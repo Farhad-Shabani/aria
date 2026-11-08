@@ -1,4 +1,4 @@
-use super::{DictationRequest, DictationRoute, DictationSettings, Rewriting, TranscriptRoute};
+use super::{Cleanup, DictationRequest, DictationRoute, DictationSettings, TranscriptRoute};
 use crate::history::HistorySource;
 use crate::vocabulary::Context;
 use aria_platform::delivery::{Application, TargetPolicy};
@@ -64,9 +64,11 @@ impl DictationSettings {
             silence_duration: settings.silence_duration,
             auto_stop: settings.auto_stop,
             own_voice_only: settings.own_voice_only,
-            rewriting: Rewriting {
-                cleanup: settings.cleanup,
-                backtrack: settings.backtrack,
+            cleanup: Cleanup {
+                enabled: settings.cleanup_enabled,
+                fillers: settings.cleanup_fillers,
+                backtrack: settings.cleanup_backtrack,
+                llm: settings.cleanup_llm_enabled,
             },
             route,
             project: if settings.vocabulary_enabled {

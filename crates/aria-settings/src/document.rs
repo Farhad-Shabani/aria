@@ -417,19 +417,29 @@ pub struct Dictation {
     pub max_recording_secs: Option<f64>,
     pub timeout_secs: Option<f64>,
     pub(crate) mute_sound: Option<bool>,
-    pub(crate) cleanup: Option<bool>,
-    pub(crate) backtrack: Option<bool>,
     pub(crate) own_voice_only: Option<bool>,
-    pub cleanup_llm: Option<CleanupLlm>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub(crate) cleanup: Cleanup,
     #[serde(skip_serializing_if = "is_default")]
     pub(crate) vocabulary: Vocabulary,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CleanupLlm {
-    pub endpoint: String,
-    pub model: String,
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct Cleanup {
+    pub(crate) enabled: Option<bool>,
+    pub(crate) fillers: Option<bool>,
+    pub(crate) backtrack: Option<bool>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub(crate) llm: CleanupLlm,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct CleanupLlm {
+    pub(crate) enabled: Option<bool>,
+    pub(crate) endpoint: Option<String>,
+    pub(crate) model: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1064,17 +1074,28 @@ impl SettingsFile {
     }
 
     fn validate_dictation(&self) -> Result<Option<CleanupTarget>, SettingsError> {
-        let Some(llm) = &self.dictation.cleanup_llm else {
-            return Ok(None);
-        };
-        CleanupTarget::new(&llm.endpoint, &llm.model)
-            .map(Some)
-            .map_err(|source| {
-                invalid(
-                    Key::DictationCleanupLlmEndpoint,
-                    InvalidValue::Cleanup(source),
-                )
-            })
+        let llm = &self.dictation.cleanup.llm;
+        match (&llm.endpoint, &llm.model) {
+            (None, None) => Ok(None),
+            (Some(endpoint), Some(model)) => {
+                CleanupTarget::new(endpoint, model)
+                    .map(Some)
+                    .map_err(|source| {
+                        invalid(
+                            Key::DictationCleanupLlmEndpoint,
+                            InvalidValue::Cleanup(source),
+                        )
+                    })
+            }
+            (Some(_), None) => Err(invalid(
+                Key::DictationCleanupLlmEndpoint,
+                InvalidValue::NeedsKey(Key::DictationCleanupLlmModel),
+            )),
+            (None, Some(_)) => Err(invalid(
+                Key::DictationCleanupLlmModel,
+                InvalidValue::NeedsKey(Key::DictationCleanupLlmEndpoint),
+            )),
+        }
     }
 
     fn validate_timeouts(&self) -> Result<DictationTimeouts, SettingsError> {
@@ -1793,13 +1814,16 @@ pub(super) mod tests {
             capture,
         } = SettingsFile::default();
         let as_json = |section: serde_json::Result<serde_json::Value>| section.expect("serializes");
-        let llm = CleanupLlm {
-            endpoint: String::new(),
-            model: String::new(),
-        };
         let sections = [
             ("dictation", as_json(serde_json::to_value(&dictation))),
-            ("dictation.cleanup_llm", as_json(serde_json::to_value(llm))),
+            (
+                "dictation.cleanup",
+                as_json(serde_json::to_value(&dictation.cleanup)),
+            ),
+            (
+                "dictation.cleanup.llm",
+                as_json(serde_json::to_value(&dictation.cleanup.llm)),
+            ),
             (
                 "dictation.vocabulary",
                 as_json(serde_json::to_value(&dictation.vocabulary)),
@@ -1829,7 +1853,7 @@ pub(super) mod tests {
             fields.extend(
                 object
                     .keys()
-                    .filter(|name| *name != "cleanup_llm" && *name != "vocabulary")
+                    .filter(|name| !["cleanup", "llm", "vocabulary"].contains(&name.as_str()))
                     .map(|name| format!("{section}.{name}")),
             );
         }
@@ -2007,9 +2031,9 @@ pub(super) mod tests {
 
     #[test]
     fn the_revision_follows_values_not_comments() {
-        let original = load("[dictation]\ncleanup = true\n");
-        let commented = load("# mine\n[dictation]\ncleanup = true # yes\n");
-        let changed = load("[dictation]\ncleanup = false\n");
+        let original = load("[dictation]\nmute_sound = true\n");
+        let commented = load("# mine\n[dictation]\nmute_sound = true # yes\n");
+        let changed = load("[dictation]\nmute_sound = false\n");
         assert_eq!(original.revision, commented.revision);
         assert_ne!(original.revision, changed.revision);
     }
@@ -2087,11 +2111,20 @@ pub(super) mod tests {
         ] {
             refused(
                 &format!(
-                    "[dictation.cleanup_llm]\nendpoint = \"{endpoint}\"\nmodel = \"{model}\"\n"
+                    "[dictation.cleanup.llm]\nendpoint = \"{endpoint}\"\nmodel = \"{model}\"\n"
                 ),
                 Key::DictationCleanupLlmEndpoint,
             );
         }
+        refused(
+            "[dictation.cleanup.llm]\nendpoint = \"http://127.0.0.1:1/v1/chat/completions\"\n",
+            Key::DictationCleanupLlmEndpoint,
+        );
+        refused(
+            "[dictation.cleanup.llm]\nmodel = \"m\"\n",
+            Key::DictationCleanupLlmModel,
+        );
+        load("[dictation.cleanup.llm]\nenabled = false\n");
         refused(
             "[dictation]\nauto_stop_ms = 2999\n",
             Key::DictationAutoStopMs,
@@ -2310,7 +2343,7 @@ pub(super) mod tests {
     fn a_read_that_sees_two_versions_retries_once_then_gives_up() {
         let dir = tempfile::tempdir().expect("a temp dir");
         let path = dir.path().join("settings.toml");
-        fs::write(&path, "[dictation]\ncleanup = true\n").expect("written");
+        fs::write(&path, "[dictation]\nmute_sound = true\n").expect("written");
         let stamp = |len: u64| Stamp {
             len,
             modified: SystemTime::UNIX_EPOCH,
@@ -2326,7 +2359,7 @@ pub(super) mod tests {
         .expect("the retry reads a settled file")
         .expect("the file exists");
         assert_eq!(calls, 4);
-        assert_eq!(text.raw, "[dictation]\ncleanup = true\n");
+        assert_eq!(text.raw, "[dictation]\nmute_sound = true\n");
 
         let mut calls = 0;
         let error = read_text_with(&path, |_path| {

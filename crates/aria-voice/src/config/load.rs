@@ -370,9 +370,9 @@ mod tests {
                 .cleanup_llm
                 .is_none()
         );
-        let llm = "[dictation.cleanup_llm]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\nmodel = \"local-model\"\n";
+        let llm = "[dictation.cleanup.llm]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\nmodel = \"local-model\"\n";
         let config = DictationConfig::load(
-            &file(&format!("[dictation]\ncleanup = true\n{llm}")),
+            &file(&format!("[dictation.cleanup]\nenabled = true\n{llm}")),
             &home_dir,
             None,
         );

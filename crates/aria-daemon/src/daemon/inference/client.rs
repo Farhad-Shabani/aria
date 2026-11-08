@@ -1542,16 +1542,18 @@ mod tests {
                     DictationPipeline::new((), Transcription::<_, Whole>::delegated(remote), ())
                         .hearing_speech(Some(Loud))
                         .tracking_voices(Some(diarizer), Some(LevelSegmenter))
-                        .rewriting(aria_voice::dictation::Rewrites::new());
+                        .cleanup(aria_voice::dictation::Rewrites::new());
                 let mut recording = aria_kit::audio::RecordingReader::from_samples(&samples);
                 let result = pipeline.transcribe(
                     &mut recording,
                     &Language::Automatic,
                     true,
                     Some(&matcher),
-                    aria_voice::dictation::Rewriting {
-                        cleanup: true,
+                    aria_voice::dictation::Cleanup {
+                        enabled: true,
+                        fillers: true,
                         backtrack: false,
+                        llm: true,
                     },
                     "test",
                     &CancelToken::never(),

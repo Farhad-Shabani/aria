@@ -337,6 +337,9 @@ pub enum InvalidValue {
     #[error("needs capture.backend = \"microphone\"")]
     NeedsMicrophone,
 
+    #[error("needs {0} set as well")]
+    NeedsKey(Key),
+
     #[error("uses unsupported home syntax")]
     HomeSyntax,
 

@@ -31,7 +31,7 @@ use super::{
     DictationResult, DictationSettings, DictationStage, ExecutionControl, GhostSnapshot,
     HeardSpeaker, StopMode, Transcribed, TranscriptSink, Utterance,
 };
-use super::{Meter, Rewrites, Rewriting};
+use super::{Cleanup, Meter, Rewrites};
 
 /// Records a press, hears it, and publishes each segment to its sinks.
 /// Where the text goes — history, the cursor — is the sinks' business.
@@ -172,7 +172,7 @@ impl<C, V, E, G, T, M: Mode, L, S> DictationPipeline<C, V, E, G, T, M, L, S> {
     }
 
     /// Runs `rewrites` on what the gate lets out.
-    pub fn rewriting<N: Layer>(
+    pub fn cleanup<N: Layer>(
         self,
         rewrites: Rewrites<N>,
     ) -> DictationPipeline<C, V, E, G, T, M, N, S> {
@@ -228,7 +228,7 @@ where
         language: &Language,
         own_voice_only: bool,
         vocabulary: Option<&Vocabulary>,
-        rewriting: Rewriting,
+        cleanup: Cleanup,
         engine: &'static str,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
@@ -237,7 +237,7 @@ where
             language,
             own_voice_only,
             vocabulary,
-            rewriting,
+            cleanup,
             cancel,
         )?;
         Ok(Transcribed {
@@ -254,7 +254,7 @@ where
         language: &Language,
         own_voice_only: bool,
         vocabulary: Option<&Vocabulary>,
-        rewriting: Rewriting,
+        cleanup: Cleanup,
         cancel: &CancelToken,
     ) -> Result<(Transcript, Option<&'static str>), DictationError> {
         if cancel.is_cancelled() {
@@ -302,7 +302,7 @@ where
         };
         Ok((
             self.rewrites
-                .finish(transcript, rewriting, vocabulary, cancel)?,
+                .finish(transcript, cleanup, vocabulary, cancel)?,
             served_by,
         ))
     }
@@ -510,7 +510,7 @@ where
                 &settings.stt_language,
                 settings.own_voice_only,
                 vocabulary,
-                settings.rewriting,
+                settings.cleanup,
                 &cancel,
             )?;
             if let Some(engine) = served_by {
@@ -569,6 +569,10 @@ where
 
         let stage_started = Instant::now();
         let mut recording = self.start_recording(&settings, control, events, stage_started)?;
+        // Only a transcript delivered whole reaches the model.
+        if settings.delivery_mode == DeliveryMode::Complete {
+            self.rewrites.prepare(settings.cleanup);
+        }
 
         let result = (|| {
             sinks
@@ -724,7 +728,7 @@ where
             let Released { heard, speaker, .. } = released;
             let mut text = heard.segment.as_str().to_owned();
             self.rewrites
-                .segment(&mut text, settings.rewriting, vocabulary, &cancel)
+                .segment(&mut text, settings.cleanup, vocabulary, &cancel)
                 .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
             let speaker = speaker.as_ref().and_then(Label::enrolled).cloned();
             published.segment(heard, &text, speaker, sinks)
@@ -784,7 +788,7 @@ where
         let transcript = match settings.delivery_mode {
             DeliveryMode::Complete => self
                 .rewrites
-                .finish(ended.transcript, settings.rewriting, vocabulary, &cancel)
+                .finish(ended.transcript, settings.cleanup, vocabulary, &cancel)
                 .map_err(started)?,
             DeliveryMode::Streaming => ended.transcript,
         };
@@ -826,7 +830,7 @@ where
             })?;
         let transcript = self
             .rewrites
-            .finish(decoded.transcript, settings.rewriting, vocabulary, cancel)
+            .finish(decoded.transcript, settings.cleanup, vocabulary, cancel)
             .map_err(started)?;
         if let Some(engine) = decoded.served_by {
             sinks.served_by(engine);
@@ -841,7 +845,7 @@ where
             .cloned();
             let mut text = heard.segment.as_str().to_owned();
             self.rewrites
-                .segment(&mut text, settings.rewriting, vocabulary, cancel)
+                .segment(&mut text, settings.cleanup, vocabulary, cancel)
                 .map_err(started)?;
             published.segment(heard, &text, speaker, sinks)?;
         }
@@ -1756,17 +1760,24 @@ mod tests {
         ]
     }
 
-    const BACKTRACK: Rewriting = Rewriting {
-        cleanup: false,
+    const BACKTRACK: Cleanup = Cleanup {
+        enabled: true,
+        fillers: true,
         backtrack: true,
+        llm: true,
     };
 
-    fn rewriting(
+    fn with_cleanup(
         mut settings: DictationSettings,
         cleanup: bool,
         backtrack: bool,
     ) -> DictationSettings {
-        settings.rewriting = Rewriting { cleanup, backtrack };
+        settings.cleanup = Cleanup {
+            enabled: cleanup,
+            fillers: true,
+            backtrack,
+            llm: true,
+        };
         settings
     }
 
@@ -2810,9 +2821,9 @@ mod tests {
     fn backtracking_joins_segments_only_for_opted_in_complete_delivery() {
         for (parts, original, corrected) in [
             (
-                &["um meet at 2", "actually 3"][..],
-                "um meet at 2 actually 3",
-                "um meet at 3",
+                &["meet at 2", "actually 3"][..],
+                "meet at 2 actually 3",
+                "meet at 3",
             ),
             (
                 &["send it to Ali scratch", "that to Sara"][..],
@@ -2830,10 +2841,10 @@ mod tests {
                         (log.history(), log.cursor()),
                     );
                     let result = pipeline
-                        .run(rewriting(
+                        .run(with_cleanup(
                             settings(mode, OutputMode::InsertAndSubmit),
-                            false,
                             enabled,
+                            true,
                         ))
                         .unwrap();
                     let expected = if enabled && mode == DeliveryMode::Complete {
@@ -2877,7 +2888,7 @@ mod tests {
                 (log.history(), log.cursor()),
             );
             let result = pipeline
-                .run(rewriting(settings(mode, OutputMode::Insert), false, true))
+                .run(with_cleanup(settings(mode, OutputMode::Insert), true, true))
                 .unwrap();
             let expected = if mode == DeliveryMode::Complete {
                 "meet at 3"
@@ -2893,30 +2904,57 @@ mod tests {
         }
     }
 
-    /// Both choices come with each press, and a model configured
-    /// at startup runs only while cleanup is on.
+    /// Each choice comes with each press, and the gate decides for all of
+    /// them, a model configured at startup included.
     #[test]
-    fn each_press_follows_the_rewriting_it_was_admitted_with() {
-        let ran = FinalLayer(move |text: &mut String, _: &CancelToken| {
-            *text = "from the model".to_owned();
-            Ok(())
-        });
-        let rewrites = Rewrites::new().with(ran);
-        let finish = |cleanup, backtrack| {
+    fn each_press_follows_the_cleanup_it_was_admitted_with() {
+        fn finish<L: aria_kit::transcription::layer::Layer>(
+            rewrites: &Rewrites<L>,
+            enabled: bool,
+            fillers: bool,
+            backtrack: bool,
+            llm: bool,
+        ) -> String {
             rewrites
                 .finish(
                     Transcript::new("um meet at 2 actually 3").unwrap(),
-                    Rewriting { cleanup, backtrack },
+                    Cleanup {
+                        enabled,
+                        fillers,
+                        backtrack,
+                        llm,
+                    },
                     None,
                     &CancelToken::never(),
                 )
                 .unwrap()
                 .into_text()
-        };
+        }
+        let rules = Rewrites::new().with(());
+        for (enabled, fillers, backtrack, expected) in [
+            (false, true, true, "um meet at 2 actually 3"),
+            (true, false, false, "um meet at 2 actually 3"),
+            (true, true, false, "meet at 2 actually 3"),
+            (true, false, true, "um meet at 3"),
+            (true, true, true, "meet at 3"),
+        ] {
+            assert_eq!(
+                finish(&rules, enabled, fillers, backtrack, true),
+                expected,
+                "enabled {enabled}, fillers {fillers}, backtrack {backtrack}"
+            );
+        }
 
-        assert_eq!(finish(false, false), "um meet at 2 actually 3");
-        assert_eq!(finish(false, true), "um meet at 3");
-        assert_eq!(finish(true, false), "from the model");
+        let model = Rewrites::new().with(FinalLayer(|text: &mut String, _: &CancelToken| {
+            *text = "from the model".to_owned();
+            Ok(())
+        }));
+        assert_eq!(
+            finish(&model, false, true, true, true),
+            "um meet at 2 actually 3"
+        );
+        assert_eq!(finish(&model, true, true, true, false), "meet at 3");
+        assert_eq!(finish(&model, true, false, false, true), "from the model");
     }
 
     #[test]
@@ -2975,13 +3013,17 @@ mod tests {
                     Transcription::stream(Stream::Native, Parts(&["um meet at 2", "actually 3"])),
                     (log.history(), log.cursor()),
                 )
-                .rewriting(
+                .cleanup(
                     Rewrites::new()
                         .with(enabled.then_some(layer))
                         .with(enabled.then_some(punctuation)),
                 );
                 let result = pipeline
-                    .run(rewriting(settings(mode, OutputMode::Insert), true, false))
+                    .run(with_cleanup(
+                        settings(mode, OutputMode::Insert),
+                        true,
+                        false,
+                    ))
                     .unwrap();
                 let applied = enabled && mode == DeliveryMode::Complete;
                 let expected = if applied {
@@ -3021,10 +3063,12 @@ mod tests {
             Transcription::complete_samples(Answering("um meet at 2 actually 3")),
             UnreachableSink,
         )
-        .rewriting(Rewrites::new().with(layer));
-        let every_pass = Rewriting {
-            cleanup: true,
+        .cleanup(Rewrites::new().with(layer));
+        let every_pass = Cleanup {
+            enabled: true,
+            fillers: true,
             backtrack: true,
+            llm: true,
         };
         let mut recording =
             RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
@@ -3078,8 +3122,8 @@ mod tests {
                 Transcription::complete_samples(Answering("meet at 2 actually 3")),
                 (log.history(), log.cursor()),
             )
-            .rewriting(Rewrites::new().with(layer));
-            let result = pipeline.run(rewriting(
+            .cleanup(Rewrites::new().with(layer));
+            let result = pipeline.run(with_cleanup(
                 settings(DeliveryMode::Complete, OutputMode::InsertAndSubmit),
                 true,
                 true,
@@ -3097,6 +3141,49 @@ mod tests {
         }
     }
 
+    struct CountPreparations(std::sync::atomic::AtomicUsize);
+
+    impl Layer for CountPreparations {
+        fn apply(&self, _: &mut String, _: &CancelToken) -> Result<(), TranscriptionError> {
+            Ok(())
+        }
+
+        fn prepare(&self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn a_press_warms_the_model_only_when_its_transcript_will_reach_it() {
+        for (mode, cleanup, warmed) in [
+            (DeliveryMode::Complete, true, 1),
+            (DeliveryMode::Complete, false, 0),
+            (DeliveryMode::Streaming, true, 0),
+        ] {
+            let model = CountPreparations(std::sync::atomic::AtomicUsize::new(0));
+            let (_directory, capture) = judged_capture();
+            let log = CallLog::default();
+            let pipeline = DictationPipeline::new(
+                capture,
+                Transcription::stream(Stream::Native, Parts(&["please meet me", "at the office"])),
+                (log.history(), log.cursor()),
+            )
+            .cleanup(Rewrites::new().with(Some(&model)));
+            pipeline
+                .run(with_cleanup(
+                    settings(mode, OutputMode::Insert),
+                    cleanup,
+                    false,
+                ))
+                .unwrap();
+            assert_eq!(
+                model.0.load(std::sync::atomic::Ordering::Relaxed),
+                warmed,
+                "{mode:?}, cleanup {cleanup}"
+            );
+        }
+    }
+
     #[test]
     fn oversized_completion_keeps_text_without_contacting_the_model() {
         let home = tempfile::tempdir().unwrap();
@@ -3111,7 +3198,7 @@ mod tests {
             Transcription::complete_samples(Answering("")),
             UnreachableSink,
         )
-        .rewriting(Rewrites::new().with(Some(cleanup)));
+        .cleanup(Rewrites::new().with(Some(cleanup)));
         for bytes in [4097, 65537] {
             let prefix = "a".repeat(bytes);
             let text = format!("{prefix} meet at 2 actually 3");
@@ -3119,9 +3206,11 @@ mod tests {
                 .rewrites
                 .finish(
                     Transcript::new(&text).unwrap(),
-                    Rewriting {
-                        cleanup: true,
+                    Cleanup {
+                        enabled: true,
+                        fillers: true,
                         backtrack: true,
+                        llm: true,
                     },
                     None,
                     &CancelToken::never(),
@@ -3168,9 +3257,9 @@ mod tests {
             Transcription::complete_samples(Answering("um meet Alice at 2 actually 3")),
             (log.history(), log.cursor()),
         )
-        .rewriting(Rewrites::new().with(layer));
+        .cleanup(Rewrites::new().with(layer));
         let result = pipeline
-            .run(rewriting(
+            .run(with_cleanup(
                 settings(DeliveryMode::Complete, OutputMode::Insert),
                 true,
                 true,
@@ -3216,7 +3305,7 @@ mod tests {
             )
             .unwrap();
             let control = ExecutionControl::for_test(StopMode::Manual);
-            let settings = rewriting(
+            let settings = with_cleanup(
                 settings(DeliveryMode::Streaming, OutputMode::Insert),
                 true,
                 false,
@@ -3304,9 +3393,11 @@ mod tests {
                 .rewrites
                 .finish(
                     Transcript::new("send the the um report").unwrap(),
-                    Rewriting {
-                        cleanup: enabled,
+                    Cleanup {
+                        enabled,
+                        fillers: true,
                         backtrack: false,
+                        llm: true,
                     },
                     None,
                     &CancelToken::never(),
@@ -3327,9 +3418,11 @@ mod tests {
 
         let result = pipeline.rewrites.finish(
             Transcript::new("um").unwrap(),
-            Rewriting {
-                cleanup: true,
+            Cleanup {
+                enabled: true,
+                fillers: true,
                 backtrack: false,
+                llm: true,
             },
             None,
             &CancelToken::never(),
@@ -3624,7 +3717,7 @@ mod tests {
         );
 
         let result = pipeline
-            .run(rewriting(
+            .run(with_cleanup(
                 own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert)),
                 true,
                 false,
@@ -3663,7 +3756,7 @@ mod tests {
                     &Language::Automatic,
                     true,
                     None,
-                    Rewriting::default(),
+                    Cleanup::default(),
                     "test",
                     &CancelToken::never()
                 )
@@ -3757,7 +3850,7 @@ mod tests {
                         &Language::Automatic,
                         true,
                         None,
-                        Rewriting::default(),
+                        Cleanup::default(),
                         "test",
                         &CancelToken::never(),
                     )
@@ -4083,7 +4176,7 @@ mod tests {
                             &Language::Automatic,
                             true,
                             None,
-                            Rewriting::default(),
+                            Cleanup::default(),
                             "test",
                             &cancel,
                         )
@@ -4146,7 +4239,7 @@ mod tests {
                         &Language::Automatic,
                         true,
                         None,
-                        Rewriting::default(),
+                        Cleanup::default(),
                         "test",
                         &CancelToken::never(),
                     )
@@ -4203,7 +4296,7 @@ mod tests {
                     &Language::Automatic,
                     true,
                     None,
-                    Rewriting::default(),
+                    Cleanup::default(),
                     "test",
                     &CancelToken::never()
                 )
@@ -4241,10 +4334,10 @@ mod tests {
                 Transcription::complete_samples(levels(Arc::default())),
                 (log.history(), log.cursor()),
             )
-            .rewriting(Rewrites::new().with(layer));
+            .cleanup(Rewrites::new().with(layer));
             let (events, captions) = caption_events();
             let result = pipeline.run_observed(
-                rewriting(
+                with_cleanup(
                     own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert)),
                     true,
                     true,
@@ -4362,7 +4455,7 @@ mod tests {
                 &Language::Automatic,
                 true,
                 None,
-                Rewriting::default(),
+                Cleanup::default(),
                 "test",
                 &CancelToken::never(),
             );
@@ -5034,7 +5127,7 @@ mod tests {
             &Language::Automatic,
             false,
             None,
-            Rewriting::default(),
+            Cleanup::default(),
             "test",
             &CancelToken::never(),
         );
@@ -5043,7 +5136,7 @@ mod tests {
             &Language::Automatic,
             false,
             None,
-            Rewriting::default(),
+            Cleanup::default(),
             "test",
             &CancelToken::never(),
         );
@@ -5145,7 +5238,7 @@ mod tests {
                 &Language::Automatic,
                 true,
                 None,
-                Rewriting::default(),
+                Cleanup::default(),
                 "test",
                 &CancelToken::never(),
             );
@@ -5177,7 +5270,7 @@ mod tests {
                 &Language::Automatic,
                 false,
                 None,
-                Rewriting::default(),
+                Cleanup::default(),
                 "test",
                 &cancel
             ),

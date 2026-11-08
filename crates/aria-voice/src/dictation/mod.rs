@@ -37,7 +37,7 @@ pub use execution::{
 use level::Meter;
 pub use level::MicLevel;
 pub use pipeline::DictationPipeline;
-pub use rewrites::{ConfiguredLayers, Rewrites, Rewriting};
+pub use rewrites::{Cleanup, ConfiguredLayers, Rewrites};
 pub use transcripts::{Delivered, DeliveryOutcome, TranscriptSink, Utterance};
 
 /// Names one recording for as long as the daemon that took it runs. What
@@ -137,7 +137,7 @@ pub struct DictationSettings {
     pub silence_duration: SilenceDuration,
     pub auto_stop: Option<AutoStop>,
     pub own_voice_only: bool,
-    pub rewriting: Rewriting,
+    pub cleanup: Cleanup,
     pub route: TranscriptRoute,
     pub project: Option<aria_settings::Directory>,
     /// The app in front as dictation was admitted.

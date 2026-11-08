@@ -16,7 +16,7 @@ use crate::config::AssistantId;
 use aria_kit::audio::{AutoStop, SilenceDuration};
 
 impl Settings {
-    pub(crate) fn from_file(settings: &SettingsFile) -> Result<Self, SettingsError> {
+    pub fn from_file(settings: &SettingsFile) -> Result<Self, SettingsError> {
         let defaults = Self::default();
         let SettingsFile {
             dictation,
@@ -52,9 +52,24 @@ impl Settings {
                 None => defaults.auto_stop,
             },
             mute_sound: dictation.mute_sound.unwrap_or(defaults.mute_sound),
-            cleanup: dictation.cleanup.unwrap_or(defaults.cleanup),
-            backtrack: dictation.backtrack.unwrap_or(defaults.backtrack),
             own_voice_only: dictation.own_voice_only.unwrap_or(defaults.own_voice_only),
+            cleanup_enabled: dictation
+                .cleanup
+                .enabled
+                .unwrap_or(defaults.cleanup_enabled),
+            cleanup_fillers: dictation
+                .cleanup
+                .fillers
+                .unwrap_or(defaults.cleanup_fillers),
+            cleanup_backtrack: dictation
+                .cleanup
+                .backtrack
+                .unwrap_or(defaults.cleanup_backtrack),
+            cleanup_llm_enabled: dictation
+                .cleanup
+                .llm
+                .enabled
+                .unwrap_or(defaults.cleanup_llm_enabled),
             vocabulary_enabled: dictation
                 .vocabulary
                 .enabled
@@ -115,9 +130,11 @@ pub(super) fn patch(current: &Settings, next: &Settings) -> Result<Patch, Settin
         silence_duration,
         auto_stop,
         mute_sound,
-        cleanup,
-        backtrack,
         own_voice_only,
+        cleanup_enabled,
+        cleanup_fillers,
+        cleanup_backtrack,
+        cleanup_llm_enabled,
         vocabulary_enabled,
         vocabulary_dir,
         history_enabled,
@@ -159,14 +176,20 @@ pub(super) fn patch(current: &Settings, next: &Settings) -> Result<Patch, Settin
     if *mute_sound != current.mute_sound {
         patch.set(Key::DictationMuteSound, *mute_sound);
     }
-    if *cleanup != current.cleanup {
-        patch.set(Key::DictationCleanup, *cleanup);
-    }
-    if *backtrack != current.backtrack {
-        patch.set(Key::DictationBacktrack, *backtrack);
-    }
     if *own_voice_only != current.own_voice_only {
         patch.set(Key::DictationOwnVoiceOnly, *own_voice_only);
+    }
+    if *cleanup_enabled != current.cleanup_enabled {
+        patch.set(Key::DictationCleanupEnabled, *cleanup_enabled);
+    }
+    if *cleanup_fillers != current.cleanup_fillers {
+        patch.set(Key::DictationCleanupFillers, *cleanup_fillers);
+    }
+    if *cleanup_backtrack != current.cleanup_backtrack {
+        patch.set(Key::DictationCleanupBacktrack, *cleanup_backtrack);
+    }
+    if *cleanup_llm_enabled != current.cleanup_llm_enabled {
+        patch.set(Key::DictationCleanupLlmEnabled, *cleanup_llm_enabled);
     }
     if *vocabulary_enabled != current.vocabulary_enabled {
         patch.set(Key::DictationVocabularyEnabled, *vocabulary_enabled);
@@ -359,8 +382,10 @@ mod tests {
             history_enabled: false,
             history_keep_audio: true,
             memory_enabled: true,
-            backtrack: true,
-            cleanup: true,
+            cleanup_backtrack: false,
+            cleanup_fillers: false,
+            cleanup_llm_enabled: false,
+            cleanup_enabled: true,
             tts_rate: SpeakingRate::new(1.5).expect("valid"),
             mute_sound: true,
             stt_language: "de".parse().expect("a language"),

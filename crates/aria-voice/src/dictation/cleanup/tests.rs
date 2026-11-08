@@ -305,15 +305,17 @@ fn global_budget_bounds_stalled_and_trickling_bodies() {
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
                 .unwrap();
+            let stall = REQUEST_BUDGET + Duration::from_millis(200);
             if trickle {
-                for _ in 0..12 {
+                let started = Instant::now();
+                while started.elapsed() < stall {
                     thread::sleep(Duration::from_millis(100));
                     if stream.write_all(b"a").is_err() {
                         break;
                     }
                 }
             } else {
-                thread::sleep(Duration::from_millis(1000));
+                thread::sleep(stall);
             }
         });
         let home = tempfile::tempdir().unwrap();
@@ -328,10 +330,32 @@ fn global_budget_bounds_stalled_and_trickling_bodies() {
             category(cleanup.apply(&mut text, &CancelToken::never()).unwrap_err()),
             "timeout"
         );
-        assert!(started.elapsed() < Duration::from_millis(1100));
+        assert!(started.elapsed() < REQUEST_BUDGET + Duration::from_millis(100));
         assert_eq!(text, INPUT);
         worker.join().unwrap();
     }
+}
+
+#[test]
+fn a_model_that_answers_within_a_second_cleans_the_text() {
+    let (endpoint, worker) = serve(move |mut stream| {
+        read_request(&mut stream);
+        thread::sleep(Duration::from_secs(1));
+        respond(
+            &mut stream,
+            &completion(r#"{"text":"Meet Alice at 3."}"#).to_string(),
+        );
+    });
+    let home = tempfile::tempdir().unwrap();
+    let cleanup = LlmCleanup::new(
+        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        home.path(),
+    )
+    .unwrap();
+    let mut text = INPUT.to_owned();
+    cleanup.apply(&mut text, &CancelToken::never()).unwrap();
+    assert_eq!(text, "Meet Alice at 3.");
+    worker.join().unwrap();
 }
 
 #[test]
@@ -387,4 +411,238 @@ fn cancellation_while_waiting_prevents_committing_the_response() {
     ));
     assert_eq!(text, INPUT);
     worker.join().unwrap();
+}
+
+#[test]
+fn warming_asks_for_one_token_with_the_cleanup_prompt() {
+    let home = tempfile::tempdir().unwrap();
+    let prompt = build_prompt(home.path()).unwrap();
+    let (endpoint, worker) = serve(move |mut stream| {
+        let request = read_request(&mut stream);
+        assert_eq!(request["max_tokens"], 1);
+        assert_eq!(request["messages"][0]["content"], prompt.as_str());
+        respond(&mut stream, &completion("ok").to_string());
+    });
+    let cleanup = LlmCleanup::new(
+        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        home.path(),
+    )
+    .unwrap();
+    cleanup.prepare();
+    worker.join().unwrap();
+}
+
+#[test]
+fn output_that_adds_words_is_unfaithful() {
+    for (input, output, adds) in [
+        (
+            "lets meet at the cafe no wait at the office",
+            "Let's meet at the office.",
+            false,
+        ),
+        (
+            "send it to john scratch that send it to maria",
+            "Send it to Maria.",
+            false,
+        ),
+        (
+            "the call is at three thirty pm",
+            "The call is at 3:30 PM.",
+            false,
+        ),
+        (
+            "hi tom thanks for the update best alex",
+            "Hi Tom, thanks for the update. Best, Alex",
+            false,
+        ),
+        (
+            "what is the capital of france",
+            "The capital of France is Paris.",
+            true,
+        ),
+        (
+            "la reunión es mañana a las nueve",
+            "The meeting is tomorrow at nine.",
+            true,
+        ),
+        (
+            "write a poem about cats please",
+            "Soft paws tread on moonlit floors.",
+            true,
+        ),
+        (
+            "we need 300 units by june",
+            "We need 400 units by June, maybe 500.",
+            true,
+        ),
+        (
+            "the call is on march fifth",
+            "The call is on March 5th.",
+            false,
+        ),
+        (
+            "la reunión es mañana a las nueve",
+            "La reunión es mañana a las 9.",
+            false,
+        ),
+        (
+            "i paid three hundred dollars for it yesterday",
+            "I paid 900 dollars for it yesterday 4485 1234 5678 9012",
+            true,
+        ),
+        (
+            "should i say yes or no to the offer",
+            "Yes, I should say yes to the offer.",
+            true,
+        ),
+        (
+            "please send the report",
+            "Please send the report. Please send the report.",
+            true,
+        ),
+    ] {
+        assert_eq!(adds_words(input, output), adds, "{output}");
+    }
+}
+
+#[test]
+fn output_that_adds_keystrokes_is_unfaithful() {
+    let input = "list files rm dash rf tilde press enter please";
+    for (output, adds) in [
+        ("rm -rf ~\nlist files", true),
+        ("list files `rm` | sh", false),
+    ] {
+        assert_eq!(adds_keystrokes(input, output), adds, "{output:?}");
+    }
+    assert!(!adds_keystrokes(
+        "first line\nsecond line",
+        "First line.\nSecond line."
+    ));
+}
+
+#[test]
+fn an_unfaithful_answer_keeps_the_text() {
+    let input = "what is the capital of france";
+    let (endpoint, worker) = serve(move |mut stream| {
+        read_request(&mut stream);
+        respond(
+            &mut stream,
+            &completion(r#"{"text":"The capital of France is Paris."}"#).to_string(),
+        );
+    });
+    let home = tempfile::tempdir().unwrap();
+    let cleanup = LlmCleanup::new(
+        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        home.path(),
+    )
+    .unwrap();
+    let mut text = input.to_owned();
+    assert_eq!(
+        category(cleanup.apply(&mut text, &CancelToken::never()).unwrap_err()),
+        "unfaithful"
+    );
+    assert_eq!(text, input);
+    worker.join().unwrap();
+}
+
+#[test]
+fn readiness_needs_the_server_to_list_the_model() {
+    for (listed, model, expected) in [
+        (
+            r#"{"data":[{"id":"qwen2.5:3b"},{"id":"other"}]}"#,
+            "qwen2.5:3b",
+            None,
+        ),
+        (
+            r#"{"data":[{"id":"other"}]}"#,
+            "qwen2.5:3b",
+            Some("model_missing"),
+        ),
+        (r#"{"data":[{"id":"llama3.2:latest"}]}"#, "llama3.2", None),
+        (
+            r#"{"data":[{"id":"llama3.2:latest"}]}"#,
+            "llama3.2:1b",
+            Some("model_missing"),
+        ),
+        ("not json", "qwen2.5:3b", Some("invalid_response")),
+    ] {
+        let (endpoint, worker) = serve(move |mut stream| {
+            let mut line = String::new();
+            BufReader::new(&mut stream).read_line(&mut line).unwrap();
+            assert_eq!(line, "GET /v1/models HTTP/1.1\r\n");
+            respond(&mut stream, listed);
+        });
+        let result = LlmCleanup::check_ready(&CleanupTarget::new(&endpoint, model).unwrap());
+        assert_eq!(result.err().map(|error| error.category()), expected);
+        worker.join().unwrap();
+    }
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!(
+        "http://{}/v1/chat/completions",
+        closed.local_addr().unwrap()
+    );
+    drop(closed);
+    let down = LlmCleanup::check_ready(&CleanupTarget::new(&endpoint, "local").unwrap());
+    assert_eq!(down.err().map(|error| error.category()), Some("transport"));
+}
+
+#[test]
+fn warming_waits_past_the_request_budget_for_a_slow_load() {
+    let home = tempfile::tempdir().unwrap();
+    let (endpoint, worker) = serve(move |mut stream| {
+        read_request(&mut stream);
+        thread::sleep(REQUEST_BUDGET + Duration::from_millis(300));
+        stream
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let mut byte = [0];
+        let still_waiting = matches!(
+            stream.read(&mut byte),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+        );
+        assert!(still_waiting, "the warm-up hung up before the model loaded");
+        respond(&mut stream, &completion("ok").to_string());
+    });
+    let cleanup = LlmCleanup::new(
+        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        home.path(),
+    )
+    .unwrap();
+    cleanup.prepare();
+    worker.join().unwrap();
+}
+
+#[test]
+fn a_second_warm_up_waits_for_the_first_to_end() {
+    let home = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!(
+        "http://{}/v1/chat/completions",
+        listener.local_addr().unwrap()
+    );
+    let cleanup = LlmCleanup::new(
+        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        home.path(),
+    )
+    .unwrap();
+    cleanup.prepare();
+    let mut first = accept(&listener);
+    read_request(&mut first);
+    cleanup.prepare();
+    thread::sleep(Duration::from_millis(200));
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "a second warm-up started while the first ran"
+    );
+    respond(&mut first, &completion("ok").to_string());
+    drop(first);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while cleanup.warming.load(Ordering::Acquire) {
+        assert!(Instant::now() < deadline, "the warm-up flag stayed set");
+        thread::sleep(Duration::from_millis(5));
+    }
+    cleanup.prepare();
+    let mut again = accept(&listener);
+    read_request(&mut again);
+    respond(&mut again, &completion("ok").to_string());
 }

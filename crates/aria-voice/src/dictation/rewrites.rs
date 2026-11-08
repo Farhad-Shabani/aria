@@ -4,11 +4,9 @@ use std::time::Instant;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::check_cancelled;
-use aria_kit::transcription::layer::{
-    self, Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats,
-};
+use aria_kit::transcription::layer::{Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats};
 
-use super::{CleanupError, LlmCleanup};
+use super::{CleanupError, LlmCleanup, cleanup};
 use crate::config::DictationConfig;
 use crate::transcription::{Transcript, TranscriptionError};
 use crate::vocabulary::Vocabulary;
@@ -16,13 +14,17 @@ use crate::vocabulary::Vocabulary;
 /// The layers the settings can add after the deterministic passes.
 pub type ConfiguredLayers = Layered<Option<LlmCleanup>, ()>;
 
-/// The passes one dictation runs, read as it was admitted.
+/// The cleanups one dictation runs, read as it was admitted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Rewriting {
-    /// Drops fillers and doubled words, then runs any local model.
-    pub cleanup: bool,
+pub struct Cleanup {
+    /// Off, no cleanup runs.
+    pub enabled: bool,
+    /// Drops fillers and doubled words.
+    pub fillers: bool,
     /// Applies "scratch that" and the like, which need the whole text.
     pub backtrack: bool,
+    /// Runs the local model, when one is configured.
+    pub llm: bool,
 }
 
 /// The passes dictation runs on its text. Each released segment gets the
@@ -59,17 +61,25 @@ impl<L: Layer> Rewrites<L> {
         }
     }
 
+    /// Loads the cleanup model while the user speaks, for a press whose
+    /// transcript will reach it.
+    pub(crate) fn prepare(&self, cleanup: Cleanup) {
+        if self.reaches_model(cleanup) {
+            self.llm.prepare();
+        }
+    }
+
     /// Calls each layer directly rather than through `Layered`, whose 64 KiB
     /// bound would stop deterministic cleanup on a long transcript.
     pub(crate) fn segment(
         &self,
         text: &mut String,
-        rewriting: Rewriting,
+        cleanup: Cleanup,
         vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
         check_cancelled(cancel)?;
-        if rewriting.cleanup {
+        if cleanup.enabled && cleanup.fillers {
             RemoveHesitations.apply(text, cancel)?;
             RemoveRepeats.apply(text, cancel)?;
         }
@@ -79,35 +89,34 @@ impl<L: Layer> Rewrites<L> {
         check_cancelled(cancel)
     }
 
+    /// Whether a transcript delivered whole goes to the cleanup model.
+    fn reaches_model(&self, cleanup: Cleanup) -> bool {
+        cleanup.enabled && cleanup.llm && self.llm.enabled()
+    }
+
     /// Corrects the whole transcript once the press ends.
     pub(crate) fn finish(
         &self,
         transcript: Transcript,
-        rewriting: Rewriting,
+        cleanup: Cleanup,
         vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
     ) -> Result<Transcript, TranscriptionError> {
         let mut text = transcript.into_text();
-        if rewriting.backtrack {
+        if cleanup.enabled && cleanup.backtrack {
             Backtrack.apply(&mut text, cancel)?;
         }
-        self.segment(&mut text, rewriting, vocabulary, cancel)?;
+        self.segment(&mut text, cleanup, vocabulary, cancel)?;
         // Cleanup can leave nothing, and then this fails as `NoSpeech`.
         let transcript = Transcript::new(text)?;
-        if !rewriting.cleanup || !self.llm.enabled() {
+        if !self.reaches_model(cleanup) {
             return Ok(transcript);
         }
         let started = Instant::now();
         let mut text = transcript.as_str().to_owned();
         let result = self.llm.apply(&mut text, cancel);
         check_cancelled(cancel)?;
-        let failure = match &result {
-            Err(TranscriptionError::Processing(layer::Error::Failed(error))) => error
-                .downcast_ref::<CleanupError>()
-                .map(CleanupError::category),
-            Err(TranscriptionError::Processing(layer::Error::TooLarge)) => Some("processing_size"),
-            _ => None,
-        };
+        let failure = result.as_ref().err().and_then(cleanup::failure_category);
         if let Some(category) = failure {
             tracing::warn!(
                 category,

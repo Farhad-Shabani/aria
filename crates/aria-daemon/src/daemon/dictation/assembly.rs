@@ -22,10 +22,10 @@ use aria_voice::config::{
     DictationConfig, PairingId, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
 };
 use aria_voice::dictation::{
-    CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
+    Cleanup, CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
     DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
     DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, Rewrites,
-    Rewriting, SoundMuting, Transcribed,
+    SoundMuting, Transcribed,
 };
 use aria_voice::transcription::{
     Language, Mode, Streaming, Transcriber, Transcription, TranscriptionError, Whole,
@@ -116,7 +116,7 @@ where
         language: &Language,
         own_voice_only: bool,
         project: Option<&Directory>,
-        rewriting: Rewriting,
+        cleanup: Cleanup,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
         self.prepared(project, |vocabulary| {
@@ -125,7 +125,7 @@ where
                 language,
                 own_voice_only,
                 Some(vocabulary),
-                rewriting,
+                cleanup,
                 self.engine,
                 cancel,
             )
@@ -330,7 +330,7 @@ impl ExecutionParts {
             )
             .hearing_speech(speaker::speech_gate())
             .tracking_voices(diarizer, segmenter)
-            .rewriting(self.rewrites),
+            .cleanup(self.rewrites),
             wake: self.wake,
             speaker: self.speaker,
             vocabulary: self.vocabulary,
@@ -425,7 +425,7 @@ impl DictationExecutor for EngineSlot {
         language: &Language,
         own_voice_only: bool,
         project: Option<&Directory>,
-        rewriting: Rewriting,
+        cleanup: Cleanup,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
         self.current().executor.transcribe(
@@ -433,7 +433,7 @@ impl DictationExecutor for EngineSlot {
             language,
             own_voice_only,
             project,
-            rewriting,
+            cleanup,
             cancel,
         )
     }
@@ -510,7 +510,7 @@ impl DictationExecutor for Unusable {
         language: &Language,
         own_voice_only: bool,
         project: Option<&Directory>,
-        rewriting: Rewriting,
+        cleanup: Cleanup,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
         self.engine()?.executor.transcribe(
@@ -518,7 +518,7 @@ impl DictationExecutor for Unusable {
             language,
             own_voice_only,
             project,
-            rewriting,
+            cleanup,
             cancel,
         )
     }
@@ -691,13 +691,13 @@ pub(super) fn transcribe_retry(
     let pipeline = DictationPipeline::new((), transcription, ())
         .hearing_speech(speaker::speech_gate())
         .tracking_voices(diarizer, segmenter)
-        .rewriting(rewrites);
+        .cleanup(rewrites);
     pipeline.transcribe(
         recording,
         &settings.stt_language,
         settings.own_voice_only,
         Some(snapshot.matcher.as_ref()),
-        settings.rewriting,
+        settings.cleanup,
         engine,
         cancel,
     )
