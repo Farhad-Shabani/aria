@@ -487,7 +487,7 @@ final class PaletteTests: XCTestCase {
     }
 
     func testAnEmptyHistoryStillShowsTheCommands() {
-        var model = openModel(history: [])
+        let model = openModel(history: [])
 
         XCTAssertEqual(model.items.compactMap(\.command), model.commands)
     }
@@ -529,7 +529,7 @@ final class PaletteTests: XCTestCase {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let day: TimeInterval = 86_400
-        var model = openModel(history: [Self.entry(3, at: day + 10), Self.entry(2, at: day + 5), Self.entry(1, at: 10)])
+        let model = openModel(history: [Self.entry(3, at: day + 10), Self.entry(2, at: day + 5), Self.entry(1, at: 10)])
 
         let titled = model.items.indices.map { model.dayStarting(at: $0, calendar: calendar) }
 
@@ -740,7 +740,7 @@ final class PaletteTests: XCTestCase {
     }
 
     func testReturnIsNamedForTypingOnlyWhenItTypesTheRow() {
-        var model = openModel(history: [Self.entry(1, at: 100)])
+        let model = openModel(history: [Self.entry(1, at: 100)])
 
         XCTAssertEqual(
             PaletteActions(model: model, hasFrontApp: true).returnTitle(typingInto: "Notes"), "Type into Notes")
