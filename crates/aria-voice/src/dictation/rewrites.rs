@@ -126,6 +126,11 @@ impl<L: Layer> Rewrites<L> {
             return Ok(transcript);
         }
         result?;
+        tracing::info!(
+            changed = text != transcript.as_str(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "dictation cleanup model applied"
+        );
         Transcript::new(text)
     }
 }
