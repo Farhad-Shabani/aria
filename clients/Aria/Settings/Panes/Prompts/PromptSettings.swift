@@ -134,7 +134,7 @@ private struct PromptKindPicker: View {
     }
 
     var body: some View {
-        Picker("Your words", selection: Binding(get: { chosen }, set: choose)) {
+        Picker("Your words", selection: Binding(get: { chosen }, set: { choose($0) })) {
             ForEach(PromptEdits.kinds, id: \.self) { kind in
                 Text(kind.title).tag(kind)
             }
