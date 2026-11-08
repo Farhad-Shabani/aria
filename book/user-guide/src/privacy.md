@@ -20,6 +20,15 @@ cannot remove backups or snapshots.
 On a Mac, **Mute while recording** asks macOS to silence other apps. Aria
 doesn't record, save, or send their sound.
 
+## Text cleanup with a local model
+
+When you [set a local model](./transcription.md#use-a-local-model), Aria sends
+each completed transcript to that server. Aria connects only to an address on
+your own Mac. The server decides where the text goes next. A proxy or a cloud
+model, such as Ollama's cloud models, sends it off your Mac. Any program
+running under your account could listen on that port and read the text. What
+the server keeps is up to the server.
+
 ## Server inference
 
 When you [use a server](./settings.md#server-inference), your audio goes
