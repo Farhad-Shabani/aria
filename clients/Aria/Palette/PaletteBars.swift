@@ -8,6 +8,8 @@ enum PaletteBarMetrics {
     static let headerHeight: CGFloat = 50
     static let pillsHeight: CGFloat = 34
     static let footerHeight: CGFloat = 38
+    /// Where a footer's last key ends. The actions menu lines up with it.
+    static let trailing: CGFloat = 10
 }
 
 struct PaletteHeader<Title: View, Detail: View>: View {
@@ -37,22 +39,6 @@ struct PaletteHeader<Title: View, Detail: View>: View {
 extension PaletteHeader where Detail == EmptyView {
     init(back: @escaping () -> Void, @ViewBuilder title: () -> Title) {
         self.init(back: back, title: title, detail: { EmptyView() })
-    }
-}
-
-struct PalettePageProgress: View {
-    private let title: String
-
-    init(_ title: String) {
-        self.title = title
-    }
-
-    var body: some View {
-        VStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text(title).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

@@ -10,6 +10,11 @@ struct Ask: Equatable {
     var stepLabel: String {
         step == .skill && !skill.isEmpty ? "using \(skill)" : step.label
     }
+
+    /// The step as a page shows it, in sentence case: “Thinking…”. The pill keeps it lowercase.
+    var stepTitle: String {
+        stepLabel.prefix(1).uppercased() + stepLabel.dropFirst() + "…"
+    }
 }
 
 /// Which asks the daemon has not answered yet, by ticket.

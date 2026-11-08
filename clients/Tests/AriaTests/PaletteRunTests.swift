@@ -121,16 +121,4 @@ final class PaletteRunTests: XCTestCase {
         XCTAssertEqual(harness.cancelled, [], "the daemon saves both replies")
         XCTAssertTrue(run.shows(ticket: 7), "their events stay out of the pill")
     }
-
-    func testAnEntryAPromptCannotRunOnSaysWhyAndOffersNoRetry() {
-        let generic = PaletteResult.Failure(code: .unspecified)
-        XCTAssertTrue(generic.canRetry)
-        for code in [
-            Aria_Daemon_V1_ErrorCode.historyEntryEmpty, .historyTranscriptUnreadable, .historyMissing, .promptMissing,
-        ] {
-            let failure = PaletteResult.Failure(code: code)
-            XCTAssertNotEqual(failure.message, generic.message, "\(code)")
-            XCTAssertFalse(failure.canRetry, "\(code)")
-        }
-    }
 }

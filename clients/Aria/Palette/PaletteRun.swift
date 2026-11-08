@@ -105,6 +105,6 @@ final class PaletteRun: ObservableObject {
         let failure = error as? DaemonFailure
         if failure?.isOffline == true { return .init(DaemonFailure.offlineMessage) }
         if case .refused(let code)? = failure { return .init(code: code) }
-        return .init("Aria couldn’t run this prompt. Try again.")
+        return .init(PaletteResult.failed)
     }
 }

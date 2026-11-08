@@ -29,6 +29,7 @@ struct PaletteResult: Equatable {
     }
 
     static let lost = "Aria lost track of this prompt. Try again."
+    static let failed = "Aria couldn’t run this prompt. Try again."
     private static let earlyLimit = 64
 
     let promptName: String
@@ -37,7 +38,7 @@ struct PaletteResult: Equatable {
     let source: PromptSource?
     let input: HistoryItem
     private(set) var ticket: UInt64?
-    private(set) var state = State.running("starting")
+    private(set) var state = State.running("Starting…")
     /// Events that came before the ticket did. The call that returns the ticket can land after the
     /// run's first events.
     private var early: [Aria_Daemon_V1_ChatEvent] = []
@@ -86,7 +87,7 @@ struct PaletteResult: Equatable {
         guard event.ticket == ticket, isRunning else { return }
         switch event.stage {
         case .working:
-            state = .running(Ask(ticket: ticket, step: event.step, skill: event.skill, since: .now).stepLabel)
+            state = .running(Ask(ticket: ticket, step: event.step, skill: event.skill, since: .now).stepTitle)
         case .replied:
             state = .replied(event.text)
         case .failed:
@@ -106,7 +107,7 @@ struct PaletteResult: Equatable {
         case .historyMissing: "This entry is no longer in history."
         case .historyEntryEmpty: "This entry has no text to run a prompt on."
         case .historyTranscriptUnreadable: "Aria can’t read this session’s whole transcript, so the prompt didn’t run."
-        default: "Aria couldn’t run this prompt. Try again."
+        default: failed
         }
     }
 }

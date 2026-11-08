@@ -319,7 +319,11 @@ struct PaletteModel: Equatable {
 
     /// The day to title above the row at `index`, when it starts one.
     func dayStarting(at index: Int, calendar: Calendar = .current) -> Date? {
-        let items = items
+        Self.dayStarting(at: index, in: items, calendar: calendar)
+    }
+
+    /// Takes `items` so a list can build them once per render, not once per row.
+    static func dayStarting(at index: Int, in items: [PaletteItem], calendar: Calendar = .current) -> Date? {
         guard let entry = items[index].entry else { return nil }
         let day = calendar.startOfDay(for: entry.created)
         let previous = items[..<index].last { $0.entry != nil }?.entry

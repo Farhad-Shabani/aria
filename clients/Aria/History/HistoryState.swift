@@ -248,7 +248,7 @@ final class HistoryState: ObservableObject {
     }
 
     func rename(_ id: UInt64, to name: String) {
-        guard canRename(id) else { return }
+        guard work.canRename(id) else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.utf8.count <= HistoryItem.titleLimit else {
             error = .nameTooLong
@@ -257,6 +257,7 @@ final class HistoryState: ObservableObject {
         error = nil
         let title = trimmed.isEmpty ? nil : trimmed
         guard (items.first { $0.id == id } ?? detail)?.title != title else { return }
+        renameTask?.cancel()
         renameTask = Task {
             do {
                 let renamed = try await effects.rename(id, title)
@@ -274,10 +275,6 @@ final class HistoryState: ObservableObject {
         HistoryWork(isClearing: isClearing, deletingID: deletingID, regeneratingID: regeneratingID)
     }
 
-    func canRename(_ id: UInt64) -> Bool {
-        work.canRename(id)
-    }
-
     /// A copy's notice or failure belongs to the row it was shown on.
     func forgetCopied() {
         if notice == Self.copiedNotice { notice = nil }
@@ -290,16 +287,8 @@ final class HistoryState: ObservableObject {
         if effects.copy(text) { notice = Self.copiedNotice } else { error = .copyFailed }
     }
 
-    func canDelete(_ entry: HistoryItem) -> Bool {
-        work.canDelete(entry)
-    }
-
-    func canRegenerate(_ entry: HistoryItem) -> Bool {
-        work.canRegenerate(entry)
-    }
-
     func regenerate() {
-        guard let entry = detail, canRegenerate(entry) else { return }
+        guard let entry = detail, work.canRegenerate(entry) else { return }
         regeneratingID = entry.id
         notice = nil
         regenerateTask = Task {
@@ -367,7 +356,7 @@ final class HistoryState: ObservableObject {
                 next = nil
                 clearNotice =
                     result.isCleanupPending
-                    ? "Dictation text cleared. Aria will finish removing some recordings later." : nil
+                    ? "History cleared. Aria will finish removing some recordings later." : nil
                 notice = clearNotice
                 isClearing = false
                 refresh()

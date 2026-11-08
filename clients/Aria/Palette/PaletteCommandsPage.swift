@@ -86,10 +86,11 @@ struct PaletteCommandsPage: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     let items = controller.model.items
+                    let selected = controller.model.selected
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         // One view per element, so the lazy stack needn't build every row to count them.
                         VStack(alignment: .leading, spacing: 0) {
-                            if let day = controller.model.dayStarting(at: index) {
+                            if let day = PaletteModel.dayStarting(at: index, in: items) {
                                 Text(HistoryDay.title(for: day))
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
@@ -98,7 +99,7 @@ struct PaletteCommandsPage: View {
                                     .padding(.bottom, 4)
                                     .accessibilityAddTraits(.isHeader)
                             }
-                            row(item)
+                            row(item, isSelected: item == selected)
                                 .id(item.id)
                                 .onHover { isHovering in
                                     if isHovering { controller.model.select(item.id) }
@@ -136,8 +137,7 @@ struct PaletteCommandsPage: View {
     }
 
     @ViewBuilder
-    private func row(_ item: PaletteItem) -> some View {
-        let isSelected = item == controller.model.selected
+    private func row(_ item: PaletteItem, isSelected: Bool) -> some View {
         switch item {
         case .command(let command) where command.action == .showLiveTranscript:
             PaletteLiveRow(

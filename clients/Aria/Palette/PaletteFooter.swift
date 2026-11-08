@@ -17,7 +17,7 @@ struct PaletteFooter<Note: View, Actions: View>: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.leading, PaletteBarMetrics.leading)
-        .padding(.trailing, 10)
+        .padding(.trailing, PaletteBarMetrics.trailing)
         .frame(minHeight: PaletteBarMetrics.footerHeight)
     }
 }
@@ -25,15 +25,17 @@ struct PaletteFooter<Note: View, Actions: View>: View {
 struct PaletteFooterProgress: View {
     private let title: String
 
-    init(_ title: String) {
-        self.title = title
-    }
-
     var body: some View {
         HStack(spacing: 6) {
             ProgressView().controlSize(.mini)
             Text(title)
         }
+    }
+}
+
+extension PaletteFooterProgress {
+    init(_ title: String) {
+        self.title = title
     }
 }
 

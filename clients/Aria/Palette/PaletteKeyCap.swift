@@ -6,10 +6,6 @@ struct PaletteKeyCap: View {
 
     private let key: String
 
-    init(_ key: String) {
-        self.key = key
-    }
-
     var body: some View {
         Text(key)
             .font(.caption.weight(.semibold))
@@ -20,5 +16,11 @@ struct PaletteKeyCap: View {
             .padding(.horizontal, 4)
             .frame(minWidth: Self.minSide, minHeight: Self.minSide)
             .background(.quinary, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+    }
+}
+
+extension PaletteKeyCap {
+    init(_ key: String) {
+        self.key = key
     }
 }

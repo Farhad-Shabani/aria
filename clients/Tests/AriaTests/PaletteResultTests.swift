@@ -69,4 +69,27 @@ final class PaletteResultTests: XCTestCase {
 
         XCTAssertEqual(result.state, .failed(.init("The assistant is signed out. Sign in, then try again.")))
     }
+
+    func testAnEntryAPromptCannotRunOnSaysWhyAndOffersNoRetry() {
+        let generic = PaletteResult.Failure(code: .unspecified)
+        XCTAssertTrue(generic.canRetry)
+        for code in [
+            Aria_Daemon_V1_ErrorCode.historyEntryEmpty, .historyTranscriptUnreadable, .historyMissing, .promptMissing,
+        ] {
+            let failure = PaletteResult.Failure(code: code)
+            XCTAssertNotEqual(failure.message, generic.message, "\(code)")
+            XCTAssertFalse(failure.canRetry, "\(code)")
+        }
+    }
+
+    func testARunningStepShowsInSentenceCase() {
+        var result = result(started: 7)
+        XCTAssertEqual(result.state, .running("Starting…"))
+
+        var working = Self.event(7, .working)
+        working.step = .thinking
+        result.apply(working)
+
+        XCTAssertEqual(result.state, .running("Thinking…"))
+    }
 }

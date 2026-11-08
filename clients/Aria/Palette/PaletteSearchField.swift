@@ -12,17 +12,8 @@ struct PaletteSearchField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> FocusingTextField {
         let field = FocusingTextField()
-        field.isBordered = false
-        field.drawsBackground = false
-        field.focusRingType = .none
-        field.lineBreakMode = .byTruncatingTail
-        field.cell?.isScrollable = true
         field.cell?.wraps = false
-        // Else ⌃N and ⌃P scroll the typed line up out of the field.
-        field.usesSingleLineMode = true
         field.font = .preferredFont(forTextStyle: .title3)
-        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.stringValue = controller.model.query
         field.delegate = context.coordinator
         return field

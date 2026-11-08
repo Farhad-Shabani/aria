@@ -82,7 +82,7 @@ session's whole transcript. The assistant may send that text to cloud
 services.
 
 With history on, Aria saves the result of a prompt you run on a history entry
-under that entry. It's deleted with the entry.
+under that entry. Aria deletes it with the entry.
 
 Each run starts without a project, earlier conversation, or Aria memory.
 Aria also disables the assistant's tools and leaves out its saved instructions

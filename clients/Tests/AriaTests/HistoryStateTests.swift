@@ -408,6 +408,32 @@ final class HistoryStateTests: XCTestCase {
         state.close()
     }
 
+    func testAnEarlierRenameThatAnswersLastDoesNotWin() async {
+        let harness = Harness()
+        var renames: [CheckedContinuation<HistoryItem, Error>] = []
+        var effects = harness.effects
+        effects.rename = { _, _ in try await withCheckedThrowingContinuation { renames.append($0) } }
+        let state = HistoryState(effects: effects)
+        state.refresh()
+        await waitUntil { state.detail?.id == 2 }
+
+        state.rename(2, to: "Old")
+        await waitUntil { renames.count == 1 }
+        state.rename(2, to: "New")
+        await waitUntil { renames.count == 2 }
+        var renamed = Self.item(2)
+        renamed.title = "New"
+        renames[1].resume(returning: renamed)
+        await waitUntil { state.detail?.title == "New" }
+        renamed.title = "Old"
+        renames[0].resume(returning: renamed)
+        for _ in 0..<20 { await Task.yield() }
+
+        XCTAssertEqual(state.detail?.title, "New")
+        XCTAssertEqual(state.items.first?.title, "New")
+        state.close()
+    }
+
     func testRenamingTrimsTheNameAndABlankNameRemovesTheTitle() async {
         let harness = Harness()
         let state = HistoryState(effects: harness.effects)
@@ -480,7 +506,7 @@ final class HistoryStateTests: XCTestCase {
         XCTAssertNil(state.detail)
         XCTAssertEqual(requests.last?.0, "Text")
         XCTAssertNil(requests.last?.1)
-        let notice = "Dictation text cleared. Aria will finish removing some recordings later."
+        let notice = "History cleared. Aria will finish removing some recordings later."
         XCTAssertEqual(state.notice, notice)
         state.refresh()
         await waitUntil { !state.isLoading }

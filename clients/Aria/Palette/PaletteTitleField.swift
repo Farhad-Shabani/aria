@@ -13,14 +13,6 @@ struct PaletteTitleField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> FocusingTextField {
         let field = FocusingTextField()
-        field.isBordered = false
-        field.drawsBackground = false
-        field.focusRingType = .none
-        field.lineBreakMode = .byTruncatingTail
-        field.cell?.isScrollable = true
-        field.usesSingleLineMode = true
-        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.setAccessibilityLabel("Title")
         field.stringValue = controller.model.renamingTitle
         field.delegate = context.coordinator

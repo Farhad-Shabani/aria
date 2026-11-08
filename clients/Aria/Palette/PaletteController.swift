@@ -185,7 +185,7 @@ final class PaletteController: ObservableObject {
     /// history. Anything else, or with no app to type into, is chosen.
     func chooseSelected() {
         guard let item = model.selected else { return }
-        guard typesOnReturn(item) else { return choose(item) }
+        guard decisions.typesOnReturn(item) else { return choose(item) }
         switch item {
         case .result(let result):
             deliver(result.text)
@@ -199,10 +199,6 @@ final class PaletteController: ObservableObject {
         case .command:
             break
         }
-    }
-
-    func typesOnReturn(_ item: PaletteItem) -> Bool {
-        decisions.typesOnReturn(item)
     }
 
     var returnTitle: String? {
@@ -297,10 +293,6 @@ final class PaletteController: ObservableObject {
         perform(actions[index])
     }
 
-    func selectMenuAction(at index: Int) {
-        model.selectMenu(at: index)
-    }
-
     private func press(_ event: NSEvent) -> Bool {
         if let index = model.menuIndex {
             return pressMenu(event, at: index)
@@ -371,8 +363,7 @@ final class PaletteController: ObservableObject {
         guard model.renamingID == nil, let character = event.charactersIgnoringModifiers?.first,
             let number = character.wholeNumberValue, character.isASCII
         else { return false }
-        // Caps Lock is held state, not part of the chord.
-        switch event.modifierFlags.intersection([.command, .option, .control, .shift]) {
+        switch event.modifierFlags.intersection(PaletteKey.chordModifiers) {
         case .command:
             guard let run = model.prompt(forNumber: number) else { return false }
             runPrompt(run.promptID, on: run.entry)
@@ -387,7 +378,7 @@ final class PaletteController: ObservableObject {
 
     /// ↓ and ↑ with no modifier, where no field takes them.
     private static func arrowStep(for event: NSEvent) -> Int? {
-        guard event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return nil }
+        guard event.modifierFlags.intersection(PaletteKey.chordModifiers).isEmpty else { return nil }
         switch Int(event.keyCode) {
         case kVK_DownArrow: return 1
         case kVK_UpArrow: return -1

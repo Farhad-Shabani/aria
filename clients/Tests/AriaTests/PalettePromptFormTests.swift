@@ -21,7 +21,10 @@ final class PalettePromptFormTests: XCTestCase {
         host.frame = NSRect(x: 0, y: 0, width: PalettePanel.size.width, height: height)
         let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host
-        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        let deadline = Date().addingTimeInterval(5)
+        while Self.outermostScrollView(in: host)?.documentView == nil, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
         host.layoutSubtreeIfNeeded()
 
         let form = try XCTUnwrap(Self.outermostScrollView(in: host))

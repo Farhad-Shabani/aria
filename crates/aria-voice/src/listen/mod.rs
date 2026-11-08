@@ -9,7 +9,7 @@ mod track;
 
 pub use event::ListenStage;
 pub use event::{EVENT_THREAD, ListenEventEmitter};
-pub use session::spawn_session;
+pub use session::run_session;
 pub use sink::TranscriptFile;
 pub use sink::{GAP_BREAK, stamp};
 pub use tap::SystemAudioCapture;

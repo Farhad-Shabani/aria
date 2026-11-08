@@ -51,7 +51,8 @@ chose it. Hold it, tap a second key, then let go:
 
 - **⇧ Shift** asks your agent. Speak, then tap the Aria key to send. Tap it
   again while Aria thinks to cancel.
-- **⌘ Command** opens Aria, where you [pick a prompt](./prompts.md#pick-a-prompt-in-aria).
+- **⌘ Command** opens Aria, where you
+  [pick a prompt](./prompts.md#pick-a-prompt-in-aria).
 
 Each is a setting under **Settings → Shortcuts**: keep the combo, record a
 shortcut of your own instead, or turn it off. **Restore Defaults** brings

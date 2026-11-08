@@ -26,13 +26,15 @@ struct PaletteKey: Equatable {
     /// Labels only: the search and title fields take Return themselves.
     static let `return` = PaletteKey(character: "\r", modifiers: [], label: "↩")
 
+    /// Caps Lock is held state, not part of the chord.
+    static let chordModifiers: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+
     let character: Character
     let modifiers: NSEvent.ModifierFlags
     let label: String
 
     func matches(_ event: NSEvent) -> Bool {
-        // Caps Lock is held state, not part of the chord.
-        event.modifierFlags.intersection([.command, .option, .control, .shift]) == modifiers
+        event.modifierFlags.intersection(Self.chordModifiers) == modifiers
             && event.charactersIgnoringModifiers?.lowercased().first == character
     }
 }

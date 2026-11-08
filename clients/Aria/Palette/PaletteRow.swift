@@ -28,7 +28,8 @@ struct PaletteRow<Content: View, Accessory: View>: View {
         }
         .padding(.leading, PaletteRowMetrics.padding + indent)
         .padding(.trailing, PaletteRowMetrics.padding)
-        .modifier(PaletteRowHighlight(isSelected: isSelected))
+        .frame(minHeight: PaletteRowMetrics.height)
+        .selectionFill(isSelected)
     }
 
     private var label: some View {
@@ -79,17 +80,5 @@ enum PaletteRowMetrics {
     static let symbolWidth: CGFloat = 20
     /// Between the highlight's edges and what the row holds.
     static let padding: CGFloat = 10
-}
-
-/// A palette row's height, and the fill that marks it selected.
-struct PaletteRowHighlight: ViewModifier {
-    private static let height: CGFloat = 36
-
-    let isSelected: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .frame(minHeight: Self.height)
-            .selectionFill(isSelected)
-    }
+    static let height: CGFloat = 36
 }

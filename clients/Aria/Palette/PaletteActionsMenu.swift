@@ -43,7 +43,7 @@ struct PaletteActionsMenu: View {
                 .buttonStyle(.plain)
                 .disabled(!action.isEnabled)
                 .onHover { isHovering in
-                    if isHovering { controller.selectMenuAction(at: index) }
+                    if isHovering { controller.model.selectMenu(at: index) }
                 }
                 .accessibilityAddTraits(index == selected ? .isSelected : [])
             }
@@ -61,7 +61,7 @@ struct PaletteActionsMenu: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
         .overlay { RoundedRectangle(cornerRadius: Self.cornerRadius).strokeBorder(.quaternary) }
         .shadow(radius: 12, y: 4)
-        .padding(.trailing, 10)
+        .padding(.trailing, PaletteBarMetrics.trailing)
         .padding(.bottom, PaletteBarMetrics.footerHeight + 4)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Actions")

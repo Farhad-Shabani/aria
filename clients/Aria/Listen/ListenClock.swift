@@ -27,10 +27,6 @@ struct ListenClock: View {
     private func liveLabel(at now: Date) -> String {
         guard let startedAt else { return "Live" }
         let seconds = UInt64(max(0, now.timeIntervalSince(startedAt)))
-        return Self.elapsed(seconds: seconds)
-    }
-
-    static func elapsed(seconds: UInt64) -> String {
         let duration = Duration.seconds(seconds)
         return seconds < 3600
             ? duration.formatted(.time(pattern: .minuteSecond))

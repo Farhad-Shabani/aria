@@ -94,7 +94,7 @@ so a terminal runs each line as a command.
 1. Hold the Aria key, tap **⌘**, then let go. Aria opens over the app
    you're in.
 2. Press a prompt's number to start it, then speak. Or type to find a
-   prompt and press Return.
+   prompt and press **Return**.
 3. Tap the Aria key to stop. Tap it once more to cancel.
 
 The first nine prompts that are on get a number. While **Save history** is on,
