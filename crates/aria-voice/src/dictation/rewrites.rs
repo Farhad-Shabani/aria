@@ -6,7 +6,7 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::check_cancelled;
 use aria_kit::transcription::layer::{Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats};
 
-use super::{CleanupError, LlmCleanup, cleanup};
+use super::{LlmCleanup, LlmCleanupError, llm};
 use crate::config::DictationConfig;
 use crate::transcription::{Transcript, TranscriptionError};
 use crate::vocabulary::Vocabulary;
@@ -44,7 +44,7 @@ impl Rewrites {
 }
 
 impl Rewrites<ConfiguredLayers> {
-    pub fn load(config: &DictationConfig, home: &std::path::Path) -> Result<Self, CleanupError> {
+    pub fn load(config: &DictationConfig, home: &std::path::Path) -> Result<Self, LlmCleanupError> {
         let llm = config
             .cleanup_llm
             .as_ref()
@@ -116,7 +116,7 @@ impl<L: Layer> Rewrites<L> {
         let mut text = transcript.as_str().to_owned();
         let result = self.llm.apply(&mut text, cancel);
         check_cancelled(cancel)?;
-        let failure = result.as_ref().err().and_then(cleanup::failure_category);
+        let failure = result.as_ref().err().and_then(llm::failure_category);
         if let Some(category) = failure {
             tracing::warn!(
                 category,

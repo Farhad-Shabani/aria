@@ -16,7 +16,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
-use super::CleanupTarget;
+use super::LlmCleanupTarget;
 use super::PromptKind;
 use super::checked::{
     CaptureChoice, CheckedSettings, Choices, DictationTimeouts, LocalStt, SttChoice, TtsEngine,
@@ -1073,20 +1073,18 @@ impl SettingsFile {
         })
     }
 
-    fn validate_dictation(&self) -> Result<Option<CleanupTarget>, SettingsError> {
+    fn validate_dictation(&self) -> Result<Option<LlmCleanupTarget>, SettingsError> {
         let llm = &self.dictation.cleanup.llm;
         match (&llm.endpoint, &llm.model) {
             (None, None) => Ok(None),
-            (Some(endpoint), Some(model)) => {
-                CleanupTarget::new(endpoint, model)
-                    .map(Some)
-                    .map_err(|source| {
-                        invalid(
-                            Key::DictationCleanupLlmEndpoint,
-                            InvalidValue::Cleanup(source),
-                        )
-                    })
-            }
+            (Some(endpoint), Some(model)) => LlmCleanupTarget::new(endpoint, model)
+                .map(Some)
+                .map_err(|source| {
+                    invalid(
+                        Key::DictationCleanupLlmEndpoint,
+                        InvalidValue::LlmCleanup(source),
+                    )
+                }),
             (Some(_), None) => Err(invalid(
                 Key::DictationCleanupLlmEndpoint,
                 InvalidValue::NeedsKey(Key::DictationCleanupLlmModel),

@@ -18,12 +18,12 @@ use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_segmentation::pyannote::Pyannote;
 use aria_settings::WakeEngine;
 use aria_settings::config::ConfigError;
-use aria_settings::{CheckedSettings, CleanupTarget, Settings};
+use aria_settings::{CheckedSettings, LlmCleanupTarget, Settings};
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_voice::config::{
     CaptureConfig, DictationConfig, ListenConfig, SpeakerConfig, TranscriptionBackend,
 };
-use aria_voice::dictation::{CleanupError, LlmCleanup};
+use aria_voice::dictation::{LlmCleanup, LlmCleanupError};
 use aria_voice::transcription::check_model;
 use aria_wake::livekit::{Config as LiveKitConfig, LiveKitWakeWord};
 use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
@@ -479,9 +479,9 @@ fn cleanup_model(dictation: Option<&DictationConfig>) -> Check {
 }
 
 fn cleanup_check(
-    target: &CleanupTarget,
+    target: &LlmCleanupTarget,
     cleanup: bool,
-    ready: impl FnOnce() -> Result<(), CleanupError>,
+    ready: impl FnOnce() -> Result<(), LlmCleanupError>,
 ) -> Check {
     let model = target.model();
     if !cleanup {
@@ -496,11 +496,11 @@ fn cleanup_check(
             CLEANUP_MODEL,
             format!("{model} at {endpoint}; skipped for text typed while you speak"),
         ),
-        Err(CleanupError::ModelMissing) => Check::warning(
+        Err(LlmCleanupError::ModelMissing) => Check::warning(
             CLEANUP_MODEL,
             format!("{endpoint} doesn't list {model}; dictation types the rule-cleaned text"),
         ),
-        Err(error @ (CleanupError::Timeout | CleanupError::Transport)) => Check::warning(
+        Err(error @ (LlmCleanupError::Timeout | LlmCleanupError::Transport)) => Check::warning(
             CLEANUP_MODEL,
             format!("{endpoint} doesn't answer ({error}); dictation types the rule-cleaned text"),
         ),
@@ -549,24 +549,25 @@ mod tests {
     #[test]
     fn the_cleanup_model_warns_when_it_would_never_run_or_cannot_be_reached() {
         let target =
-            CleanupTarget::new("http://127.0.0.1:11434/v1/chat/completions", "qwen2.5:3b").unwrap();
+            LlmCleanupTarget::new("http://127.0.0.1:11434/v1/chat/completions", "qwen2.5:3b")
+                .unwrap();
         let cases = [
             (false, None, Status::Warning, "its model is off"),
             (
                 true,
-                Some(CleanupError::ModelMissing),
+                Some(LlmCleanupError::ModelMissing),
                 Status::Warning,
                 "doesn't list qwen2.5:3b",
             ),
             (
                 true,
-                Some(CleanupError::Transport),
+                Some(LlmCleanupError::Transport),
                 Status::Warning,
                 "doesn't answer",
             ),
             (
                 true,
-                Some(CleanupError::HttpStatus),
+                Some(LlmCleanupError::HttpStatus),
                 Status::Warning,
                 "answered, but",
             ),

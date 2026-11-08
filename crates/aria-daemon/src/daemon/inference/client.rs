@@ -1542,7 +1542,7 @@ mod tests {
                     DictationPipeline::new((), Transcription::<_, Whole>::delegated(remote), ())
                         .hearing_speech(Some(Loud))
                         .tracking_voices(Some(diarizer), Some(LevelSegmenter))
-                        .cleanup(aria_voice::dictation::Rewrites::new());
+                        .rewriting(aria_voice::dictation::Rewrites::new());
                 let mut recording = aria_kit::audio::RecordingReader::from_samples(&samples);
                 let result = pipeline.transcribe(
                     &mut recording,

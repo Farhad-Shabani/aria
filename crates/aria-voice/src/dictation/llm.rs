@@ -12,7 +12,7 @@ use aria_kit::transcription::{
 use aria_primitives::cancel::CancelToken;
 use serde::Deserialize;
 
-use aria_settings::CleanupTarget;
+use aria_settings::LlmCleanupTarget;
 
 const MIN_WORDS: usize = 4;
 const MAX_INPUT_BYTES: usize = 4 * 1024;
@@ -30,7 +30,7 @@ const WARM_INPUT: &str = "Hello.";
 const OUTPUT_CONTRACT: &str = "Return exactly one JSON object with exactly one field, \"text\", containing the cleaned transcript as a nonempty string. No Markdown fences, explanation, tool calls, or other fields.";
 
 #[derive(Debug, thiserror::Error)]
-pub enum CleanupError {
+pub enum LlmCleanupError {
     #[error("cleanup prompt cannot be read as UTF-8")]
     PromptRead,
     #[error("cleanup prompt exceeds 16 KiB")]
@@ -55,13 +55,13 @@ pub enum CleanupError {
     ModelMissing,
 }
 
-impl From<CleanupError> for TranscriptionError {
-    fn from(error: CleanupError) -> Self {
+impl From<LlmCleanupError> for TranscriptionError {
+    fn from(error: LlmCleanupError) -> Self {
         Self::Processing(layer::Error::Failed(Box::new(error)))
     }
 }
 
-impl CleanupError {
+impl LlmCleanupError {
     pub(crate) fn category(&self) -> &'static str {
         match self {
             Self::PromptRead => "prompt_read",
@@ -81,7 +81,7 @@ impl CleanupError {
 
 #[derive(Clone)]
 pub struct LlmCleanup {
-    target: CleanupTarget,
+    target: LlmCleanupTarget,
     prompt: String,
     agent: ureq::Agent,
     /// Set while a warm-up runs, so presses never stack them.
@@ -89,7 +89,7 @@ pub struct LlmCleanup {
 }
 
 impl LlmCleanup {
-    pub fn new(target: &CleanupTarget, home: &Path) -> Result<Self, CleanupError> {
+    pub fn new(target: &LlmCleanupTarget, home: &Path) -> Result<Self, LlmCleanupError> {
         Ok(Self {
             target: target.clone(),
             prompt: build_prompt(home)?,
@@ -99,7 +99,7 @@ impl LlmCleanup {
     }
 
     /// Whether the server answers and lists the model. Spends no tokens.
-    pub fn check_ready(target: &CleanupTarget) -> Result<(), CleanupError> {
+    pub fn check_ready(target: &LlmCleanupTarget) -> Result<(), LlmCleanupError> {
         let deadline = Instant::now() + REQUEST_BUDGET;
         let mut response = agent(REQUEST_BUDGET)
             .get(target.listing())
@@ -107,21 +107,21 @@ impl LlmCleanup {
             .call()
             .map_err(transport_error)?;
         if !response.status().is_success() {
-            return Err(CleanupError::HttpStatus);
+            return Err(LlmCleanupError::HttpStatus);
         }
         let body = read_bounded(
             response.body_mut().as_reader(),
             MAX_MODEL_LIST_BYTES,
             || {
                 if Instant::now() >= deadline {
-                    Err(CleanupError::Timeout)
+                    Err(LlmCleanupError::Timeout)
                 } else {
                     Ok(())
                 }
             },
         )?;
         let listed: ModelList =
-            serde_json::from_slice(&body).map_err(|_| CleanupError::InvalidResponse)?;
+            serde_json::from_slice(&body).map_err(|_| LlmCleanupError::InvalidResponse)?;
         // Ollama lists "llama3.2:latest" and serves it as "llama3.2".
         let model = target.model();
         let latest = format!("{model}:latest");
@@ -129,7 +129,7 @@ impl LlmCleanup {
         if listed.data.iter().flatten().any(|entry| serves(&entry.id)) {
             Ok(())
         } else {
-            Err(CleanupError::ModelMissing)
+            Err(LlmCleanupError::ModelMissing)
         }
     }
 
@@ -145,7 +145,7 @@ impl LlmCleanup {
         let result = parse_response(&body)
             .and_then(|output| {
                 if adds_words(text, &output) || adds_keystrokes(text, &output) {
-                    Err(CleanupError::Unfaithful)
+                    Err(LlmCleanupError::Unfaithful)
                 } else {
                     Ok(output)
                 }
@@ -185,7 +185,7 @@ impl LlmCleanup {
             .send(request)
             .map_err(transport_error)?;
         if !response.status().is_success() {
-            return Err(CleanupError::HttpStatus.into());
+            return Err(LlmCleanupError::HttpStatus.into());
         }
         read_bounded(response.body_mut().as_reader(), MAX_RESPONSE_BYTES, || {
             check_budget(cancel, deadline)
@@ -198,7 +198,7 @@ impl Layer for LlmCleanup {
         let deadline = Instant::now() + REQUEST_BUDGET;
         check_budget(cancel, deadline)?;
         let result = if text.len() > MAX_INPUT_BYTES {
-            Err(CleanupError::InputTooLarge.into())
+            Err(LlmCleanupError::InputTooLarge.into())
         } else {
             // A word count is a rough way to skip tiny commands.
             let words = text
@@ -266,8 +266,8 @@ impl Drop for Warming {
 pub(super) fn failure_category(error: &TranscriptionError) -> Option<&'static str> {
     match error {
         TranscriptionError::Processing(layer::Error::Failed(error)) => error
-            .downcast_ref::<CleanupError>()
-            .map(CleanupError::category),
+            .downcast_ref::<LlmCleanupError>()
+            .map(LlmCleanupError::category),
         TranscriptionError::Processing(layer::Error::TooLarge) => Some("processing_size"),
         _ => None,
     }
@@ -287,7 +287,7 @@ fn agent(budget: Duration) -> ureq::Agent {
 
 /// Reads at most `limit` bytes, asking `check` before each chunk whether to
 /// go on.
-fn read_bounded<E: From<CleanupError>>(
+fn read_bounded<E: From<LlmCleanupError>>(
     mut reader: impl Read,
     limit: usize,
     mut check: impl FnMut() -> Result<(), E>,
@@ -303,7 +303,7 @@ fn read_bounded<E: From<CleanupError>>(
             return Ok(body);
         }
         if body.len() + count > limit {
-            return Err(CleanupError::ResponseTooLarge.into());
+            return Err(LlmCleanupError::ResponseTooLarge.into());
         }
         body.extend_from_slice(&buffer[..count]);
     }
@@ -314,21 +314,21 @@ fn check_budget(cancel: &CancelToken, deadline: Instant) -> Result<(), Transcrip
         return Err(TranscriptionError::Cancelled);
     }
     if Instant::now() >= deadline {
-        return Err(CleanupError::Timeout.into());
+        return Err(LlmCleanupError::Timeout.into());
     }
     Ok(())
 }
 
-fn transport_error(error: ureq::Error) -> CleanupError {
+fn transport_error(error: ureq::Error) -> LlmCleanupError {
     match error {
-        ureq::Error::Timeout(_) => CleanupError::Timeout,
-        ureq::Error::LargeResponseHeader(_, _) => CleanupError::HeadersTooLarge,
-        ureq::Error::TooManyRedirects | ureq::Error::RedirectFailed => CleanupError::HttpStatus,
-        _ => CleanupError::Transport,
+        ureq::Error::Timeout(_) => LlmCleanupError::Timeout,
+        ureq::Error::LargeResponseHeader(_, _) => LlmCleanupError::HeadersTooLarge,
+        ureq::Error::TooManyRedirects | ureq::Error::RedirectFailed => LlmCleanupError::HttpStatus,
+        _ => LlmCleanupError::Transport,
     }
 }
 
-fn build_prompt(home: &Path) -> Result<String, CleanupError> {
+fn build_prompt(home: &Path) -> Result<String, LlmCleanupError> {
     let path = home
         .join(aria_settings::PROMPTS_DIR)
         .join(aria_settings::CLEANUP_PROMPT_FILE);
@@ -337,15 +337,15 @@ fn build_prompt(home: &Path) -> Result<String, CleanupError> {
         Ok(file) => {
             file.take((MAX_GUIDANCE_BYTES + 1) as u64)
                 .read_to_end(&mut bytes)
-                .map_err(|_| CleanupError::PromptRead)?;
+                .map_err(|_| LlmCleanupError::PromptRead)?;
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => return Err(CleanupError::PromptRead),
+        Err(_) => return Err(LlmCleanupError::PromptRead),
     }
     if bytes.len() > MAX_GUIDANCE_BYTES {
-        return Err(CleanupError::PromptTooLarge);
+        return Err(LlmCleanupError::PromptTooLarge);
     }
-    let override_text = String::from_utf8(bytes).map_err(|_| CleanupError::PromptRead)?;
+    let override_text = String::from_utf8(bytes).map_err(|_| LlmCleanupError::PromptRead)?;
     let guidance = if override_text.trim().is_empty() {
         DEFAULT_GUIDANCE
     } else {
@@ -458,25 +458,25 @@ struct Rewritten {
     text: String,
 }
 
-fn parse_response(body: &[u8]) -> Result<String, CleanupError> {
+fn parse_response(body: &[u8]) -> Result<String, LlmCleanupError> {
     let completion: Completion =
-        serde_json::from_slice(body).map_err(|_| CleanupError::InvalidResponse)?;
+        serde_json::from_slice(body).map_err(|_| LlmCleanupError::InvalidResponse)?;
     let [choice]: [Choice; 1] = completion
         .choices
         .try_into()
-        .map_err(|_| CleanupError::InvalidResponse)?;
+        .map_err(|_| LlmCleanupError::InvalidResponse)?;
     if choice.finish_reason != "stop"
         || choice.message.role != "assistant"
         || choice.message.tool_calls.is_some()
         || choice.message.function_call.is_some()
         || choice.message.refusal.is_some()
     {
-        return Err(CleanupError::InvalidResponse);
+        return Err(LlmCleanupError::InvalidResponse);
     }
-    let output: Rewritten =
-        serde_json::from_str(&choice.message.content).map_err(|_| CleanupError::InvalidResponse)?;
+    let output: Rewritten = serde_json::from_str(&choice.message.content)
+        .map_err(|_| LlmCleanupError::InvalidResponse)?;
     if output.text.trim().is_empty() || output.text.len() > MAX_OUTPUT_BYTES {
-        return Err(CleanupError::InvalidResponse);
+        return Err(LlmCleanupError::InvalidResponse);
     }
     Ok(output.text)
 }

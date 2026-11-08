@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use aria_kit::synthesis::{SpeakingRate, Voice};
 use aria_settings::config::{ConfigError, backend, tts_backend};
-use aria_settings::{CleanupTarget, DictationTimeouts};
+use aria_settings::{DictationTimeouts, LlmCleanupTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationConfig {
@@ -14,7 +14,7 @@ pub struct DictationConfig {
     pub transcription: TranscriptionBackend,
     pub dictation_timeouts: DictationTimeouts,
     /// A loopback LLM pass over the transcript, after the rule-based cleanup.
-    pub cleanup_llm: Option<CleanupTarget>,
+    pub cleanup_llm: Option<LlmCleanupTarget>,
 }
 
 /// The engine a daemon builds, and what it falls back to if that fails.

@@ -172,7 +172,7 @@ impl<C, V, E, G, T, M: Mode, L, S> DictationPipeline<C, V, E, G, T, M, L, S> {
     }
 
     /// Runs `rewrites` on what the gate lets out.
-    pub fn cleanup<N: Layer>(
+    pub fn rewriting<N: Layer>(
         self,
         rewrites: Rewrites<N>,
     ) -> DictationPipeline<C, V, E, G, T, M, N, S> {
@@ -3013,7 +3013,7 @@ mod tests {
                     Transcription::stream(Stream::Native, Parts(&["um meet at 2", "actually 3"])),
                     (log.history(), log.cursor()),
                 )
-                .cleanup(
+                .rewriting(
                     Rewrites::new()
                         .with(enabled.then_some(layer))
                         .with(enabled.then_some(punctuation)),
@@ -3063,7 +3063,7 @@ mod tests {
             Transcription::complete_samples(Answering("um meet at 2 actually 3")),
             UnreachableSink,
         )
-        .cleanup(Rewrites::new().with(layer));
+        .rewriting(Rewrites::new().with(layer));
         let every_pass = Cleanup {
             enabled: true,
             fillers: true,
@@ -3122,7 +3122,7 @@ mod tests {
                 Transcription::complete_samples(Answering("meet at 2 actually 3")),
                 (log.history(), log.cursor()),
             )
-            .cleanup(Rewrites::new().with(layer));
+            .rewriting(Rewrites::new().with(layer));
             let result = pipeline.run(with_cleanup(
                 settings(DeliveryMode::Complete, OutputMode::InsertAndSubmit),
                 true,
@@ -3168,7 +3168,7 @@ mod tests {
                 Transcription::stream(Stream::Native, Parts(&["please meet me", "at the office"])),
                 (log.history(), log.cursor()),
             )
-            .cleanup(Rewrites::new().with(Some(&model)));
+            .rewriting(Rewrites::new().with(Some(&model)));
             pipeline
                 .run(with_cleanup(
                     settings(mode, OutputMode::Insert),
@@ -3188,8 +3188,11 @@ mod tests {
     fn oversized_completion_keeps_text_without_contacting_the_model() {
         let home = tempfile::tempdir().unwrap();
         let cleanup = super::super::LlmCleanup::new(
-            &aria_settings::CleanupTarget::new("http://127.0.0.1:1/v1/chat/completions", "local")
-                .unwrap(),
+            &aria_settings::LlmCleanupTarget::new(
+                "http://127.0.0.1:1/v1/chat/completions",
+                "local",
+            )
+            .unwrap(),
             home.path(),
         )
         .unwrap();
@@ -3198,7 +3201,7 @@ mod tests {
             Transcription::complete_samples(Answering("")),
             UnreachableSink,
         )
-        .cleanup(Rewrites::new().with(Some(cleanup)));
+        .rewriting(Rewrites::new().with(Some(cleanup)));
         for bytes in [4097, 65537] {
             let prefix = "a".repeat(bytes);
             let text = format!("{prefix} meet at 2 actually 3");
@@ -3250,14 +3253,14 @@ mod tests {
         let layer = FinalLayer(|text: &mut String, _: &CancelToken| {
             assert_eq!(text, "meet Alice at 3");
             *text = "untrusted partial response".to_owned();
-            Err(super::super::CleanupError::Timeout.into())
+            Err(super::super::LlmCleanupError::Timeout.into())
         });
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::complete_samples(Answering("um meet Alice at 2 actually 3")),
             (log.history(), log.cursor()),
         )
-        .cleanup(Rewrites::new().with(layer));
+        .rewriting(Rewrites::new().with(layer));
         let result = pipeline
             .run(with_cleanup(
                 settings(DeliveryMode::Complete, OutputMode::Insert),
@@ -4334,7 +4337,7 @@ mod tests {
                 Transcription::complete_samples(levels(Arc::default())),
                 (log.history(), log.cursor()),
             )
-            .cleanup(Rewrites::new().with(layer));
+            .rewriting(Rewrites::new().with(layer));
             let (events, captions) = caption_events();
             let result = pipeline.run_observed(
                 with_cleanup(

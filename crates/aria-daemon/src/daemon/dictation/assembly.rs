@@ -22,10 +22,9 @@ use aria_voice::config::{
     DictationConfig, PairingId, SpeakerConfig, TranscriptionBackend, TranscriptionConfig,
 };
 use aria_voice::dictation::{
-    Cleanup, CleanupError, ConfiguredLayers, Cursor, DictationCoordinator, DictationError,
-    DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
-    DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, Rewrites,
-    SoundMuting, Transcribed,
+    Cleanup, ConfiguredLayers, Cursor, DictationCoordinator, DictationError, DictationEventEmitter,
+    DictationExecutor, DictationPipeline, DictationPolicy, DictationPolicyError, DictationResult,
+    DictationSettings, ExecutionControl, LlmCleanupError, Rewrites, SoundMuting, Transcribed,
 };
 use aria_voice::transcription::{
     Language, Mode, Streaming, Transcriber, Transcription, TranscriptionError, Whole,
@@ -168,7 +167,7 @@ pub enum DictationInitializationError {
     Config(#[source] ConfigError),
 
     #[error("failed to prepare dictation cleanup")]
-    Cleanup(#[source] CleanupError),
+    Cleanup(#[source] LlmCleanupError),
 
     #[error("failed to initialize audio capture")]
     Capture(#[source] CaptureError),
@@ -330,7 +329,7 @@ impl ExecutionParts {
             )
             .hearing_speech(speaker::speech_gate())
             .tracking_voices(diarizer, segmenter)
-            .cleanup(self.rewrites),
+            .rewriting(self.rewrites),
             wake: self.wake,
             speaker: self.speaker,
             vocabulary: self.vocabulary,
@@ -691,7 +690,7 @@ pub(super) fn transcribe_retry(
     let pipeline = DictationPipeline::new((), transcription, ())
         .hearing_speech(speaker::speech_gate())
         .tracking_voices(diarizer, segmenter)
-        .cleanup(rewrites);
+        .rewriting(rewrites);
     pipeline.transcribe(
         recording,
         &settings.stt_language,
@@ -934,8 +933,11 @@ mod tests {
         let home_dir = home.path().to_owned();
         let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
         config.cleanup_llm = Some(
-            aria_settings::CleanupTarget::new("http://127.0.0.1:8080/v1/chat/completions", "test")
-                .unwrap(),
+            aria_settings::LlmCleanupTarget::new(
+                "http://127.0.0.1:8080/v1/chat/completions",
+                "test",
+            )
+            .unwrap(),
         );
         let speaker =
             SpeakerConfig::load(&aria_settings::SettingsFile::default().speaker, &home_dir);
@@ -977,7 +979,7 @@ mod tests {
             result,
             Err(DictationError::Transcription(TranscriptionError::Processing(
                 aria_kit::transcription::layer::Error::Failed(error)
-            ))) if matches!(error.downcast_ref::<CleanupError>(), Some(CleanupError::PromptRead))
+            ))) if matches!(error.downcast_ref::<LlmCleanupError>(), Some(LlmCleanupError::PromptRead))
         ));
     }
 }

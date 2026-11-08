@@ -91,7 +91,7 @@ fn category(error: TranscriptionError) -> &'static str {
     let TranscriptionError::Processing(layer::Error::Failed(error)) = error else {
         panic!("expected cleanup failure");
     };
-    error.downcast_ref::<CleanupError>().unwrap().category()
+    error.downcast_ref::<LlmCleanupError>().unwrap().category()
 }
 
 #[test]
@@ -112,18 +112,18 @@ fn prompt_overrides_are_bounded_and_keep_the_output_contract() {
     std::fs::write(&path, [0xff]).unwrap();
     assert!(matches!(
         build_prompt(home.path()),
-        Err(CleanupError::PromptRead)
+        Err(LlmCleanupError::PromptRead)
     ));
     std::fs::write(&path, vec![b'a'; MAX_GUIDANCE_BYTES + 1]).unwrap();
     assert!(matches!(
         build_prompt(home.path()),
-        Err(CleanupError::PromptTooLarge)
+        Err(LlmCleanupError::PromptTooLarge)
     ));
     let unreadable_home = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(unreadable_home.path().join(".aria/prompts/cleanup.md")).unwrap();
     assert!(matches!(
         build_prompt(unreadable_home.path()),
-        Err(CleanupError::PromptRead)
+        Err(LlmCleanupError::PromptRead)
     ));
 }
 
@@ -184,7 +184,7 @@ fn request_treats_instructions_as_data_and_commits_only_valid_text() {
     });
     let home = tempfile::tempdir().unwrap();
     let cleanup = LlmCleanup::new(
-        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        &LlmCleanupTarget::new(&endpoint, "local").unwrap(),
         home.path(),
     )
     .unwrap();
@@ -200,7 +200,7 @@ fn request_treats_instructions_as_data_and_commits_only_valid_text() {
 fn tiny_inputs_skip_network_and_oversized_inputs_fail_without_mutation() {
     let home = tempfile::tempdir().unwrap();
     let cleanup = LlmCleanup::new(
-        &CleanupTarget::new("http://127.0.0.1:1/v1/chat/completions", "local").unwrap(),
+        &LlmCleanupTarget::new("http://127.0.0.1:1/v1/chat/completions", "local").unwrap(),
         home.path(),
     )
     .unwrap();
@@ -282,7 +282,7 @@ fn http_failures_preserve_text_and_next_request_recovers() {
         });
         let home = tempfile::tempdir().unwrap();
         let cleanup = LlmCleanup::new(
-            &CleanupTarget::new(&endpoint, "local").unwrap(),
+            &LlmCleanupTarget::new(&endpoint, "local").unwrap(),
             home.path(),
         )
         .unwrap();
@@ -320,7 +320,7 @@ fn global_budget_bounds_stalled_and_trickling_bodies() {
         });
         let home = tempfile::tempdir().unwrap();
         let cleanup = LlmCleanup::new(
-            &CleanupTarget::new(&endpoint, "local").unwrap(),
+            &LlmCleanupTarget::new(&endpoint, "local").unwrap(),
             home.path(),
         )
         .unwrap();
@@ -348,7 +348,7 @@ fn a_model_that_answers_within_a_second_cleans_the_text() {
     });
     let home = tempfile::tempdir().unwrap();
     let cleanup = LlmCleanup::new(
-        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        &LlmCleanupTarget::new(&endpoint, "local").unwrap(),
         home.path(),
     )
     .unwrap();
@@ -370,7 +370,7 @@ fn a_valid_response_after_the_callers_deadline_is_rejected() {
     });
     let home = tempfile::tempdir().unwrap();
     let cleanup = LlmCleanup::new(
-        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        &LlmCleanupTarget::new(&endpoint, "local").unwrap(),
         home.path(),
     )
     .unwrap();
@@ -400,7 +400,7 @@ fn cancellation_while_waiting_prevents_committing_the_response() {
     });
     let home = tempfile::tempdir().unwrap();
     let cleanup = LlmCleanup::new(
-        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        &LlmCleanupTarget::new(&endpoint, "local").unwrap(),
         home.path(),
     )
     .unwrap();
@@ -424,7 +424,7 @@ fn warming_asks_for_one_token_with_the_cleanup_prompt() {
         respond(&mut stream, &completion("ok").to_string());
     });
     let cleanup = LlmCleanup::new(
-        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        &LlmCleanupTarget::new(&endpoint, "local").unwrap(),
         home.path(),
     )
     .unwrap();
@@ -532,7 +532,7 @@ fn an_unfaithful_answer_keeps_the_text() {
     });
     let home = tempfile::tempdir().unwrap();
     let cleanup = LlmCleanup::new(
-        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        &LlmCleanupTarget::new(&endpoint, "local").unwrap(),
         home.path(),
     )
     .unwrap();
@@ -577,7 +577,7 @@ fn readiness_needs_the_server_to_list_the_model() {
             assert_eq!(line, "GET /v1/models HTTP/1.1\r\n");
             respond(&mut stream, listed);
         });
-        let result = LlmCleanup::check_ready(&CleanupTarget::new(&endpoint, model).unwrap());
+        let result = LlmCleanup::check_ready(&LlmCleanupTarget::new(&endpoint, model).unwrap());
         assert_eq!(result.err().map(|error| error.category()), expected);
         worker.join().unwrap();
     }
@@ -587,7 +587,7 @@ fn readiness_needs_the_server_to_list_the_model() {
         closed.local_addr().unwrap()
     );
     drop(closed);
-    let down = LlmCleanup::check_ready(&CleanupTarget::new(&endpoint, "local").unwrap());
+    let down = LlmCleanup::check_ready(&LlmCleanupTarget::new(&endpoint, "local").unwrap());
     assert_eq!(down.err().map(|error| error.category()), Some("transport"));
 }
 
@@ -609,7 +609,7 @@ fn warming_waits_past_the_request_budget_for_a_slow_load() {
         respond(&mut stream, &completion("ok").to_string());
     });
     let cleanup = LlmCleanup::new(
-        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        &LlmCleanupTarget::new(&endpoint, "local").unwrap(),
         home.path(),
     )
     .unwrap();
@@ -626,7 +626,7 @@ fn a_second_warm_up_waits_for_the_first_to_end() {
         listener.local_addr().unwrap()
     );
     let cleanup = LlmCleanup::new(
-        &CleanupTarget::new(&endpoint, "local").unwrap(),
+        &LlmCleanupTarget::new(&endpoint, "local").unwrap(),
         home.path(),
     )
     .unwrap();
