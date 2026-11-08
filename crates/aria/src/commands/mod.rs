@@ -38,7 +38,7 @@ pub struct Cli {
 enum Command {
     #[command(hide = true)]
     Daemon,
-    #[command(about = "Host transcription for paired devices without opening audio devices")]
+    #[command(about = "Host speech recognition for paired devices without opening audio devices")]
     Serve {
         #[arg(long)]
         bind: std::net::SocketAddr,
@@ -96,15 +96,15 @@ enum Command {
         /// Leave the speech models for later
         #[arg(long)]
         skip_models: bool,
-        /// Set the speech-to-text engine, keeping every other choice and
-        /// downloading only that engine's models
-        #[arg(long, value_name = "ENGINE", conflicts_with_all = ["yes", "skip_models"])]
+        /// Set the speech model, keeping every other choice and downloading
+        /// only its files
+        #[arg(long, value_name = "MODEL", conflicts_with_all = ["yes", "skip_models"])]
         stt: Option<String>,
-        /// Transcribe on the paired server, keeping the local engine and its
+        /// Recognize speech on the paired server, keeping the local model and its
         /// settings for later
         #[arg(long, conflicts_with_all = ["yes", "skip_models", "stt", "local"])]
         server: bool,
-        /// Transcribe on this machine again
+        /// Recognize speech on this machine again
         #[arg(long, conflicts_with_all = ["yes", "skip_models", "stt"])]
         local: bool,
     },

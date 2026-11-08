@@ -235,7 +235,7 @@ keys! {
     SttInterpreter: "stt.interpreter", Live, Mac, [], Kind::Path, None,
         "A Python with parakeet-mlx installed. parakeet-mlx only, and required there.";
     SttRunsOn: "stt.runs_on", Live, Mac, [], Kind::Choice(&["local", "server"]), Some("local"),
-        "Where dictation transcribes: local, or server for your paired server.";
+        "Where speech recognition runs: local, or server for your paired server.";
     TtsBackend: "tts.backend", Restart, Mac, [], Kind::Choice(&[tts_backend::SYSTEM, tts_backend::KOKORO, tts_backend::QWEN]), Some(tts_backend::DEFAULT),
         "The engine that speaks `aria say` and replies: system, kokoro or qwen.";
     TtsRate: "tts.rate", Live, Mac, [], Kind::Number, Some("1.0"),

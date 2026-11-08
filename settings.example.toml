@@ -56,7 +56,7 @@ enabled = true
 keep_audio = false
 
 [transcription]
-# Transcribes your Mac's audio with an engine that streams. Absent uses the stt engine,
+# Transcribes your Mac's audio with an engine that streams. Absent uses the speech model,
 # or parakeet when that one can't stream.
 # backend = "moonshine"
 # Absent means setup's download for that engine.
@@ -156,7 +156,7 @@ language = "en"
 device = "cpu"
 # A Python with parakeet-mlx installed. parakeet-mlx only, and required there.
 # interpreter = "~/.local/share/aria/parakeet-mlx/bin/python3"
-# Where dictation transcribes: local, or server for your paired server.
+# Where speech recognition runs: local, or server for your paired server.
 # The engine above stays set for the way back. See the Privacy page in the User Guide.
 runs_on = "local"
 

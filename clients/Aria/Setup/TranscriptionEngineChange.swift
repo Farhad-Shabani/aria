@@ -70,7 +70,7 @@ final class TranscriptionEngineChange: ObservableObject {
             } catch  where Task.isCancelled {
             } catch SetupClientError.cancelled {
             } catch {
-                log.error("Speech engine change failed: \(String(describing: error), privacy: .private)")
+                log.error("Speech model change failed: \(String(describing: error), privacy: .private)")
                 run?.state = .failed(SetupClientError.message(for: error, otherwise: Self.failure))
                 await ended()
                 return

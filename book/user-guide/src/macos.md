@@ -82,7 +82,7 @@ Whisper Tiny and Parakeet (MLX) type only after recording stops. While you use
 one of them, **Deliver** stays at **After recording stops**. Your choice
 returns when you switch back to a model that types while you speak.
 
-While **Transcribe on your server** is on in **Settings → Recognition**, your
+While **Recognize speech on your server** is on in **Settings → Recognition**, your
 server chooses the model.
 
 A model stays on your Mac after you switch away from it. To free its space,

@@ -69,7 +69,7 @@ pub(super) enum HistoryCommand {
     },
     /// Transcribe a retained recording and replace its saved text
     #[command(
-        long_about = "Transcribe a retained recording and replace its saved text. Uses the configured local or server transcription backend. Failure preserves the previous text."
+        long_about = "Transcribe a retained recording and replace its saved text. Uses the configured local or server speech recognition. Failure preserves the previous text."
     )]
     Retry {
         #[arg(value_parser = clap::value_parser!(u64).range(1..=i64::MAX as u64))]

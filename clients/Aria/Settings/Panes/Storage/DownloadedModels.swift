@@ -40,16 +40,16 @@ extension DownloadedModels.Model {
     var detail: String {
         let size = isPartial ? "Partly downloaded" : SetupState.size(bytes)
         guard !usedBy.isEmpty else { return size }
-        return "\(size) · Used by \(usedBy.map(Self.feature).formatted(.list(type: .and)))"
+        return "\(size) · Used by \(usedBy.flatMap(Self.features).formatted(.list(type: .and)))"
     }
 
-    private static func feature(_ use: Aria_Setup_V1_ModelUse) -> String {
+    private static func features(_ use: Aria_Setup_V1_ModelUse) -> [String] {
         switch use {
-        case .stt: "Dictation"
-        case .systemTranscription: "Transcription"
-        case .tts: "Spoken Content"
-        case .speaker: "Voice"
-        case .unspecified, .UNRECOGNIZED: "Aria"
+        case .stt: ["Dictation", "Chat"]
+        case .systemTranscription: ["Transcription"]
+        case .tts: ["Spoken Content"]
+        case .speaker: ["Voice"]
+        case .unspecified, .UNRECOGNIZED: ["Aria"]
         }
     }
 }

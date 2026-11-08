@@ -924,7 +924,7 @@ pub enum SetupError {
     #[error("setup knows no model named {name}")]
     UnknownModel { name: String },
 
-    #[error("setup knows no speech-to-text engine named {name}")]
+    #[error("setup knows no speech model named {name}")]
     UnknownEngine { name: String },
 
     #[error("{name} can't be set in place; choose it in `aria setup`")]
@@ -939,7 +939,7 @@ pub enum SetupError {
     #[error("another setup is already running")]
     Busy,
 
-    #[error("transcription runs on the paired server; run `aria setup --local` first")]
+    #[error("speech recognition runs on the paired server; run `aria setup --local` first")]
     ServerInUse,
 
     #[error(transparent)]

@@ -44,7 +44,9 @@ final class DownloadedModelsTests: XCTestCase {
         let model = { (id: String) in models.models.first { $0.id == id } }
 
         XCTAssertEqual(
-            model("parakeet")?.detail, "\(SetupState.size(2_500_000_000)) · Used by Dictation and Transcription")
+            model("parakeet")?.detail,
+            "\(SetupState.size(2_500_000_000)) · Used by Dictation, Chat, and Transcription")
+        XCTAssertEqual(model("whisper")?.detail, "\(SetupState.size(875_000_000)) · Used by Dictation and Chat")
         XCTAssertEqual(model("nemotron")?.detail, "Partly downloaded")
         XCTAssertEqual(model("kokoro")?.usedBy, [], "nothing loads it, so it can be deleted")
     }

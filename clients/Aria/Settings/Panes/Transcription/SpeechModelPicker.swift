@@ -64,7 +64,7 @@ struct SpeechModelPicker: View {
     @ViewBuilder
     private var status: some View {
         if usesServer {
-            Text("Your server transcribes. Change this in Recognition.")
+            Text("Your server recognizes speech. Change this in Recognition.")
         } else if let target, case .downloading(let transfer) = engineChange.state {
             if let transfer {
                 Text(

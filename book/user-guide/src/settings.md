@@ -1,4 +1,4 @@
-{{#title Aria settings and speech engines - Aria User Guide}}
+{{#title Aria settings and speech models - Aria User Guide}}
 
 # Settings
 
@@ -16,7 +16,7 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
 - **Dictation** sets output, delivery, text cleanup, auto-stop, and muting
   sound while recording.
 - **Recognition** sets the language, voice filtering, project vocabulary,
-  and where transcription runs.
+  and where speech recognition runs.
 - **Shortcuts** chooses right Option or Fn for the Aria key. It also sets
   what opens Aria and what starts a chat: an Aria key combo, a shortcut of your
   own, or nothing.
@@ -67,13 +67,13 @@ This makes speech 1.2 times the normal rate. To change one utterance, use
 
 ## Server inference
 
-Run the transcription model on a personal server while your desktop records
-and delivers the text. The desktop needs no local transcription model.
+Run the speech model on a personal server while your desktop records and
+delivers the text. The desktop needs no local speech model.
 See [Privacy](./privacy.md#server-inference) for what gets sent.
 
-On the server, set a local transcription engine and its model in
-`~/.aria/settings.toml`, then run the command below. The server reads them once,
-so restart `aria serve` after changing them.
+On the server, set a local speech model in `~/.aria/settings.toml`, then run
+the command below. The server reads the setting once, so restart `aria serve`
+after changing it.
 
 ```sh
 aria serve \
@@ -93,7 +93,7 @@ pair:
 
 - **On a Mac:** in **Settings → Recognition**, click **Pair…**, then
   **Paste Invitation**. Check the address, click **Pair**, and turn on
-  **Transcribe on your server**.
+  **Recognize speech on your server**.
 - **From a terminal:** run `aria remote pair`, paste it, and press Ctrl-D.
   Then run `aria setup --server`.
 
@@ -104,13 +104,13 @@ instead of switching to a local engine.
 
 Speech output, wake words and voice profiles stay on the device.
 Transcription needs its own local `transcription.backend`. To go back, turn off
-**Transcribe on your server**, or run `aria setup --local`. Your
-local engine keeps its settings while the server transcribes. If its model
+**Recognize speech on your server**, or run `aria setup --local`. Your
+local engine keeps its settings while the server recognizes speech. If its model
 isn't on disk, Aria downloads it before switching back.
 
-To unpair, turn off **Transcribe on your server** and click **Forget…**, or run
+To unpair, turn off **Recognize speech on your server** and click **Forget…**, or run
 `aria remote forget`. The server keeps trusting the device until you block it.
-Pairing again also waits until transcription runs on your device.
+Pairing again also waits until speech recognition runs on your device.
 
 To block a device, run `aria remote revoke FINGERPRINT` on the server.
 `aria remote pair` prints the fingerprint. In Settings, **Forget…** can copy
@@ -119,10 +119,9 @@ storage error, fix it and revoke again before restarting the server.
 
 ## Apply changes
 
-Most settings apply to the next dictation or question, including the
-speech-to-text engine and its model. Speech output engines, their model paths,
-the phone port, and other keys marked `restart` apply after a restart. Check
-the file and see each value:
+Most settings apply to the next dictation or question, including the speech
+model. Speech output engines, their model paths, the phone port, and other keys
+marked `restart` apply after a restart. Check the file and see each value:
 
 ```sh
 aria settings check

@@ -134,7 +134,7 @@ pub(super) enum Stt {
 }
 
 impl Backend for Stt {
-    const TITLE: &'static str = "Speech to text";
+    const TITLE: &'static str = "Speech model";
     const ALL: &'static [Self] = &[
         Self::Parakeet,
         Self::Whisper,

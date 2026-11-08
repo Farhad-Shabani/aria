@@ -178,7 +178,7 @@ pub enum DictationInitializationError {
     #[error("failed to load the wake-word model")]
     WakeModel(#[source] aria_wake::Error),
 
-    #[error("failed to initialize transcription")]
+    #[error("failed to initialize speech recognition")]
     Transcription(#[source] TranscriptionError),
 
     #[error("failed to initialize text delivery")]
@@ -223,7 +223,7 @@ fn load_engine(
     tracing::info!(
         engine = name,
         load_ms = started.elapsed().as_millis(),
-        "transcription model loaded"
+        "speech model loaded"
     );
     Ok(transcriber)
 }

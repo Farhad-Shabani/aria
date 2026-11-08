@@ -9,8 +9,9 @@ struct EnginesPage: View {
         Form {
             Section {
                 picker(
-                    "Speech to text", state.inspection.transcriptionChoices, $state.selections.transcriptionEngineID,
-                    note: serverTranscribes ? "Your server transcribes. Change this in Settings > Recognition." : nil
+                    "Speech model", state.inspection.transcriptionChoices, $state.selections.transcriptionEngineID,
+                    note: serverTranscribes
+                        ? "Your server recognizes speech. Change this in Settings > Recognition." : nil
                 )
                 .disabled(serverTranscribes)
                 picker("Text to speech", state.inspection.synthesisChoices, $state.selections.synthesisEngineID)

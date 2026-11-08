@@ -48,9 +48,9 @@ pub(super) fn set_transcription_engine(engine: &str) -> anyhow::Result<()> {
         std::io::stdout().is_terminal(),
         &mut |_| Ok(()),
     )
-    .context("setting the speech engine did not finish")?;
+    .context("setting the speech model did not finish")?;
     println!();
-    println!("speech       {}", summary.engine);
+    println!("speech model {}", summary.engine);
     for (name, outcome) in &summary.models {
         println!("{name:<12} {}", outcome.as_str());
     }
@@ -64,9 +64,9 @@ pub(super) fn set_transcription_runs_on(runs_on: RunsOn) -> anyhow::Result<()> {
         std::io::stdout().is_terminal(),
         &mut |_| Ok(()),
     )
-    .context("setting where transcription runs did not finish")?;
+    .context("setting where speech recognition runs did not finish")?;
     println!();
-    println!("transcribes  {}", summary.runs_on.name());
+    println!("recognition  {}", summary.runs_on.name());
     for (name, outcome) in &summary.models {
         println!("{name:<12} {}", outcome.as_str());
     }
@@ -77,7 +77,7 @@ pub(super) fn set_transcription_runs_on(runs_on: RunsOn) -> anyhow::Result<()> {
 fn print_summary(summary: &crate::setup::Summary) {
     let selections = &summary.selections;
     println!();
-    println!("speech       {}", selections.stt);
+    println!("speech model {}", selections.stt);
     println!("voice        {}", selections.tts);
     println!("wake word    {}", on_off(selections.wake));
     println!("settings     {}", settings_write_message(&summary.settings));

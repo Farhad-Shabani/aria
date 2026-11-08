@@ -636,7 +636,7 @@ mod tests {
                     path: models.join("pyannote/segmentation-3.0.onnx"),
                 },
             ],
-            "System transcription inherits the dictation model"
+            "System transcription inherits the speech model"
         );
     }
 

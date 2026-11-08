@@ -110,9 +110,9 @@ record audio to test microphone permission.
 
 ### Switch the speech model
 
-To change only the speech-to-text engine, name it. Setup keeps your other
-choices, downloads that engine's model if it isn't on disk, and switches
-without restarting the service:
+To change only the speech model, name it. Setup keeps your other choices,
+downloads the model if it isn't on disk, and switches without restarting the
+service:
 
 ```sh
 aria setup --stt moonshine

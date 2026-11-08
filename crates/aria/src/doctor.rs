@@ -31,7 +31,7 @@ use aria_wake::openwakeword::{Config as OpenWakeWordConfig, OpenWakeWord};
 const SETTINGS: &str = "settings";
 const RUNTIME_DIRECTORY: &str = "runtime directory";
 const AUDIO_CAPTURE: &str = "audio capture";
-const TRANSCRIPTION_MODEL: &str = "transcription model";
+const TRANSCRIPTION_MODEL: &str = "speech model";
 const WAKE_WORD_MODEL: &str = "wake-word model";
 const SPEAKER_MODEL: &str = "speaker model";
 const SEGMENTATION_MODEL: &str = "segmentation model";
@@ -195,7 +195,7 @@ fn server(home: &Path) -> Check {
     match aria_daemon::paired_server(home) {
         Ok(Some(paired)) => Check::ok(
             TRANSCRIPTION_MODEL,
-            format!("server {}; no local transcription model", paired.endpoint),
+            format!("server {}; no local speech model", paired.endpoint),
         ),
         Ok(None) => Check::failed(
             TRANSCRIPTION_MODEL,

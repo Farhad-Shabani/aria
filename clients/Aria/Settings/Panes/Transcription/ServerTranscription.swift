@@ -98,7 +98,7 @@ final class ServerTranscription: ObservableObject {
         }
     }
 
-    static let switchFailure = "Aria couldn’t change where transcription runs. Try again."
+    static let switchFailure = "Aria couldn’t change where speech recognition runs. Try again."
     static let forgetFailure = "Aria couldn’t forget the server. Try again."
     static let readBackFailure = "Saved, but Aria couldn’t show the change. Reopen Settings to see it."
     static let pairFailure = "Aria couldn’t pair with the server. Try again."

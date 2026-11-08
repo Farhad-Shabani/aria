@@ -7,13 +7,13 @@ meeting or video. It captures what your Mac plays, not your microphone, and
 writes to a file instead of typing into an app.
 
 Transcription needs System Audio Recording permission. It uses your
-speech-to-text engine, so the default setup needs no extra model. First check
+speech model, so the default setup needs no extra model. First check
 [Mac dictation](./macos.md) or [terminal dictation](./terminal-dictation.md),
 depending on how you installed Aria.
 
 ## Model
 
-Transcription uses your dictation model. If Transcription can't run that model,
+Transcription uses your speech model. If Transcription can't run that model,
 it uses Parakeet. If Parakeet isn't on your Mac, add the Moonshine Base model
 below for English audio. Setup doesn't download it for you.
 

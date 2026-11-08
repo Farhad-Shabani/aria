@@ -117,9 +117,9 @@ fn runs_on(value: i32) -> Result<RunsOn, SetupError> {
     match generated::RunsOn::try_from(value) {
         Ok(generated::RunsOn::Local) => Ok(RunsOn::Local),
         Ok(generated::RunsOn::Server) => Ok(RunsOn::Server),
-        Ok(generated::RunsOn::Unspecified) | Err(_) => {
-            Err(SetupError::Invalid("no known place to run transcription"))
-        }
+        Ok(generated::RunsOn::Unspecified) | Err(_) => Err(SetupError::Invalid(
+            "no known place to run speech recognition",
+        )),
     }
 }
 

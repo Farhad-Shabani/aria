@@ -14,7 +14,10 @@ pub(super) struct BuiltSpeech {
 
 pub(super) fn build_speech(config: TtsConfig) -> Result<BuiltSpeech, SpeechInitializationError> {
     let TtsConfig { backend, fallback } = config;
-    tracing::info!(backend = backend.name(), "building the speech engine");
+    tracing::info!(
+        backend = backend.name(),
+        "building the text-to-speech engine"
+    );
     let backend =
         SpeechBackend::build(backend, fallback).map_err(SpeechInitializationError::Backend)?;
     Ok(BuiltSpeech {
@@ -34,9 +37,9 @@ impl From<&SpeechInitializationError> for RpcErrorCode {
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::daemon) enum SpeechInitializationError {
-    #[error("failed to initialize the speech engine")]
+    #[error("failed to initialize the text-to-speech engine")]
     Backend(#[source] SpeechBuildError),
 
-    #[error("the speech engine panicked while loading")]
+    #[error("the text-to-speech engine panicked while loading")]
     LoadPanicked,
 }

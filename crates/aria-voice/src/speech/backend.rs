@@ -82,7 +82,7 @@ impl SpeechBackend {
                 tracing::warn!(
                     engine,
                     error = %aria_primitives::error_chain(&error),
-                    "speech model is unavailable; speaking through the system voice"
+                    "text-to-speech model is unavailable; speaking through the system voice"
                 );
                 Self::build_system()
             }
@@ -134,7 +134,7 @@ impl SpeechBackend {
 /// for different reasons, and an operator needs to know which.
 #[derive(Debug, thiserror::Error)]
 pub enum SpeechBuildError {
-    #[error("the speech engine could not be loaded")]
+    #[error("the text-to-speech engine could not be loaded")]
     Synthesis(#[source] SynthesisError),
 
     #[error("audio output is unavailable")]

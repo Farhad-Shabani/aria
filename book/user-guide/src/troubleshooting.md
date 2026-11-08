@@ -60,7 +60,7 @@ also starts it.
 
 Check your output device and volume. Then use `aria service status` and
 `aria settings show` to inspect the voice and model paths. Engine and model
-changes need a restart. `aria doctor` doesn't check speech-engine files.
+changes need a restart. `aria doctor` doesn't check text-to-speech files.
 
 Linux system speech needs `/usr/bin/espeak-ng` or `/usr/bin/espeak`. For Kokoro,
 rerun setup to obtain its model and voices file, or correct their paths.
@@ -81,7 +81,7 @@ Settings and it checks again.
 A chat that fails for either reason says so in the status pill.
 
 Try [a typed question](./chat.md#try-a-typed-question) before a spoken one.
-If typing works but speech does not, check the microphone and recognition model.
+If typing works but speech doesn't, check the microphone and speech model.
 
 ## Transcription fails
 
@@ -89,7 +89,7 @@ In **System Settings → Privacy & Security → Screen & System Audio Recording*
 check permission for the requesting app or executable. Microphone permission
 doesn't grant access to your Mac's audio.
 
-If Transcription can't run your dictation model, it uses Parakeet. Without
+If Transcription can't run your speech model, it uses Parakeet. Without
 Parakeet, set up the [Moonshine model](./transcribe-system-audio.md#model). For a
 failure after a transcription starts, run `aria transcribe status`. Confirm
 that audio is playing through your Mac.

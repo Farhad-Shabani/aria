@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct TranscriptionSection: View {
-    private static let rowTitle = "Transcribe on your server"
+    private static let rowTitle = "Recognize speech on your server"
 
     @ObservedObject var server: ServerTranscription
     @ObservedObject var setup: SetupStatus
@@ -100,7 +100,9 @@ struct TranscriptionSection: View {
         } else if let failure = server.failure {
             Text(failure).foregroundStyle(.failure)
         } else {
-            Text("Recordings stay on your Mac unless you pair a server and turn this on.")
+            Text(
+                "Recordings stay on your Mac unless you pair a server and turn this on. Transcribe System Audio always runs on this Mac."
+            )
         }
     }
 }
