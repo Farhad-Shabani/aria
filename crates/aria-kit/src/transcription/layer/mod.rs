@@ -31,6 +31,11 @@ pub trait Layer: Send + Sync {
     fn enabled(&self) -> bool {
         true
     }
+
+    /// Gets ready for an `apply` that is coming soon, such as loading a
+    /// model while the user still speaks. Returns at once; any work runs
+    /// on its own.
+    fn prepare(&self) {}
 }
 
 pub struct Layered<L, I> {
@@ -52,6 +57,11 @@ impl<L: Layer, I: Layer> Layer for Layered<L, I> {
 
     fn enabled(&self) -> bool {
         self.inner.enabled() || self.layer.enabled()
+    }
+
+    fn prepare(&self) {
+        self.inner.prepare();
+        self.layer.prepare();
     }
 }
 
@@ -76,6 +86,12 @@ impl<L: Layer> Layer for Option<L> {
     fn enabled(&self) -> bool {
         self.as_ref().is_some_and(Layer::enabled)
     }
+
+    fn prepare(&self) {
+        if let Some(layer) = self {
+            layer.prepare();
+        }
+    }
 }
 
 impl<L: Layer> Layer for &L {
@@ -85,6 +101,10 @@ impl<L: Layer> Layer for &L {
 
     fn enabled(&self) -> bool {
         (**self).enabled()
+    }
+
+    fn prepare(&self) {
+        (**self).prepare();
     }
 }
 

@@ -317,6 +317,28 @@ fn completion_without_a_final_segment_keeps_processed_text() {
     assert_eq!(operation.finish(&mut recording).unwrap().as_str(), "hello");
 }
 
+struct CountPreparations(AtomicUsize);
+
+impl Layer for CountPreparations {
+    fn apply(&self, _: &mut String, _: &CancelToken) -> Result<(), TranscriptionError> {
+        Ok(())
+    }
+
+    fn prepare(&self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn preparing_a_stack_prepares_every_layer_in_it() {
+    let inner = CountPreparations(AtomicUsize::new(0));
+    let outer = CountPreparations(AtomicUsize::new(0));
+    let absent: Option<CountPreparations> = None;
+    Layered::new(Layered::new(&inner, absent), Some(&outer)).prepare();
+    assert_eq!(inner.0.load(Ordering::Relaxed), 1);
+    assert_eq!(outer.0.load(Ordering::Relaxed), 1);
+}
+
 struct CountApplications(AtomicUsize);
 
 impl Layer for CountApplications {
