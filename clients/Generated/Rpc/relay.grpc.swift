@@ -83,7 +83,7 @@ extension Aria_Daemon_V1_RelayService {
         /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
         /// >   SHUTTING_DOWN - the daemon is stopping
         /// >   CANCELLED - the client's own stream failed
-        /// >   RECOGNITION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
+        /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
         /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
         /// > Delivery failures do not return the text and can include partial delivery.
         ///
@@ -147,7 +147,7 @@ extension Aria_Daemon_V1_RelayService {
         /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
         /// >   SHUTTING_DOWN - the daemon is stopping
         /// >   CANCELLED - the client's own stream failed
-        /// >   RECOGNITION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
+        /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
         /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
         /// > Delivery failures do not return the text and can include partial delivery.
         ///
@@ -208,7 +208,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
     /// >   SHUTTING_DOWN - the daemon is stopping
     /// >   CANCELLED - the client's own stream failed
-    /// >   RECOGNITION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
+    /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
     /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
     /// > Delivery failures do not return the text and can include partial delivery.
     ///
@@ -263,7 +263,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
     /// >   SHUTTING_DOWN - the daemon is stopping
     /// >   CANCELLED - the client's own stream failed
-    /// >   RECOGNITION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
+    /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
     /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
     /// > Delivery failures do not return the text and can include partial delivery.
     ///

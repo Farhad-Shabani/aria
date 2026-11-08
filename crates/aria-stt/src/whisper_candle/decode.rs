@@ -5,7 +5,7 @@ use candle_transformers::models::whisper::{self as whisper, Config, model::Whisp
 use tokenizers::Tokenizer;
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::{Language, RecognitionError, check_cancelled, english_only};
+use aria_kit::transcription::{Language, TranscriptionError, check_cancelled, english_only};
 
 use super::{BACKEND, EngineError, inference_failed};
 
@@ -35,7 +35,7 @@ impl Prompt {
         tokenizer: &Tokenizer,
         config: &Config,
         language: &Language,
-    ) -> Result<Self, RecognitionError> {
+    ) -> Result<Self, TranscriptionError> {
         let control = |name: &str| {
             tokenizer
                 .token_to_id(name)
@@ -62,7 +62,7 @@ impl Prompt {
 /// An undeclared language is taken as English; detection is a decode of its
 /// own. A language the vocabulary has no token for is one this model does not
 /// speak.
-fn language_token(tokenizer: &Tokenizer, language: &Language) -> Result<u32, RecognitionError> {
+fn language_token(tokenizer: &Tokenizer, language: &Language) -> Result<u32, TranscriptionError> {
     let Language::Specific(code) = language else {
         return tokenizer
             .token_to_id(ENGLISH_TOKEN)
@@ -71,13 +71,13 @@ fn language_token(tokenizer: &Tokenizer, language: &Language) -> Result<u32, Rec
     let primary = code.as_str().split('-').next().unwrap_or_default();
     tokenizer
         .token_to_id(&format!("<|{primary}|>"))
-        .ok_or_else(|| RecognitionError::UnsupportedLanguage {
+        .ok_or_else(|| TranscriptionError::UnsupportedLanguage {
             backend: BACKEND,
             language: primary.to_owned(),
         })
 }
 
-fn missing_control_token(name: &str) -> RecognitionError {
+fn missing_control_token(name: &str) -> TranscriptionError {
     inference_failed(EngineError(format!("the vocabulary has no {name} token")))
 }
 
@@ -94,7 +94,7 @@ pub(super) fn all_windows(
     mel: &[f32],
     spoken: usize,
     cancel: &CancelToken,
-) -> Result<String, RecognitionError> {
+) -> Result<String, TranscriptionError> {
     let bands = model.config.num_mel_bins;
     let mut text = String::new();
 
@@ -120,7 +120,7 @@ fn one_window(
     mel: &[f32],
     bands: usize,
     start: usize,
-) -> Result<String, RecognitionError> {
+) -> Result<String, TranscriptionError> {
     model.reset_kv_cache();
     let window = window_tensor(mel, bands, start)?;
     let features = model
@@ -163,7 +163,7 @@ fn one_window(
 
 /// One 30-second window of mel frames, zero-padded when the recording ends
 /// mid-window. Whisper only reads inputs of that one length.
-fn window_tensor(mel: &[f32], bands: usize, start: usize) -> Result<Tensor, RecognitionError> {
+fn window_tensor(mel: &[f32], bands: usize, start: usize) -> Result<Tensor, TranscriptionError> {
     let frames = mel.len() / bands;
     let mut window = vec![0f32; bands * whisper::N_FRAMES];
     let taken = whisper::N_FRAMES.min(frames - start);

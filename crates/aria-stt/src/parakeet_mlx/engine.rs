@@ -7,8 +7,8 @@ use std::sync::Mutex;
 use aria_kit::backend::ModelDownload;
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{Sidecar, validate_interpreter};
-use aria_kit::recognition::{
-    AudioInputKind, Engine, Hypothesis, Language, RecognitionAudio, RecognitionError, Recognizer,
+use aria_kit::transcription::{
+    AudioInputKind, Engine, Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError,
     check_cancelled,
 };
 
@@ -32,7 +32,7 @@ impl ParakeetMlx {
     pub fn load(
         interpreter: impl Into<PathBuf>,
         model: impl Into<String>,
-    ) -> Result<Self, RecognitionError> {
+    ) -> Result<Self, TranscriptionError> {
         Self::load_from(
             ParakeetMlxConfig {
                 interpreter: interpreter.into(),
@@ -73,7 +73,7 @@ impl Engine for ParakeetMlx {
 
     /// The model is a repository id the sidecar resolves against its own
     /// cache, so nothing here can confirm it without a download.
-    fn check_from(config: &ParakeetMlxConfig) -> Result<PathBuf, RecognitionError> {
+    fn check_from(config: &ParakeetMlxConfig) -> Result<PathBuf, TranscriptionError> {
         validate_interpreter(config.interpreter.clone()).map_err(|error| {
             Phase::Load {
                 model: &config.model,
@@ -85,7 +85,7 @@ impl Engine for ParakeetMlx {
     fn load_from(
         config: ParakeetMlxConfig,
         cancel: &CancelToken,
-    ) -> Result<Self, RecognitionError> {
+    ) -> Result<Self, TranscriptionError> {
         check_cancelled(cancel)?;
         let interpreter = Self::check_from(&config)?;
         let sidecar = start(&interpreter, &config.model, cancel)?;
@@ -104,7 +104,7 @@ impl Recognizer for ParakeetMlx {
         &self,
         _language: &Language,
         _cancel: &CancelToken,
-    ) -> Result<(), RecognitionError> {
+    ) -> Result<(), TranscriptionError> {
         Ok(())
     }
 
@@ -113,10 +113,10 @@ impl Recognizer for ParakeetMlx {
         input: RecognitionAudio<'_>,
         _language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, RecognitionError> {
+    ) -> Result<Hypothesis, TranscriptionError> {
         let audio = input.require_wav(BACKEND)?;
         let audio_path = audio.path().and_then(|path| path.to_str()).ok_or_else(|| {
-            RecognitionError::UnsupportedAudioPath {
+            TranscriptionError::UnsupportedAudioPath {
                 backend: BACKEND,
                 path: audio.path().map(Path::to_path_buf).unwrap_or_default(),
             }
@@ -166,7 +166,7 @@ mod tests {
             &cancel,
         );
 
-        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
+        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
     }
 
     #[test]
@@ -180,7 +180,7 @@ mod tests {
         // The unspawnable interpreter proves the refusal came first.
         assert!(matches!(
             outcome,
-            Err(RecognitionError::UnsupportedAudioInput { backend, .. }) if backend == BACKEND
+            Err(TranscriptionError::UnsupportedAudioInput { backend, .. }) if backend == BACKEND
         ));
     }
 
@@ -204,7 +204,7 @@ mod tests {
         );
 
         std::fs::remove_file(&path).ok();
-        assert!(matches!(outcome, Err(RecognitionError::Load { .. })));
+        assert!(matches!(outcome, Err(TranscriptionError::Load { .. })));
     }
 
     #[test]

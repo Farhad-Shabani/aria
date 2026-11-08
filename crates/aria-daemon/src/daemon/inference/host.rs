@@ -32,7 +32,7 @@ use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_settings::config::ConfigError;
 use aria_settings::{SettingsCache, SettingsPoll};
 use aria_voice::config::SttBackend;
-use aria_voice::stt::RecognitionError;
+use aria_voice::stt::TranscriptionError;
 
 use super::engine::Engine;
 use super::identity::{self, ServerAccess};
@@ -59,7 +59,7 @@ fn run(address: SocketAddr) -> Result<(), HostFailure> {
     let config = match serving.clone() {
         SttBackend::Local(engine) => EngineConfig::try_from(engine)?,
         SttBackend::Server(_) => {
-            return Err(HostFailure::Model(RecognitionError::UnsupportedBackend {
+            return Err(HostFailure::Model(TranscriptionError::UnsupportedBackend {
                 backend: aria_settings::config::backend::SERVER,
             }));
         }
@@ -333,7 +333,7 @@ enum HostFailure {
     #[error(transparent)]
     Shutdown(#[from] ShutdownError),
     #[error("loading the inference engine failed")]
-    Model(#[from] RecognitionError),
+    Model(#[from] TranscriptionError),
     #[error("opening the inference listener or runtime failed")]
     Io(#[source] io::Error),
     #[error("the inference transport failed")]
@@ -359,8 +359,8 @@ pub(in crate::daemon) mod tests {
     use aria_kit::audio::RecordingReader;
     use aria_settings::config::ServerEndpoint;
     use aria_voice::stt::{
-        AudioInputKind, ChunkStream, Emitted, Hypothesis, Language, Recognition, RecognitionAudio,
-        Recognizer, Stream as RecognitionStream, Whole,
+        AudioInputKind, ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Recognizer,
+        Stream as RecognitionStream, Transcription, Whole,
     };
 
     #[derive(Default)]
@@ -385,7 +385,11 @@ pub(in crate::daemon) mod tests {
     struct Fake(Arc<Observed>);
 
     impl Recognizer for Fake {
-        fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
+        fn validate_language(
+            &self,
+            _: &Language,
+            _: &CancelToken,
+        ) -> Result<(), TranscriptionError> {
             Ok(())
         }
         fn recognize_with(
@@ -393,7 +397,7 @@ pub(in crate::daemon) mod tests {
             audio: RecognitionAudio<'_>,
             language: &Language,
             cancel: &CancelToken,
-        ) -> Result<Hypothesis, RecognitionError> {
+        ) -> Result<Hypothesis, TranscriptionError> {
             assert!(matches!(audio, RecognitionAudio::Samples(samples) if !samples.is_empty()));
             self.0
                 .samples
@@ -414,7 +418,7 @@ pub(in crate::daemon) mod tests {
                 std::thread::sleep(Duration::from_millis(1));
             }
             if cancel.is_cancelled() {
-                return Err(RecognitionError::Cancelled);
+                return Err(TranscriptionError::Cancelled);
             }
             Ok(Hypothesis::new("raw model words"))
         }
@@ -422,7 +426,7 @@ pub(in crate::daemon) mod tests {
             &self,
             _: &Language,
             _: &CancelToken,
-        ) -> Result<Option<Box<dyn ChunkStream>>, RecognitionError> {
+        ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
             self.0.native.fetch_add(1, Ordering::SeqCst);
             Ok(Some(Box::new(Native)))
         }
@@ -433,7 +437,7 @@ pub(in crate::daemon) mod tests {
         fn chunk_samples(&self) -> usize {
             160
         }
-        fn feed(&mut self, _: &[f32]) -> Result<Emitted, RecognitionError> {
+        fn feed(&mut self, _: &[f32]) -> Result<Emitted, TranscriptionError> {
             Ok(Emitted {
                 words: Hypothesis::new("native words"),
                 joins_previous: false,
@@ -1010,20 +1014,20 @@ pub(in crate::daemon) mod tests {
             recording.fill().unwrap();
             let samples = recording.samples().to_vec();
             let began = Instant::now();
-            let expected = Recognition::complete(input, model)
-                .recognize_with(&mut recording, &Language::Automatic, &CancelToken::never())
+            let expected = Transcription::complete(input, model)
+                .transcribe_with(&mut recording, &Language::Automatic, &CancelToken::never())
                 .unwrap();
             let local_time = began.elapsed();
             let client = RemoteRecognizer::open(&home)
                 .unwrap()
                 .require_engine(name)
                 .unwrap();
-            let remote = Recognition::<_, Whole>::delegated(client);
+            let remote = Transcription::<_, Whole>::delegated(client);
             let mut times = Vec::new();
             for _ in 0..2 {
                 let began = Instant::now();
                 let actual = remote
-                    .recognize(
+                    .transcribe(
                         &mut RecordingReader::from_samples(&samples),
                         &Language::Automatic,
                     )

@@ -101,7 +101,7 @@ has no telemetry or crash reporting.
   on first use.
 
 History stays on your computer, readable only by your account. By default it
-keeps text up to 30 days, and audio only from failed recognitions, for 24
+keeps text up to 30 days, and audio only from failed transcriptions, for 24
 hours. Turn saving off under **Settings → Privacy**.
 [Privacy](https://ariacue.pages.dev/user-guide/privacy.html) covers every case.
 
@@ -116,7 +116,7 @@ hours. Turn saving off under **Settings → Privacy**.
 
 You can use these Rust crates in your own projects, without the Aria daemon.
 
-- `aria-kit`: audio capture, streaming recognition, text cleanup, speaker
+- `aria-kit`: audio capture, streaming transcription, text cleanup, speaker
   tracking, and shared engine interfaces
 - `aria-stt`: speech-recognition engines
 - `aria-tts`: speech-synthesis engines
@@ -126,7 +126,7 @@ You can use these Rust crates in your own projects, without the Aria daemon.
 - `aria-web`: the dictation pipeline in the browser, through WebAssembly
 - `aria-primitives`: process, file, and socket building blocks
 
-To recognize speech in a WAV file with Whisper, run
+To transcribe a WAV file with Whisper, run
 `cargo add aria-stt --features whisper`, then:
 
 ```rust,no_run
@@ -134,8 +134,8 @@ use aria_stt::{prelude::*, whisper::Whisper};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Whisper::load("/absolute/path/ggml-base.en.bin")?;
-    let recognition = Recognition::streaming(engine);
-    let transcript = recognition.recognize_file("speech.wav")?;
+    let transcription = Transcription::streaming(engine);
+    let transcript = transcription.transcribe_file("speech.wav")?;
     println!("{}", transcript.as_str());
     Ok(())
 }

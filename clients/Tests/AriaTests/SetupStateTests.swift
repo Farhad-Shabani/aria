@@ -539,7 +539,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.step, .voice)
     }
 
-    func testAFailedRecognitionShowsTheFallbackForAnUnknownError() async {
+    func testAFailedTranscriptionShowsTheFallbackForAnUnknownError() async {
         let harness = Harness()
         harness.transcribeError = Refused()
         let state = await walkToVoice(harness)

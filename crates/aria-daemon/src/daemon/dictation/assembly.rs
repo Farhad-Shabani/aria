@@ -25,7 +25,7 @@ use aria_voice::dictation::{
     DictationSettings, ExecutionControl, LlmCleanupError, Rewrites, SoundMuting, Transcribed,
 };
 use aria_voice::stt::{
-    Language, Mode, Recognition, RecognitionError, Recognizer, Streaming, Whole,
+    Language, Mode, Recognizer, Streaming, Transcription, TranscriptionError, Whole,
 };
 use aria_voice::vocabulary::Vocabulary;
 
@@ -153,7 +153,7 @@ impl From<&DictationInitializationError> for RpcErrorCode {
             | DictationInitializationError::WakeConfiguration(_)
             | DictationInitializationError::WakeModel(_) => Self::Internal,
             DictationInitializationError::Capture(_) => Self::CaptureFailed,
-            DictationInitializationError::Recognition(_) => Self::RecognitionFailed,
+            DictationInitializationError::Transcription(_) => Self::TranscriptionFailed,
             DictationInitializationError::Delivery(_) => Self::DeliveryFailed,
         }
     }
@@ -177,7 +177,7 @@ pub enum DictationInitializationError {
     WakeModel(#[source] aria_wake::Error),
 
     #[error("failed to initialize speech recognition")]
-    Recognition(#[source] RecognitionError),
+    Transcription(#[source] TranscriptionError),
 
     #[error("failed to initialize text delivery")]
     Delivery(#[source] DeliveryError),
@@ -198,7 +198,7 @@ impl ModelLoading {
     fn load(
         self,
         engine: EngineConfig,
-    ) -> Result<ModelLoad<Box<dyn Recognizer>>, RecognitionError> {
+    ) -> Result<ModelLoad<Box<dyn Recognizer>>, TranscriptionError> {
         match self {
             Self::Eager => Ok(ModelLoad::loaded(load_engine(
                 engine,
@@ -214,7 +214,7 @@ impl ModelLoading {
 fn load_engine(
     engine: EngineConfig,
     cancel: &CancelToken,
-) -> Result<Box<dyn Recognizer>, RecognitionError> {
+) -> Result<Box<dyn Recognizer>, TranscriptionError> {
     let name = engine.name();
     let started = Instant::now();
     let recognizer = engine.load(cancel)?;
@@ -237,13 +237,13 @@ struct SelectedEngine {
 impl SelectedEngine {
     fn new<T: Recognizer, M: Mode>(
         name: &'static str,
-        recognition: Recognition<T, M>,
+        transcription: Transcription<T, M>,
         preload: Option<Preload>,
     ) -> Self {
         Self {
             name,
             preload,
-            build: Box::new(move |parts: ExecutionParts| parts.finish(name, recognition)),
+            build: Box::new(move |parts: ExecutionParts| parts.finish(name, transcription)),
         }
     }
 }
@@ -252,7 +252,7 @@ fn select_engine(
     backend: SttBackend,
     loading: ModelLoading,
     home: &Path,
-) -> Result<SelectedEngine, RecognitionError> {
+) -> Result<SelectedEngine, TranscriptionError> {
     match backend {
         SttBackend::Local(config) => select_local(config, loading),
         SttBackend::Server(pairing) => select_remote(home, pairing.as_ref()),
@@ -264,11 +264,11 @@ fn select_engine(
 fn select_remote(
     home: &Path,
     pairing: Option<&PairingId>,
-) -> Result<SelectedEngine, RecognitionError> {
+) -> Result<SelectedEngine, TranscriptionError> {
     let remote = RemoteRecognizer::open_matching(home, pairing)?;
     Ok(SelectedEngine::new(
         aria_settings::config::backend::SERVER,
-        Recognition::<_, Streaming>::delegated(remote),
+        Transcription::<_, Streaming>::delegated(remote),
         None,
     ))
 }
@@ -276,7 +276,7 @@ fn select_remote(
 fn select_local(
     config: SttConfig,
     loading: ModelLoading,
-) -> Result<SelectedEngine, RecognitionError> {
+) -> Result<SelectedEngine, TranscriptionError> {
     let engine = EngineConfig::try_from(config)?;
     let name = engine.name();
     let input = engine.input();
@@ -284,10 +284,10 @@ fn select_local(
     let model = loading.load(engine)?;
     let preload = model.preload();
     Ok(match stream {
-        Some(stream) => SelectedEngine::new(name, Recognition::stream(stream, model), preload),
+        Some(stream) => SelectedEngine::new(name, Transcription::stream(stream, model), preload),
         // A whole-mode engine reads the finished recording, so its input
         // kind decides whether the pipeline hands it samples or a WAV file.
-        None => SelectedEngine::new(name, Recognition::complete(input, model), preload),
+        None => SelectedEngine::new(name, Transcription::complete(input, model), preload),
     })
 }
 
@@ -305,7 +305,11 @@ struct ExecutionParts {
 impl ExecutionParts {
     /// The one place the concrete pipeline becomes a boxed executor, so the
     /// engine, its mode, and its cadence stay static until here.
-    fn finish<T, M>(self, engine: &'static str, recognition: Recognition<T, M>) -> RuntimeExecutor
+    fn finish<T, M>(
+        self,
+        engine: &'static str,
+        transcription: Transcription<T, M>,
+    ) -> RuntimeExecutor
     where
         T: Recognizer,
         M: Mode,
@@ -315,7 +319,7 @@ impl ExecutionParts {
             engine,
             pipeline: DictationPipeline::new(
                 self.capture,
-                recognition,
+                transcription,
                 (
                     History::new(self.transcripts, engine),
                     Cursor::new(self.delivery),
@@ -465,7 +469,7 @@ impl DictationEngine {
     }
 
     /// Loads the model ahead of use. A stop leaves nothing half loaded.
-    pub(super) fn preload(&self, stop: &CancelToken) -> Result<(), RecognitionError> {
+    pub(super) fn preload(&self, stop: &CancelToken) -> Result<(), TranscriptionError> {
         self.preload
             .as_ref()
             .map_or(Ok(()), |preload| preload(stop))
@@ -546,7 +550,7 @@ pub(super) struct EngineParts {
 impl EngineParts {
     pub(super) fn engine(&self, backend: &SttBackend) -> Result<DictationEngine, DictationError> {
         let selected = select_engine(backend.clone(), ModelLoading::OnFirstUse, &self.home)
-            .map_err(DictationError::Recognition)?;
+            .map_err(DictationError::Transcription)?;
         let parts = ExecutionParts {
             capture: Arc::clone(&self.capture),
             delivery: self.delivery.create(self.delivery_timeout)?,
@@ -555,7 +559,7 @@ impl EngineParts {
             speaker: self.speaker.clone(),
             vocabulary: Arc::clone(&self.vocabulary),
             rewrites: Rewrites::load(&self.dictation, &self.home)
-                .map_err(|error| DictationError::Recognition(error.into()))?,
+                .map_err(|error| DictationError::Transcription(error.into()))?,
         };
         Ok(DictationEngine {
             name: selected.name,
@@ -611,7 +615,7 @@ pub(super) fn build_dictation(
     let capture = PreparedCapture::load(capture, wake, spool_dir, timeouts.recording())?;
     let backend = stt.clone();
     let engine =
-        select_engine(stt, loading, home).map_err(DictationInitializationError::Recognition)?;
+        select_engine(stt, loading, home).map_err(DictationInitializationError::Transcription)?;
     let (capture, wake) = capture
         .open()
         .map_err(DictationInitializationError::Capture)?;
@@ -670,15 +674,15 @@ pub(super) fn transcribe_retry(
 ) -> Result<Transcribed, DictationError> {
     let config = &setup.dictation;
     let rewrites = Rewrites::load(config, &setup.home)
-        .map_err(|error| DictationError::Recognition(error.into()))?;
-    let (recognition, engine) = retry_transcription(&setup.home, target, cancel)?;
+        .map_err(|error| DictationError::Transcription(error.into()))?;
+    let (transcription, engine) = retry_transcription(&setup.home, target, cancel)?;
     let snapshot = setup.vocabulary.snapshot(settings.project.as_ref());
     let (diarizer, segmenter) = if settings.own_voice_only {
         speaker::tracking_models(&setup.speaker)
     } else {
         (None, None)
     };
-    let pipeline = DictationPipeline::new((), recognition, ())
+    let pipeline = DictationPipeline::new((), transcription, ())
         .hearing_speech(speaker::speech_gate())
         .tracking_voices(diarizer, segmenter)
         .rewriting(rewrites);
@@ -694,13 +698,13 @@ pub(super) fn transcribe_retry(
 }
 
 /// A retry decodes the stored recording once, so every engine runs whole.
-type RetryTranscription = Recognition<Box<dyn Recognizer>, Whole>;
+type RetryTranscription = Transcription<Box<dyn Recognizer>, Whole>;
 
 fn retry_transcription(
     home: &Path,
     target: RetryTarget<'_>,
     cancel: &CancelToken,
-) -> Result<(RetryTranscription, &'static str), RecognitionError> {
+) -> Result<(RetryTranscription, &'static str), TranscriptionError> {
     match target {
         RetryTarget::Server { engine } => {
             let mut remote = RemoteRecognizer::open(home)?;
@@ -709,7 +713,7 @@ fn retry_transcription(
             }
             let remote: Box<dyn Recognizer> = Box::new(remote);
             Ok((
-                Recognition::delegated(remote),
+                Transcription::delegated(remote),
                 aria_settings::config::backend::SERVER,
             ))
         }
@@ -717,7 +721,7 @@ fn retry_transcription(
             let name = config.backend_name();
             let engine = EngineConfig::try_from(config)?;
             Ok((
-                Recognition::complete(engine.input(), engine.load(cancel)?),
+                Transcription::complete(engine.input(), engine.load(cancel)?),
                 name,
             ))
         }
@@ -861,7 +865,7 @@ mod tests {
         server.stop().await;
         let missed = dictate().await.unwrap();
         assert!(
-            matches!(missed, Err(DictationError::Recognition(_))),
+            matches!(missed, Err(DictationError::Transcription(_))),
             "{missed:?}"
         );
     }
@@ -967,8 +971,8 @@ mod tests {
         );
         assert!(matches!(
             result,
-            Err(DictationError::Recognition(RecognitionError::Processing(
-                aria_kit::recognition::layer::Error::Failed(error)
+            Err(DictationError::Transcription(TranscriptionError::Processing(
+                aria_kit::transcription::layer::Error::Failed(error)
             ))) if matches!(error.downcast_ref::<LlmCleanupError>(), Some(LlmCleanupError::PromptRead))
         ));
     }

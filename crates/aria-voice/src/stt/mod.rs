@@ -14,17 +14,17 @@ use aria_stt::whisper::WhisperConfig;
 use aria_stt::whisper_candle::WhisperCandleConfig;
 
 pub use aria_kit::backend::ModelError;
-pub use aria_kit::recognition::{
+pub use aria_kit::transcription::{
     AudioInputKind, Cadence, ChunkStream, Emitted, Engine, Hypothesis, Language, LanguageCode,
-    LanguageCodeError, Mode, Operation, Recognition, RecognitionAudio, RecognitionError,
-    Recognizer, Stream, Streaming, StreamingEngine, Transcript, TranscriptSegment,
-    TranscriptUpdate, Whole,
+    LanguageCodeError, Mode, Operation, RecognitionAudio, Recognizer, Stream, Streaming,
+    StreamingEngine, Transcript, TranscriptSegment, TranscriptUpdate, Transcription,
+    TranscriptionError, Whole,
 };
 
 impl TryFrom<SttConfig> for EngineConfig {
-    type Error = RecognitionError;
+    type Error = TranscriptionError;
 
-    fn try_from(config: SttConfig) -> Result<Self, RecognitionError> {
+    fn try_from(config: SttConfig) -> Result<Self, TranscriptionError> {
         match config {
             SttConfig::Whisper { model } => Ok(Self::Whisper(WhisperConfig::new(model))),
             SttConfig::WhisperCandle { model_directory } => Ok(Self::WhisperCandle(
@@ -45,7 +45,7 @@ impl TryFrom<SttConfig> for EngineConfig {
                 Ok(Self::ParakeetMlx(ParakeetMlxConfig { interpreter, model }))
             }
             #[cfg(not(target_os = "macos"))]
-            SttConfig::ParakeetMlx { .. } => Err(RecognitionError::UnsupportedBackend {
+            SttConfig::ParakeetMlx { .. } => Err(TranscriptionError::UnsupportedBackend {
                 backend: aria_settings::config::backend::PARAKEET_MLX,
             }),
         }
@@ -59,7 +59,7 @@ pub(crate) fn streams(config: &SttConfig) -> bool {
 
 /// Resolves the model a backend would load, without reading it or starting a
 /// child.
-pub fn check_model(config: &SttConfig) -> Result<String, RecognitionError> {
+pub fn check_model(config: &SttConfig) -> Result<String, TranscriptionError> {
     let checked = EngineConfig::try_from(config.clone())?.check()?;
     let checked = checked.display();
     Ok(match config {
@@ -193,7 +193,7 @@ mod tests {
 
         assert!(checked.contains("python3"));
         assert!(checked.contains(MODEL));
-        assert!(matches!(unusable, RecognitionError::Load { .. }));
+        assert!(matches!(unusable, TranscriptionError::Load { .. }));
     }
 
     #[test]
@@ -207,7 +207,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            RecognitionError::Model {
+            TranscriptionError::Model {
                 backend: aria_settings::config::backend::WHISPER,
                 source: ModelError::Path(InspectionError::NotRegularFile { .. }),
             }
@@ -226,7 +226,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            RecognitionError::Model {
+            TranscriptionError::Model {
                 source: ModelError::Missing {
                     file: "vocab.txt",
                     ..

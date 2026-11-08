@@ -8,10 +8,10 @@
 //! use aria_stt::{whisper_candle::WhisperCandle, prelude::*};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let recognition = Recognition::complete_samples(WhisperCandle::load("model")?)
+//! let transcription = Transcription::complete_samples(WhisperCandle::load("model")?)
 //!     .with(RemoveHesitations)
 //!     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
-//! let session = Session::microphone(&recognition, &Language::Automatic)?;
+//! let session = Session::microphone(&transcription, &Language::Automatic)?;
 //!
 //! // ... the speaker talks ...
 //!
@@ -35,8 +35,8 @@ use tokenizers::Tokenizer;
 
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::{
-    Hypothesis, Language, RecognitionAudio, RecognitionError, Recognizer, check_cancelled,
+use aria_kit::transcription::{
+    Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError, check_cancelled,
 };
 
 #[cfg(not(target_family = "wasm"))]
@@ -103,7 +103,7 @@ impl WhisperCandle {
         weights: &[u8],
         tokenizer: &[u8],
         config: &[u8],
-    ) -> Result<Self, RecognitionError> {
+    ) -> Result<Self, TranscriptionError> {
         let config: Config = serde_json::from_slice(config).map_err(load_failed)?;
         if config.num_mel_bins != MEL_BANDS {
             return Err(load_failed(EngineError(format!(
@@ -134,7 +134,7 @@ impl Recognizer for WhisperCandle {
         &self,
         language: &Language,
         _cancel: &CancelToken,
-    ) -> Result<(), RecognitionError> {
+    ) -> Result<(), TranscriptionError> {
         decode::Prompt::new(&self.tokenizer, &self.config, language).map(|_prompt| ())
     }
 
@@ -143,7 +143,7 @@ impl Recognizer for WhisperCandle {
         audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, RecognitionError> {
+    ) -> Result<Hypothesis, TranscriptionError> {
         check_cancelled(cancel)?;
         let samples = audio.require_samples(BACKEND)?;
         let prompt = decode::Prompt::new(&self.tokenizer, &self.config, language)?;
@@ -169,16 +169,16 @@ fn decode_mel_filters() -> Vec<f32> {
         .collect()
 }
 
-fn load_failed(source: impl std::error::Error + Send + Sync + 'static) -> RecognitionError {
-    RecognitionError::Load {
+fn load_failed(source: impl std::error::Error + Send + Sync + 'static) -> TranscriptionError {
+    TranscriptionError::Load {
         backend: BACKEND,
         model: "safetensors".to_owned(),
         source: BackendError::engine(source),
     }
 }
 
-fn inference_failed(source: impl std::error::Error + Send + Sync + 'static) -> RecognitionError {
-    RecognitionError::Inference {
+fn inference_failed(source: impl std::error::Error + Send + Sync + 'static) -> TranscriptionError {
+    TranscriptionError::Inference {
         backend: BACKEND,
         source: BackendError::engine(source),
     }

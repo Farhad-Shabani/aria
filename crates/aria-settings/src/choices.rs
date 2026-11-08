@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use aria_kit::recognition::{Language, LanguageCode};
 use aria_kit::synthesis::SpeakingRate;
+use aria_kit::transcription::{Language, LanguageCode};
 
 use super::{ApplicationOverrides, Choices, Chord, Prompts};
 use super::{SettingsError, is_valid_model_id};

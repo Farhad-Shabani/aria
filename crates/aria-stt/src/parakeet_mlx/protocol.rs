@@ -8,7 +8,7 @@ use serde::Deserialize;
 use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{Script, Sidecar, SidecarError};
-use aria_kit::recognition::RecognitionError;
+use aria_kit::transcription::TranscriptionError;
 
 pub(super) const BACKEND: &str = super::NAME;
 
@@ -35,7 +35,7 @@ pub(super) fn start(
     interpreter: &Path,
     model: &str,
     cancel: &CancelToken,
-) -> Result<Sidecar, RecognitionError> {
+) -> Result<Sidecar, TranscriptionError> {
     let mut sidecar = Sidecar::start(&Script {
         name: BACKEND,
         interpreter,
@@ -54,7 +54,7 @@ fn handshake(
     sidecar: &mut Sidecar,
     model: &str,
     cancel: &CancelToken,
-) -> Result<(), RecognitionError> {
+) -> Result<(), TranscriptionError> {
     let phase = Phase::Load { model };
     match sidecar
         .receive(&|| cancel.is_cancelled())
@@ -79,7 +79,7 @@ pub(super) fn recognize(
     audio_path: &str,
     chunk_samples: Option<usize>,
     cancel: &CancelToken,
-) -> Result<String, RecognitionError> {
+) -> Result<String, TranscriptionError> {
     let phase = Phase::Inference;
     let request = Request {
         op: "recognize",
@@ -109,14 +109,14 @@ pub(super) enum Phase<'a> {
 }
 
 impl Phase<'_> {
-    fn failed(&self, source: BackendError) -> RecognitionError {
+    fn failed(&self, source: BackendError) -> TranscriptionError {
         match *self {
-            Self::Load { model } => RecognitionError::Load {
+            Self::Load { model } => TranscriptionError::Load {
                 backend: BACKEND,
                 model: model.to_owned(),
                 source,
             },
-            Self::Inference => RecognitionError::Inference {
+            Self::Inference => TranscriptionError::Inference {
                 backend: BACKEND,
                 source,
             },
@@ -125,9 +125,9 @@ impl Phase<'_> {
 
     /// The transport gave out. Cancellation is its own outcome, never a
     /// failure of the child.
-    pub(super) fn transport(&self, error: SidecarError) -> RecognitionError {
+    pub(super) fn transport(&self, error: SidecarError) -> TranscriptionError {
         match error {
-            SidecarError::Cancelled => RecognitionError::Cancelled,
+            SidecarError::Cancelled => TranscriptionError::Cancelled,
             transport @ (SidecarError::Interpreter(_)
             | SidecarError::Home(_)
             | SidecarError::Spawn(_)
@@ -141,7 +141,7 @@ impl Phase<'_> {
     }
 
     /// The child answered on its own terms, and the answer is no good.
-    fn unusable(&self, detail: impl Into<String>) -> RecognitionError {
+    fn unusable(&self, detail: impl Into<String>) -> TranscriptionError {
         self.failed(BackendError::Unusable(detail.into()))
     }
 }
@@ -150,31 +150,31 @@ impl Phase<'_> {
 /// pipes, or has since exited is not, and the next press starts a new one.
 pub(super) fn still_serving(
     sidecar: &mut Sidecar,
-    outcome: &Result<String, RecognitionError>,
+    outcome: &Result<String, TranscriptionError>,
 ) -> bool {
     match outcome {
         Ok(_)
-        | Err(RecognitionError::Processing(_))
-        | Err(RecognitionError::Inference {
+        | Err(TranscriptionError::Processing(_))
+        | Err(TranscriptionError::Inference {
             source: BackendError::Unusable(_),
             ..
         }) => sidecar.is_running(),
         Err(
-            RecognitionError::Model { .. }
-            | RecognitionError::Load { .. }
-            | RecognitionError::Capture(_)
-            | RecognitionError::Inference { .. }
-            | RecognitionError::UnsupportedLanguage { .. }
-            | RecognitionError::UnsupportedAudioInput { .. }
-            | RecognitionError::UnsupportedAudioPath { .. }
-            | RecognitionError::UnsupportedBackend { .. }
-            | RecognitionError::UnsupportedDevice { .. }
-            | RecognitionError::NoNativeStream
-            | RecognitionError::NoDelegatedOperation
-            | RecognitionError::LoadPanicked
-            | RecognitionError::Cancelled
-            | RecognitionError::InvalidSegment
-            | RecognitionError::NoSpeech,
+            TranscriptionError::Model { .. }
+            | TranscriptionError::Load { .. }
+            | TranscriptionError::Capture(_)
+            | TranscriptionError::Inference { .. }
+            | TranscriptionError::UnsupportedLanguage { .. }
+            | TranscriptionError::UnsupportedAudioInput { .. }
+            | TranscriptionError::UnsupportedAudioPath { .. }
+            | TranscriptionError::UnsupportedBackend { .. }
+            | TranscriptionError::UnsupportedDevice { .. }
+            | TranscriptionError::NoNativeStream
+            | TranscriptionError::NoDelegatedOperation
+            | TranscriptionError::LoadPanicked
+            | TranscriptionError::Cancelled
+            | TranscriptionError::InvalidSegment
+            | TranscriptionError::NoSpeech,
         ) => false,
     }
 }
@@ -332,11 +332,11 @@ mod tests {
     fn giving_up_is_cancellation_in_either_phase() {
         assert!(matches!(
             Phase::Load { model: "m" }.transport(SidecarError::Cancelled),
-            RecognitionError::Cancelled
+            TranscriptionError::Cancelled
         ));
         assert!(matches!(
             Phase::Inference.transport(SidecarError::Cancelled),
-            RecognitionError::Cancelled
+            TranscriptionError::Cancelled
         ));
     }
 
@@ -344,14 +344,14 @@ mod tests {
     fn a_transport_failure_belongs_to_the_phase_that_hit_it() {
         assert!(matches!(
             Phase::Load { model: "m" }.transport(SidecarError::Closed),
-            RecognitionError::Load {
+            TranscriptionError::Load {
                 source: BackendError::Engine(_),
                 ..
             }
         ));
         assert!(matches!(
             Phase::Inference.transport(SidecarError::Closed),
-            RecognitionError::Inference {
+            TranscriptionError::Inference {
                 source: BackendError::Engine(_),
                 ..
             }
@@ -367,7 +367,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            RecognitionError::Load {
+            TranscriptionError::Load {
                 source: BackendError::Unusable(detail),
                 ..
             } if detail.contains("speaks protocol 99")
@@ -383,7 +383,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            RecognitionError::Load {
+            TranscriptionError::Load {
                 source: BackendError::Unusable(detail),
                 ..
             } if detail == "no such model"
@@ -399,7 +399,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            RecognitionError::Load {
+            TranscriptionError::Load {
                 source: BackendError::Unusable(detail),
                 ..
             } if detail.contains("before reporting readiness")
@@ -434,7 +434,7 @@ mod tests {
 
         assert!(matches!(
             &outcome,
-            Err(RecognitionError::Inference {
+            Err(TranscriptionError::Inference {
                 source: BackendError::Unusable(detail),
                 ..
             }) if detail == "boom"
@@ -455,7 +455,7 @@ mod tests {
             token
         });
 
-        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
+        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
         assert!(
             !still_serving(&mut sidecar, &outcome),
             "a cancelled sidecar was killed and must not be reused"
@@ -475,7 +475,7 @@ mod tests {
 
         assert!(matches!(
             outcome,
-            Err(RecognitionError::Inference {
+            Err(TranscriptionError::Inference {
                 source: BackendError::Unusable(detail),
                 ..
             }) if detail == "reported readiness twice"
@@ -495,7 +495,7 @@ mod tests {
 
         assert!(matches!(
             &outcome,
-            Err(RecognitionError::Inference {
+            Err(TranscriptionError::Inference {
                 source: BackendError::Engine(_),
                 ..
             })

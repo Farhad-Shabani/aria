@@ -124,7 +124,7 @@ message HistoryEntry {
   optional string project_directory = 8;
 
   string text = 9;
-  // Whether recognition finished; List may still return a text preview.
+  // Whether transcription finished; List may still return a text preview.
   bool transcription_complete = 10;
   // Set for a SYSTEM_TRANSCRIPTION or CHAT entry. A DICTATION entry has none.
   oneof details {

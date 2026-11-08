@@ -66,10 +66,10 @@ final class HistoryItemTests: XCTestCase {
         XCTAssertFalse(item.canRegenerate)
     }
 
-    func testRecognitionErrorShowsExplanationInsteadOfRawCategory() throws {
+    func testTranscriptionErrorShowsExplanationInsteadOfRawCategory() throws {
         var wire = Self.wire(.dictation)
         wire.status = .transcriptionFailed
-        wire.error.code = .recognitionFailed
+        wire.error.code = .transcriptionFailed
         XCTAssertEqual(
             try HistoryItem(wire).message, "Aria couldn’t finish transcribing this recording.")
         wire.error.code = .UNRECOGNIZED(12345)

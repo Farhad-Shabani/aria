@@ -359,7 +359,7 @@ mod tests {
     use aria_settings::Settings;
     use aria_voice::dictation::{DictationRequest, StopMode, TranscriptRoute};
     use aria_voice::history::HistorySource;
-    use aria_voice::stt::RecognitionError;
+    use aria_voice::stt::TranscriptionError;
 
     fn store(directory: &Path) -> Arc<HistoryStore> {
         Arc::new(HistoryStore::open(&directory.join(".aria/history")))
@@ -458,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn recognition_failure_keeps_partial_text_and_owns_a_copy_of_finalized_audio() {
+    fn transcription_failure_keeps_partial_text_and_owns_a_copy_of_finalized_audio() {
         let directory = tempfile::tempdir().unwrap();
         let (saved, mut sink, mut recording) = sink(directory.path(), "test", 16_000);
         let original = recording
@@ -475,8 +475,8 @@ mod tests {
         sink.segment(Utterance::anonymous("partial")).unwrap();
         sink.recording_finished(
             &mut recording,
-            Err(&DictationError::Recognition(
-                RecognitionError::NoNativeStream,
+            Err(&DictationError::Transcription(
+                TranscriptionError::NoNativeStream,
             )),
         );
         sink.dictation_finished();

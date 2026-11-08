@@ -1,10 +1,10 @@
-{{#title Recognize speech in WAV files with Whisper in Rust - Using Aria Libraries}}
+{{#title Transcribe WAV files with Whisper in Rust - Using Aria Libraries}}
 
-# Speech recognition
+# File transcription
 
 Start by turning a short WAV recording into text with Whisper. Once that
 works, you can choose a language or correct project terms in the result.
-Add the [`aria-stt` dependency](./workflow.md#speech-recognition) and check your
+Add the [`aria-stt` dependency](./workflow.md#transcription) and check your
 build tools before continuing.
 
 ## Model and audio
@@ -45,8 +45,8 @@ use aria_stt::{prelude::*, whisper::Whisper};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Whisper::load("/absolute/path/ggml-base.en.bin")?;
-    let recognition = Recognition::streaming(engine);
-    let transcript = recognition.recognize_file("speech.wav")?;
+    let transcription = Transcription::streaming(engine);
+    let transcript = transcription.transcribe_file("speech.wav")?;
     println!("{}", transcript.as_str());
     Ok(())
 }
@@ -60,33 +60,33 @@ cargo run \
 ```
 
 The program prints the recognized sentence. `Whisper::load` loads the model;
-`Recognition` uses it to process the recording. Reuse `recognition` for
+`Transcription` uses it to process the recording. Reuse `transcription` for
 later files to avoid loading the model for each one.
 
-`recognize_file` uses automatic language selection; an English-only model
-still recognizes English only. `Recognition::streaming` also works with a
+`transcribe_file` uses automatic language selection; an English-only model
+still recognizes English only. `Transcription::streaming` also works with a
 completed file and returns the complete result here.
 
 If model loading fails, check that you downloaded a GGML file and supplied an
 absolute path. Model files must be owned by your user or root and must not be
 writable by group or others (for example, `chmod 644`). If input loading fails, check the WAV format above.
-Silence or empty recognized output is reported as `RecognitionError::NoSpeech`.
+Silence or empty recognized output is reported as `TranscriptionError::NoSpeech`.
 
 ## Choose a language
 
 If you know the recording's language, you can select it explicitly. Use a
 `RecordingReader` to read the WAV and pass the language to
-`recognize`. Replace `src/main.rs` with:
+`transcribe`. Replace `src/main.rs` with:
 
 ```rust,no_run
 use aria_stt::{prelude::*, whisper::Whisper};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Whisper::load("/absolute/path/ggml-base.en.bin")?;
-    let recognition = Recognition::streaming(engine);
+    let transcription = Transcription::streaming(engine);
     let mut audio = RecordingReader::from_wav_file("speech.wav")?;
     let language: Language = "en".parse()?;
-    let transcript = recognition.recognize(&mut audio, &language)?;
+    let transcript = transcription.transcribe(&mut audio, &language)?;
     println!("{}", transcript.as_str());
     Ok(())
 }
@@ -98,16 +98,16 @@ The selected language must be supported by the model.
 
 Recognition may spell a project name differently from how you write it.
 Text layers let you correct those spellings after recognition.
-Keep the model-loading line and replace `let recognition = ...` with:
+Keep the model-loading line and replace `let transcription = ...` with:
 
 ```rust,no_run
 # use aria_stt::{prelude::*, whisper::Whisper};
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 # let engine = Whisper::load("/absolute/path/ggml-base.en.bin")?;
-let recognition = Recognition::streaming(engine)
+let transcription = Transcription::streaming(engine)
     .with(RemoveHesitations)
     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
-# let _ = recognition;
+# let _ = transcription;
 # Ok(())
 # }
 ```
@@ -119,7 +119,7 @@ English fillers, `RemoveRepeats` drops a word said twice in a row, and
 “cargo dot toml” into `Cargo.toml`. It corrects text after recognition; it does
 not train or prompt the model, and it is not general fuzzy spelling correction.
 
-With live recognition, layers process each finalized segment separately.
+With live transcription, layers process each finalized segment separately.
 A phrase split across segments cannot be matched as one vocabulary term.
 
 ### Test your spellings
@@ -176,7 +176,7 @@ assert_eq!(caret.insert("today?"), " today?");
 - Split the field at the cursor: `Caret::between(&field[..cursor], &field[cursor..])`.
 - If you can't read the field, use `Caret::default()`. Text then goes in
   unchanged.
-- For live recognition, keep one caret and call `insert` for each segment.
+- For live transcription, keep one caret and call `insert` for each segment.
 
-To use the same recognition with microphone input, continue to
-[Microphone recognition](./recording.md).
+To use the same transcription with microphone input, continue to
+[Microphone transcription](./recording.md).

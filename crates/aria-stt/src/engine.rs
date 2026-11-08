@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::{
-    AudioInputKind, Engine, RecognitionError, Recognizer, Stream, StreamingEngine,
+use aria_kit::transcription::{
+    AudioInputKind, Engine, Recognizer, Stream, StreamingEngine, TranscriptionError,
 };
 
 /// One engine's configuration, for a caller that picks the engine at run time.
@@ -13,18 +13,18 @@ use aria_kit::recognition::{
 /// the build can turn on more features, so a match needs a wildcard arm.
 ///
 /// ```
-/// use aria_kit::recognition::{Recognition, Recognizer, Streaming};
-/// use aria_stt::{CancelToken, EngineConfig, RecognitionError};
+/// use aria_kit::transcription::{Transcription, Recognizer, Streaming};
+/// use aria_stt::{CancelToken, EngineConfig, TranscriptionError};
 ///
 /// fn live(
 ///     config: EngineConfig,
-/// ) -> Result<Option<Recognition<Box<dyn Recognizer>, Streaming>>, RecognitionError> {
+/// ) -> Result<Option<Transcription<Box<dyn Recognizer>, Streaming>>, TranscriptionError> {
 ///     let Some(stream) = config.stream() else {
 ///         return Ok(None);
 ///     };
 ///     config.check()?;
 ///     let recognizer = config.load(&CancelToken::never())?;
-///     Ok(Some(Recognition::stream(stream, recognizer)))
+///     Ok(Some(Transcription::stream(stream, recognizer)))
 /// }
 /// ```
 #[derive(Clone)]
@@ -101,7 +101,7 @@ impl EngineConfig {
 
     /// Resolves what [`load`](Self::load) would read, without reading it or
     /// starting a child.
-    pub fn check(&self) -> Result<PathBuf, RecognitionError> {
+    pub fn check(&self) -> Result<PathBuf, TranscriptionError> {
         match self {
             #[cfg(feature = "moonshine")]
             Self::Moonshine(config) => crate::moonshine::Moonshine::check_from(config),
@@ -118,7 +118,7 @@ impl EngineConfig {
         }
     }
 
-    pub fn load(self, cancel: &CancelToken) -> Result<Box<dyn Recognizer>, RecognitionError> {
+    pub fn load(self, cancel: &CancelToken) -> Result<Box<dyn Recognizer>, TranscriptionError> {
         fn boxed(engine: impl Recognizer + 'static) -> Box<dyn Recognizer> {
             Box::new(engine)
         }
@@ -179,10 +179,10 @@ mod tests {
         ]
     }
 
-    fn names_engine(error: &RecognitionError, name: &str) -> bool {
+    fn names_engine(error: &TranscriptionError, name: &str) -> bool {
         matches!(
             error,
-            RecognitionError::Model { backend, .. } | RecognitionError::Load { backend, .. }
+            TranscriptionError::Model { backend, .. } | TranscriptionError::Load { backend, .. }
                 if *backend == name
         )
     }

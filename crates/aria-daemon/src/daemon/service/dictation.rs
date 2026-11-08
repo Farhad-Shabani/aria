@@ -171,7 +171,7 @@ mod tests {
             })
             .expect_err("a missing model must fail the press");
 
-        assert_eq!(rpc_code(&error), RpcErrorCode::RecognitionFailed);
+        assert_eq!(rpc_code(&error), RpcErrorCode::TranscriptionFailed);
         assert!(
             matches!(stages.first(), Some(DictationStage::Recording { .. })),
             "{stages:?}"

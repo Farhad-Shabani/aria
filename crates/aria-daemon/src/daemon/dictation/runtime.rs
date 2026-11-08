@@ -465,7 +465,7 @@ impl DictationRuntime {
                 .map_err(transcription)?;
             if names_an_engine(requested) && transcribed.engine != requested {
                 return Err(HistoryError::transcription(
-                    RpcErrorCode::RecognitionFailed,
+                    RpcErrorCode::TranscriptionFailed,
                     EngineMismatch {
                         requested: requested.to_owned(),
                         ran: transcribed.engine,
@@ -474,10 +474,9 @@ impl DictationRuntime {
             }
             return Ok(transcribed);
         }
-        let setup = self
-            .retry
-            .get()
-            .map_err(|error| HistoryError::transcription(RpcErrorCode::RecognitionFailed, error))?;
+        let setup = self.retry.get().map_err(|error| {
+            HistoryError::transcription(RpcErrorCode::TranscriptionFailed, error)
+        })?;
         // A swap may have changed the engine since the retry setup was read.
         let backend = running.map_or_else(
             || setup.dictation.stt.clone(),
@@ -564,7 +563,7 @@ fn retry_target<'a>(
         (SttBackend::Local(local), Some(engine)) => local
             .for_backend(engine, home)
             .map(RetryTarget::Local)
-            .map_err(|error| HistoryError::transcription(RpcErrorCode::RecognitionFailed, error)),
+            .map_err(|error| HistoryError::transcription(RpcErrorCode::TranscriptionFailed, error)),
     }
 }
 
@@ -1210,7 +1209,7 @@ mod history_tests {
         assert_eq!(
             unchanged.error,
             Some(aria_settings::rpc::RpcFailure::new(
-                RpcErrorCode::RecognitionFailed,
+                RpcErrorCode::TranscriptionFailed,
                 "history transcription failed"
             ))
         );

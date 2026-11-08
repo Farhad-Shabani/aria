@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 
 use crate::cancel::CancelToken;
 
-use super::{RecognitionError, TranscriptUpdate, check_cancelled};
+use super::{TranscriptUpdate, TranscriptionError, check_cancelled};
 
 mod backtrack;
 pub use backtrack::Backtrack;
@@ -21,12 +21,12 @@ const MAX_TEXT_BYTES: usize = 64 * 1024;
 pub enum Error {
     #[error("processed transcript exceeds 64 KiB")]
     TooLarge,
-    #[error("a recognition layer failed")]
+    #[error("a transcription layer failed")]
     Failed(#[source] Cause),
 }
 
 pub trait Layer: Send + Sync {
-    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), RecognitionError>;
+    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError>;
 
     fn enabled(&self) -> bool {
         true
@@ -50,7 +50,7 @@ impl<L: Layer, I: Layer> Layered<L, I> {
 }
 
 impl<L: Layer, I: Layer> Layer for Layered<L, I> {
-    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), RecognitionError> {
+    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
         apply(&self.inner, text, cancel)?;
         apply(&self.layer, text, cancel)
     }
@@ -66,7 +66,7 @@ impl<L: Layer, I: Layer> Layer for Layered<L, I> {
 }
 
 impl Layer for () {
-    fn apply(&self, _text: &mut String, _cancel: &CancelToken) -> Result<(), RecognitionError> {
+    fn apply(&self, _text: &mut String, _cancel: &CancelToken) -> Result<(), TranscriptionError> {
         Ok(())
     }
 
@@ -76,7 +76,7 @@ impl Layer for () {
 }
 
 impl<L: Layer> Layer for Option<L> {
-    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), RecognitionError> {
+    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
         if let Some(layer) = self {
             apply(layer, text, cancel)?;
         }
@@ -95,7 +95,7 @@ impl<L: Layer> Layer for Option<L> {
 }
 
 impl<L: Layer> Layer for &L {
-    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), RecognitionError> {
+    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
         (**self).apply(text, cancel)
     }
 
@@ -109,7 +109,7 @@ impl<L: Layer> Layer for &L {
 }
 
 impl Layer for Vocabulary {
-    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), RecognitionError> {
+    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
         if let Some(corrected) = self.correct_checked(text, &|bytes| {
             check_cancelled(cancel)?;
             check_size(bytes)
@@ -124,7 +124,7 @@ fn apply<L: Layer>(
     layer: &L,
     text: &mut String,
     cancel: &CancelToken,
-) -> Result<(), RecognitionError> {
+) -> Result<(), TranscriptionError> {
     check_cancelled(cancel)?;
     if !layer.enabled() {
         return Ok(());
@@ -135,9 +135,9 @@ fn apply<L: Layer>(
     check_size(text.len())
 }
 
-fn check_size(bytes: usize) -> Result<(), RecognitionError> {
+fn check_size(bytes: usize) -> Result<(), TranscriptionError> {
     if bytes > MAX_TEXT_BYTES {
-        return Err(RecognitionError::Processing(Error::TooLarge));
+        return Err(TranscriptionError::Processing(Error::TooLarge));
     }
     Ok(())
 }
@@ -156,7 +156,7 @@ impl Output {
         mut update: TranscriptUpdate,
         layers: &L,
         cancel: &CancelToken,
-    ) -> Result<(), RecognitionError> {
+    ) -> Result<(), TranscriptionError> {
         if let TranscriptUpdate::Finalized(segment) = &mut update {
             // Matching stays within one segment. A phrase split across
             // segments would need bounded holdback.

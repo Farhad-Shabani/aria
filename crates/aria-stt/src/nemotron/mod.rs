@@ -10,10 +10,10 @@
 //! use aria_stt::{nemotron::Nemotron, prelude::*};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let recognition = Recognition::streaming(Nemotron::load("model")?)
+//! let transcription = Transcription::streaming(Nemotron::load("model")?)
 //!     .with(RemoveHesitations)
 //!     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
-//! let mut session = Session::microphone(&recognition, &Language::Automatic)?;
+//! let mut session = Session::microphone(&transcription, &Language::Automatic)?;
 //!
 //! // Words arrive as you speak and are never revised.
 //! while let Some(words) = session.next_finalized()? {
@@ -25,7 +25,7 @@
 //! # }
 //! ```
 //!
-//! For audio you already hold, [`crate::Recognition::recognize_file`] decodes a
+//! For audio you already hold, [`crate::Transcription::transcribe_file`] decodes a
 //! WAV in one call through the same chunked path.
 
 use std::path::PathBuf;
@@ -34,9 +34,9 @@ use parakeet_rs::{ExecutionConfig, NemotronHandle, TokenInfo};
 
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::{
+use aria_kit::transcription::{
     AudioInputKind, ChunkStream, Emitted, Engine, Hypothesis, Language, RecognitionAudio,
-    RecognitionError, Recognizer, Stream, StreamingEngine, TimedWord, check_cancelled,
+    Recognizer, Stream, StreamingEngine, TimedWord, TranscriptionError, check_cancelled,
     english_only, validate_model_directory, word_timings,
 };
 
@@ -106,7 +106,7 @@ impl NemotronConfig {
 }
 
 impl Nemotron {
-    pub fn load(directory: impl Into<PathBuf>) -> Result<Self, RecognitionError> {
+    pub fn load(directory: impl Into<PathBuf>) -> Result<Self, TranscriptionError> {
         Self::load_from(NemotronConfig::new(directory), &CancelToken::never())
     }
 
@@ -125,7 +125,7 @@ impl Engine for Nemotron {
 
     type Config = NemotronConfig;
 
-    fn check_from(config: &NemotronConfig) -> Result<PathBuf, RecognitionError> {
+    fn check_from(config: &NemotronConfig) -> Result<PathBuf, TranscriptionError> {
         validate_model_directory(
             config.model_directory.clone(),
             BACKEND,
@@ -133,10 +133,10 @@ impl Engine for Nemotron {
         )
     }
 
-    fn load_from(config: NemotronConfig, cancel: &CancelToken) -> Result<Self, RecognitionError> {
+    fn load_from(config: NemotronConfig, cancel: &CancelToken) -> Result<Self, TranscriptionError> {
         check_cancelled(cancel)?;
         let directory = Self::check_from(&config)?;
-        let load_error = |source: BackendError| RecognitionError::Load {
+        let load_error = |source: BackendError| TranscriptionError::Load {
             backend: BACKEND,
             model: directory.display().to_string(),
             source,
@@ -163,7 +163,7 @@ impl Recognizer for Nemotron {
         &self,
         language: &Language,
         _cancel: &CancelToken,
-    ) -> Result<(), RecognitionError> {
+    ) -> Result<(), TranscriptionError> {
         english_only(BACKEND, language)
     }
 
@@ -174,7 +174,7 @@ impl Recognizer for Nemotron {
         audio: RecognitionAudio<'_>,
         _language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, RecognitionError> {
+    ) -> Result<Hypothesis, TranscriptionError> {
         check_cancelled(cancel)?;
         let samples = audio.require_samples(BACKEND)?;
         let mut stream = self.stream();
@@ -195,7 +195,7 @@ impl Recognizer for Nemotron {
         &self,
         _language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Option<Box<dyn ChunkStream>>, RecognitionError> {
+    ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
         check_cancelled(cancel)?;
         Ok(Some(Box::new(self.stream())))
     }
@@ -217,10 +217,10 @@ struct NemotronStream {
 }
 
 impl NemotronStream {
-    fn feed_tokens(&mut self, chunk: &[f32]) -> Result<Vec<TokenInfo>, RecognitionError> {
+    fn feed_tokens(&mut self, chunk: &[f32]) -> Result<Vec<TokenInfo>, TranscriptionError> {
         self.inner
             .transcribe_chunk_with_tokens(chunk)
-            .map_err(|source| RecognitionError::Inference {
+            .map_err(|source| TranscriptionError::Inference {
                 backend: BACKEND,
                 source: BackendError::engine(source),
             })
@@ -232,7 +232,7 @@ impl ChunkStream for NemotronStream {
         CHUNK_SAMPLES
     }
 
-    fn feed(&mut self, chunk: &[f32]) -> Result<Emitted, RecognitionError> {
+    fn feed(&mut self, chunk: &[f32]) -> Result<Emitted, TranscriptionError> {
         let tokens = self.feed_tokens(chunk)?;
         Ok(Emitted {
             words: hypothesis(pieces(&tokens)),
@@ -318,7 +318,7 @@ mod tests {
 
         let outcome = Nemotron::load_from(NemotronConfig::new("/nonexistent/model"), &cancel);
 
-        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
+        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
     }
 
     #[test]
@@ -330,7 +330,7 @@ mod tests {
 
         assert!(matches!(
             outcome,
-            Err(RecognitionError::Model {
+            Err(TranscriptionError::Model {
                 source: ModelError::Missing {
                     file: "decoder_joint.onnx",
                     ..

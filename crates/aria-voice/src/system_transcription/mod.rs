@@ -17,7 +17,7 @@ pub use tap::SystemAudioCapture;
 use aria_primitives::Cause;
 use std::path::PathBuf;
 
-use crate::stt::RecognitionError;
+use crate::stt::TranscriptionError;
 use aria_settings::rpc::RpcErrorCode;
 
 pub struct SystemTranscriptionStarted {
@@ -61,7 +61,7 @@ pub enum SystemTranscriptionError {
     },
 
     #[error("transcription failed")]
-    Transcription(#[source] RecognitionError),
+    Transcription(#[source] TranscriptionError),
 
     #[error("failed to write the transcript file")]
     Transcript(#[source] std::io::Error),
@@ -77,7 +77,7 @@ impl From<&SystemTranscriptionError> for RpcErrorCode {
             SystemTranscriptionError::Spawn(_) | SystemTranscriptionError::CaptureFailed { .. } => {
                 Self::SystemTranscriptionCaptureFailed
             }
-            SystemTranscriptionError::Transcription(_) => Self::RecognitionFailed,
+            SystemTranscriptionError::Transcription(_) => Self::TranscriptionFailed,
             SystemTranscriptionError::Transcript(_) => Self::Internal,
         }
     }

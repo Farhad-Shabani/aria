@@ -1,6 +1,6 @@
 //! Who spoke when, read from the audio rather than from the transcript.
 //!
-//! Per-segment labels depend on recognition boundaries, which can contain
+//! Per-segment labels depend on transcription boundaries, which can contain
 //! too little speech or several voices. A voice track instead analyzes audio
 //! independently and assigns labels by each paragraph's audio span.
 

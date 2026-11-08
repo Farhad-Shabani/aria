@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use aria_bench::stt::{reference_matches, word_errors, words};
 use aria_kit::audio::{CANONICAL_SAMPLE_RATE, canonical_samples, read_wav};
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::{Hypothesis, Language, RecognitionAudio, RecognitionError, Recognizer};
+use aria_kit::transcription::{
+    Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError,
+};
 use aria_stt::parakeet::{Device, Parakeet};
 use serde::Deserialize;
 use serde_json::json;
@@ -123,7 +125,7 @@ struct Policy {
 }
 
 struct CachedDecode {
-    hypothesis: Result<Hypothesis, RecognitionError>,
+    hypothesis: Result<Hypothesis, TranscriptionError>,
     decode_ms: f64,
 }
 
@@ -326,19 +328,23 @@ fn main() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aria_kit::recognition::{RecognitionError, TimedWord};
+    use aria_kit::transcription::{TimedWord, TranscriptionError};
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
     struct Decode {
         samples: Range<usize>,
-        result: Result<Hypothesis, RecognitionError>,
+        result: Result<Hypothesis, TranscriptionError>,
     }
 
     struct Scripted(Mutex<VecDeque<Decode>>);
 
     impl Recognizer for Scripted {
-        fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
+        fn validate_language(
+            &self,
+            _: &Language,
+            _: &CancelToken,
+        ) -> Result<(), TranscriptionError> {
             Ok(())
         }
 
@@ -347,7 +353,7 @@ mod tests {
             audio: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
-        ) -> Result<Hypothesis, RecognitionError> {
+        ) -> Result<Hypothesis, TranscriptionError> {
             let decode = self.0.lock().unwrap().pop_front().unwrap();
             let RecognitionAudio::Samples(samples) = audio else {
                 panic!("corrections decode sample slices");
@@ -459,7 +465,7 @@ mod tests {
             },
             Decode {
                 samples: 16000..48000,
-                result: Err(RecognitionError::Cancelled),
+                result: Err(TranscriptionError::Cancelled),
             },
             Decode {
                 samples: 32000..64000,

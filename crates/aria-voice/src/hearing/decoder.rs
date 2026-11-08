@@ -5,14 +5,14 @@ use std::sync::Arc;
 use std::thread::{Scope, ScopedJoinHandle};
 
 use aria_kit::audio::RecordingReader;
-use aria_kit::recognition::next_heard_update;
+use aria_kit::transcription::next_heard_update;
 
 use super::board::{Board, Decoded};
-use crate::stt::{Operation, RecognitionError, Recognizer, Transcript};
+use crate::stt::{Operation, Recognizer, Transcript, TranscriptionError};
 
 pub(super) struct DecodeThread<'scope> {
     board: Arc<Board>,
-    worker: Option<ScopedJoinHandle<'scope, Result<Transcript, RecognitionError>>>,
+    worker: Option<ScopedJoinHandle<'scope, Result<Transcript, TranscriptionError>>>,
 }
 
 impl<'scope> DecodeThread<'scope> {
@@ -41,7 +41,7 @@ impl<'scope> DecodeThread<'scope> {
     }
 
     /// Joins the decoder. `None` when it panicked.
-    pub(super) fn finish(mut self) -> Option<Result<Transcript, RecognitionError>> {
+    pub(super) fn finish(mut self) -> Option<Result<Transcript, TranscriptionError>> {
         let worker = self.worker.take().expect("the decoder is joined only once");
         worker.join().ok()
     }
@@ -73,7 +73,7 @@ fn decode<T: Recognizer>(
     recording: &mut RecordingReader,
     previews: bool,
     board: &Board,
-) -> Result<Transcript, RecognitionError> {
+) -> Result<Transcript, TranscriptionError> {
     while let Some(update) = next_heard_update(operation, recording, previews)? {
         let decoded = Decoded {
             update,
@@ -82,7 +82,7 @@ fn decode<T: Recognizer>(
         };
         if board.push_decoded(decoded).is_err() {
             // Nobody will read another update.
-            return Err(RecognitionError::Cancelled);
+            return Err(TranscriptionError::Cancelled);
         }
     }
     operation.finish(recording)

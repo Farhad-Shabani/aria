@@ -65,5 +65,5 @@ name              = "parakeet_mlx_sidecar"
 required-features = [ "parakeet-mlx" ]
 
 [[example]]
-name              = "recognize"
+name              = "transcribe"
 required-features = [ "whisper" ]

@@ -1,8 +1,8 @@
 use super::{DB_FILE, LEXICON_FILE};
 use aria_kit::cancel::CancelToken;
 #[cfg(test)]
-use aria_kit::recognition::layer::vocabulary::Vocabulary;
-use aria_kit::recognition::layer::vocabulary::{MatchError, PersonalRules};
+use aria_kit::transcription::layer::vocabulary::Vocabulary;
+use aria_kit::transcription::layer::vocabulary::{MatchError, PersonalRules};
 use rusqlite::{Connection, OpenFlags};
 use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;

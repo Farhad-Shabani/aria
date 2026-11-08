@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use aria_kit::cancel::{CancelToken, Deadline};
 
 use crate::microphone::{Admitted, Claim, Gate};
-use crate::stt::{Language, RecognitionError, Transcript};
+use crate::stt::{Language, Transcript, TranscriptionError};
 use aria_kit::audio::{CaptureError, RecordingReader};
 use aria_primitives::error_chain;
 use aria_settings::rpc::RpcErrorCode;
@@ -189,8 +189,8 @@ pub enum DictationError {
     #[error("speaker processing failed: {0}")]
     Speaker(#[source] crate::hearing::TrackingError),
 
-    #[error("recognition failed: {0}")]
-    Recognition(#[source] crate::stt::RecognitionError),
+    #[error("transcription failed: {0}")]
+    Transcription(#[source] crate::stt::TranscriptionError),
 
     #[error("text delivery failed: {0}")]
     Delivery(#[source] aria_platform::delivery::DeliveryError),
@@ -213,13 +213,13 @@ impl From<aria_platform::delivery::DeliveryError> for DictationError {
 
 /// What a fault below means for the press, before the press's own cancel
 /// and deadline are taken into account.
-impl From<RecognitionError> for DictationError {
-    fn from(error: RecognitionError) -> Self {
+impl From<TranscriptionError> for DictationError {
+    fn from(error: TranscriptionError) -> Self {
         match error {
-            RecognitionError::Cancelled => Self::Cancelled,
-            RecognitionError::NoSpeech => Self::NoSpeech,
-            RecognitionError::Capture(error) => error.into(),
-            error => Self::Recognition(error),
+            TranscriptionError::Cancelled => Self::Cancelled,
+            TranscriptionError::NoSpeech => Self::NoSpeech,
+            TranscriptionError::Capture(error) => error.into(),
+            error => Self::Transcription(error),
         }
     }
 }
@@ -236,7 +236,7 @@ impl From<crate::hearing::TrackingError> for DictationError {
 impl From<crate::hearing::HearingError> for DictationError {
     fn from(error: crate::hearing::HearingError) -> Self {
         match error {
-            crate::hearing::HearingError::Recognition(error) => error.into(),
+            crate::hearing::HearingError::Transcription(error) => error.into(),
             crate::hearing::HearingError::Tracking(error) => error.into(),
         }
     }
@@ -267,7 +267,9 @@ impl From<&DictationError> for RpcErrorCode {
             DictationError::ApplicationExcluded => Self::ApplicationExcluded,
             DictationError::Capture(_) => Self::CaptureFailed,
             DictationError::NoSpeech => Self::NoSpeech,
-            DictationError::Recognition(_) | DictationError::Speaker(_) => Self::RecognitionFailed,
+            DictationError::Transcription(_) | DictationError::Speaker(_) => {
+                Self::TranscriptionFailed
+            }
             DictationError::Delivery(_) => Self::DeliveryFailed,
         }
     }
@@ -856,30 +858,30 @@ mod tests {
     }
 
     #[test]
-    fn recognition_errors_keep_their_meaning() {
+    fn transcription_errors_keep_their_meaning() {
         let heard_nothing = CaptureError::NoSpeech(Duration::from_secs(1));
 
         assert!(matches!(
-            DictationError::from(RecognitionError::NoSpeech),
+            DictationError::from(TranscriptionError::NoSpeech),
             DictationError::NoSpeech
         ));
         assert!(matches!(
-            DictationError::from(RecognitionError::Cancelled),
+            DictationError::from(TranscriptionError::Cancelled),
             DictationError::Cancelled
         ));
         assert!(matches!(
-            DictationError::from(RecognitionError::Capture(heard_nothing)),
+            DictationError::from(TranscriptionError::Capture(heard_nothing)),
             DictationError::NoSpeech
         ));
         assert!(matches!(
-            DictationError::from(RecognitionError::NoNativeStream),
-            DictationError::Recognition(RecognitionError::NoNativeStream)
+            DictationError::from(TranscriptionError::NoNativeStream),
+            DictationError::Transcription(TranscriptionError::NoNativeStream)
         ));
         assert_eq!(
             RpcErrorCode::from(&DictationError::Speaker(
                 crate::hearing::TrackingError::Failed
             )),
-            RpcErrorCode::RecognitionFailed
+            RpcErrorCode::TranscriptionFailed
         );
     }
 

@@ -1,8 +1,8 @@
 //! Reading a recording while capture is still writing it.
 //!
-//! Capture appends samples from its own thread; whoever recognizes takes them
+//! Capture appends samples from its own thread; whoever transcribes takes them
 //! as they arrive. A backend that needs the whole recording asks for it and
-//! waits. Streaming recognition asks for one chunk at a time and starts
+//! waits. Streaming transcription asks for one chunk at a time and starts
 //! before capture ends.
 
 use std::ops::Range;

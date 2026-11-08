@@ -8,10 +8,10 @@
 //! use aria_stt::{moonshine::Moonshine, prelude::*};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let recognition = Recognition::streaming(Moonshine::load("model")?)
+//! let transcription = Transcription::streaming(Moonshine::load("model")?)
 //!     .with(RemoveHesitations)
 //!     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
-//! let mut session = Session::microphone(&recognition, &Language::Automatic)?;
+//! let mut session = Session::microphone(&transcription, &Language::Automatic)?;
 //!
 //! // Committed words arrive as you speak and are never revised.
 //! while let Some(words) = session.next_finalized()? {
@@ -23,7 +23,7 @@
 //! # }
 //! ```
 //!
-//! For audio you already hold, [`crate::Recognition::recognize_file`] decodes a
+//! For audio you already hold, [`crate::Transcription::transcribe_file`] decodes a
 //! WAV in one call.
 
 mod graphs;
@@ -34,9 +34,9 @@ use std::sync::Mutex;
 
 use aria_kit::backend::{ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::{
-    AudioInputKind, Cadence, Engine, Hypothesis, Language, RecognitionAudio, RecognitionError,
-    Recognizer, Stream, StreamingEngine, check_cancelled, english_only, validate_model_directory,
+use aria_kit::transcription::{
+    AudioInputKind, Cadence, Engine, Hypothesis, Language, RecognitionAudio, Recognizer, Stream,
+    StreamingEngine, TranscriptionError, check_cancelled, english_only, validate_model_directory,
 };
 
 use graphs::{Graphs, MIN_SAMPLES};
@@ -94,7 +94,7 @@ impl MoonshineConfig {
 }
 
 impl Moonshine {
-    pub fn load(directory: impl Into<PathBuf>) -> Result<Self, RecognitionError> {
+    pub fn load(directory: impl Into<PathBuf>) -> Result<Self, TranscriptionError> {
         Self::load_from(MoonshineConfig::new(directory), &CancelToken::never())
     }
 }
@@ -106,7 +106,7 @@ impl Engine for Moonshine {
 
     type Config = MoonshineConfig;
 
-    fn check_from(config: &MoonshineConfig) -> Result<PathBuf, RecognitionError> {
+    fn check_from(config: &MoonshineConfig) -> Result<PathBuf, TranscriptionError> {
         validate_model_directory(
             config.model_directory.clone(),
             BACKEND,
@@ -118,14 +118,18 @@ impl Engine for Moonshine {
         )
     }
 
-    fn load_from(config: MoonshineConfig, cancel: &CancelToken) -> Result<Self, RecognitionError> {
+    fn load_from(
+        config: MoonshineConfig,
+        cancel: &CancelToken,
+    ) -> Result<Self, TranscriptionError> {
         check_cancelled(cancel)?;
         let directory = Self::check_from(&config)?;
-        let vocabulary =
-            vocabulary::Vocabulary::load(&directory).map_err(|source| RecognitionError::Model {
+        let vocabulary = vocabulary::Vocabulary::load(&directory).map_err(|source| {
+            TranscriptionError::Model {
                 backend: BACKEND,
                 source,
-            })?;
+            }
+        })?;
         let graphs = Graphs::load(&directory)?;
         check_cancelled(cancel)?;
         Ok(Self {
@@ -144,7 +148,7 @@ impl Recognizer for Moonshine {
         &self,
         language: &Language,
         _cancel: &CancelToken,
-    ) -> Result<(), RecognitionError> {
+    ) -> Result<(), TranscriptionError> {
         english_only(BACKEND, language)
     }
 
@@ -153,7 +157,7 @@ impl Recognizer for Moonshine {
         audio: RecognitionAudio<'_>,
         _language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, RecognitionError> {
+    ) -> Result<Hypothesis, TranscriptionError> {
         check_cancelled(cancel)?;
         let samples = audio.require_samples(BACKEND)?;
         let mut graphs = self
@@ -170,7 +174,7 @@ fn decode_window(
     vocabulary: &vocabulary::Vocabulary,
     window: &[f32],
     cancel: &CancelToken,
-) -> Result<String, RecognitionError> {
+) -> Result<String, TranscriptionError> {
     // Too brief to fill the encoder, so there is nothing to find: heard as
     // silence rather than run through the model.
     if window.len() < MIN_SAMPLES {
@@ -191,6 +195,6 @@ mod tests {
 
         let outcome = Moonshine::load_from(MoonshineConfig::new("/nonexistent/model"), &cancel);
 
-        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
+        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
     }
 }

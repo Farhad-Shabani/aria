@@ -300,7 +300,7 @@ fn guard(
     facts: Facts,
 ) -> Result<(), DeliveryError> {
     // Judged again rather than trusted from `prepare`: a whole recording and
-    // recognition sit in between, and the user is free to switch windows,
+    // transcription sit in between, and the user is free to switch windows,
     // click into a password field, or withdraw the grant during it. Focus is
     // judged before secure input, which is system-wide: a password field in
     // another app means the user left, not that this field refuses.

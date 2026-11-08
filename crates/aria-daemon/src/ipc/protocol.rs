@@ -183,7 +183,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         }
         RpcErrorCode::Internal
         | RpcErrorCode::CaptureFailed
-        | RpcErrorCode::RecognitionFailed
+        | RpcErrorCode::TranscriptionFailed
         | RpcErrorCode::DeliveryFailed
         | RpcErrorCode::SynthesisFailed
         | RpcErrorCode::PlaybackFailed
@@ -2942,7 +2942,7 @@ pub(crate) fn error_code_to_wire(code: RpcErrorCode) -> i32 {
         RpcErrorCode::DeliveryTimeout => wire::ErrorCode::DeliveryTimeout,
         RpcErrorCode::CaptureFailed => wire::ErrorCode::CaptureFailed,
         RpcErrorCode::NoSpeech => wire::ErrorCode::NoSpeech,
-        RpcErrorCode::RecognitionFailed => wire::ErrorCode::RecognitionFailed,
+        RpcErrorCode::TranscriptionFailed => wire::ErrorCode::TranscriptionFailed,
         RpcErrorCode::DeliveryFailed => wire::ErrorCode::DeliveryFailed,
         RpcErrorCode::DeliveryTargetChanged => wire::ErrorCode::DeliveryTargetChanged,
         RpcErrorCode::DeliveryInterrupted => wire::ErrorCode::DeliveryInterrupted,
@@ -3003,7 +3003,7 @@ pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolEr
         Ok(wire::ErrorCode::DeliveryTimeout) => RpcErrorCode::DeliveryTimeout,
         Ok(wire::ErrorCode::CaptureFailed) => RpcErrorCode::CaptureFailed,
         Ok(wire::ErrorCode::NoSpeech) => RpcErrorCode::NoSpeech,
-        Ok(wire::ErrorCode::RecognitionFailed) => RpcErrorCode::RecognitionFailed,
+        Ok(wire::ErrorCode::TranscriptionFailed) => RpcErrorCode::TranscriptionFailed,
         Ok(wire::ErrorCode::DeliveryFailed) => RpcErrorCode::DeliveryFailed,
         Ok(wire::ErrorCode::DeliveryTargetChanged) => RpcErrorCode::DeliveryTargetChanged,
         Ok(wire::ErrorCode::DeliveryInterrupted) => RpcErrorCode::DeliveryInterrupted,

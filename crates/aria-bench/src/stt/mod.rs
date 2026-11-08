@@ -31,7 +31,7 @@ use aria_kit::audio::{
     ResampleError, StopSignal, WavError, WavReplayCapture, read_wav,
 };
 use aria_kit::primitives::error_chain;
-use aria_voice::stt::{Language, LanguageCode, RecognitionError};
+use aria_voice::stt::{Language, LanguageCode, TranscriptionError};
 
 pub use backends::{BackendRequest, SelectionError, Skipped};
 pub use corpus::{Built, CorpusError};
@@ -368,7 +368,7 @@ fn hear(
     let started = Instant::now();
     let mut segments = Vec::new();
     let mut previews = Vec::new();
-    let heard = attempt.recognition.recognize(
+    let heard = attempt.transcription.transcribe(
         &mut recording,
         language,
         started,
@@ -387,7 +387,7 @@ fn hear(
         Ok(transcript) => (transcript.into_text(), None),
         // Silence is a legitimate transcript of an utterance the backend could
         // not make out, and scores as deletions rather than as a broken run.
-        Err(RecognitionError::NoSpeech) => (String::new(), None),
+        Err(TranscriptionError::NoSpeech) => (String::new(), None),
         Err(failure) => (String::new(), Some(error_chain(&failure))),
     };
 
@@ -569,6 +569,6 @@ pub enum BenchError {
     Load {
         backend: &'static str,
         #[source]
-        source: RecognitionError,
+        source: TranscriptionError,
     },
 }

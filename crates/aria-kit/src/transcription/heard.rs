@@ -2,8 +2,8 @@
 //! recording, freeing the audio no reader needs any more.
 
 use crate::audio::RecordingReader;
-use crate::recognition::{
-    Layer, Operation, RecognitionError, Recognizer, TranscriptSegment, TranscriptUpdate,
+use crate::transcription::{
+    Layer, Operation, Recognizer, TranscriptSegment, TranscriptUpdate, TranscriptionError,
 };
 
 /// The next finalized segment, or `None` once the recording ends. Decoding,
@@ -15,7 +15,7 @@ use crate::recognition::{
 pub fn next_heard<T: Recognizer, L: Layer>(
     operation: &mut Operation<'_, T, L>,
     recording: &mut RecordingReader,
-) -> Result<Option<Heard>, RecognitionError> {
+) -> Result<Option<Heard>, TranscriptionError> {
     loop {
         match next_heard_update(operation, recording, false)? {
             Some(HeardUpdate::Finalized(heard)) => return Ok(Some(heard)),
@@ -31,7 +31,7 @@ pub fn next_heard_update<T: Recognizer, L: Layer>(
     operation: &mut Operation<'_, T, L>,
     recording: &mut RecordingReader,
     previews: bool,
-) -> Result<Option<HeardUpdate>, RecognitionError> {
+) -> Result<Option<HeardUpdate>, TranscriptionError> {
     let segment = match operation.next(recording, previews)? {
         Some(TranscriptUpdate::Finalized(segment)) => segment,
         Some(TranscriptUpdate::Provisional {
@@ -89,8 +89,8 @@ mod tests {
     fn preview_reads_preserve_finalized_segments_and_completion() {
         use crate::audio::testing::{Pace, paced};
         use crate::cancel::CancelToken;
-        use crate::recognition::{
-            Cadence, Hypothesis, Language, Recognition, RecognitionAudio, TimedWord,
+        use crate::transcription::{
+            Cadence, Hypothesis, Language, RecognitionAudio, TimedWord, Transcription,
         };
         use std::sync::Mutex;
 
@@ -104,7 +104,7 @@ mod tests {
                 &self,
                 _: &Language,
                 _: &CancelToken,
-            ) -> Result<(), RecognitionError> {
+            ) -> Result<(), TranscriptionError> {
                 Ok(())
             }
             fn recognize_with(
@@ -112,7 +112,7 @@ mod tests {
                 audio: RecognitionAudio<'_>,
                 _: &Language,
                 _: &CancelToken,
-            ) -> Result<Hypothesis, RecognitionError> {
+            ) -> Result<Hypothesis, TranscriptionError> {
                 let mut calls = self.calls.lock().expect("no poison");
                 let text = ["one two", "one two three", "three four", "three four five"][*calls];
                 *calls += 1;
@@ -137,7 +137,7 @@ mod tests {
         }
         let run = |previews, timed| {
             let (_directory, mut recording, pace) = paced(vec![vec![8192_i16; 1600]; 4]);
-            let recognition = Recognition::agreement(
+            let transcription = Transcription::agreement(
                 Cadence::from_millis(100, 200),
                 Script {
                     pace,
@@ -145,7 +145,7 @@ mod tests {
                     timed,
                 },
             );
-            let mut operation = recognition.start(&Language::Automatic).expect("starts");
+            let mut operation = transcription.start(&Language::Automatic).expect("starts");
             let mut rows = Vec::new();
             let mut preview_count = 0;
             loop {
@@ -183,7 +183,9 @@ mod tests {
     fn delayed_untimed_words_keep_the_entire_decode_window() {
         use crate::audio::testing::{Pace, paced};
         use crate::cancel::CancelToken;
-        use crate::recognition::{Cadence, Hypothesis, Language, Recognition, RecognitionAudio};
+        use crate::transcription::{
+            Cadence, Hypothesis, Language, RecognitionAudio, Transcription,
+        };
         use std::sync::Mutex;
 
         struct Script {
@@ -195,7 +197,7 @@ mod tests {
                 &self,
                 _: &Language,
                 _: &CancelToken,
-            ) -> Result<(), RecognitionError> {
+            ) -> Result<(), TranscriptionError> {
                 Ok(())
             }
 
@@ -204,7 +206,7 @@ mod tests {
                 _: RecognitionAudio<'_>,
                 _: &Language,
                 _: &CancelToken,
-            ) -> Result<Hypothesis, RecognitionError> {
+            ) -> Result<Hypothesis, TranscriptionError> {
                 let mut calls = self.calls.lock().unwrap();
                 let answers = [
                     "one two",
@@ -224,14 +226,14 @@ mod tests {
         }
         let second = CANONICAL_SAMPLE_RATE as usize;
         let (_directory, mut recording, pace) = paced(vec![vec![8192_i16; second]; 8]);
-        let recognition = Recognition::agreement(
+        let transcription = Transcription::agreement(
             Cadence::from_millis(1_000, 20_000),
             Script {
                 pace,
                 calls: Mutex::new(0),
             },
         );
-        let mut operation = recognition.start(&Language::Automatic).unwrap();
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
         let mut heard = Vec::new();
         while let Some(segment) = next_heard(&mut operation, &mut recording).unwrap() {
             heard.push(segment);

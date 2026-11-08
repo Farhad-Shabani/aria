@@ -478,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn recognition_resolves_a_parakeet_model_directory() {
+    fn stt_resolves_a_parakeet_model_directory() {
         let file = file("[stt]\nbackend = \"parakeet\"\nmodel = \"~/models/tdt\"\n");
         assert_eq!(
             SttBackend::load(&file, &test_home(), None),

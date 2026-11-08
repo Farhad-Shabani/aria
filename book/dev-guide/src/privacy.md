@@ -21,7 +21,7 @@ secure erasure and cannot remove snapshots or backups.
 
 ## Your files and output
 
-`recognize_file` reads your WAV and leaves it in place. Transcripts and
+`transcribe_file` reads your WAV and leaves it in place. Transcripts and
 generated audio stay in memory until your code saves them.
 
 ## Model files

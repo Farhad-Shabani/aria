@@ -1,18 +1,18 @@
-//! The system recognition stack replayed offline: a WAV heard in realtime through
-//! streaming recognition, the speech map, the speaker tracker and the gate a
-//! system recognition keeps its words by. Settled labels come afterwards, from
-//! the voice track, as they do in system recognition.
+//! The system transcription stack replayed offline: a WAV heard in realtime through
+//! streaming transcription, the speech map, the speaker tracker and the gate a
+//! system transcription keeps its words by. Settled labels come afterwards, from
+//! the voice track, as they do in system transcription.
 
 use std::path::Path;
 use std::time::Duration;
 
 use aria_kit::audio::{AudioCapture, RecordingMode, ReplayPace, StopSignal, WavReplayCapture};
-use aria_kit::recognition::next_heard;
 use aria_kit::speaker::{Admission, Decision, Gate, Timeline, TurnFeed};
+use aria_kit::transcription::next_heard;
 use aria_kit::voice_activity::{SileroVad, SpeechDetector};
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_voice::speaker::{Diarizer, Label, VoiceprintTracker};
-use aria_voice::stt::{Language, Recognition, RecognitionError, Recognizer, Streaming};
+use aria_voice::stt::{Language, Recognizer, Streaming, Transcription, TranscriptionError};
 
 use crate::diarize::BenchError;
 
@@ -26,9 +26,9 @@ pub(crate) struct Segment {
     embedding: Option<Vec<f32>>,
 }
 
-/// Close to what a system recognition without the voice track ends with: the
+/// Close to what a system transcription without the voice track ends with: the
 /// live embeddings grouped again over the whole recording. Relabels each
-/// segment by its own embedding, where system recognition relabels each paragraph by the
+/// segment by its own embedding, where system transcription relabels each paragraph by the
 /// average of its segments' embeddings.
 pub(crate) fn relabeled(
     diarizer: &Diarizer<WeSpeaker>,
@@ -52,10 +52,10 @@ pub(crate) struct Dropped {
     pub(crate) samples: u64,
 }
 
-/// The system recognition's loop, replayed from a WAV. With a `diarizer`, a
-/// tracker labels voices live, as system recognition's does.
+/// The system transcription's loop, replayed from a WAV. With a `diarizer`, a
+/// tracker labels voices live, as system transcription's does.
 pub(crate) fn hear<T: Recognizer>(
-    recognition: &Recognition<T, Streaming>,
+    transcription: &Transcription<T, Streaming>,
     wav: &Path,
     spool_dir: &Path,
     scenario: &'static str,
@@ -64,7 +64,7 @@ pub(crate) fn hear<T: Recognizer>(
     diarizer: Option<&mut Diarizer<WeSpeaker>>,
 ) -> Result<(Vec<Segment>, Dropped), BenchError> {
     let replay = |source| BenchError::Replay { scenario, source };
-    let recognizing = |source| BenchError::Recognition { scenario, source };
+    let transcribing = |source| BenchError::Transcription { scenario, source };
     let mut recording = WavReplayCapture::new(spool_dir, longest, wav, pace)
         .map_err(replay)?
         .start(RecordingMode::UntilStopped, StopSignal::never())
@@ -76,15 +76,15 @@ pub(crate) fn hear<T: Recognizer>(
     let mut feed = TurnFeed::start(&mut recording, speech, tracker);
     let untracked = Timeline::default();
     let mut gate = Gate::new(Admission::Spoken, feed.held_from());
-    let mut operation = recognition
+    let mut operation = transcription
         .start(&Language::Automatic)
-        .map_err(recognizing)?;
+        .map_err(transcribing)?;
     let mut kept = Kept::default();
     loop {
         let heard = match next_heard(&mut operation, &mut recording) {
             Ok(Some(heard)) => heard,
-            Ok(None) | Err(RecognitionError::Capture(_)) => break,
-            Err(source) => return Err(recognizing(source)),
+            Ok(None) | Err(TranscriptionError::Capture(_)) => break,
+            Err(source) => return Err(transcribing(source)),
         };
         feed.hear_through(operation.read_to());
         gate.hold(heard);

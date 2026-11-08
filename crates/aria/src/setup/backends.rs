@@ -323,13 +323,13 @@ mod tests {
         {
             let home = home_with_downloads("stt", stt.key(), stt.model().assets());
             let home_dir = home.path().to_path_buf();
-            let aria_voice::config::SttBackend::Local(recognition) =
+            let aria_voice::config::SttBackend::Local(engine) =
                 DictationConfig::load(&aria_settings::load(&home_dir).unwrap(), &home_dir, None)
                     .stt
             else {
                 panic!("{} is a local engine", stt.key());
             };
-            if let Err(error) = aria_voice::stt::check_model(&recognition) {
+            if let Err(error) = aria_voice::stt::check_model(&engine) {
                 panic!("{}: {}", stt.key(), error_chain(&error));
             }
         }

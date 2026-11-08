@@ -9,8 +9,8 @@ use crate::primitives::error_chain;
 
 use super::sentences::ends_sentence;
 use super::{
-    ChunkStep, Hypothesis, RecognitionError, SILENCE_FLOOR, Transcript, TranscriptSegment,
-    TranscriptUpdate, check_cancelled,
+    ChunkStep, Hypothesis, SILENCE_FLOOR, Transcript, TranscriptSegment, TranscriptUpdate,
+    TranscriptionError, check_cancelled,
 };
 
 /// How much new audio each decode waits for, and how far the buffer may grow
@@ -175,8 +175,8 @@ impl AgreementState {
         &mut self,
         recording: &mut RecordingReader,
         cancel: &CancelToken,
-        decode: impl FnMut(&[f32]) -> Result<Hypothesis, RecognitionError>,
-    ) -> Result<Option<ChunkStep>, RecognitionError> {
+        decode: impl FnMut(&[f32]) -> Result<Hypothesis, TranscriptionError>,
+    ) -> Result<Option<ChunkStep>, TranscriptionError> {
         self.next_with(recording, cancel, false, decode)
     }
 
@@ -185,8 +185,8 @@ impl AgreementState {
         recording: &mut RecordingReader,
         cancel: &CancelToken,
         previews: bool,
-        mut decode: impl FnMut(&[f32]) -> Result<Hypothesis, RecognitionError>,
-    ) -> Result<Option<ChunkStep>, RecognitionError> {
+        mut decode: impl FnMut(&[f32]) -> Result<Hypothesis, TranscriptionError>,
+    ) -> Result<Option<ChunkStep>, TranscriptionError> {
         if previews {
             check_cancelled(cancel)?;
         }
@@ -250,11 +250,11 @@ impl AgreementState {
         &self,
         recording: &mut RecordingReader,
         cancel: &CancelToken,
-    ) -> Result<Option<u64>, RecognitionError> {
+    ) -> Result<Option<u64>, TranscriptionError> {
         check_cancelled(cancel)?;
         recording
             .fill_through(self.decoded_end + self.cadence.stride_samples as u64)
-            .map_err(RecognitionError::Capture)?;
+            .map_err(TranscriptionError::Capture)?;
         check_cancelled(cancel)?;
         // The cap bounds a decode that fell behind capture; without it a
         // finished recording decodes as one window.
@@ -273,8 +273,8 @@ impl AgreementState {
         recording: &RecordingReader,
         available: u64,
         cancel: &CancelToken,
-        decode: &mut impl FnMut(&[f32]) -> Result<Hypothesis, RecognitionError>,
-    ) -> Result<Option<ChunkStep>, RecognitionError> {
+        decode: &mut impl FnMut(&[f32]) -> Result<Hypothesis, TranscriptionError>,
+    ) -> Result<Option<ChunkStep>, TranscriptionError> {
         // Audio that landed while the previous decode was running.
         // `fill_through` waits for one stride, so anything past that
         // piled up behind the decoder — and a decode covering four
@@ -396,7 +396,7 @@ impl AgreementState {
         if hypothesis.words().len() != words {
             return None;
         }
-        let spans: Result<Vec<_>, RecognitionError> = hypothesis
+        let spans: Result<Vec<_>, TranscriptionError> = hypothesis
             .words()
             .iter()
             .map(|word| super::bounded_span(word.span_from(from)?, self.decoded_end))
@@ -523,10 +523,10 @@ impl AgreementState {
     fn finish_after(
         &mut self,
         committed: Option<TranscriptSegment>,
-    ) -> Result<Option<ChunkStep>, RecognitionError> {
+    ) -> Result<Option<ChunkStep>, TranscriptionError> {
         let tail = self.agreement.take_tail(None);
         let tail = self.commit(tail);
-        // Nobody spoke, which is an ordinary end to a streaming recognition, not a
+        // Nobody spoke, which is an ordinary end to a streaming transcription, not a
         // failure. `Operation::finish` still answers `NoSpeech` for callers
         // that asked for a transcript and got none.
         let words = std::mem::take(&mut self.transcript).join(" ");
@@ -1183,7 +1183,7 @@ mod tests {
     use super::*;
     use crate::audio::CANONICAL_SAMPLE_RATE;
     use crate::audio::testing::{Pace, paced, recorded};
-    use crate::recognition::TimedWord;
+    use crate::transcription::TimedWord;
 
     const STRIDE_MS: usize = 100;
     const STRIDE: usize = STRIDE_MS * CANONICAL_SAMPLE_RATE as usize / 1000;
@@ -1449,7 +1449,7 @@ mod tests {
             state.next_with(&mut recording, &cancel, true, |_| {
                 panic!("cancelled operation cannot decode")
             }),
-            Err(RecognitionError::Cancelled)
+            Err(TranscriptionError::Cancelled)
         ));
     }
 

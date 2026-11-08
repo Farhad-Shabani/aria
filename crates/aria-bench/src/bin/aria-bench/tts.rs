@@ -55,7 +55,7 @@ pub(crate) struct Cli {
     #[arg(long, default_value = "3")]
     runs: usize,
 
-    /// Recognizes what was synthesized, for scoring.
+    /// Transcribes what was synthesized, for scoring.
     #[arg(long)]
     asr_parakeet: Option<PathBuf>,
 

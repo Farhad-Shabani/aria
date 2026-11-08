@@ -137,7 +137,7 @@ impl SystemTranscriptionEngine {
     }
 
     /// Resolves the model a session would load, without reading it.
-    pub fn check_model(&self) -> Result<String, crate::stt::RecognitionError> {
+    pub fn check_model(&self) -> Result<String, crate::stt::TranscriptionError> {
         crate::stt::check_model(&self.0)
     }
 

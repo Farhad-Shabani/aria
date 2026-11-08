@@ -28,7 +28,7 @@ cd speech-demo
 Run the remaining commands from `speech-demo`, unless a page says otherwise.
 `cargo add` adds the latest release of each crate to `Cargo.toml`.
 
-### Speech recognition
+### Transcription
 
 ```sh
 cargo add aria-stt --features whisper
@@ -79,5 +79,5 @@ ORT_LIB_LOCATION=/opt/onnxruntime/lib \
   cargo check
 ```
 
-After the check passes, you're ready to [recognize a file](./recognition.md),
+After the check passes, you're ready to [transcribe a file](./transcription.md),
 [record from a microphone](./recording.md), or [generate speech](./synthesis.md).

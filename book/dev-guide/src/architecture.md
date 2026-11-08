@@ -8,29 +8,29 @@ reuse it for later requests.
 
 ## Libraries
 
-`aria-stt` provides recognition, `aria-tts` provides synthesis, and `aria-kit`
+`aria-stt` provides transcription, `aria-tts` provides synthesis, and `aria-kit`
 provides microphone capture, audio playback, and shared speech types.
 
 The engine crates re-export their common types in `prelude`. That is why
-recognition imports `Recognition`, `RecordingReader`, and `Microphone` from
+transcription imports `Transcription`, `RecordingReader`, and `Microphone` from
 `aria_stt`, and synthesis imports `Synthesis` and `CancelToken` from `aria_tts`. Add
 `aria-kit` directly for playback, for writing a clip to WAV, or for cutting a
 recording into utterances.
 
-## Recognition
+## Transcription
 
 ```text
 Load Whisper once
-  → construct Recognition
+  → construct Transcription
   → provide a WAV or microphone recording
   → receive finalized text
 ```
 
-`Whisper` loads and runs the recognition model. `Recognition` chooses how to
+`Whisper` loads and runs the recognition model. `Transcription` chooses how to
 process the recording and applies any text layers. `Session` manages
-recognition of one recording.
+transcription of one recording.
 
-For a completed file, `recognize_file` returns one `Transcript`. For live
+For a completed file, `transcribe_file` returns one `Transcript`. For live
 input, `Session::next_finalized` returns segments as they become final, and
 `stop` returns the complete transcript. Finalized segments stay unchanged.
 
@@ -55,7 +55,7 @@ voice program and provides no audio samples.
 
 ## Blocking calls
 
-Model loading, recognition, audio reads, and speaking are synchronous calls.
+Model loading, transcription, audio reads, and speaking are synchronous calls.
 Run them on a worker thread when integrating with a UI or an asynchronous
 application. Streaming can produce output before an operation finishes, but
 reading the next result can still block.

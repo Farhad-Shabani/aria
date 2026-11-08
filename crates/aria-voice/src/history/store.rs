@@ -1217,7 +1217,7 @@ fn stored_code(code: RpcErrorCode) -> i32 {
         RpcErrorCode::DeliveryTimeout => 102,
         RpcErrorCode::CaptureFailed => 103,
         RpcErrorCode::NoSpeech => 104,
-        RpcErrorCode::RecognitionFailed => 105,
+        RpcErrorCode::TranscriptionFailed => 105,
         RpcErrorCode::DeliveryFailed => 106,
         RpcErrorCode::DeliveryTargetChanged => 108,
         RpcErrorCode::DeliveryInterrupted => 109,
@@ -1272,7 +1272,7 @@ fn code_from_stored(number: i32) -> Option<RpcErrorCode> {
         102 => RpcErrorCode::DeliveryTimeout,
         103 => RpcErrorCode::CaptureFailed,
         104 => RpcErrorCode::NoSpeech,
-        105 => RpcErrorCode::RecognitionFailed,
+        105 => RpcErrorCode::TranscriptionFailed,
         106 => RpcErrorCode::DeliveryFailed,
         108 => RpcErrorCode::DeliveryTargetChanged,
         109 => RpcErrorCode::DeliveryInterrupted,
@@ -2555,7 +2555,7 @@ mod tests {
         );
         let _lease = store.begin_retry(failed.id).unwrap();
         let error = HistoryError::transcription(
-            RpcErrorCode::RecognitionFailed,
+            RpcErrorCode::TranscriptionFailed,
             io::Error::other("x".repeat(MAX_ERROR_MESSAGE_BYTES)),
         );
         assert!(error_chain(&error).len() > MAX_ERROR_MESSAGE_BYTES);
@@ -2563,7 +2563,7 @@ mod tests {
         assert_eq!(
             store.get(failed.id).unwrap().error,
             Some(RpcFailure::new(
-                RpcErrorCode::RecognitionFailed,
+                RpcErrorCode::TranscriptionFailed,
                 "history transcription failed"
             ))
         );

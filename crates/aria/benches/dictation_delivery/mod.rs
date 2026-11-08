@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use aria_harness::{Sandbox, artifact, inputs};
-use aria_kit::recognition::Caret;
+use aria_kit::transcription::Caret;
 use serde_json::{Value, json};
 use tonic::transport::{Channel, Endpoint};
 

@@ -1,4 +1,4 @@
-//! Labels speakers independently of recognition, using fixed embedding windows
+//! Labels speakers independently of transcription, using fixed embedding windows
 //! and voice-activity detection to identify speech regions.
 
 use std::ops::Range;

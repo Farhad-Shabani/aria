@@ -1,12 +1,12 @@
-//! One recognition run: a recording the session owns, the recognition
+//! One transcription run: a recording the session owns, the transcription
 //! over it, and the lifecycle between them. A [`Streaming`] session yields
 //! words as they are committed; a `Whole` session has only its end.
 
 use std::marker::PhantomData;
 
 use super::{
-    Language, Layer, Mode, Operation, Recognition, RecognitionError, Recognizer, Streaming,
-    Transcript, TranscriptSegment,
+    Language, Layer, Mode, Operation, Recognizer, Streaming, Transcript, TranscriptSegment,
+    Transcription, TranscriptionError,
 };
 use crate::audio::RecordingReader;
 
@@ -15,7 +15,7 @@ use crate::audio::Stopper;
 #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
 use crate::audio::{Microphone, RecordingMode};
 
-/// One recognition run over audio that arrives while the run is live.
+/// One transcription run over audio that arrives while the run is live.
 ///
 /// Constructed over a recording the caller feeds, or straight from the
 /// microphone where one exists. `finish` waits for input to end, drains the
@@ -35,12 +35,12 @@ impl<'a, T: Recognizer, M: Mode, L: Layer> Session<'a, T, M, L> {
     /// Runs against a recording the caller already has. Whoever feeds it also
     /// ends it; `finish` only waits for that end and finishes the transcript.
     pub fn over(
-        recognition: &'a Recognition<T, M, L>,
+        transcription: &'a Transcription<T, M, L>,
         language: &'a Language,
         recording: RecordingReader,
-    ) -> Result<Self, RecognitionError> {
+    ) -> Result<Self, TranscriptionError> {
         Ok(Self {
-            operation: recognition.start(language)?,
+            operation: transcription.start(language)?,
             recording,
             #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
             _microphone: None,
@@ -51,9 +51,9 @@ impl<'a, T: Recognizer, M: Mode, L: Layer> Session<'a, T, M, L> {
     }
 
     /// Waits for input to end, drains whatever remains, and returns the
-    /// completed transcript — or [`RecognitionError::NoSpeech`] when
+    /// completed transcript — or [`TranscriptionError::NoSpeech`] when
     /// nothing was said.
-    pub fn finish(mut self) -> Result<Transcript, RecognitionError> {
+    pub fn finish(mut self) -> Result<Transcript, TranscriptionError> {
         #[cfg(not(target_family = "wasm"))]
         if let Some(stopper) = &self.stopper {
             stopper.stop();
@@ -68,16 +68,16 @@ impl<'a, T: Recognizer, M: Mode, L: Layer> Session<'a, T, M, L> {
     /// ends the recording; until then every [`Streaming`] step blocks on
     /// captured audio.
     pub fn microphone(
-        recognition: &'a Recognition<T, M, L>,
+        transcription: &'a Transcription<T, M, L>,
         language: &'a Language,
-    ) -> Result<Self, RecognitionError> {
+    ) -> Result<Self, TranscriptionError> {
         // Recording starts first: `start` can block, and speech during it
         // must not be lost.
-        let mut microphone = Microphone::open().map_err(RecognitionError::Capture)?;
+        let mut microphone = Microphone::open().map_err(TranscriptionError::Capture)?;
         let (recording, stopper) = microphone
             .record(RecordingMode::UntilStopped)
-            .map_err(RecognitionError::Capture)?;
-        let operation = match recognition.start(language) {
+            .map_err(TranscriptionError::Capture)?;
+        let operation = match transcription.start(language) {
             Ok(operation) => operation,
             Err(error) => {
                 stopper.stop();
@@ -97,7 +97,7 @@ impl<'a, T: Recognizer, M: Mode, L: Layer> Session<'a, T, M, L> {
 impl<'a, T: Recognizer, L: Layer> Session<'a, T, Streaming, L> {
     /// The next committed stretch of words, or `None` once the input has
     /// ended and the tail is delivered. Committed words are never revised.
-    pub fn next_finalized(&mut self) -> Result<Option<TranscriptSegment>, RecognitionError> {
+    pub fn next_finalized(&mut self) -> Result<Option<TranscriptSegment>, TranscriptionError> {
         self.operation.next_finalized(&mut self.recording)
     }
 }
@@ -123,7 +123,7 @@ mod tests {
     use crate::audio::CANONICAL_SAMPLE_RATE;
     use crate::audio::testing::{Pace, paced, recorded};
     use crate::cancel::CancelToken;
-    use crate::recognition::{Cadence, Hypothesis, RecognitionAudio};
+    use crate::transcription::{Cadence, Hypothesis, RecognitionAudio};
 
     const STRIDE_MS: usize = 100;
     const STRIDE: usize = STRIDE_MS * CANONICAL_SAMPLE_RATE as usize / 1000;
@@ -156,7 +156,7 @@ mod tests {
             &self,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<(), RecognitionError> {
+        ) -> Result<(), TranscriptionError> {
             Ok(())
         }
 
@@ -165,7 +165,7 @@ mod tests {
             _audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<Hypothesis, RecognitionError> {
+        ) -> Result<Hypothesis, TranscriptionError> {
             if let Some(pace) = &self.pace {
                 pace.advance();
             }
@@ -187,13 +187,13 @@ mod tests {
     fn a_streaming_session_commits_words_as_their_agreement_holds() {
         let (_directory, recording, pace) = paced(vec![stride_batch(); 4]);
         let cadence = Cadence::from_millis(STRIDE_MS, 20_000);
-        let recognition = Recognition::agreement(
+        let transcription = Transcription::agreement(
             cadence,
             Scripted::paced(&["one", "one two", "one two three", "one two three"], pace),
         );
         let language = Language::Automatic;
         let mut session =
-            Session::over(&recognition, &language, recording).expect("the session starts");
+            Session::over(&transcription, &language, recording).expect("the session starts");
 
         let mut segments = Vec::new();
         while let Some(segment) = session.next_finalized().expect("every step succeeds") {
@@ -208,10 +208,10 @@ mod tests {
     #[test]
     fn a_whole_session_has_only_its_end() {
         let (_directory, recording) = recorded(&[0; 64]);
-        let recognition = Recognition::complete_samples(Scripted::new(&["hello world"]));
+        let transcription = Transcription::complete_samples(Scripted::new(&["hello world"]));
         let language = Language::Automatic;
 
-        let transcript = Session::over(&recognition, &language, recording)
+        let transcript = Session::over(&transcription, &language, recording)
             .expect("the session starts")
             .finish()
             .expect("the transcript completes");

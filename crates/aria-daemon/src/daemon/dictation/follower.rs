@@ -12,7 +12,7 @@ use aria_primitives::error_chain;
 use aria_settings::SettingsCache;
 use aria_voice::config::SttBackend;
 use aria_voice::microphone::Gate;
-use aria_voice::stt::RecognitionError;
+use aria_voice::stt::TranscriptionError;
 use tokio_util::sync::CancellationToken;
 
 use super::super::inference::pairing_id;
@@ -154,7 +154,7 @@ fn settle(
 /// starts.
 fn preload(engine: &DictationEngine, stop: &CancelToken) {
     match engine.preload(stop) {
-        Ok(()) | Err(RecognitionError::Cancelled) => {}
+        Ok(()) | Err(TranscriptionError::Cancelled) => {}
         Err(error) => tracing::warn!(
             engine = engine.name,
             error = %error_chain(&error),
@@ -178,7 +178,7 @@ mod tests {
         DictationOutcome, DictationPolicy, DictationRequest, DictationResult, DictationSettings,
         ExecutionControl, StopMode, Transcribed,
     };
-    use aria_voice::stt::{Language, RecognitionError};
+    use aria_voice::stt::{Language, TranscriptionError};
 
     use super::super::assembly::RuntimeExecutor;
     use super::super::model_load::Preload;
@@ -424,8 +424,8 @@ mod tests {
         let (remote, remote_dropped) = named("server");
         let slot = EngineSlot::new(DictationEngine::built("server", server(1), remote));
         let failing: BuildEngine = Arc::new(|_: &SttBackend| {
-            Err(DictationError::Recognition(
-                RecognitionError::NoNativeStream,
+            Err(DictationError::Transcription(
+                TranscriptionError::NoNativeStream,
             ))
         });
 
@@ -439,7 +439,10 @@ mod tests {
 
         assert_eq!(settled, Settled::Swapped);
         assert!(remote_dropped.load(Ordering::SeqCst));
-        assert!(matches!(press(&slot), Err(DictationError::Recognition(_))));
+        assert!(matches!(
+            press(&slot),
+            Err(DictationError::Transcription(_))
+        ));
         assert_eq!(slot.current().backend, local("/missing"));
     }
 
@@ -503,8 +506,8 @@ mod tests {
         let counted = Arc::clone(&attempts);
         let build: BuildEngine = Arc::new(move |backend: &SttBackend| {
             if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-                return Err(DictationError::Recognition(
-                    RecognitionError::NoNativeStream,
+                return Err(DictationError::Transcription(
+                    TranscriptionError::NoNativeStream,
                 ));
             }
             let (executor, _) = named("recovered");

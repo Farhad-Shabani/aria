@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use aria_kit::audio::RecordingWaker;
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::HeardUpdate;
+use aria_kit::transcription::HeardUpdate;
 
 use super::turns::{Snapshot, TrackingError};
 

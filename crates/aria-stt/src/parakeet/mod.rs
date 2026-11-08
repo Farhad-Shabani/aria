@@ -4,10 +4,10 @@
 //! use aria_stt::{parakeet::{Device, Parakeet}, prelude::*};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let recognition = Recognition::streaming(Parakeet::load("model", Device::Cpu)?)
+//! let transcription = Transcription::streaming(Parakeet::load("model", Device::Cpu)?)
 //!     .with(RemoveHesitations)
 //!     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
-//! let mut session = Session::microphone(&recognition, &Language::Automatic)?;
+//! let mut session = Session::microphone(&transcription, &Language::Automatic)?;
 //!
 //! // Committed words arrive as you speak and are never revised.
 //! while let Some(words) = session.next_finalized()? {
@@ -19,7 +19,7 @@
 //! # }
 //! ```
 //!
-//! For audio you already hold, [`crate::Recognition::recognize_file`] decodes a
+//! For audio you already hold, [`crate::Transcription::transcribe_file`] decodes a
 //! WAV in one call. Streaming runs at [`CADENCE`].
 
 use std::path::PathBuf;
@@ -32,9 +32,9 @@ use parakeet_rs::{ExecutionConfig, ParakeetTDT, TimedToken, TimestampMode, Trans
 use aria_kit::audio::{CANONICAL_SAMPLE_RATE, CHANNELS};
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::{
-    AudioInputKind, Cadence, Engine, Hypothesis, Language, RecognitionAudio, RecognitionError,
-    Recognizer, Stream, StreamingEngine, TimedWord, check_cancelled, validate_model_directory,
+use aria_kit::transcription::{
+    AudioInputKind, Cadence, Engine, Hypothesis, Language, RecognitionAudio, Recognizer, Stream,
+    StreamingEngine, TimedWord, TranscriptionError, check_cancelled, validate_model_directory,
     word_timings,
 };
 
@@ -110,7 +110,7 @@ impl ParakeetConfig {
 }
 
 impl Parakeet {
-    pub fn load(directory: impl Into<PathBuf>, device: Device) -> Result<Self, RecognitionError> {
+    pub fn load(directory: impl Into<PathBuf>, device: Device) -> Result<Self, TranscriptionError> {
         Self::load_from(
             ParakeetConfig::new(directory, device),
             &CancelToken::never(),
@@ -125,17 +125,17 @@ impl Engine for Parakeet {
 
     type Config = ParakeetConfig;
 
-    fn check_from(config: &ParakeetConfig) -> Result<PathBuf, RecognitionError> {
+    fn check_from(config: &ParakeetConfig) -> Result<PathBuf, TranscriptionError> {
         validate_model_directory(config.model_directory.clone(), BACKEND, &[VOCABULARY_FILE])
     }
 
-    fn load_from(config: ParakeetConfig, cancel: &CancelToken) -> Result<Self, RecognitionError> {
+    fn load_from(config: ParakeetConfig, cancel: &CancelToken) -> Result<Self, TranscriptionError> {
         check_cancelled(cancel)?;
         let directory = Self::check_from(&config)?;
 
         let execution = Some(execution(config.device)?);
         let model = ParakeetTDT::from_pretrained(&directory, execution).map_err(|source| {
-            RecognitionError::Load {
+            TranscriptionError::Load {
                 backend: BACKEND,
                 model: directory.display().to_string(),
                 source: BackendError::engine(source),
@@ -158,7 +158,7 @@ impl Recognizer for Parakeet {
         &self,
         _language: &Language,
         _cancel: &CancelToken,
-    ) -> Result<(), RecognitionError> {
+    ) -> Result<(), TranscriptionError> {
         Ok(())
     }
 
@@ -167,7 +167,7 @@ impl Recognizer for Parakeet {
         audio: RecognitionAudio<'_>,
         _language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, RecognitionError> {
+    ) -> Result<Hypothesis, TranscriptionError> {
         check_cancelled(cancel)?;
         let samples = audio.require_samples(BACKEND)?;
         let mut model = self
@@ -188,7 +188,7 @@ impl Recognizer for Parakeet {
 }
 
 // Use available CPU parallelism instead of the bindings' four-thread default.
-fn execution(device: Device) -> Result<ExecutionConfig, RecognitionError> {
+fn execution(device: Device) -> Result<ExecutionConfig, TranscriptionError> {
     let threads = std::thread::available_parallelism().map_or(4, usize::from);
     let config = ExecutionConfig::new().with_intra_threads(threads);
     match device {
@@ -196,7 +196,7 @@ fn execution(device: Device) -> Result<ExecutionConfig, RecognitionError> {
         #[cfg(all(target_os = "macos", feature = "parakeet-gpu"))]
         Device::Gpu => Ok(config.with_execution_provider(ExecutionProvider::WebGPU)),
         #[cfg(not(all(target_os = "macos", feature = "parakeet-gpu")))]
-        Device::Gpu => Err(RecognitionError::UnsupportedDevice { backend: BACKEND }),
+        Device::Gpu => Err(TranscriptionError::UnsupportedDevice { backend: BACKEND }),
     }
 }
 
@@ -206,7 +206,7 @@ fn execution(device: Device) -> Result<ExecutionConfig, RecognitionError> {
 fn decode_window(
     model: &mut ParakeetTDT,
     window: &[f32],
-) -> Result<(String, Vec<TimedToken>), RecognitionError> {
+) -> Result<(String, Vec<TimedToken>), TranscriptionError> {
     model
         .transcribe_samples(
             window.to_vec(),
@@ -215,7 +215,7 @@ fn decode_window(
             Some(TimestampMode::Tokens),
         )
         .map(|decoded| (decoded.text, decoded.tokens))
-        .map_err(|source| RecognitionError::Inference {
+        .map_err(|source| TranscriptionError::Inference {
             backend: BACKEND,
             source: BackendError::engine(source),
         })
@@ -235,6 +235,6 @@ mod tests {
             &cancel,
         );
 
-        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
+        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
     }
 }

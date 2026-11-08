@@ -54,20 +54,21 @@ fn noise(count: usize) -> impl Iterator<Item = i16> {
 }
 
 fn recognize(
-    recognition: &Recognition<ParakeetMlx, Whole>,
+    transcription: &Transcription<ParakeetMlx, Whole>,
     path: &PathBuf,
-) -> Result<Transcript, RecognitionError> {
-    let mut recording = RecordingReader::from_wav_file(path).map_err(RecognitionError::Capture)?;
-    let outcome = recognition.recognize(&mut recording, &Language::Automatic);
+) -> Result<Transcript, TranscriptionError> {
+    let mut recording =
+        RecordingReader::from_wav_file(path).map_err(TranscriptionError::Capture)?;
+    let outcome = transcription.transcribe(&mut recording, &Language::Automatic);
     std::fs::remove_file(path).ok();
     outcome
 }
 
 /// Any transcript, or the pipeline's own no-speech verdict; what must not
 /// happen is a crashed decode or a dead sidecar.
-fn survives(name: &str, outcome: Result<Transcript, RecognitionError>) {
+fn survives(name: &str, outcome: Result<Transcript, TranscriptionError>) {
     match outcome {
-        Ok(_) | Err(RecognitionError::NoSpeech) => {}
+        Ok(_) | Err(TranscriptionError::NoSpeech) => {}
         Err(error) => panic!("{name} must decode, got {error:?}"),
     }
 }
@@ -98,39 +99,39 @@ fn the_sidecar_survives_an_adversarial_whole_decode_matrix() {
 
     // One engine across the matrix: the sequence itself proves the sidecar
     // keeps serving after whatever each clip provoked.
-    let recognition = Recognition::complete_wav(engine);
+    let transcription = Transcription::complete_wav(engine);
     for (name, clip) in clips {
-        survives(name, recognize(&recognition, &clip));
+        survives(name, recognize(&transcription, &clip));
     }
 }
 
 #[test]
 fn streaming_folds_a_sub_hop_tail_instead_of_crashing_the_encoder() {
     let Some(engine) = engine() else { return };
-    let recognition = Recognition::complete_wav(engine.stream_chunks(16000));
+    let transcription = Transcription::complete_wav(engine.stream_chunks(16000));
 
     for (name, total) in [
         ("one-sample-tail", SUB_HOP_TAIL_SAMPLES),
         ("full-hop-tail", 8 * 16000 + 160),
     ] {
         let clip = fixture_wav(name, noise(total));
-        survives(name, recognize(&recognition, &clip));
+        survives(name, recognize(&transcription, &clip));
     }
 }
 
 #[test]
 fn a_chunk_below_one_mel_hop_fails_the_request_but_not_the_sidecar() {
     let Some(engine) = engine() else { return };
-    let recognition = Recognition::complete_wav(engine.stream_chunks(1));
+    let transcription = Transcription::complete_wav(engine.stream_chunks(1));
 
     // Twice: the second refusal proves the sidecar survived the first.
     for _ in 0..2 {
         let clip = fixture_wav("sub-hop-chunk", noise(16000));
-        let error = recognize(&recognition, &clip).expect_err("a sub-hop chunk must be refused");
+        let error = recognize(&transcription, &clip).expect_err("a sub-hop chunk must be refused");
         assert!(
             matches!(
                 &error,
-                RecognitionError::Inference {
+                TranscriptionError::Inference {
                     source: BackendError::Unusable(detail),
                     ..
                 } if detail.contains("mel hop")

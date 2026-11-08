@@ -12,17 +12,17 @@ use super::{
 };
 use crate::config::SpeakerConfig;
 use crate::speaker::Diarizer;
-use crate::stt::Recognition;
+use crate::stt::Transcription;
 use aria_harness::own_voice::{ArtifactKind, Placed, SPEAKERS_DIR, Truth};
 use aria_kit::audio::{
     AudioCapture, CaptureError, RecordingMode, RecordingReader, ReplayPace, StopSignal,
     WavReplayCapture,
 };
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::{
-    Hypothesis, Language, RecognitionAudio, RecognitionError, Recognizer, StreamingEngine as _,
-};
 use aria_kit::speaker::{ProfileStore, Role};
+use aria_kit::transcription::{
+    Hypothesis, Language, RecognitionAudio, Recognizer, StreamingEngine as _, TranscriptionError,
+};
 use aria_kit::voice_activity::SileroVad;
 use aria_platform::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
 use aria_segmentation::pyannote::Pyannote;
@@ -188,7 +188,7 @@ impl Recognizer for ReplayParakeet {
         &self,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<(), RecognitionError> {
+    ) -> Result<(), TranscriptionError> {
         self.model.validate_language(language, cancel)
     }
 
@@ -197,7 +197,7 @@ impl Recognizer for ReplayParakeet {
         audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, RecognitionError> {
+    ) -> Result<Hypothesis, TranscriptionError> {
         let hypothesis = self.model.recognize_with(audio, language, cancel)?;
         Ok(if self.timed {
             hypothesis
@@ -997,7 +997,7 @@ fn dictate(speaker: &SpeakerConfig, wav: &Path, parakeet: &Arc<Parakeet>, press:
             capture,
             started: Arc::clone(&started),
         },
-        Recognition::stream(
+        Transcription::stream(
             Parakeet::STREAM,
             ReplayParakeet {
                 model: Arc::clone(parakeet),

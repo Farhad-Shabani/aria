@@ -2,12 +2,12 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::Heard;
-use aria_kit::recognition::layer::Layer;
-use aria_kit::recognition::{Punctuated, SentenceEnds, check_cancelled};
 use aria_kit::segmentation::Segmenter;
 use aria_kit::speaker::Embedder;
 use aria_kit::speaker::{Admission, Gate, Released, Speaker, Timeline, TurnFeed};
+use aria_kit::transcription::Heard;
+use aria_kit::transcription::layer::Layer;
+use aria_kit::transcription::{Punctuated, SentenceEnds, check_cancelled};
 use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector};
 
 use crate::hearing::{
@@ -15,8 +15,8 @@ use crate::hearing::{
 };
 use crate::speaker::{Diarizer, Label, Profile, SpeakerName, VoiceprintTracker};
 use crate::stt::{
-    Language, Mode, Operation, Recognition, RecognitionError, Recognizer, Transcript,
-    TranscriptSegment,
+    Language, Mode, Operation, Recognizer, Transcript, TranscriptSegment, Transcription,
+    TranscriptionError,
 };
 use crate::vocabulary::Vocabulary;
 use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
@@ -36,12 +36,12 @@ use super::{Cleanup, Meter, Rewrites};
 /// Records a press, hears it, and publishes each segment to its sinks.
 /// Where the text goes — history, the cursor — is the sinks' business.
 /// The parameters follow a press through: capture, VAD, diarization,
-/// segmentation, recognition, rewrites, sinks.
+/// segmentation, transcription, rewrites, sinks.
 pub struct DictationPipeline<C, V, E, G, T, M: Mode, L, S> {
     capture: C,
     /// Hears where anyone spoke and whose voice it was.
     listening: Mutex<Listening<V, E, G>>,
-    recognition: Recognition<T, M>,
+    transcription: Transcription<T, M>,
     rewrites: Rewrites<L>,
     sinks: Mutex<S>,
 }
@@ -107,7 +107,7 @@ struct CompleteDecode {
 
 impl<C, T, M: Mode, S> DictationPipeline<C, SileroVad, WeSpeaker, Pyannote, T, M, (), S> {
     /// Hears no speech or voices and changes no text until told to.
-    pub fn new(capture: C, recognition: Recognition<T, M>, sinks: S) -> Self {
+    pub fn new(capture: C, transcription: Transcription<T, M>, sinks: S) -> Self {
         Self {
             capture,
             listening: Mutex::new(Listening {
@@ -115,7 +115,7 @@ impl<C, T, M: Mode, S> DictationPipeline<C, SileroVad, WeSpeaker, Pyannote, T, M
                 diarizer: None,
                 segmenter: None,
             }),
-            recognition,
+            transcription,
             rewrites: Rewrites::new(),
             sinks: Mutex::new(sinks),
         }
@@ -141,7 +141,7 @@ impl<C, V, E, G, T, M: Mode, L, S> DictationPipeline<C, V, E, G, T, M, L, S> {
                 diarizer: listening.diarizer,
                 segmenter: listening.segmenter,
             }),
-            recognition: self.recognition,
+            transcription: self.transcription,
             rewrites: self.rewrites,
             sinks: self.sinks,
         }
@@ -165,7 +165,7 @@ impl<C, V, E, G, T, M: Mode, L, S> DictationPipeline<C, V, E, G, T, M, L, S> {
                 diarizer,
                 segmenter,
             }),
-            recognition: self.recognition,
+            transcription: self.transcription,
             rewrites: self.rewrites,
             sinks: self.sinks,
         }
@@ -179,7 +179,7 @@ impl<C, V, E, G, T, M: Mode, L, S> DictationPipeline<C, V, E, G, T, M, L, S> {
         DictationPipeline {
             capture: self.capture,
             listening: self.listening,
-            recognition: self.recognition,
+            transcription: self.transcription,
             rewrites,
             sinks: self.sinks,
         }
@@ -288,7 +288,7 @@ where
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled);
         }
-        let mut operation = self.recognition.start_with(language, cancel)?;
+        let mut operation = self.transcription.start_with(language, cancel)?;
         let (transcript, served_by) = match timeline {
             Some(timeline) => {
                 let decoded =
@@ -316,7 +316,8 @@ where
         recording.fill().map_err(DictationError::Capture)?;
         let source = recording.held_from()..recording.held_to();
         let mut segments = Vec::new();
-        while let Some(mut heard) = aria_kit::recognition::next_heard(&mut operation, recording)? {
+        while let Some(mut heard) = aria_kit::transcription::next_heard(&mut operation, recording)?
+        {
             if [heard.segment.span(), heard.segment.source_window()]
                 .into_iter()
                 .flatten()
@@ -324,7 +325,7 @@ where
                     span.start < source.start || span.start > span.end || span.end > source.end
                 })
             {
-                return Err(RecognitionError::InvalidSegment.into());
+                return Err(TranscriptionError::InvalidSegment.into());
             }
             if heard.segment.word_spans().is_none() && heard.segment.source_window().is_none() {
                 heard.segment = heard.segment.with_source_window(source.clone())?;
@@ -334,7 +335,7 @@ where
         }
         let transcript = operation.finish(recording)?;
         if segments.is_empty() {
-            return Err(RecognitionError::InvalidSegment.into());
+            return Err(TranscriptionError::InvalidSegment.into());
         }
         Ok(CompleteDecode {
             segments,
@@ -388,7 +389,7 @@ where
         }
         check_cancelled(cancel)?;
         let mut gated = kept_recording(recording, &kept)?;
-        let operation = self.recognition.start_with(language, cancel)?;
+        let operation = self.transcription.start_with(language, cancel)?;
         self.decode_admitted(operation, &mut gated, source)
     }
 
@@ -539,9 +540,9 @@ where
         result
     }
 
-    /// Recording and recognition overlap: capture runs on its own thread
-    /// while streaming recognition takes chunks as they arrive. Both stages
-    /// are therefore logged once recognition returns,
+    /// Recording and transcription overlap: capture runs on its own thread
+    /// while streaming transcription takes chunks as they arrive. Both stages
+    /// are therefore logged once transcription returns,
     /// which is the first moment the recording's end is known here.
     fn execute_stages(
         &self,
@@ -582,7 +583,7 @@ where
             // Held only for the transcribing stage: the meter ends with
             // capture, and the pill has its next stage to draw by then.
             let meter = Meter::watching(&recording, control, events);
-            // Recognition can fail before it has read the press to its end —
+            // Transcription can fail before it has read the press to its end —
             // an unsupported language is refused on the first line. Capture would
             // otherwise keep running until its own timeout, and the meter above
             // would wait on it before anything could stop it.
@@ -678,14 +679,14 @@ where
         vocabulary: Option<&Vocabulary>,
     ) -> Result<Dictated, DictationError> {
         let started_at = Instant::now();
-        let started = |error| log_recognition_error(error, control, started_at);
+        let started = |error| log_transcription_error(error, control, started_at);
         let board = Board::new();
         let cancel = {
             let control = Arc::clone(control);
             board.token(move || control.should_stop())
         };
         let operation = self
-            .recognition
+            .transcription
             .start_with(&settings.stt_language, &cancel)
             .map_err(started)?;
         let streaming = settings.delivery_mode == DeliveryMode::Streaming;
@@ -733,7 +734,7 @@ where
             published.segment(heard, &text, speaker, sinks)
         };
         let failed = |error: HearingError, published: &mut Published<'_>| match error {
-            HearingError::Recognition(_) => published
+            HearingError::Transcription(_) => published
                 .failure
                 .take()
                 .unwrap_or_else(|| hearing_failed(error, control, started_at)),
@@ -811,7 +812,7 @@ where
         heard: impl FnMut(&Timeline),
     ) -> Result<Dictated, DictationError> {
         let (control, started_at) = (published.control, published.started_at);
-        let started = |error| log_recognition_error(error, control, started_at);
+        let started = |error| log_transcription_error(error, control, started_at);
         let timeline = hear_to_end(feed, cancel, heard)
             .map_err(|error| hearing_failed(error, control, started_at))?;
         recording.fill().map_err(DictationError::Capture)?;
@@ -824,7 +825,7 @@ where
                 cancel,
             )
             .map_err(|error| match error {
-                DictationError::Recognition(error) => started(error),
+                DictationError::Transcription(error) => started(error),
                 error => check_execution(control).err().unwrap_or(error),
             })?;
         let transcript = self
@@ -964,7 +965,7 @@ impl<'a> Published<'a> {
             tracing::info!(
                 stage = "delivery",
                 elapsed_ms = self.started_at.elapsed().as_millis(),
-                "dictation first segment recognized"
+                "dictation first segment transcribed"
             );
         }
         self.announce(&punctuated.text, speaker, sinks);
@@ -1094,7 +1095,7 @@ impl<'a> Published<'a> {
         }
         self.close_last_sentence(sinks);
         let transcript = Transcript::new(std::mem::take(&mut self.written))
-            .map_err(|error| log_recognition_error(error, self.control, self.started_at))?;
+            .map_err(|error| log_transcription_error(error, self.control, self.started_at))?;
         let completed = self.completion.publish(Some(&transcript), sinks);
         if let Some(error) = self.failure.take() {
             if let Err(error) = completed {
@@ -1162,33 +1163,33 @@ fn caption_suffix(text: &str) -> Arc<str> {
     Arc::from(&text[start..])
 }
 
-fn log_recognition_error(
-    error: RecognitionError,
+fn log_transcription_error(
+    error: TranscriptionError,
     control: &ExecutionControl,
     stage_started: Instant,
 ) -> DictationError {
     let stage = match &error {
-        RecognitionError::Capture(_) => "recording",
-        RecognitionError::Model { .. }
-        | RecognitionError::Load { .. }
-        | RecognitionError::Inference { .. }
-        | RecognitionError::UnsupportedLanguage { .. }
-        | RecognitionError::UnsupportedAudioInput { .. }
-        | RecognitionError::UnsupportedAudioPath { .. }
-        | RecognitionError::UnsupportedBackend { .. }
-        | RecognitionError::UnsupportedDevice { .. }
-        | RecognitionError::NoNativeStream
-        | RecognitionError::NoDelegatedOperation
-        | RecognitionError::LoadPanicked
-        | RecognitionError::Cancelled
-        | RecognitionError::NoSpeech
-        | RecognitionError::InvalidSegment
-        | RecognitionError::Processing(_) => "transcription",
+        TranscriptionError::Capture(_) => "recording",
+        TranscriptionError::Model { .. }
+        | TranscriptionError::Load { .. }
+        | TranscriptionError::Inference { .. }
+        | TranscriptionError::UnsupportedLanguage { .. }
+        | TranscriptionError::UnsupportedAudioInput { .. }
+        | TranscriptionError::UnsupportedAudioPath { .. }
+        | TranscriptionError::UnsupportedBackend { .. }
+        | TranscriptionError::UnsupportedDevice { .. }
+        | TranscriptionError::NoNativeStream
+        | TranscriptionError::NoDelegatedOperation
+        | TranscriptionError::LoadPanicked
+        | TranscriptionError::Cancelled
+        | TranscriptionError::NoSpeech
+        | TranscriptionError::InvalidSegment
+        | TranscriptionError::Processing(_) => "transcription",
     };
     log_stage_error(
         stage,
         stage_started.elapsed(),
-        map_recognition_error(error, control),
+        map_transcription_error(error, control),
     )
 }
 
@@ -1256,7 +1257,7 @@ fn hearing_failed(
     started_at: Instant,
 ) -> DictationError {
     match error {
-        HearingError::Recognition(error) => log_recognition_error(error, control, started_at),
+        HearingError::Transcription(error) => log_transcription_error(error, control, started_at),
         HearingError::Tracking(error) => check_execution(control)
             .err()
             .unwrap_or_else(|| error.into()),
@@ -1474,15 +1475,18 @@ fn log_stage_error(
     error
 }
 
-fn map_recognition_error(error: RecognitionError, control: &ExecutionControl) -> DictationError {
+fn map_transcription_error(
+    error: TranscriptionError,
+    control: &ExecutionControl,
+) -> DictationError {
     if control.is_cancelled() {
         return DictationError::Cancelled;
     }
     match error {
-        RecognitionError::Cancelled if control.deadline_expired() => {
+        TranscriptionError::Cancelled if control.deadline_expired() => {
             DictationError::OverallTimeout(control.overall_timeout())
         }
-        RecognitionError::Capture(error) => map_capture_error(error, control),
+        TranscriptionError::Capture(error) => map_capture_error(error, control),
         error => error.into(),
     }
 }
@@ -1534,8 +1538,8 @@ mod tests {
     use crate::dictation::{Cursor, RecordingId};
     use crate::speaker::testing::{OWN, Voice, diarizer, tracker};
     use crate::stt::{
-        Cadence, ChunkStream, Emitted, Hypothesis, Language, Recognition, RecognitionAudio, Stream,
-        Streaming,
+        Cadence, ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Stream, Streaming,
+        Transcription,
     };
     use aria_kit::audio::{
         Recording, RecordingWriter, ReplayPace, WavReplayCapture, canonical_fixture, fixture_of,
@@ -1555,9 +1559,9 @@ mod tests {
 
     impl<F> Layer for FinalLayer<F>
     where
-        F: Fn(&mut String, &CancelToken) -> Result<(), RecognitionError> + Send + Sync,
+        F: Fn(&mut String, &CancelToken) -> Result<(), TranscriptionError> + Send + Sync,
     {
-        fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), RecognitionError> {
+        fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
             (self.0)(text, cancel)
         }
     }
@@ -1565,7 +1569,11 @@ mod tests {
     struct Parts(&'static [&'static str]);
 
     impl Recognizer for Parts {
-        fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
+        fn validate_language(
+            &self,
+            _: &Language,
+            _: &CancelToken,
+        ) -> Result<(), TranscriptionError> {
             Ok(())
         }
 
@@ -1574,7 +1582,7 @@ mod tests {
             _: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
-        ) -> Result<Hypothesis, RecognitionError> {
+        ) -> Result<Hypothesis, TranscriptionError> {
             panic!("native stream expected")
         }
 
@@ -1582,13 +1590,13 @@ mod tests {
             &self,
             _: &Language,
             _: &CancelToken,
-        ) -> Result<Option<Box<dyn ChunkStream>>, RecognitionError> {
+        ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
             struct Chunks(std::iter::Copied<std::slice::Iter<'static, &'static str>>);
             impl ChunkStream for Chunks {
                 fn chunk_samples(&self) -> usize {
                     16_000
                 }
-                fn feed(&mut self, _: &[f32]) -> Result<Emitted, RecognitionError> {
+                fn feed(&mut self, _: &[f32]) -> Result<Emitted, TranscriptionError> {
                     Ok(Emitted {
                         words: Hypothesis::new(self.0.next().unwrap_or("")),
                         joins_previous: false,
@@ -1607,7 +1615,7 @@ mod tests {
             &self,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<(), RecognitionError> {
+        ) -> Result<(), TranscriptionError> {
             Ok(())
         }
 
@@ -1616,7 +1624,7 @@ mod tests {
             audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<Hypothesis, RecognitionError> {
+        ) -> Result<Hypothesis, TranscriptionError> {
             let heard = match audio {
                 RecognitionAudio::Samples(samples) => !samples.is_empty(),
                 RecognitionAudio::Wav(_) => true,
@@ -1630,7 +1638,7 @@ mod tests {
             &self,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<(), RecognitionError> {
+        ) -> Result<(), TranscriptionError> {
             Ok(())
         }
 
@@ -1639,7 +1647,7 @@ mod tests {
             _audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<Hypothesis, RecognitionError> {
+        ) -> Result<Hypothesis, TranscriptionError> {
             Ok(Hypothesis::new(self.0))
         }
 
@@ -1647,7 +1655,7 @@ mod tests {
             &self,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<Option<Box<dyn ChunkStream>>, RecognitionError> {
+        ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
             Ok(Some(Box::new(Self(self.0))))
         }
     }
@@ -1657,7 +1665,7 @@ mod tests {
             16_000
         }
 
-        fn feed(&mut self, _chunk: &[f32]) -> Result<Emitted, RecognitionError> {
+        fn feed(&mut self, _chunk: &[f32]) -> Result<Emitted, TranscriptionError> {
             Ok(Emitted {
                 words: Hypothesis::new(std::mem::take(&mut self.0)),
                 joins_previous: false,
@@ -1671,11 +1679,11 @@ mod tests {
         type Error = DictationError;
 
         fn segment(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
-            panic!("whole recognition cannot publish after rejection");
+            panic!("whole transcription cannot publish after rejection");
         }
 
         fn completed(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
-            panic!("whole recognition cannot publish after rejection");
+            panic!("whole transcription cannot publish after rejection");
         }
     }
 
@@ -1710,10 +1718,10 @@ mod tests {
     fn filtered_pipeline<C, E, T, M: Mode, S>(
         capture: C,
         diarizer: Diarizer<E>,
-        recognition: Recognition<T, M>,
+        transcription: Transcription<T, M>,
         sinks: S,
     ) -> DictationPipeline<C, Loud, E, LevelSegmenter, T, M, (), S> {
-        DictationPipeline::new(capture, recognition, sinks)
+        DictationPipeline::new(capture, transcription, sinks)
             .hearing_speech(Some(Loud))
             .tracking_voices(Some(diarizer), Some(LevelSegmenter))
     }
@@ -1840,10 +1848,10 @@ mod tests {
     /// What is heard in a short loud recording when the engine answers
     /// `text`.
     fn heard(directory: &std::path::Path, text: &'static str) -> Heard {
-        let recognition = Recognition::complete_samples(Answering(text));
-        let mut operation = recognition.start(&Language::Automatic).unwrap();
+        let transcription = Transcription::complete_samples(Answering(text));
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
         let mut recording = RecordingReader::from_samples_in(directory, &[0.5; 1600]).unwrap();
-        aria_kit::recognition::next_heard(&mut operation, &mut recording)
+        aria_kit::transcription::next_heard(&mut operation, &mut recording)
             .unwrap()
             .unwrap()
     }
@@ -1893,7 +1901,7 @@ mod tests {
             &self,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<(), RecognitionError> {
+        ) -> Result<(), TranscriptionError> {
             Ok(())
         }
 
@@ -1902,7 +1910,7 @@ mod tests {
             _audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<Hypothesis, RecognitionError> {
+        ) -> Result<Hypothesis, TranscriptionError> {
             let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let mut writer = self.writer.lock().unwrap();
             let Some(&(audio, text)) = self.steps.get(call) else {
@@ -1959,7 +1967,7 @@ mod tests {
         );
         DictationPipeline::new(
             capture,
-            Recognition::agreement(Cadence::from_millis(500, 20_000), engine),
+            Transcription::agreement(Cadence::from_millis(500, 20_000), engine),
             sinks,
         )
     }
@@ -2015,11 +2023,11 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut recording =
             RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
-        let recognition = Recognition::complete_samples(Answering("turn left"));
-        let mut operation = recognition
+        let transcription = Transcription::complete_samples(Answering("turn left"));
+        let mut operation = transcription
             .start_with(&Language::Automatic, &CancelToken::never())
             .unwrap();
-        let heard = aria_kit::recognition::next_heard(&mut operation, &mut recording)
+        let heard = aria_kit::transcription::next_heard(&mut operation, &mut recording)
             .unwrap()
             .unwrap();
         published.provisional("uncommitted guess", &sinks);
@@ -2083,7 +2091,7 @@ mod tests {
             let (_directory, capture) = capture();
             let pipeline = DictationPipeline::new(
                 capture,
-                Recognition::complete_samples(Answering(text)),
+                Transcription::complete_samples(Answering(text)),
                 Cursor::new(RecordingDelivery {
                     log: CallLog::default(),
                     fail,
@@ -2118,29 +2126,29 @@ mod tests {
     }
 
     #[test]
-    fn caption_failure_before_recognition_still_clears_the_recording() {
+    fn caption_failure_before_transcription_still_clears_the_recording() {
         struct Cancelled;
         impl Recognizer for Cancelled {
             fn validate_language(
                 &self,
                 _language: &Language,
                 _cancel: &CancelToken,
-            ) -> Result<(), RecognitionError> {
-                Err(RecognitionError::Cancelled)
+            ) -> Result<(), TranscriptionError> {
+                Err(TranscriptionError::Cancelled)
             }
             fn recognize_with(
                 &self,
                 _audio: RecognitionAudio<'_>,
                 _language: &Language,
                 _cancel: &CancelToken,
-            ) -> Result<Hypothesis, RecognitionError> {
+            ) -> Result<Hypothesis, TranscriptionError> {
                 panic!("cancelled validation prevents decoding")
             }
         }
         let (_directory, capture) = capture();
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::complete_samples(Cancelled),
+            Transcription::complete_samples(Cancelled),
             CallLog::default().history(),
         );
         let (events, snapshots) = caption_events();
@@ -2168,7 +2176,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 capture,
                 diarizer(Voice(voice)),
-                Recognition::agreement(Cadence::from_millis(500, 20_000), Answering("hello")),
+                Transcription::agreement(Cadence::from_millis(500, 20_000), Answering("hello")),
                 CallLog::default().history(),
             );
             let (events, snapshots) = caption_events();
@@ -2203,7 +2211,7 @@ mod tests {
             let (_directory, capture) = capture();
             let pipeline = DictationPipeline::new(
                 capture,
-                Recognition::agreement(Cadence::from_millis(500, 20_000), Answering("hello")),
+                Transcription::agreement(Cadence::from_millis(500, 20_000), Answering("hello")),
                 CallLog::default().history(),
             );
             let (events, snapshots) = caption_events();
@@ -2227,12 +2235,12 @@ mod tests {
     }
 
     #[test]
-    fn whole_recognition_delivers_a_request_to_stream_complete_and_says_so() {
+    fn whole_transcription_delivers_a_request_to_stream_complete_and_says_so() {
         let (events, stages) = stage_events();
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             Arc::new(ModeSpy::default()),
-            Recognition::complete_samples(Answering("hello")),
+            Transcription::complete_samples(Answering("hello")),
             (log.history(), log.cursor()),
         );
 
@@ -2275,7 +2283,7 @@ mod tests {
         let (events, stages) = stage_events();
         let pipeline = DictationPipeline::new(
             Arc::new(ModeSpy::default()),
-            Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             PastingSink,
         );
 
@@ -2329,7 +2337,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 Arc::clone(&capture),
-                Recognition::complete_samples(Answering("hello")),
+                Transcription::complete_samples(Answering("hello")),
                 (log.history(), log.cursor()),
             );
             let mut settings = settings(DeliveryMode::Complete, OutputMode::Insert);
@@ -2358,7 +2366,7 @@ mod tests {
         let (directory, pressed_capture) = capture();
         let pipeline = DictationPipeline::new(
             pressed_capture,
-            Recognition::complete_samples(Answering("hello")),
+            Transcription::complete_samples(Answering("hello")),
             (press.history(), press.cursor()),
         );
         let (events, pressed) = stage_events();
@@ -2374,7 +2382,7 @@ mod tests {
         let (_unused, relayed_capture) = capture();
         let pipeline = DictationPipeline::new(
             relayed_capture,
-            Recognition::complete_samples(Answering("hello")),
+            Transcription::complete_samples(Answering("hello")),
             (relayed.history(), relayed.cursor()),
         );
         let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
@@ -2420,7 +2428,7 @@ mod tests {
                 &self,
                 _language: &Language,
                 _cancel: &CancelToken,
-            ) -> Result<(), RecognitionError> {
+            ) -> Result<(), TranscriptionError> {
                 Ok(())
             }
             fn recognize_with(
@@ -2428,8 +2436,8 @@ mod tests {
                 _audio: RecognitionAudio<'_>,
                 _language: &Language,
                 _cancel: &CancelToken,
-            ) -> Result<Hypothesis, RecognitionError> {
-                Err(RecognitionError::LoadPanicked)
+            ) -> Result<Hypothesis, TranscriptionError> {
+                Err(TranscriptionError::LoadPanicked)
             }
         }
         /// Logs how each recording ended, which `RecordingSink` leaves out.
@@ -2464,7 +2472,7 @@ mod tests {
         let (directory, pressed_capture) = capture();
         let pipeline = DictationPipeline::new(
             pressed_capture,
-            Recognition::complete_samples(Failing),
+            Transcription::complete_samples(Failing),
             (Ending(Arc::clone(&pressed)), CallLog::default().cursor()),
         );
         let (events, _stages) = stage_events();
@@ -2479,7 +2487,7 @@ mod tests {
         let (_unused, relayed_capture) = capture();
         let pipeline = DictationPipeline::new(
             relayed_capture,
-            Recognition::complete_samples(Failing),
+            Transcription::complete_samples(Failing),
             (Ending(Arc::clone(&relayed)), CallLog::default().cursor()),
         );
         let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
@@ -2507,7 +2515,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::complete_samples(Answering("hello")),
+            Transcription::complete_samples(Answering("hello")),
             (log.history(), log.cursor()),
         );
         let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
@@ -2534,7 +2542,7 @@ mod tests {
         let history = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::complete_samples(Answering("hello")),
+            Transcription::complete_samples(Answering("hello")),
             (history.history(), typed.failing_cursor()),
         );
         let mut settings = settings(DeliveryMode::Complete, OutputMode::Insert);
@@ -2559,7 +2567,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (UnreachableSink, log.cursor()),
         );
         let mut settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
@@ -2579,7 +2587,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (log.history(), log.cursor()),
         );
         let result = pipeline.run(settings(DeliveryMode::Streaming, OutputMode::Insert));
@@ -2626,12 +2634,12 @@ mod tests {
             let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 capture,
-                Recognition::stream(stream, Answering("run d b two")),
+                Transcription::stream(stream, Answering("run d b two")),
                 (log.history(), log.cursor()),
             );
             let matcher = crate::vocabulary::Vocabulary::compile(
                 &[],
-                aria_kit::recognition::layer::vocabulary::PersonalRules::new(
+                aria_kit::transcription::layer::vocabulary::PersonalRules::new(
                     vec!["db2".to_owned()],
                     Vec::new(),
                 ),
@@ -2700,7 +2708,7 @@ mod tests {
                     let started = Instant::now();
                     let pipeline = DictationPipeline::new(
                         capture,
-                        Recognition::stream(
+                        Transcription::stream(
                             if native {
                                 Stream::Native
                             } else {
@@ -2779,7 +2787,10 @@ mod tests {
             let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 capture,
-                Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("aria s t t")),
+                Transcription::agreement(
+                    Cadence::from_millis(100, 20_000),
+                    Answering("aria s t t"),
+                ),
                 log.history(),
             );
             let cases: [(Option<&Vocabulary>, &str); 4] = [
@@ -2826,7 +2837,7 @@ mod tests {
                     let log = CallLog::default();
                     let pipeline = DictationPipeline::new(
                         capture,
-                        Recognition::stream(Stream::Native, Parts(parts)),
+                        Transcription::stream(Stream::Native, Parts(parts)),
                         (log.history(), log.cursor()),
                     );
                     let result = pipeline
@@ -2873,7 +2884,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 capture,
-                Recognition::agreement(Cadence::from_millis(100, 20_000), engine),
+                Transcription::agreement(Cadence::from_millis(100, 20_000), engine),
                 (log.history(), log.cursor()),
             );
             let result = pipeline
@@ -2897,7 +2908,7 @@ mod tests {
     /// them, a model configured at startup included.
     #[test]
     fn each_press_follows_the_cleanup_it_was_admitted_with() {
-        fn finish<L: aria_kit::recognition::layer::Layer>(
+        fn finish<L: aria_kit::transcription::layer::Layer>(
             rewrites: &Rewrites<L>,
             enabled: bool,
             fillers: bool,
@@ -2950,7 +2961,7 @@ mod tests {
     fn backtracking_is_local_to_each_completed_transcript() {
         let pipeline = DictationPipeline::new(
             (),
-            Recognition::complete_samples(Answering("")),
+            Transcription::complete_samples(Answering("")),
             UnreachableSink,
         );
         for text in ["meet at 2", "actually 3", "scratch", "that to Sara"] {
@@ -2977,7 +2988,7 @@ mod tests {
                 None,
                 &cancel
             ),
-            Err(RecognitionError::Cancelled)
+            Err(TranscriptionError::Cancelled)
         ));
     }
 
@@ -2999,7 +3010,7 @@ mod tests {
                 });
                 let pipeline = DictationPipeline::new(
                     capture,
-                    Recognition::stream(Stream::Native, Parts(&["um meet at 2", "actually 3"])),
+                    Transcription::stream(Stream::Native, Parts(&["um meet at 2", "actually 3"])),
                     (log.history(), log.cursor()),
                 )
                 .rewriting(
@@ -3040,7 +3051,7 @@ mod tests {
     }
 
     #[test]
-    fn full_recording_recognition_uses_completion_layers_and_cancellation() {
+    fn full_recording_transcription_uses_completion_layers_and_cancellation() {
         let (directory, capture) = capture();
         let layer = FinalLayer(|text: &mut String, _: &CancelToken| {
             assert_eq!(text, "meet at 3");
@@ -3049,7 +3060,7 @@ mod tests {
         });
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::complete_samples(Answering("um meet at 2 actually 3")),
+            Transcription::complete_samples(Answering("um meet at 2 actually 3")),
             UnreachableSink,
         )
         .rewriting(Rewrites::new().with(layer));
@@ -3101,14 +3112,14 @@ mod tests {
             let layer = FinalLayer(move |text: &mut String, _: &CancelToken| {
                 *text = "never deliver this".to_owned();
                 Err(if cancelled {
-                    RecognitionError::Cancelled
+                    TranscriptionError::Cancelled
                 } else {
-                    RecognitionError::NoNativeStream
+                    TranscriptionError::NoNativeStream
                 })
             });
             let pipeline = DictationPipeline::new(
                 capture,
-                Recognition::complete_samples(Answering("meet at 2 actually 3")),
+                Transcription::complete_samples(Answering("meet at 2 actually 3")),
                 (log.history(), log.cursor()),
             )
             .rewriting(Rewrites::new().with(layer));
@@ -3120,7 +3131,7 @@ mod tests {
             if cancelled {
                 assert!(matches!(result, Err(DictationError::Cancelled)));
             } else {
-                assert!(matches!(result, Err(DictationError::Recognition(_))));
+                assert!(matches!(result, Err(DictationError::Transcription(_))));
             }
             assert!(log.entries().iter().all(|entry| {
                 !entry.starts_with("completed:")
@@ -3133,7 +3144,7 @@ mod tests {
     struct CountPreparations(std::sync::atomic::AtomicUsize);
 
     impl Layer for CountPreparations {
-        fn apply(&self, _: &mut String, _: &CancelToken) -> Result<(), RecognitionError> {
+        fn apply(&self, _: &mut String, _: &CancelToken) -> Result<(), TranscriptionError> {
             Ok(())
         }
 
@@ -3154,7 +3165,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 capture,
-                Recognition::stream(Stream::Native, Parts(&["please meet me", "at the office"])),
+                Transcription::stream(Stream::Native, Parts(&["please meet me", "at the office"])),
                 (log.history(), log.cursor()),
             )
             .rewriting(Rewrites::new().with(Some(&model)));
@@ -3187,7 +3198,7 @@ mod tests {
         .unwrap();
         let pipeline = DictationPipeline::new(
             (),
-            Recognition::complete_samples(Answering("")),
+            Transcription::complete_samples(Answering("")),
             UnreachableSink,
         )
         .rewriting(Rewrites::new().with(Some(cleanup)));
@@ -3246,7 +3257,7 @@ mod tests {
         });
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::complete_samples(Answering("um meet Alice at 2 actually 3")),
+            Transcription::complete_samples(Answering("um meet Alice at 2 actually 3")),
             (log.history(), log.cursor()),
         )
         .rewriting(Rewrites::new().with(layer));
@@ -3279,7 +3290,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 capture,
-                Recognition::stream(
+                Transcription::stream(
                     Stream::Agreement(Cadence::from_millis(100, 20_000)),
                     Answering(heard),
                 ),
@@ -3377,7 +3388,7 @@ mod tests {
         for (enabled, expected) in [(false, "send the the um report"), (true, "send the report")] {
             let pipeline = DictationPipeline::new(
                 (),
-                Recognition::complete_samples(Answering("")),
+                Transcription::complete_samples(Answering("")),
                 UnreachableSink,
             );
 
@@ -3404,7 +3415,7 @@ mod tests {
     fn a_whole_transcript_of_only_fillers_is_no_speech() {
         let pipeline = DictationPipeline::new(
             (),
-            Recognition::complete_samples(Answering("")),
+            Transcription::complete_samples(Answering("")),
             UnreachableSink,
         );
 
@@ -3420,7 +3431,7 @@ mod tests {
             &CancelToken::never(),
         );
 
-        assert!(matches!(result, Err(RecognitionError::NoSpeech)));
+        assert!(matches!(result, Err(TranscriptionError::NoSpeech)));
     }
 
     fn ghost_events() -> (
@@ -3506,7 +3517,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 capture,
                 diarizer(Voice(voice)),
-                Recognition::agreement(Cadence::from_millis(500, 20_000), engine),
+                Transcription::agreement(Cadence::from_millis(500, 20_000), engine),
                 CallLog::default().history(),
             );
             let (events, ghosts) = ghost_events();
@@ -3567,7 +3578,7 @@ mod tests {
         let pipeline = filtered_pipeline(
             capture,
             diarizer(VoiceByLevel),
-            Recognition::agreement(Cadence::from_millis(100, 20_000), engine),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), engine),
             (log.history(), log.cursor()),
         );
         let (events, ghosts) = ghost_events();
@@ -3675,7 +3686,7 @@ mod tests {
         let pipeline = filtered_pipeline(
             Finished(source),
             diarizer(VoiceByLevel),
-            Recognition::complete_samples(context_sensitive),
+            Transcription::complete_samples(context_sensitive),
             (log.history(), log.cursor()),
         );
 
@@ -3699,7 +3710,7 @@ mod tests {
             Finished([OTHER_SPEECH, PAUSE, OWN_SPEECH].concat()),
             diarizer(VoiceByLevel),
             // A filler inside the owner's turn.
-            Recognition::complete_samples(Hypotheses(|_| {
+            Transcription::complete_samples(Hypotheses(|_| {
                 Ok(timed(
                     "other first um second",
                     &[(0.2, 1.2), (3.2, 3.6), (3.7, 3.9), (4.2, 5.0)],
@@ -3728,7 +3739,7 @@ mod tests {
         let pipeline = filtered_pipeline(
             Finished(source.clone()),
             diarizer(VoiceByLevel),
-            Recognition::complete_samples(levels(Arc::clone(&inputs))),
+            Transcription::complete_samples(levels(Arc::clone(&inputs))),
             CallLog::default().history(),
         );
         assert_eq!(
@@ -3765,13 +3776,13 @@ mod tests {
         segments: Vec<TranscriptSegment>,
         text: &'static str,
         inputs: Arc<Mutex<Vec<Vec<f32>>>>,
-    ) -> aria_kit::recognition::OperationSource {
-        use aria_kit::recognition::{OperationSource, OperationStep, TranscriptUpdate};
+    ) -> aria_kit::transcription::OperationSource {
+        use aria_kit::transcription::{OperationSource, OperationStep, TranscriptUpdate};
 
         let mut segments = segments.into_iter();
         let mut first = true;
         OperationSource::new(engine, move |recording, _| {
-            recording.fill().map_err(RecognitionError::Capture)?;
+            recording.fill().map_err(TranscriptionError::Capture)?;
             if first {
                 inputs.lock().unwrap().push(recording.samples().to_vec());
                 first = false;
@@ -3823,7 +3834,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 Finished(source.clone()),
                 diarizer(VoiceByLevel),
-                Recognition::<_, crate::stt::Whole>::delegated(model),
+                Transcription::<_, crate::stt::Whole>::delegated(model),
                 (log.history(), log.cursor()),
             );
 
@@ -3886,7 +3897,7 @@ mod tests {
         let pipeline = filtered_pipeline(
             Finished([OWN_SPEECH, PAUSE, OWN_SPEECH].concat()),
             diarizer(VoiceByLevel),
-            Recognition::<_, crate::stt::Whole>::delegated(model),
+            Transcription::<_, crate::stt::Whole>::delegated(model),
             (log.history(), log.cursor()),
         );
 
@@ -3917,7 +3928,7 @@ mod tests {
         let inputs = Arc::new(Mutex::new(Vec::new()));
         let pipeline = DictationPipeline::new(
             (),
-            Recognition::complete_samples(levels(Arc::clone(&inputs))),
+            Transcription::complete_samples(levels(Arc::clone(&inputs))),
             (),
         )
         .hearing_speech(None::<Loud>);
@@ -3932,7 +3943,7 @@ mod tests {
         feed.hear_through(4_000);
         let timeline = feed.timeline().expect("a tracker runs").clone();
         let language = Language::Automatic;
-        let operation = pipeline.recognition.start(&language).unwrap();
+        let operation = pipeline.transcription.start(&language).unwrap();
 
         let result = pipeline.filtered_complete(
             &mut recording,
@@ -3979,7 +3990,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 Finished([OTHER_SPEECH, PAUSE, OWN_SPEECH].concat()),
                 diarizer(VoiceByLevel),
-                Recognition::<_, crate::stt::Whole>::delegated(model),
+                Transcription::<_, crate::stt::Whole>::delegated(model),
                 (log.history(), log.cursor()),
             );
 
@@ -3990,8 +4001,8 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(DictationError::Recognition(
-                    RecognitionError::InvalidSegment
+                Err(DictationError::Transcription(
+                    TranscriptionError::InvalidSegment
                 ))
             ));
             assert_eq!(openings.load(Ordering::Relaxed), 1);
@@ -4002,11 +4013,11 @@ mod tests {
     /// Decodes a saved `source` held from stream position `origin`,
     /// keeping only the owner's words.
     fn decode_from<T: Recognizer, M: Mode>(
-        recognition: Recognition<T, M>,
+        transcription: Transcription<T, M>,
         source: &[f32],
         origin: u64,
     ) -> CompleteDecode {
-        let pipeline = DictationPipeline::new((), recognition, ()).hearing_speech(None::<Loud>);
+        let pipeline = DictationPipeline::new((), transcription, ()).hearing_speech(None::<Loud>);
         let mut recording = RecordingReader::from_samples(source);
         recording.fill().unwrap();
         recording.release_before(origin);
@@ -4020,7 +4031,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let language = Language::Automatic;
-        let operation = pipeline.recognition.start(&language).unwrap();
+        let operation = pipeline.transcription.start(&language).unwrap();
         pipeline
             .filtered_complete(
                 &mut recording,
@@ -4051,7 +4062,7 @@ mod tests {
         });
 
         let decoded = decode_from(
-            Recognition::<_, crate::stt::Whole>::delegated(model),
+            Transcription::<_, crate::stt::Whole>::delegated(model),
             OWN_SPEECH,
             8_000,
         );
@@ -4071,7 +4082,7 @@ mod tests {
         let source = [OTHER_SPEECH, PAUSE, OWN_SPEECH].concat();
 
         let decoded = decode_from(
-            Recognition::complete_samples(levels(Arc::default())),
+            Transcription::complete_samples(levels(Arc::default())),
             &source,
             8_000,
         );
@@ -4091,7 +4102,7 @@ mod tests {
 
     #[test]
     fn complete_context_late_failures_map_to_errors_and_publish_nothing() {
-        use aria_kit::recognition::{OperationSource, OperationStep, TranscriptUpdate};
+        use aria_kit::transcription::{OperationSource, OperationStep, TranscriptUpdate};
 
         for failure in ["inference", "cancel", "no-speech", "no-segments"] {
             for live in [false, true] {
@@ -4103,10 +4114,10 @@ mod tests {
                         let cancel = cancel.clone();
                         let mut first = true;
                         OperationSource::new("discarded-engine", move |recording, _| {
-                            recording.fill().map_err(RecognitionError::Capture)?;
+                            recording.fill().map_err(TranscriptionError::Capture)?;
                             let end = recording.held_to();
                             if failure == "no-speech" {
-                                return Err(RecognitionError::NoSpeech);
+                                return Err(TranscriptionError::NoSpeech);
                             }
                             if failure == "no-segments" {
                                 return Ok(OperationStep::Complete {
@@ -4126,7 +4137,7 @@ mod tests {
                                 });
                             }
                             match failure {
-                                "inference" => Err(RecognitionError::Inference {
+                                "inference" => Err(TranscriptionError::Inference {
                                     backend: "test",
                                     source: aria_kit::backend::BackendError::Unusable(
                                         "test failure".into(),
@@ -4150,7 +4161,7 @@ mod tests {
                 let pipeline = filtered_pipeline(
                     Finished(source.clone()),
                     diarizer(VoiceByLevel),
-                    Recognition::<_, crate::stt::Whole>::delegated(model),
+                    Transcription::<_, crate::stt::Whole>::delegated(model),
                     (log.history(), log.cursor()),
                 );
                 let cancel = CancelToken::new();
@@ -4177,14 +4188,14 @@ mod tests {
                 match failure {
                     "inference" => assert!(matches!(
                         result,
-                        Err(DictationError::Recognition(
-                            RecognitionError::Inference { .. }
+                        Err(DictationError::Transcription(
+                            TranscriptionError::Inference { .. }
                         ))
                     )),
                     "no-segments" => assert!(matches!(
                         result,
-                        Err(DictationError::Recognition(
-                            RecognitionError::InvalidSegment
+                        Err(DictationError::Transcription(
+                            TranscriptionError::InvalidSegment
                         ))
                     )),
                     "cancel" => assert!(matches!(result, Err(DictationError::Cancelled))),
@@ -4208,7 +4219,7 @@ mod tests {
                 Finished(source.clone()),
                 diarizer(VoiceByLevel),
                 // Hears only the guest, timed inside the guest's turn.
-                Recognition::complete_samples(Hypotheses({
+                Transcription::complete_samples(Hypotheses({
                     let calls = Arc::clone(&calls);
                     move |_| {
                         calls.fetch_add(1, Ordering::Relaxed);
@@ -4266,7 +4277,7 @@ mod tests {
         let pipeline = filtered_pipeline(
             capture,
             diarizer(VoiceByLevel),
-            Recognition::complete_wav(wav_levels(Arc::clone(&inputs))),
+            Transcription::complete_wav(wav_levels(Arc::clone(&inputs))),
             (log.history(), log.cursor()),
         );
 
@@ -4313,7 +4324,7 @@ mod tests {
                     calls.fetch_add(1, Ordering::Relaxed);
                     assert_eq!(text, "own");
                     if fail {
-                        return Err(RecognitionError::InvalidSegment);
+                        return Err(TranscriptionError::InvalidSegment);
                     }
                     text.push_str(" processed");
                     Ok(())
@@ -4323,7 +4334,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 Finished([OTHER_SPEECH, PAUSE, OWN_SPEECH].concat()),
                 diarizer(VoiceByLevel),
-                Recognition::complete_samples(levels(Arc::default())),
+                Transcription::complete_samples(levels(Arc::default())),
                 (log.history(), log.cursor()),
             )
             .rewriting(Rewrites::new().with(layer));
@@ -4340,8 +4351,8 @@ mod tests {
             if fail {
                 assert!(matches!(
                     result,
-                    Err(DictationError::Recognition(
-                        RecognitionError::InvalidSegment
+                    Err(DictationError::Transcription(
+                        TranscriptionError::InvalidSegment
                     ))
                 ));
                 assert_eq!(log.entries(), ["prepare:Insert"]);
@@ -4387,7 +4398,7 @@ mod tests {
             let log = CallLog::default();
             let pipeline = DictationPipeline::new(
                 capture,
-                Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+                Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
                 (log.history(), log.cursor()),
             )
             .hearing_speech(Some(Deaf))
@@ -4410,7 +4421,7 @@ mod tests {
                 let log = CallLog::default();
                 let pipeline = DictationPipeline::new(
                     Finished(OWN_SPEECH.to_vec()),
-                    Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+                    Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
                     (log.history(), log.cursor()),
                 )
                 .hearing_speech(speech)
@@ -4435,7 +4446,7 @@ mod tests {
         for (case, speech, diarizer, segmenter) in unavailable_filters() {
             let pipeline = DictationPipeline::new(
                 Finished(OWN_SPEECH.to_vec()),
-                Recognition::complete_samples(Answering("hello")),
+                Transcription::complete_samples(Answering("hello")),
                 UnreachableSink,
             )
             .hearing_speech(speech)
@@ -4836,7 +4847,7 @@ mod tests {
             let (_directory, capture) = replay(|directory| fixture_of(directory, 4_000));
             let pipeline = DictationPipeline::new(
                 capture,
-                Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("yeah")),
+                Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("yeah")),
                 CallLog::default().history(),
             )
             .hearing_speech(Some(OneFrame(true)));
@@ -4961,7 +4972,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 capture,
                 diarizer(VoiceByLevel),
-                Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("yeah")),
+                Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("yeah")),
                 (log.history(), log.cursor()),
             );
             let (send, receive) = std::sync::mpsc::channel();
@@ -4989,13 +5000,14 @@ mod tests {
     /// Runs one press and returns its result and the sink log.
     fn press<C: AudioCapture, T: Recognizer, M: Mode, V: VoiceActivityDetector + Send>(
         capture: C,
-        recognition: Recognition<T, M>,
+        transcription: Transcription<T, M>,
         detector: Option<V>,
         delivery: DeliveryMode,
     ) -> (Result<DictationResult, DictationError>, Vec<String>) {
         let log = CallLog::default();
-        let pipeline = DictationPipeline::new(capture, recognition, (log.history(), log.cursor()))
-            .hearing_speech(detector);
+        let pipeline =
+            DictationPipeline::new(capture, transcription, (log.history(), log.cursor()))
+                .hearing_speech(detector);
         let result = pipeline.run(settings(delivery, OutputMode::Insert));
         (result, log.entries())
     }
@@ -5004,19 +5016,19 @@ mod tests {
     fn a_press_without_speech_types_nothing() {
         let gate = crate::speaker::speech_gate;
         let agreement =
-            || Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("Mm-hmm."));
+            || Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("Mm-hmm."));
         let presses = [
             press(capture().1, agreement(), gate(), DeliveryMode::Streaming),
             press(capture().1, agreement(), gate(), DeliveryMode::Complete),
             press(
                 capture().1,
-                Recognition::complete_samples(Answering("Mm-hmm.")),
+                Transcription::complete_samples(Answering("Mm-hmm.")),
                 gate(),
                 DeliveryMode::Complete,
             ),
             press(
                 capture().1,
-                Recognition::complete_wav(Answering("Mm-hmm.")),
+                Transcription::complete_wav(Answering("Mm-hmm.")),
                 gate(),
                 DeliveryMode::Complete,
             ),
@@ -5036,7 +5048,7 @@ mod tests {
     #[test]
     fn a_press_with_speech_types_its_words() {
         let agreement =
-            || Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello"));
+            || Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello"));
         let presses = [
             press(
                 capture().1,
@@ -5047,13 +5059,13 @@ mod tests {
             press(capture().1, agreement(), Some(Loud), DeliveryMode::Complete),
             press(
                 capture().1,
-                Recognition::complete_samples(Answering("hello")),
+                Transcription::complete_samples(Answering("hello")),
                 Some(Loud),
                 DeliveryMode::Complete,
             ),
             press(
                 capture().1,
-                Recognition::complete_wav(Answering("hello")),
+                Transcription::complete_wav(Answering("hello")),
                 Some(Loud),
                 DeliveryMode::Complete,
             ),
@@ -5085,7 +5097,7 @@ mod tests {
             );
             let (result, log) = press(
                 capture,
-                Recognition::agreement(Cadence::from_millis(100, 20_000), engine),
+                Transcription::agreement(Cadence::from_millis(100, 20_000), engine),
                 Some(Loud),
                 delivery,
             );
@@ -5104,7 +5116,7 @@ mod tests {
         let (directory, capture) = capture();
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::complete_samples(Answering("Mm-hmm.")),
+            Transcription::complete_samples(Answering("Mm-hmm.")),
             (),
         )
         .hearing_speech(Some(Loud));
@@ -5148,7 +5160,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::complete_samples(Answering("hello")),
+            Transcription::complete_samples(Answering("hello")),
             (log.history(), log.cursor()),
         );
         let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
@@ -5179,7 +5191,7 @@ mod tests {
         let pipeline = filtered_pipeline(
             capture,
             diarizer(Voice(OTHER)),
-            Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (log.history(), log.cursor()),
         );
         let settings = own_voice_only(settings(DeliveryMode::Streaming, OutputMode::Insert));
@@ -5218,7 +5230,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 capture,
                 diarizer(Voice(voice)),
-                Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+                Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
                 (),
             );
             let mut recording = RecordingReader::from_samples_in(directory.path(), &[0.5; 64_000])
@@ -5248,7 +5260,7 @@ mod tests {
         let (directory, capture) = capture();
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::complete_samples(Answering("must not escape")),
+            Transcription::complete_samples(Answering("must not escape")),
             (),
         );
         let mut recording =
@@ -5292,7 +5304,7 @@ mod tests {
         let positions = Arc::new(Mutex::new(Vec::new()));
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::agreement(Cadence::from_millis(100, 20_000), Echoing),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Echoing),
             (
                 PositionSink(Arc::clone(&positions)),
                 CallLog::default().cursor(),
@@ -5315,7 +5327,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 capture,
                 diarizer(Voice(OWN)),
-                Recognition::agreement(Cadence::from_millis(1_000, 20_000), Answering("hello")),
+                Transcription::agreement(Cadence::from_millis(1_000, 20_000), Answering("hello")),
                 (log.history(), log.cursor()),
             );
             let (events, stages) = stage_events();
@@ -5351,7 +5363,7 @@ mod tests {
         let pipeline = filtered_pipeline(
             capture,
             diarizer(Voice(OWN)),
-            Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (log.history(), log.cursor()),
         );
         let press = || {
@@ -5388,7 +5400,7 @@ mod tests {
                 opening: OWN_SPEECH,
             },
             diarizer(Voice(OWN)),
-            Recognition::complete_samples(Answering("hello")),
+            Transcription::complete_samples(Answering("hello")),
             CallLog::default().history(),
         );
         let (send, receive) = std::sync::mpsc::channel();
@@ -5426,7 +5438,7 @@ mod tests {
         let pipeline = filtered_pipeline(
             capture,
             diarizer(Voice(OWN)),
-            Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (log.history(), log.cursor()),
         );
         let result = pipeline.run(own_voice_only(settings(
@@ -5458,7 +5470,7 @@ mod tests {
             let pipeline = filtered_pipeline(
                 capture,
                 diarizer(Voice(voice)),
-                Recognition::complete_samples(Echoing),
+                Transcription::complete_samples(Echoing),
                 (log.history(), log.cursor()),
             );
             let (send, stages) = std::sync::mpsc::channel();
@@ -5504,7 +5516,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             (log.history(), log.failing_cursor()),
         );
         let result = pipeline.run(settings(DeliveryMode::Streaming, OutputMode::Insert));
@@ -5535,7 +5547,7 @@ mod tests {
         .expect("fixture is replayable");
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
             CallLog::default().failing_cursor(),
         );
         let control = ExecutionControl::for_test(StopMode::Manual);
@@ -5558,7 +5570,7 @@ mod tests {
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
-            Recognition::complete_samples(Answering("hello")),
+            Transcription::complete_samples(Answering("hello")),
             (log.history(), log.failing_cursor()),
         );
         let result = pipeline.run(settings(DeliveryMode::Complete, OutputMode::Insert));

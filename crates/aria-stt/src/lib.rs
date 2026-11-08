@@ -22,8 +22,8 @@
 ))]
 mod engine;
 
-pub use aria_kit::recognition::prelude;
-pub use aria_kit::recognition::prelude::*;
+pub use aria_kit::transcription::prelude;
+pub use aria_kit::transcription::prelude::*;
 #[cfg(all(
     not(target_family = "wasm"),
     any(

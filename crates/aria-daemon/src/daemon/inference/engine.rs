@@ -10,13 +10,13 @@ use tokio::sync::mpsc;
 use aria_kit::audio::{
     Recording, RecordingReader, RecordingWriter, SpooledRecordingWriter, f32_from_pcm16,
 };
-use aria_kit::recognition::check_cancelled;
+use aria_kit::transcription::check_cancelled;
 use aria_primitives::cancel::CancelToken;
 use aria_primitives::local_socket::ExclusiveListener;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::stt::{
-    AudioInputKind, Recognition, RecognitionError, Recognizer, Stream, TranscriptSegment,
-    TranscriptUpdate,
+    AudioInputKind, Recognizer, Stream, TranscriptSegment, TranscriptUpdate, Transcription,
+    TranscriptionError,
 };
 
 use super::{OUTPUT_POLL, OUTPUT_STALL_TIMEOUT};
@@ -46,7 +46,7 @@ impl Engine {
         spool: PathBuf,
         ownership: Arc<ExclusiveListener>,
         cancel: &CancelToken,
-    ) -> Result<Self, RecognitionError> {
+    ) -> Result<Self, TranscriptionError> {
         let (name, input, stream) = (config.name(), config.input(), config.stream());
         let recognizer = config.load(cancel)?;
         Ok(Self::new(name, input, stream, recognizer, spool, ownership))
@@ -129,12 +129,12 @@ impl Engine {
         let streaming;
         let mut operation = match (start.strategy, self.stream) {
             (Strategy::Streaming, Some(stream)) => {
-                streaming = Recognition::stream(stream, Arc::clone(&self.recognizer));
+                streaming = Transcription::stream(stream, Arc::clone(&self.recognizer));
                 streaming.start_with(&start.language, cancel)
             }
             // `prepare` refuses streaming from an engine without a stream.
             (Strategy::Whole, _) | (Strategy::Streaming, None) => {
-                whole = Recognition::complete(self.input, Arc::clone(&self.recognizer));
+                whole = Transcription::complete(self.input, Arc::clone(&self.recognizer));
                 whole.start_with(&start.language, cancel)
             }
         }
@@ -175,7 +175,7 @@ impl Engine {
         check_cancelled(cancel).map_err(recognition_failure)?;
         let transcript = operation
             .completed()
-            .ok_or_else(|| recognition_failure(RecognitionError::NoSpeech))?;
+            .ok_or_else(|| recognition_failure(TranscriptionError::NoSpeech))?;
         within_limit(transcript.as_str().len())?;
         Ok(self.transcript(transcript.as_str()))
     }
@@ -268,7 +268,7 @@ fn emit(
         match events.try_send(event) {
             Ok(()) => return Ok(()),
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                return Err(recognition_failure(RecognitionError::Cancelled));
+                return Err(recognition_failure(TranscriptionError::Cancelled));
             }
             Err(mpsc::error::TrySendError::Full(pending)) => event = pending,
         }
@@ -290,7 +290,7 @@ fn bounded_segment(
 ) -> Result<TranscriptSegment, RpcFailure> {
     segment.bounded(audio_end).map_err(|_| {
         RpcFailure::new(
-            RpcErrorCode::RecognitionFailed,
+            RpcErrorCode::TranscriptionFailed,
             "inference returned an invalid audio span",
         )
     })
@@ -298,32 +298,34 @@ fn bounded_segment(
 
 fn preparation_failure() -> RpcFailure {
     RpcFailure::new(
-        RpcErrorCode::RecognitionFailed,
+        RpcErrorCode::TranscriptionFailed,
         "preparing inference audio failed",
     )
 }
 
-pub(super) fn recognition_failure(error: RecognitionError) -> RpcFailure {
+pub(super) fn recognition_failure(error: TranscriptionError) -> RpcFailure {
     let (code, message) = match error {
-        RecognitionError::Cancelled => (RpcErrorCode::Cancelled, "inference was cancelled"),
-        RecognitionError::NoSpeech => (RpcErrorCode::NoSpeech, "no speech was recognized"),
-        RecognitionError::UnsupportedLanguage { .. } => (
+        TranscriptionError::Cancelled => (RpcErrorCode::Cancelled, "inference was cancelled"),
+        TranscriptionError::NoSpeech => (RpcErrorCode::NoSpeech, "no speech was transcribed"),
+        TranscriptionError::UnsupportedLanguage { .. } => (
             RpcErrorCode::Unsupported,
             "the engine does not support the requested language",
         ),
-        RecognitionError::Model { .. }
-        | RecognitionError::Load { .. }
-        | RecognitionError::Capture(_)
-        | RecognitionError::Inference { .. }
-        | RecognitionError::UnsupportedAudioPath { .. }
-        | RecognitionError::UnsupportedAudioInput { .. }
-        | RecognitionError::UnsupportedBackend { .. }
-        | RecognitionError::UnsupportedDevice { .. }
-        | RecognitionError::NoNativeStream
-        | RecognitionError::NoDelegatedOperation
-        | RecognitionError::LoadPanicked
-        | RecognitionError::InvalidSegment
-        | RecognitionError::Processing(_) => (RpcErrorCode::RecognitionFailed, "inference failed"),
+        TranscriptionError::Model { .. }
+        | TranscriptionError::Load { .. }
+        | TranscriptionError::Capture(_)
+        | TranscriptionError::Inference { .. }
+        | TranscriptionError::UnsupportedAudioPath { .. }
+        | TranscriptionError::UnsupportedAudioInput { .. }
+        | TranscriptionError::UnsupportedBackend { .. }
+        | TranscriptionError::UnsupportedDevice { .. }
+        | TranscriptionError::NoNativeStream
+        | TranscriptionError::NoDelegatedOperation
+        | TranscriptionError::LoadPanicked
+        | TranscriptionError::InvalidSegment
+        | TranscriptionError::Processing(_) => {
+            (RpcErrorCode::TranscriptionFailed, "inference failed")
+        }
     };
     RpcFailure::new(code, message)
 }
@@ -391,7 +393,7 @@ mod tests {
         let beyond_audio = TranscriptSegment::new("impossible", Some(160..320)).unwrap();
         assert_eq!(
             bounded_segment(beyond_audio, 160).unwrap_err().code,
-            RpcErrorCode::RecognitionFailed
+            RpcErrorCode::TranscriptionFailed
         );
     }
 

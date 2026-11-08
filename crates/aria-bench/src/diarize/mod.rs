@@ -37,7 +37,7 @@ use aria_kit::synthesis::{SpeechTextError, Synthesizer, VoiceError};
 use aria_kit::voice_activity::VoiceActivityError;
 use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
 use aria_voice::speaker::{Diarizer, Label};
-use aria_voice::stt::{Recognition, RecognitionError, StreamingEngine};
+use aria_voice::stt::{StreamingEngine, Transcription, TranscriptionError};
 
 /// Longer than any scenario's realtime replay.
 const SCENARIO_LIMIT: Duration = Duration::from_secs(600);
@@ -85,7 +85,7 @@ pub struct Embedded {
 
 /// Labels one real recording end to end, for scoring against a corpus's own
 /// ground truth. No script to synthesize, so no TTS — the audio already
-/// exists. It plays at its own speed because streaming recognition decodes
+/// exists. It plays at its own speed because streaming transcription decodes
 /// a window at a time; handed a whole recording at once, the encoder outruns
 /// its positional limit.
 pub fn label_recording<Stt: StreamingEngine>(
@@ -95,12 +95,12 @@ pub fn label_recording<Stt: StreamingEngine>(
     wav: &Path,
     timeline: Timeline,
 ) -> Result<Labeled, BenchError> {
-    let recognition = Recognition::streaming(stt);
+    let transcription = Transcription::streaming(stt);
     let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
 
     // Only the voice track's labels are scored, so no tracker runs.
     let (segments, dropped) = replay::hear(
-        &recognition,
+        &transcription,
         wav,
         workspace.path(),
         "recording",
@@ -362,7 +362,7 @@ impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
             segmentation,
         } = self;
         // The same composition the daemon runs for system transcription.
-        let recognition = Recognition::streaming(stt);
+        let transcription = Transcription::streaming(stt);
         let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
 
         let mut scenarios = Vec::new();
@@ -373,7 +373,7 @@ impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
             };
             let mut diarizer = diarizer(model())?;
             let (segments, dropped) = replay::hear(
-                &recognition,
+                &transcription,
                 &wav,
                 workspace.path(),
                 scenario.name,
@@ -452,11 +452,11 @@ pub enum BenchError {
         source: CaptureError,
     },
 
-    #[error("failed to recognize speech in the {scenario} scenario")]
-    Recognition {
+    #[error("failed to transcribe speech in the {scenario} scenario")]
+    Transcription {
         scenario: &'static str,
         #[source]
-        source: RecognitionError,
+        source: TranscriptionError,
     },
 }
 

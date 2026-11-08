@@ -3,7 +3,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::Path;
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::recognition::layer::vocabulary::matching_forms;
+use aria_kit::transcription::layer::vocabulary::matching_forms;
 
 use super::{MAX_SOURCE_BYTES, MAX_TERMS, SELECTED_TERMS, Source, SourceKind, Term};
 
