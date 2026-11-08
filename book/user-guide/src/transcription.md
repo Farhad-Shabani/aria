@@ -92,16 +92,16 @@ With **Deliver** set to **After recording stops**, Aria also applies spoken
 corrections to the completed text. “Meet me at 3, actually 4” becomes “meet
 me at 4”. “Send it to Ali, scratch that, to Sara” becomes “Send it to Sara”.
 This handles only simple, unambiguous corrections within a clause, in
-English. More complex corrections stay as spoken. Text Aria types while you
-speak can't be taken back, so it keeps the original words.
+English. More complex corrections stay as spoken. Aria can't take back text
+it types while you speak, so that text keeps the original words.
 
-The switch turns every cleanup on or off. To turn off one of them, set it in
-your settings file:
+**Clean up text** turns all of these on or off. To turn off one of them, set it
+in your settings file:
 
 ```toml
 [dictation.cleanup]
 enabled = true
-fillers = true      # drops “um”, “uh”, and repeated words
+fillers = true      # drops "um", "uh", and repeated words
 backtrack = false   # keeps spoken corrections as you said them
 ```
 
@@ -127,9 +127,9 @@ model = "qwen2.5:3b"
 ```
 
 The model runs only when **Clean up text** is on. It skips text Aria types
-while you speak, so set **Deliver** to **After recording stops**. To pause it
-and keep these lines, add `enabled = false` to the table. Aria asks
-the server to load the model when you start recording, so it's ready when you
+while you speak, so set **Deliver** to **After recording stops**. To pause the
+model and keep these lines, add `enabled = false` to the table. Aria asks the
+server to load the model when you start recording, so it's ready when you
 stop. A smaller model, such as `qwen2.5:1.5b`, misses most spoken corrections.
 
 If the model doesn't answer within 3 seconds, or adds words you didn't say,
