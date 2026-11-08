@@ -7,12 +7,12 @@ use std::sync::Mutex;
 use aria_kit::backend::ModelDownload;
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{Sidecar, validate_interpreter};
-use aria_kit::transcription::{
-    AudioInputKind, Engine, Hypothesis, Language, Transcriber, TranscriptionAudio,
-    TranscriptionError, check_cancelled,
+use aria_kit::recognition::{
+    AudioInputKind, Engine, Hypothesis, Language, RecognitionAudio, RecognitionError, Recognizer,
+    check_cancelled,
 };
 
-use super::protocol::{BACKEND, Phase, start, still_serving, transcribe};
+use super::protocol::{BACKEND, Phase, recognize, start, still_serving};
 
 pub struct ParakeetMlx {
     interpreter: PathBuf,
@@ -32,7 +32,7 @@ impl ParakeetMlx {
     pub fn load(
         interpreter: impl Into<PathBuf>,
         model: impl Into<String>,
-    ) -> Result<Self, TranscriptionError> {
+    ) -> Result<Self, RecognitionError> {
         Self::load_from(
             ParakeetMlxConfig {
                 interpreter: interpreter.into(),
@@ -73,7 +73,7 @@ impl Engine for ParakeetMlx {
 
     /// The model is a repository id the sidecar resolves against its own
     /// cache, so nothing here can confirm it without a download.
-    fn check_from(config: &ParakeetMlxConfig) -> Result<PathBuf, TranscriptionError> {
+    fn check_from(config: &ParakeetMlxConfig) -> Result<PathBuf, RecognitionError> {
         validate_interpreter(config.interpreter.clone()).map_err(|error| {
             Phase::Load {
                 model: &config.model,
@@ -85,7 +85,7 @@ impl Engine for ParakeetMlx {
     fn load_from(
         config: ParakeetMlxConfig,
         cancel: &CancelToken,
-    ) -> Result<Self, TranscriptionError> {
+    ) -> Result<Self, RecognitionError> {
         check_cancelled(cancel)?;
         let interpreter = Self::check_from(&config)?;
         let sidecar = start(&interpreter, &config.model, cancel)?;
@@ -98,25 +98,25 @@ impl Engine for ParakeetMlx {
     }
 }
 
-impl Transcriber for ParakeetMlx {
+impl Recognizer for ParakeetMlx {
     /// Accepts any language: the engine takes no language input.
     fn validate_language(
         &self,
         _language: &Language,
         _cancel: &CancelToken,
-    ) -> Result<(), TranscriptionError> {
+    ) -> Result<(), RecognitionError> {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        input: TranscriptionAudio<'_>,
+        input: RecognitionAudio<'_>,
         _language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
+    ) -> Result<Hypothesis, RecognitionError> {
         let audio = input.require_wav(BACKEND)?;
         let audio_path = audio.path().and_then(|path| path.to_str()).ok_or_else(|| {
-            TranscriptionError::UnsupportedAudioPath {
+            RecognitionError::UnsupportedAudioPath {
                 backend: BACKEND,
                 path: audio.path().map(Path::to_path_buf).unwrap_or_default(),
             }
@@ -128,7 +128,7 @@ impl Transcriber for ParakeetMlx {
             None => slot.insert(start(&self.interpreter, &self.model, cancel)?),
         };
 
-        let outcome = transcribe(sidecar, audio_path, self.chunk_samples, cancel);
+        let outcome = recognize(sidecar, audio_path, self.chunk_samples, cancel);
         if !still_serving(sidecar, &outcome) {
             slot.take();
         }
@@ -166,13 +166,13 @@ mod tests {
             &cancel,
         );
 
-        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
+        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
     }
 
     #[test]
     fn samples_input_is_refused_before_any_sidecar_is_started() {
-        let outcome = unspawnable().transcribe_with(
-            TranscriptionAudio::Samples(&[]),
+        let outcome = unspawnable().recognize_with(
+            RecognitionAudio::Samples(&[]),
             &Language::Automatic,
             &CancelToken::never(),
         );
@@ -180,7 +180,7 @@ mod tests {
         // The unspawnable interpreter proves the refusal came first.
         assert!(matches!(
             outcome,
-            Err(TranscriptionError::UnsupportedAudioInput { backend, .. }) if backend == BACKEND
+            Err(RecognitionError::UnsupportedAudioInput { backend, .. }) if backend == BACKEND
         ));
     }
 
@@ -193,8 +193,8 @@ mod tests {
         let mut recording = aria_kit::audio::RecordingReader::from_wav_file(&path)
             .expect("the fixture should load");
 
-        let outcome = unspawnable().transcribe_with(
-            TranscriptionAudio::Wav(
+        let outcome = unspawnable().recognize_with(
+            RecognitionAudio::Wav(
                 recording
                     .finished_audio()
                     .expect("the fixture should finish"),
@@ -204,7 +204,7 @@ mod tests {
         );
 
         std::fs::remove_file(&path).ok();
-        assert!(matches!(outcome, Err(TranscriptionError::Load { .. })));
+        assert!(matches!(outcome, Err(RecognitionError::Load { .. })));
     }
 
     #[test]

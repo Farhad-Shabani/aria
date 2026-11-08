@@ -234,7 +234,7 @@ extension Aria_Daemon_V1_HistoryService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Re-transcribe retained audio and replace saved text; never deliver it.
+        /// > Transcribe retained audio again and replace saved text; never deliver it.
         /// > Defaults to the original engine and language. Failure preserves saved text.
         ///
         /// - Parameters:
@@ -456,7 +456,7 @@ extension Aria_Daemon_V1_HistoryService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Re-transcribe retained audio and replace saved text; never deliver it.
+        /// > Transcribe retained audio again and replace saved text; never deliver it.
         /// > Defaults to the original engine and language. Failure preserves saved text.
         ///
         /// - Parameters:
@@ -679,7 +679,7 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Re-transcribe retained audio and replace saved text; never deliver it.
+    /// > Transcribe retained audio again and replace saved text; never deliver it.
     /// > Defaults to the original engine and language. Failure preserves saved text.
     ///
     /// - Parameters:
@@ -902,7 +902,7 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Re-transcribe retained audio and replace saved text; never deliver it.
+    /// > Transcribe retained audio again and replace saved text; never deliver it.
     /// > Defaults to the original engine and language. Failure preserves saved text.
     ///
     /// - Parameters:

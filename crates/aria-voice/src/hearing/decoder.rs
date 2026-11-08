@@ -5,20 +5,20 @@ use std::sync::Arc;
 use std::thread::{Scope, ScopedJoinHandle};
 
 use aria_kit::audio::RecordingReader;
-use aria_kit::transcription::next_heard_update;
+use aria_kit::recognition::next_heard_update;
 
 use super::board::{Board, Decoded};
-use crate::transcription::{Operation, Transcriber, Transcript, TranscriptionError};
+use crate::stt::{Operation, RecognitionError, Recognizer, Transcript};
 
 pub(super) struct DecodeThread<'scope> {
     board: Arc<Board>,
-    worker: Option<ScopedJoinHandle<'scope, Result<Transcript, TranscriptionError>>>,
+    worker: Option<ScopedJoinHandle<'scope, Result<Transcript, RecognitionError>>>,
 }
 
 impl<'scope> DecodeThread<'scope> {
     /// Decodes `recording` to its end. Every update goes on `board`, and the
     /// decoder's end follows the last, however the decoder ends.
-    pub(super) fn spawn<'env, T: Transcriber>(
+    pub(super) fn spawn<'env, T: Recognizer>(
         scope: &'scope Scope<'scope, 'env>,
         mut operation: Operation<'scope, T>,
         recording: &'scope mut RecordingReader,
@@ -41,7 +41,7 @@ impl<'scope> DecodeThread<'scope> {
     }
 
     /// Joins the decoder. `None` when it panicked.
-    pub(super) fn finish(mut self) -> Option<Result<Transcript, TranscriptionError>> {
+    pub(super) fn finish(mut self) -> Option<Result<Transcript, RecognitionError>> {
         let worker = self.worker.take().expect("the decoder is joined only once");
         worker.join().ok()
     }
@@ -68,12 +68,12 @@ impl Drop for Done<'_> {
     }
 }
 
-fn decode<T: Transcriber>(
+fn decode<T: Recognizer>(
     operation: &mut Operation<'_, T>,
     recording: &mut RecordingReader,
     previews: bool,
     board: &Board,
-) -> Result<Transcript, TranscriptionError> {
+) -> Result<Transcript, RecognitionError> {
     while let Some(update) = next_heard_update(operation, recording, previews)? {
         let decoded = Decoded {
             update,
@@ -82,7 +82,7 @@ fn decode<T: Transcriber>(
         };
         if board.push_decoded(decoded).is_err() {
             // Nobody will read another update.
-            return Err(TranscriptionError::Cancelled);
+            return Err(RecognitionError::Cancelled);
         }
     }
     operation.finish(recording)

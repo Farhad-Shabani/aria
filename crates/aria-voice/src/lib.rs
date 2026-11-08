@@ -6,6 +6,6 @@ pub mod history;
 pub mod microphone;
 pub mod speaker;
 pub mod speech;
+pub mod stt;
 pub mod system_transcription;
-pub mod transcription;
 pub mod vocabulary;

@@ -1,4 +1,4 @@
-//! Sets where dictation transcribes: on this machine, or on the paired
+//! Sets where dictation recognizes speech: on this machine, or on the paired
 //! server. Only `stt.runs_on` changes, so the local engine and its keys
 //! stay for the way back. The running daemon swaps once it sees the write,
 //! so nothing restarts.
@@ -10,21 +10,21 @@ use aria_settings::RunsOn;
 use crate::primitives::user_home;
 
 use super::settings_file::{self, SettingsWrite};
-use super::transcription_engine::fetch_engine_models;
+use super::stt_engine::fetch_engine_models;
 use super::{Outcome, Pairing, SetupError, SetupEvent, Step, lock_setup};
 
 #[derive(Debug)]
-pub struct SetTranscriptionRunsOnSummary {
+pub struct SetSttRunsOnSummary {
     pub runs_on: RunsOn,
     pub models: Vec<(&'static str, Outcome)>,
     pub settings: SettingsWrite,
 }
 
-pub fn set_transcription_runs_on(
+pub fn set_stt_runs_on(
     runs_on: RunsOn,
     transfer_meter: bool,
     observe: &mut dyn FnMut(SetupEvent) -> Result<(), SetupError>,
-) -> Result<SetTranscriptionRunsOnSummary, SetupError> {
+) -> Result<SetSttRunsOnSummary, SetupError> {
     let home = user_home::resolve().map_err(SetupError::Home)?;
     set_in(&home, runs_on, transfer_meter, observe)
 }
@@ -36,7 +36,7 @@ fn set_in(
     runs_on: RunsOn,
     transfer_meter: bool,
     observe: &mut dyn FnMut(SetupEvent) -> Result<(), SetupError>,
-) -> Result<SetTranscriptionRunsOnSummary, SetupError> {
+) -> Result<SetSttRunsOnSummary, SetupError> {
     let _lock = lock_setup(&aria_settings::default_path(home))?;
     let file = settings_file::read(home)?;
     settings_file::check_runs_on(home, &file, runs_on)?;
@@ -46,14 +46,14 @@ fn set_in(
             Vec::new()
         }
         RunsOn::Local => {
-            let engine = aria_settings::config::transcription_engine(&file.stt);
+            let engine = aria_settings::config::stt_engine(&file.stt);
             fetch_engine_models(home, &file, engine, transfer_meter, observe)?
         }
     };
 
     observe(SetupEvent::Started(Step::Settings))?;
     let settings = settings_file::write_runs_on(home, runs_on)?;
-    Ok(SetTranscriptionRunsOnSummary {
+    Ok(SetSttRunsOnSummary {
         runs_on,
         models,
         settings,
@@ -76,10 +76,7 @@ mod tests {
     fn set(
         home: &Path,
         runs_on: RunsOn,
-    ) -> (
-        Result<SetTranscriptionRunsOnSummary, SetupError>,
-        Vec<SetupEvent>,
-    ) {
+    ) -> (Result<SetSttRunsOnSummary, SetupError>, Vec<SetupEvent>) {
         let mut events = Vec::new();
         let result = set_in(home, runs_on, false, &mut |event| {
             events.push(event);

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, bail, ensure};
 use aria_harness::{Sandbox, inputs, log, start_service, stats, toml_string};
 use aria_settings::config::backend;
-use aria_voice::config::{TranscriptionConfig, TranscriptionDevice};
+use aria_voice::config::{SttConfig, SttDevice};
 
 mod dictation_delivery;
 mod engines;
@@ -367,32 +367,32 @@ fn bench_config(
     Ok(config)
 }
 
-fn settings(config: &TranscriptionConfig) -> anyhow::Result<String> {
+fn settings(config: &SttConfig) -> anyhow::Result<String> {
     Ok(match config {
-        TranscriptionConfig::Whisper { model }
-        | TranscriptionConfig::WhisperCandle {
+        SttConfig::Whisper { model }
+        | SttConfig::WhisperCandle {
             model_directory: model,
         }
-        | TranscriptionConfig::Moonshine {
+        | SttConfig::Moonshine {
             model_directory: model,
         }
-        | TranscriptionConfig::Nemotron {
+        | SttConfig::Nemotron {
             model_directory: model,
         } => {
             format!("model = {}\n", toml_string(&model.display().to_string())?)
         }
-        TranscriptionConfig::Parakeet {
+        SttConfig::Parakeet {
             model_directory,
             device,
         } => format!(
             "model = {}\ndevice = \"{}\"\n",
             toml_string(&model_directory.display().to_string())?,
             match device {
-                TranscriptionDevice::Cpu => "cpu",
-                TranscriptionDevice::Gpu => "gpu",
+                SttDevice::Cpu => "cpu",
+                SttDevice::Gpu => "gpu",
             }
         ),
-        TranscriptionConfig::ParakeetMlx { model, interpreter } => {
+        SttConfig::ParakeetMlx { model, interpreter } => {
             format!(
                 "model = {}\ninterpreter = {}\n",
                 toml_string(model)?,
@@ -598,7 +598,7 @@ mod tests {
     fn speaker_inputs_reach_the_daemon_config() {
         let engine = engines::BenchEngine {
             backend: backend::WHISPER,
-            config: TranscriptionConfig::Whisper {
+            config: SttConfig::Whisper {
                 model: "/models/whisper.bin".into(),
             },
         };

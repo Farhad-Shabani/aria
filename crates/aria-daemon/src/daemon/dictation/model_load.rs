@@ -1,20 +1,20 @@
-//! Model readiness for eager and on-demand transcription engines.
+//! Model readiness for eager and on-demand recognition engines.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::slot::Slot;
-use aria_kit::transcription::{
-    ChunkStream, Hypothesis, Language, Transcriber, TranscriptionAudio, TranscriptionError,
+use aria_kit::recognition::{
+    ChunkStream, Hypothesis, Language, RecognitionAudio, RecognitionError, Recognizer,
 };
 
-type Build<E> = dyn Fn(&CancelToken) -> Result<E, TranscriptionError> + Send + Sync;
+type Build<E> = dyn Fn(&CancelToken) -> Result<E, RecognitionError> + Send + Sync;
 
 /// Loads a deferred model ahead of the first press. A press that comes first
 /// waits on the same load instead of starting its own. Once the model is in,
 /// running it again returns at once, so a stopped preload can simply rerun.
-pub(super) type Preload = Arc<dyn Fn(&CancelToken) -> Result<(), TranscriptionError> + Send + Sync>;
+pub(super) type Preload = Arc<dyn Fn(&CancelToken) -> Result<(), RecognitionError> + Send + Sync>;
 
 pub(super) enum ModelLoad<E> {
     Loaded(E),
@@ -33,7 +33,7 @@ impl<E> ModelLoad<E> {
     }
 
     pub(super) fn deferred(
-        build: impl Fn(&CancelToken) -> Result<E, TranscriptionError> + Send + Sync + 'static,
+        build: impl Fn(&CancelToken) -> Result<E, RecognitionError> + Send + Sync + 'static,
     ) -> Self {
         Self::Deferred(Arc::new(DeferredModel {
             build: Box::new(build),
@@ -56,7 +56,7 @@ impl<E> ModelLoad<E> {
         }
     }
 
-    fn get(&self, cancel: &CancelToken) -> Result<&E, TranscriptionError> {
+    fn get(&self, cancel: &CancelToken) -> Result<&E, RecognitionError> {
         match self {
             Self::Loaded(value) => Ok(value),
             Self::Deferred(model) => model.get(cancel),
@@ -65,46 +65,42 @@ impl<E> ModelLoad<E> {
 }
 
 impl<E> DeferredModel<E> {
-    fn get(&self, cancel: &CancelToken) -> Result<&E, TranscriptionError> {
+    fn get(&self, cancel: &CancelToken) -> Result<&E, RecognitionError> {
         // A press's own cancel and deadline still end its wait on a preload.
-        let stopped = || {
-            cancel
-                .is_cancelled()
-                .then_some(TranscriptionError::Cancelled)
-        };
+        let stopped = || cancel.is_cancelled().then_some(RecognitionError::Cancelled);
         self.model.get_or_try_init_unless(stopped, || {
             if cancel.is_cancelled() {
-                return Err(TranscriptionError::Cancelled);
+                return Err(RecognitionError::Cancelled);
             }
             catch_unwind(AssertUnwindSafe(|| (self.build)(cancel)))
-                .unwrap_or(Err(TranscriptionError::LoadPanicked))
+                .unwrap_or(Err(RecognitionError::LoadPanicked))
         })
     }
 }
 
-impl<E: Transcriber> Transcriber for ModelLoad<E> {
+impl<E: Recognizer> Recognizer for ModelLoad<E> {
     fn validate_language(
         &self,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<(), TranscriptionError> {
+    ) -> Result<(), RecognitionError> {
         self.get(cancel)?.validate_language(language, cancel)
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
-        self.get(cancel)?.transcribe_with(audio, language, cancel)
+    ) -> Result<Hypothesis, RecognitionError> {
+        self.get(cancel)?.recognize_with(audio, language, cancel)
     }
 
     fn open_stream(
         &self,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
+    ) -> Result<Option<Box<dyn ChunkStream>>, RecognitionError> {
         self.get(cancel)?.open_stream(language, cancel)
     }
 }
@@ -125,7 +121,7 @@ mod tests {
         let build_attempts = Arc::clone(&attempts);
         let model = ModelLoad::deferred(move |_cancel| {
             if build_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
-                Err(TranscriptionError::NoSpeech)
+                Err(RecognitionError::NoSpeech)
             } else {
                 Ok(42_u32)
             }
@@ -133,7 +129,7 @@ mod tests {
         let first = model.get(&CancelToken::never());
         let second = model.get(&CancelToken::never());
 
-        assert!(matches!(first, Err(TranscriptionError::NoSpeech)));
+        assert!(matches!(first, Err(RecognitionError::NoSpeech)));
         assert_eq!(*second.expect("the retry should succeed"), 42);
     }
 
@@ -164,7 +160,7 @@ mod tests {
             while !cancel.is_cancelled() {
                 thread::sleep(Duration::from_millis(5));
             }
-            Err(TranscriptionError::Cancelled)
+            Err(RecognitionError::Cancelled)
         }));
         let request = CancelToken::new();
         let waiting_request = request.clone();
@@ -175,6 +171,6 @@ mod tests {
         request.cancel();
         let outcome = waiting.join().expect("the caller should finish");
 
-        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
+        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
     }
 }

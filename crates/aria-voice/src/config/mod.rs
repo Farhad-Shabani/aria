@@ -11,7 +11,7 @@ use aria_settings::{DictationTimeouts, LlmCleanupTarget};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationConfig {
     pub capture: CaptureConfig,
-    pub transcription: TranscriptionBackend,
+    pub stt: SttBackend,
     pub dictation_timeouts: DictationTimeouts,
     /// A loopback LLM pass over the transcript, after the rule-based cleanup.
     pub cleanup_llm: Option<LlmCleanupTarget>,
@@ -79,10 +79,10 @@ pub enum TtsFallback {
     System,
 }
 
-/// Where dictation and recorded transcription run.
+/// Where recognition runs, for dictation and recordings.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TranscriptionBackend {
-    Local(TranscriptionConfig),
+pub enum SttBackend {
+    Local(SttConfig),
     /// The paired server, or `None` before any pairing.
     Server(Option<PairingId>),
 }
@@ -99,7 +99,7 @@ impl PairingId {
     }
 }
 
-impl TranscriptionBackend {
+impl SttBackend {
     pub fn backend_name(&self) -> &'static str {
         match self {
             Self::Local(engine) => engine.backend_name(),
@@ -112,18 +112,18 @@ impl TranscriptionBackend {
 /// never at daemon startup, so a broken transcription section blocks nothing else.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemTranscriptionConfig {
-    pub transcription: SystemTranscriptionEngine,
+    pub engine: SystemTranscriptionEngine,
     pub transcripts_dir: PathBuf,
 }
 
-/// An engine that transcribes a live stream. Only a config whose engine
+/// An engine that recognizes a live stream. Only a config whose engine
 /// streams becomes one, so holding it proves the engine streams.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SystemTranscriptionEngine(TranscriptionConfig);
+pub struct SystemTranscriptionEngine(SttConfig);
 
 impl SystemTranscriptionEngine {
-    pub(crate) fn new(config: TranscriptionConfig) -> Result<Self, ConfigError> {
-        if crate::transcription::streams(&config) {
+    pub(crate) fn new(config: SttConfig) -> Result<Self, ConfigError> {
+        if crate::stt::streams(&config) {
             Ok(Self(config))
         } else {
             Err(ConfigError::SystemTranscriptionUnusableEngine(
@@ -137,11 +137,11 @@ impl SystemTranscriptionEngine {
     }
 
     /// Resolves the model a session would load, without reading it.
-    pub fn check_model(&self) -> Result<String, crate::transcription::TranscriptionError> {
-        crate::transcription::check_model(&self.0)
+    pub fn check_model(&self) -> Result<String, crate::stt::RecognitionError> {
+        crate::stt::check_model(&self.0)
     }
 
-    pub(crate) fn config(&self) -> &TranscriptionConfig {
+    pub(crate) fn config(&self) -> &SttConfig {
         &self.0
     }
 }
@@ -159,7 +159,7 @@ pub struct SpeakerConfig {
 pub use load::{LoadedModel, Section, loaded_models};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TranscriptionConfig {
+pub enum SttConfig {
     Whisper {
         model: PathBuf,
     },
@@ -168,7 +168,7 @@ pub enum TranscriptionConfig {
     },
     Parakeet {
         model_directory: PathBuf,
-        device: TranscriptionDevice,
+        device: SttDevice,
     },
     Moonshine {
         model_directory: PathBuf,
@@ -182,7 +182,7 @@ pub enum TranscriptionConfig {
     },
 }
 
-impl TranscriptionConfig {
+impl SttConfig {
     /// `None` for parakeet-mlx, which fetches its model by name.
     pub(crate) fn model_path(self) -> Option<PathBuf> {
         match self {
@@ -203,7 +203,7 @@ impl TranscriptionConfig {
         if self.backend_name() == backend {
             return Ok(self.clone());
         }
-        load::transcription_defaults(backend, home)
+        load::stt_defaults(backend, home)
     }
 
     pub fn backend_name(&self) -> &'static str {
@@ -218,7 +218,7 @@ impl TranscriptionConfig {
     }
 }
 
-pub use aria_stt::parakeet::Device as TranscriptionDevice;
+pub use aria_stt::parakeet::Device as SttDevice;
 
 use aria_kit::audio::ReplayPace;
 

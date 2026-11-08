@@ -1,18 +1,18 @@
 import Foundation
 import os
 
-private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "TranscriptionEngineChange")
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "SttEngineChange")
 
 /// Sets dictation's speech-to-text engine. The daemon swaps the engine once
 /// it sees the settings write, so the current one keeps working until then.
 @MainActor
-final class TranscriptionEngineChange: ObservableObject {
+final class SttEngineChange: ObservableObject {
     struct Effects {
         var run:
             (
-                Aria_Setup_V1_SetTranscriptionEngineRequest,
+                Aria_Setup_V1_SetSttEngineRequest,
                 @escaping @Sendable (Aria_Setup_V1_SetupEvent) -> Void
-            ) async throws -> Aria_Setup_V1_SetTranscriptionEngineSummary
+            ) async throws -> Aria_Setup_V1_SetSttEngineSummary
     }
 
     enum State: Equatable {
@@ -59,7 +59,7 @@ final class TranscriptionEngineChange: ObservableObject {
         run = Run(engine: engine, state: .finishing)
         task = Task {
             defer { task = nil }
-            var request = Aria_Setup_V1_SetTranscriptionEngineRequest()
+            var request = Aria_Setup_V1_SetSttEngineRequest()
             request.engineID = engine
             do {
                 _ = try await runner.run {
@@ -96,8 +96,8 @@ final class TranscriptionEngineChange: ObservableObject {
     }
 }
 
-extension TranscriptionEngineChange.Effects {
+extension SttEngineChange.Effects {
     static var live: Self {
-        .init(run: { request, onEvent in try await SetupClient.setTranscriptionEngine(request, onEvent: onEvent) })
+        .init(run: { request, onEvent in try await SetupClient.setSttEngine(request, onEvent: onEvent) })
     }
 }

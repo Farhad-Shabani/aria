@@ -5,8 +5,8 @@
 ---
 
 - [Setup](./workflow.md)
-- [File transcription](./transcription.md)
-- [Microphone transcription](./recording.md)
+- [Speech recognition](./recognition.md)
+- [Microphone recognition](./recording.md)
 - [Generate speech](./synthesis.md)
 - [Engines and sessions](./architecture.md)
 - [Privacy](./privacy.md)

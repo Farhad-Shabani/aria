@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use aria_kit::synthesis::{SpeakingRate, SynthesisError, Voice};
-use aria_voice::transcription::TranscriptionError;
+use aria_voice::stt::RecognitionError;
 use tempfile::TempDir;
 
 pub use backends::{EngineRequest, Skipped};
@@ -75,7 +75,7 @@ pub enum BenchError {
     Corpus(#[from] CorpusError),
 
     #[error("failed to load the ASR judge")]
-    Judge(#[source] TranscriptionError),
+    Judge(#[source] RecognitionError),
 
     // Not transparent: the record errors name the results path, and the
     // chain belongs in the log rather than on the terminal.

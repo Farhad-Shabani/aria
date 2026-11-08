@@ -39,7 +39,7 @@ impl Deref for CheckedSettings {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Choices {
-    /// The local engine, kept while the server transcribes.
+    /// The local engine, kept while the server recognizes.
     pub stt: SttChoice,
     pub stt_runs_on: RunsOn,
     /// `None` while system transcription runs the stt engine.

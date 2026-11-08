@@ -1,5 +1,5 @@
 //! The system transcription: a thread carrying system audio through streaming
-//! transcription into the transcript file. Hearing decodes it and judges its
+//! recognition into the transcript file. Hearing decodes it and judges its
 //! speech and voices; the voice track settles who spoke afterwards.
 
 use std::ops::Range;
@@ -14,9 +14,7 @@ use aria_stt::EngineConfig;
 
 use crate::config::{SpeakerConfig, SystemTranscriptionConfig, SystemTranscriptionEngine};
 use crate::hearing::{Board, Decoding, Event, Hearing, HearingError};
-use crate::transcription::{
-    Language, Stream, Streaming, Transcriber, Transcription, TranscriptionError,
-};
+use crate::stt::{Language, Recognition, RecognitionError, Recognizer, Stream, Streaming};
 use crate::vocabulary::Vocabulary;
 use aria_kit::audio::RecordingReader;
 
@@ -49,7 +47,7 @@ pub fn run_session(
     events.emit(SystemTranscriptionStage::Started);
     let session = Session { vocabulary, events };
     session.run(
-        &config.transcription,
+        &config.engine,
         cancel,
         speaker_config,
         capture,
@@ -103,9 +101,9 @@ impl Listening<aria_kit::voice_activity::SileroVad> {
 fn load(
     transcription: &SystemTranscriptionEngine,
     cancel: &CancelToken,
-) -> Result<(Stream, Box<dyn Transcriber>), TranscriptionError> {
+) -> Result<(Stream, Box<dyn Recognizer>), RecognitionError> {
     let engine = EngineConfig::try_from(transcription.config().clone())?;
-    let stream = engine.stream().ok_or(TranscriptionError::NoNativeStream)?;
+    let stream = engine.stream().ok_or(RecognitionError::NoNativeStream)?;
     Ok((stream, engine.load(cancel)?))
 }
 
@@ -125,13 +123,13 @@ impl Session<'_> {
         let result = match load(transcription, cancel) {
             Ok((stream, engine)) => self.transcribe_all(
                 recording,
-                &Transcription::stream(stream, engine),
+                &Recognition::stream(stream, engine),
                 Listening::load(speaker),
                 track_audio,
                 &mut sink,
                 || capture.stopper().stop(),
             ),
-            Err(TranscriptionError::Cancelled) if cancel.is_cancelled() => Ok(()),
+            Err(RecognitionError::Cancelled) if cancel.is_cancelled() => Ok(()),
             Err(error) => Err(SystemTranscriptionError::Transcription(error)),
         };
         capture.stopper().stop();
@@ -141,7 +139,7 @@ impl Session<'_> {
     fn transcribe_all<T, V>(
         &self,
         mut recording: RecordingReader,
-        transcription: &Transcription<T, Streaming>,
+        transcription: &Recognition<T, Streaming>,
         mut listening: Listening<V>,
         track_audio: RecordingReader,
         sink: &mut TranscriptFile,
@@ -152,7 +150,7 @@ impl Session<'_> {
         end_capture: impl Fn(),
     ) -> Result<(), SystemTranscriptionError>
     where
-        T: Transcriber,
+        T: Recognizer,
         V: VoiceActivityDetector + Send,
     {
         // A stop cancels the session before it ends capture, and the decoder
@@ -327,18 +325,18 @@ impl<F: Fn()> Drop for EndsCapture<F> {
 /// transcript, not a failure.
 fn system_transcription_ended(error: HearingError) -> Result<(), SystemTranscriptionError> {
     match error {
-        HearingError::Transcription(
-            TranscriptionError::Capture(_) | TranscriptionError::NoSpeech,
-        ) => Ok(()),
+        HearingError::Recognition(RecognitionError::Capture(_) | RecognitionError::NoSpeech) => {
+            Ok(())
+        }
         error => Err(system_transcription_error(error)),
     }
 }
 
 fn system_transcription_error(error: HearingError) -> SystemTranscriptionError {
     match error {
-        HearingError::Transcription(error) => SystemTranscriptionError::Transcription(error),
+        HearingError::Recognition(error) => SystemTranscriptionError::Transcription(error),
         HearingError::Tracking(error) => {
-            SystemTranscriptionError::Transcription(TranscriptionError::Inference {
+            SystemTranscriptionError::Transcription(RecognitionError::Inference {
                 backend: "voice tracking",
                 source: aria_kit::backend::BackendError::engine(error),
             })
@@ -373,9 +371,9 @@ fn emit_merges(events: &SystemTranscriptionEventEmitter, merged: &[crate::speake
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{TranscriptionConfig, TranscriptionDevice};
+    use crate::config::{SttConfig, SttDevice};
     use crate::dictation::testing::Loud;
-    use crate::transcription::{Cadence, Hypothesis, TranscriptionAudio};
+    use crate::stt::{Cadence, Hypothesis, RecognitionAudio};
     use crate::vocabulary::{PersonalRules, Term};
 
     use super::*;
@@ -408,9 +406,9 @@ mod tests {
                 events: &events,
             };
 
-            let parakeet = SystemTranscriptionEngine::new(TranscriptionConfig::Parakeet {
+            let parakeet = SystemTranscriptionEngine::new(SttConfig::Parakeet {
                 model_directory: directory.path().to_path_buf(),
-                device: TranscriptionDevice::Cpu,
+                device: SttDevice::Cpu,
             })
             .unwrap();
             let result = session.run(&parakeet, &cancel, &speaker, capture, recording, sink);
@@ -434,21 +432,21 @@ mod tests {
 
     struct Answering(&'static str);
 
-    impl Transcriber for Answering {
+    impl Recognizer for Answering {
         fn validate_language(
             &self,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<(), TranscriptionError> {
+        ) -> Result<(), RecognitionError> {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _audio: TranscriptionAudio<'_>,
+            _audio: RecognitionAudio<'_>,
             _language: &Language,
             _cancel: &CancelToken,
-        ) -> Result<Hypothesis, TranscriptionError> {
+        ) -> Result<Hypothesis, RecognitionError> {
             Ok(Hypothesis::new(self.0))
         }
     }
@@ -467,7 +465,7 @@ mod tests {
         let recording = RecordingReader::from_samples(audio);
         let track_audio = recording.fork();
         let transcription =
-            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering(text));
+            Recognition::agreement(Cadence::from_millis(100, 20_000), Answering(text));
         let session = Session {
             vocabulary,
             events: &SystemTranscriptionEventEmitter::unsubscribed(),

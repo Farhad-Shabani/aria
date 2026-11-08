@@ -1,9 +1,9 @@
 import SwiftUI
 
-struct TranscriptionSection: View {
+struct ServerSttSection: View {
     private static let rowTitle = "Recognize speech on your server"
 
-    @ObservedObject var server: ServerTranscription
+    @ObservedObject var server: ServerStt
     @ObservedObject var setup: SetupStatus
     @EnvironmentObject private var runner: SetupRunner
     @State private var isPairing = false
@@ -34,7 +34,7 @@ struct TranscriptionSection: View {
 
     private var usesServer: Binding<Bool> {
         Binding(
-            get: { setup.transcriptionRunsOn == .server },
+            get: { setup.sttRunsOn == .server },
             set: { isOn in Task { await server.use(isOn ? .server : .local) } }
         )
     }
@@ -55,7 +55,7 @@ struct TranscriptionSection: View {
                     if setup.server != nil {
                         Button("Forget…", role: .destructive) { isConfirmingForget = true }
                             .disabled(!server.canForget || runner.isRunning)
-                            .help(setup.transcriptionRunsOn == .server ? "Turn off \(Self.rowTitle) first." : "")
+                            .help(setup.sttRunsOn == .server ? "Turn off \(Self.rowTitle) first." : "")
                     }
                     Toggle(Self.rowTitle, isOn: usesServer)
                         .labelsHidden()
@@ -65,7 +65,7 @@ struct TranscriptionSection: View {
             } label: {
                 Text(Self.rowTitle)
                 if let paired = setup.server {
-                    Text(ServerTranscription.address(of: paired.endpoint) ?? paired.endpoint)
+                    Text(ServerStt.address(of: paired.endpoint) ?? paired.endpoint)
                 }
             }
         }
@@ -111,7 +111,7 @@ private struct PairServerSheet: View {
     private static let width: CGFloat = 420
     private static let inviteCommand = "aria remote invite --endpoint https://your-server:9851"
 
-    @ObservedObject var server: ServerTranscription
+    @ObservedObject var server: ServerStt
     @Binding var isPresented: Bool
     @EnvironmentObject private var runner: SetupRunner
 

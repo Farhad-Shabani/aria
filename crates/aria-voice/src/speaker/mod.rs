@@ -1,5 +1,5 @@
 //! Who is speaking, wired to the shipped engines: the diarizer dictation and
-//! system transcription share, and the voice track that system transcription runs beside its transcriber. The
+//! system transcription share, and the voice track that system transcription runs beside its recognizer. The
 //! policy itself lives in `aria_kit::speaker`.
 
 #[cfg(test)]
@@ -113,7 +113,7 @@ pub fn usable_profiles(stored: Result<StoredProfiles, ProfileError>) -> Vec<Prof
     stored.profiles
 }
 
-/// The voice track that system transcription runs beside its transcriber. `None` when no
+/// The voice track that system transcription runs beside its recognizer. `None` when no
 /// segmentation model is installed: live labels then stand until the
 /// session relabels them at its end.
 pub fn voice_track(

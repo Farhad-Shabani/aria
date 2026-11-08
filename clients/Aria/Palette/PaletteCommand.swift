@@ -40,7 +40,7 @@ struct PaletteCommand: Equatable, Identifiable {
         action: .startDictation)
     static func ask(_ assistant: Aria_Daemon_V1_AssistantId?) -> PaletteCommand {
         PaletteCommand(
-            id: "new-ask", title: "Ask \(assistant?.name ?? "Your Assistant")", symbol: "bubble.left", number: nil,
+            id: "new-chat", title: "Ask \(assistant?.name ?? "Your Assistant")", symbol: "bubble.left", number: nil,
             chord: nil, keywords: ["question", "chat"], action: .startAsk)
     }
     static func history(_ section: HistorySection) -> PaletteCommand {

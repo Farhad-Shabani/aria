@@ -286,55 +286,7 @@ fn move_aliases(
         }
         moved = true;
     }
-    Ok(retire_renamed_tables(document, aliases) || moved)
-}
-
-/// An older table, such as `[listen]`, left holding no values: a bare header,
-/// keys commented out, or a comment above it once its keys moved. It would
-/// fail as an unknown field, so it goes, and its comments move to the new table.
-fn retire_renamed_tables(document: &mut DocumentMut, aliases: &[(Key, &str)]) -> bool {
-    let mut renamed: Vec<(&str, &str)> = aliases
-        .iter()
-        .filter_map(|(key, alias)| Some((alias.split_once('.')?.0, key.path().split_once('.')?.0)))
-        .filter(|(old, new)| old != new)
-        .collect();
-    renamed.dedup();
-    let mut retired = false;
-    for (old, new) in renamed {
-        let root = document.as_table_mut();
-        let Some(Item::Table(table)) = root.get(old) else {
-            continue;
-        };
-        if !table.is_empty() {
-            continue;
-        }
-        let comments = table
-            .decor()
-            .prefix()
-            .and_then(|prefix| prefix.as_str())
-            .unwrap_or_default()
-            .to_owned();
-        let Some(Item::Table(table)) = root.remove(old) else {
-            continue;
-        };
-        match root.get_mut(new) {
-            Some(Item::Table(current)) => {
-                let below = current
-                    .decor()
-                    .prefix()
-                    .and_then(|prefix| prefix.as_str())
-                    .unwrap_or_default()
-                    .to_owned();
-                current.decor_mut().set_prefix(format!("{comments}{below}"));
-            }
-            Some(_) => {}
-            None => {
-                root.insert(new, Item::Table(table));
-            }
-        }
-        retired = true;
-    }
-    retired
+    Ok(moved)
 }
 
 /// Removes the value at `path` with its key, then the tables above it that
@@ -1819,48 +1771,6 @@ pub(super) mod tests {
         assert!(text.contains("[assistant]"), "{text}");
         assert!(text.contains("# who answers\nid = \"codex\""), "{text}");
         assert!(!text.contains("agent"), "{text}");
-    }
-
-    #[test]
-    fn a_listen_table_from_before_the_rename_loads_as_transcription() {
-        let loaded = Loaded::parse(
-            "[listen]\nbackend = \"parakeet\"\ndevice = \"gpu\"\ntranscripts_dir = \"~/notes\"\n",
-            Path::new(HOME),
-        )
-        .expect("loads");
-        assert_eq!(
-            loaded.settings.system_transcription.backend.as_deref(),
-            Some("parakeet")
-        );
-        let text = loaded.document.to_string();
-        assert!(text.contains("[transcription]"), "{text}");
-        assert!(!text.contains("[listen]"), "{text}");
-    }
-
-    #[test]
-    fn a_listen_table_left_without_values_loads_and_takes_the_new_name() {
-        for text in [
-            "[listen]\n",
-            "[listen]\n# backend = \"parakeet\"\n",
-            "# system audio\n[listen]\nbackend = \"parakeet\"\n",
-        ] {
-            let loaded = Loaded::parse(text, Path::new(HOME)).expect(text);
-            let written = loaded.document.to_string();
-            assert!(!written.contains("[listen]"), "{text:?} wrote {written:?}");
-        }
-        let commented = Loaded::parse(
-            "# system audio\n[listen]\nbackend = \"parakeet\"\n",
-            Path::new(HOME),
-        )
-        .expect("loads");
-        assert!(
-            commented
-                .document
-                .to_string()
-                .contains("# system audio\n[transcription]"),
-            "{}",
-            commented.document
-        );
     }
 
     #[test]

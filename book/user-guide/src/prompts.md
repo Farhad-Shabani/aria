@@ -70,7 +70,7 @@ it. Aria keeps up to 16 prompts.
 1. Click into the app where you want the text.
 2. Press the prompt's shortcut and speak.
 3. Tap the Aria key (right Option, or Fn if you chose it) to stop. Aria
-   transcribes, runs the prompt, and types the result.
+   transcribes your speech, runs the prompt, and types the result.
 
 To cancel while Aria works, tap the Aria key again. Pressing the shortcut
 again does nothing until the run ends.

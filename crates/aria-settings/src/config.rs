@@ -32,7 +32,7 @@ pub mod tts_backend {
 
 /// Names an engine under `stt.backend`, and labels that engine in
 /// its own logs and errors. `SERVER` only labels a dictation the paired
-/// server transcribed.
+/// server recognized.
 pub mod backend {
     pub const SERVER: &str = "server";
     pub const WHISPER: &str = "whisper";
@@ -223,8 +223,8 @@ pub fn model_location(value: Option<&Path>, default: impl AsRef<Path>, home: &Pa
     value.map_or_else(|| models_dir(home).join(default), Path::to_path_buf)
 }
 
-/// The transcription engine the section names, or the default.
-pub fn transcription_engine(file: &Stt) -> &str {
+/// The recognition engine the section names, or the default.
+pub fn stt_engine(file: &Stt) -> &str {
     file.backend.as_deref().unwrap_or(backend::DEFAULT)
 }
 

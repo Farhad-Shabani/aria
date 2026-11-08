@@ -34,7 +34,7 @@ fillers = true
 # "meet at 3, actually 4" becomes "meet at 4". English only.
 backtrack = true
 
-# Cleans up the transcript with a local model as well, while delivery is complete.
+# Cleans up the text with a local model as well, while delivery is complete.
 # Ollama serves it at port 11434.
 [dictation.cleanup.llm]
 # Runs the model. false keeps the endpoint and model below.

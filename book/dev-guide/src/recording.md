@@ -1,11 +1,11 @@
-{{#title Transcribe microphone input in Rust - Using Aria Libraries}}
+{{#title Recognize microphone input in Rust - Using Aria Libraries}}
 
-# Microphone transcription
+# Microphone recognition
 
-With a Whisper model ready, you can transcribe microphone input using the
-same engine. Enable the [`whisper` and `microphone` features](./workflow.md#transcription)
+With a Whisper model ready, you can recognize microphone input using the
+same engine. Enable the [`whisper` and `microphone` features](./workflow.md#speech-recognition)
 of `aria-stt`.
-If you still need a model, follow [Model and audio](./transcription.md#model-and-audio).
+If you still need a model, follow [Model and audio](./recognition.md#model-and-audio).
 
 On macOS, grant microphone access to the application running the example.
 On Linux, install ALSA development headers and pkg-config before building.
@@ -14,7 +14,7 @@ Start with a short utterance and a working default input device.
 ## Stop with Enter
 
 Start with a recording you stop yourself. This program records until you
-press Enter, then transcribes the recording and prints the completed text.
+press Enter, then recognizes the recording and prints the completed text.
 
 Replace `src/main.rs` with this program, using the absolute path to your
 Whisper model:
@@ -24,8 +24,8 @@ use aria_stt::{prelude::*, whisper::Whisper};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Whisper::load("/absolute/path/ggml-base.en.bin")?;
-    let transcription = Transcription::streaming(engine);
-    let session = Session::microphone(&transcription, &Language::Automatic)?;
+    let recognition = Recognition::streaming(engine);
+    let session = Session::microphone(&recognition, &Language::Automatic)?;
 
     println!("Speak, then press Enter to finish.");
     std::io::stdin().read_line(&mut String::new())?;
@@ -55,12 +55,12 @@ use aria_stt::{prelude::*, whisper::Whisper};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Whisper::load("/absolute/path/ggml-base.en.bin")?;
-    let transcription = Transcription::streaming(engine);
+    let recognition = Recognition::streaming(engine);
     let mut microphone = Microphone::open()?;
     let (recording, _stopper) = microphone.record(RecordingMode::StopOnSilence {
         trailing_silence: Default::default(),
     })?;
-    let mut session = Session::over(&transcription, &Language::Automatic, recording)?;
+    let mut session = Session::over(&recognition, &Language::Automatic, recording)?;
 
     while let Some(segment) = session.next_finalized()? {
         println!("{}", segment.as_str());
@@ -84,7 +84,7 @@ without appending it a second time. A short utterance may finish before any
 intermediate text appears.
 
 Here, silence ends the recording. Calling `stop()` on `Session::over` waits
-for that end before completing transcription; it does not stop capture itself.
+for that end before completing recognition; it does not stop capture itself.
 
 ## Continuous dictation
 
@@ -105,7 +105,7 @@ use aria_stt::{prelude::*, whisper::Whisper};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Whisper::load("/absolute/path/ggml-base.en.bin")?;
-    let transcription = Transcription::complete_samples(engine);
+    let recognition = Recognition::complete_samples(engine);
     let mut microphone = Microphone::builder()
         .maximum_duration(Duration::from_secs(60 * 60))
         .open()?;
@@ -129,9 +129,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Boundary::End(at) => {
                     let from = opened.take().expect("an utterance ends after it starts");
                     let mut utterance = RecordingReader::from_samples(recording.span(from..at));
-                    match transcription.transcribe(&mut utterance, &Language::Automatic) {
+                    match recognition.recognize(&mut utterance, &Language::Automatic) {
                         Ok(text) => println!("{}", text.as_str()),
-                        Err(TranscriptionError::NoSpeech) => {}
+                        Err(RecognitionError::NoSpeech) => {}
                         Err(error) => return Err(error.into()),
                     }
                 }
@@ -147,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 Positions count from the endpointer's first push, which here is the start of
 the recording. Each utterance opens `LEAD_IN_FRAMES` frames before its
 `Start`, the same lead-in `StopOnSilence` keeps. An utterance still open when
-capture ends gets no `End`: transcribe `opened..held_to()` yourself if you
+capture ends gets no `End`: recognize `opened..held_to()` yourself if you
 need it. Each utterance is already cut, so it decodes in one pass. Sound that never pauses, such as music, keeps one utterance open and
 growing; cut it at a fixed length if your input can do that.
 

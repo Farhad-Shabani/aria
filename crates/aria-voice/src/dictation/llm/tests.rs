@@ -87,8 +87,8 @@ fn respond(stream: &mut TcpStream, body: &str) {
     .unwrap();
 }
 
-fn category(error: TranscriptionError) -> &'static str {
-    let TranscriptionError::Processing(layer::Error::Failed(error)) = error else {
+fn category(error: RecognitionError) -> &'static str {
+    let RecognitionError::Processing(layer::Error::Failed(error)) = error else {
         panic!("expected cleanup failure");
     };
     error.downcast_ref::<LlmCleanupError>().unwrap().category()
@@ -226,7 +226,7 @@ fn tiny_inputs_skip_network_and_oversized_inputs_fail_without_mutation() {
     cancel.cancel();
     assert!(matches!(
         cleanup.apply(&mut text, &cancel),
-        Err(TranscriptionError::Cancelled)
+        Err(RecognitionError::Cancelled)
     ));
 }
 
@@ -407,7 +407,7 @@ fn cancellation_while_waiting_prevents_committing_the_response() {
     let mut text = INPUT.to_owned();
     assert!(matches!(
         cleanup.apply(&mut text, &cancel),
-        Err(TranscriptionError::Cancelled)
+        Err(RecognitionError::Cancelled)
     ));
     assert_eq!(text, INPUT);
     worker.join().unwrap();

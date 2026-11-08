@@ -323,13 +323,13 @@ mod tests {
         {
             let home = home_with_downloads("stt", stt.key(), stt.model().assets());
             let home_dir = home.path().to_path_buf();
-            let aria_voice::config::TranscriptionBackend::Local(transcription) =
+            let aria_voice::config::SttBackend::Local(recognition) =
                 DictationConfig::load(&aria_settings::load(&home_dir).unwrap(), &home_dir, None)
-                    .transcription
+                    .stt
             else {
                 panic!("{} is a local engine", stt.key());
             };
-            if let Err(error) = aria_voice::transcription::check_model(&transcription) {
+            if let Err(error) = aria_voice::stt::check_model(&recognition) {
                 panic!("{}: {}", stt.key(), error_chain(&error));
             }
         }
@@ -373,7 +373,7 @@ mod tests {
 
         assert_eq!(
             default(choices::<Stt>(None, &host)).map(|choice| choice.key),
-            Some(aria_settings::config::transcription_engine(&unset.stt))
+            Some(aria_settings::config::stt_engine(&unset.stt))
         );
         assert_eq!(
             default(choices::<Tts>(None, &host)).map(|choice| choice.key),

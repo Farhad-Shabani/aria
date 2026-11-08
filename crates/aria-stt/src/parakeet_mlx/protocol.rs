@@ -8,7 +8,7 @@ use serde::Deserialize;
 use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{Script, Sidecar, SidecarError};
-use aria_kit::transcription::TranscriptionError;
+use aria_kit::recognition::RecognitionError;
 
 pub(super) const BACKEND: &str = super::NAME;
 
@@ -35,7 +35,7 @@ pub(super) fn start(
     interpreter: &Path,
     model: &str,
     cancel: &CancelToken,
-) -> Result<Sidecar, TranscriptionError> {
+) -> Result<Sidecar, RecognitionError> {
     let mut sidecar = Sidecar::start(&Script {
         name: BACKEND,
         interpreter,
@@ -54,14 +54,14 @@ fn handshake(
     sidecar: &mut Sidecar,
     model: &str,
     cancel: &CancelToken,
-) -> Result<(), TranscriptionError> {
+) -> Result<(), RecognitionError> {
     let phase = Phase::Load { model };
     match sidecar
         .receive(&|| cancel.is_cancelled())
         .map_err(|error| phase.transport(error))?
     {
         Reply::Ready { protocol, .. } if protocol == PROTOCOL_VERSION => {
-            tracing::info!(backend = BACKEND, model, "transcription sidecar ready");
+            tracing::info!(backend = BACKEND, model, "speech recognition sidecar ready");
             Ok(())
         }
         Reply::Ready { protocol, .. } => Err(phase.unusable(format!(
@@ -74,15 +74,15 @@ fn handshake(
     }
 }
 
-pub(super) fn transcribe(
+pub(super) fn recognize(
     sidecar: &mut Sidecar,
     audio_path: &str,
     chunk_samples: Option<usize>,
     cancel: &CancelToken,
-) -> Result<String, TranscriptionError> {
+) -> Result<String, RecognitionError> {
     let phase = Phase::Inference;
     let request = Request {
-        op: "transcribe",
+        op: "recognize",
         audio_path,
         chunk_samples,
     };
@@ -102,21 +102,21 @@ pub(super) fn transcribe(
 
 /// Which half of the backend's life a failure belongs to. Bringing the child
 /// up and asking it a question fail the same ways, but the pipeline treats a
-/// backend that cannot load differently from a press that did not transcribe.
+/// backend that cannot load differently from a press that did not recognize.
 pub(super) enum Phase<'a> {
     Load { model: &'a str },
     Inference,
 }
 
 impl Phase<'_> {
-    fn failed(&self, source: BackendError) -> TranscriptionError {
+    fn failed(&self, source: BackendError) -> RecognitionError {
         match *self {
-            Self::Load { model } => TranscriptionError::Load {
+            Self::Load { model } => RecognitionError::Load {
                 backend: BACKEND,
                 model: model.to_owned(),
                 source,
             },
-            Self::Inference => TranscriptionError::Inference {
+            Self::Inference => RecognitionError::Inference {
                 backend: BACKEND,
                 source,
             },
@@ -125,9 +125,9 @@ impl Phase<'_> {
 
     /// The transport gave out. Cancellation is its own outcome, never a
     /// failure of the child.
-    pub(super) fn transport(&self, error: SidecarError) -> TranscriptionError {
+    pub(super) fn transport(&self, error: SidecarError) -> RecognitionError {
         match error {
-            SidecarError::Cancelled => TranscriptionError::Cancelled,
+            SidecarError::Cancelled => RecognitionError::Cancelled,
             transport @ (SidecarError::Interpreter(_)
             | SidecarError::Home(_)
             | SidecarError::Spawn(_)
@@ -141,7 +141,7 @@ impl Phase<'_> {
     }
 
     /// The child answered on its own terms, and the answer is no good.
-    fn unusable(&self, detail: impl Into<String>) -> TranscriptionError {
+    fn unusable(&self, detail: impl Into<String>) -> RecognitionError {
         self.failed(BackendError::Unusable(detail.into()))
     }
 }
@@ -150,31 +150,31 @@ impl Phase<'_> {
 /// pipes, or has since exited is not, and the next press starts a new one.
 pub(super) fn still_serving(
     sidecar: &mut Sidecar,
-    outcome: &Result<String, TranscriptionError>,
+    outcome: &Result<String, RecognitionError>,
 ) -> bool {
     match outcome {
         Ok(_)
-        | Err(TranscriptionError::Processing(_))
-        | Err(TranscriptionError::Inference {
+        | Err(RecognitionError::Processing(_))
+        | Err(RecognitionError::Inference {
             source: BackendError::Unusable(_),
             ..
         }) => sidecar.is_running(),
         Err(
-            TranscriptionError::Model { .. }
-            | TranscriptionError::Load { .. }
-            | TranscriptionError::Capture(_)
-            | TranscriptionError::Inference { .. }
-            | TranscriptionError::UnsupportedLanguage { .. }
-            | TranscriptionError::UnsupportedAudioInput { .. }
-            | TranscriptionError::UnsupportedAudioPath { .. }
-            | TranscriptionError::UnsupportedBackend { .. }
-            | TranscriptionError::UnsupportedDevice { .. }
-            | TranscriptionError::NoNativeStream
-            | TranscriptionError::NoDelegatedOperation
-            | TranscriptionError::LoadPanicked
-            | TranscriptionError::Cancelled
-            | TranscriptionError::InvalidSegment
-            | TranscriptionError::NoSpeech,
+            RecognitionError::Model { .. }
+            | RecognitionError::Load { .. }
+            | RecognitionError::Capture(_)
+            | RecognitionError::Inference { .. }
+            | RecognitionError::UnsupportedLanguage { .. }
+            | RecognitionError::UnsupportedAudioInput { .. }
+            | RecognitionError::UnsupportedAudioPath { .. }
+            | RecognitionError::UnsupportedBackend { .. }
+            | RecognitionError::UnsupportedDevice { .. }
+            | RecognitionError::NoNativeStream
+            | RecognitionError::NoDelegatedOperation
+            | RecognitionError::LoadPanicked
+            | RecognitionError::Cancelled
+            | RecognitionError::InvalidSegment
+            | RecognitionError::NoSpeech,
         ) => false,
     }
 }
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn a_request_carries_the_operation_and_the_audio_path() {
         let line = serde_json::to_string(&Request {
-            op: "transcribe",
+            op: "recognize",
             audio_path: "/tmp/recording.wav",
             chunk_samples: None,
         })
@@ -278,14 +278,14 @@ mod tests {
 
         assert_eq!(
             line,
-            r#"{"op":"transcribe","audio_path":"/tmp/recording.wav"}"#
+            r#"{"op":"recognize","audio_path":"/tmp/recording.wav"}"#
         );
     }
 
     #[test]
     fn a_streaming_request_names_its_chunk() {
         let line = serde_json::to_string(&Request {
-            op: "transcribe",
+            op: "recognize",
             audio_path: "/tmp/recording.wav",
             chunk_samples: Some(12000),
         })
@@ -293,7 +293,7 @@ mod tests {
 
         assert_eq!(
             line,
-            r#"{"op":"transcribe","audio_path":"/tmp/recording.wav","chunk_samples":12000}"#
+            r#"{"op":"recognize","audio_path":"/tmp/recording.wav","chunk_samples":12000}"#
         );
     }
 
@@ -332,11 +332,11 @@ mod tests {
     fn giving_up_is_cancellation_in_either_phase() {
         assert!(matches!(
             Phase::Load { model: "m" }.transport(SidecarError::Cancelled),
-            TranscriptionError::Cancelled
+            RecognitionError::Cancelled
         ));
         assert!(matches!(
             Phase::Inference.transport(SidecarError::Cancelled),
-            TranscriptionError::Cancelled
+            RecognitionError::Cancelled
         ));
     }
 
@@ -344,14 +344,14 @@ mod tests {
     fn a_transport_failure_belongs_to_the_phase_that_hit_it() {
         assert!(matches!(
             Phase::Load { model: "m" }.transport(SidecarError::Closed),
-            TranscriptionError::Load {
+            RecognitionError::Load {
                 source: BackendError::Engine(_),
                 ..
             }
         ));
         assert!(matches!(
             Phase::Inference.transport(SidecarError::Closed),
-            TranscriptionError::Inference {
+            RecognitionError::Inference {
                 source: BackendError::Engine(_),
                 ..
             }
@@ -367,7 +367,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            TranscriptionError::Load {
+            RecognitionError::Load {
                 source: BackendError::Unusable(detail),
                 ..
             } if detail.contains("speaks protocol 99")
@@ -383,7 +383,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            TranscriptionError::Load {
+            RecognitionError::Load {
                 source: BackendError::Unusable(detail),
                 ..
             } if detail == "no such model"
@@ -399,7 +399,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            TranscriptionError::Load {
+            RecognitionError::Load {
                 source: BackendError::Unusable(detail),
                 ..
             } if detail.contains("before reporting readiness")
@@ -410,7 +410,7 @@ mod tests {
     fn a_transcript_is_read_back_from_the_sidecar() {
         let mut sidecar = stub(r#"read line; echo '{"ok":true,"text":"hello there"}'"#);
 
-        let text = transcribe(
+        let text = recognize(
             &mut sidecar,
             "/tmp/recording.wav",
             None,
@@ -425,7 +425,7 @@ mod tests {
     fn a_sidecar_that_reports_a_failure_keeps_serving() {
         let mut sidecar = stub(r#"while read line; do echo '{"ok":false,"error":"boom"}'; done"#);
 
-        let outcome = transcribe(
+        let outcome = recognize(
             &mut sidecar,
             "/tmp/recording.wav",
             None,
@@ -434,7 +434,7 @@ mod tests {
 
         assert!(matches!(
             &outcome,
-            Err(TranscriptionError::Inference {
+            Err(RecognitionError::Inference {
                 source: BackendError::Unusable(detail),
                 ..
             }) if detail == "boom"
@@ -449,13 +449,13 @@ mod tests {
     fn a_cancelled_press_stops_the_sidecar_instead_of_waiting() {
         let mut sidecar = stub("sleep 600");
 
-        let outcome = transcribe(&mut sidecar, "/tmp/recording.wav", None, &{
+        let outcome = recognize(&mut sidecar, "/tmp/recording.wav", None, &{
             let token = CancelToken::new();
             token.cancel();
             token
         });
 
-        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
+        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
         assert!(
             !still_serving(&mut sidecar, &outcome),
             "a cancelled sidecar was killed and must not be reused"
@@ -466,7 +466,7 @@ mod tests {
     fn a_second_readiness_report_is_refused() {
         let mut sidecar = stub(&format!("read line; {READY}"));
 
-        let outcome = transcribe(
+        let outcome = recognize(
             &mut sidecar,
             "/tmp/recording.wav",
             None,
@@ -475,7 +475,7 @@ mod tests {
 
         assert!(matches!(
             outcome,
-            Err(TranscriptionError::Inference {
+            Err(RecognitionError::Inference {
                 source: BackendError::Unusable(detail),
                 ..
             }) if detail == "reported readiness twice"
@@ -486,7 +486,7 @@ mod tests {
     fn a_child_that_dies_mid_request_is_not_reused() {
         let mut sidecar = stub("read line; exit 1");
 
-        let outcome = transcribe(
+        let outcome = recognize(
             &mut sidecar,
             "/tmp/recording.wav",
             None,
@@ -495,7 +495,7 @@ mod tests {
 
         assert!(matches!(
             &outcome,
-            Err(TranscriptionError::Inference {
+            Err(RecognitionError::Inference {
                 source: BackendError::Engine(_),
                 ..
             })

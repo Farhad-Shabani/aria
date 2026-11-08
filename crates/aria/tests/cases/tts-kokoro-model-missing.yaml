@@ -27,7 +27,7 @@ expect:
     - run: [say, --stop]
       stdout_contains:
         - "nothing was playing"
-    # Silence ends a dictation at transcription, so nothing reaches the
+    # Silence ends a dictation at recognition, so nothing reaches the
     # clipboard. Copy mode needs no Accessibility grant.
     - run: [dictate, --mode, copy]
       exit: failure

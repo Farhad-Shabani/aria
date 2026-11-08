@@ -1,6 +1,6 @@
 use crate::cancel::CancelToken;
 
-use super::{Layer, TranscriptionError};
+use super::{Layer, RecognitionError};
 
 const FILLERS: &[&str] = &[
     "um", "umm", "uh", "uhh", "uhm", "er", "erm", "ah", "ahh", "hmm", "hm", "mm", "mhm",
@@ -10,7 +10,7 @@ const FILLERS: &[&str] = &[
 pub struct RemoveHesitations;
 
 impl Layer for RemoveHesitations {
-    fn apply(&self, text: &mut String, _cancel: &CancelToken) -> Result<(), TranscriptionError> {
+    fn apply(&self, text: &mut String, _cancel: &CancelToken) -> Result<(), RecognitionError> {
         remove_words(text, DroppedCapital::Carry, |_, word| {
             FILLERS.contains(&squeezed(&word.core()).as_str())
         });
@@ -28,7 +28,7 @@ impl Layer for RemoveHesitations {
 pub struct RemoveRepeats;
 
 impl Layer for RemoveRepeats {
-    fn apply(&self, text: &mut String, _cancel: &CancelToken) -> Result<(), TranscriptionError> {
+    fn apply(&self, text: &mut String, _cancel: &CancelToken) -> Result<(), RecognitionError> {
         remove_words(text, DroppedCapital::Discard, |previous, word| {
             let core = word.core();
             is_spoken(&core)

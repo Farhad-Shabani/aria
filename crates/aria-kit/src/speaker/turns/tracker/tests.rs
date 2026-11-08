@@ -2,9 +2,9 @@ use std::cell::Cell;
 
 use super::*;
 use crate::audio::RecordingReader;
+use crate::recognition::Heard;
 use crate::speaker::turns::{Admission, Ahead, Gate, Speaker, TurnFeed};
 use crate::speaker::{LevelSegmenter, Profile, Role, SpeakerError, enrolled_voice};
-use crate::transcription::Heard;
 use crate::voice_activity::VoiceActivityError;
 use crate::voice_activity::{SpeechDetector, VoiceActivityDetector};
 
@@ -1174,14 +1174,14 @@ fn source_admission_waits_for_its_pending_turn() {
 
 fn heard_text(text: &str, window: Range<u64>) -> Heard {
     Heard {
-        segment: crate::transcription::TranscriptSegment::new(text, Some(window.clone())).unwrap(),
+        segment: crate::recognition::TranscriptSegment::new(text, Some(window.clone())).unwrap(),
         span: Some(window.clone()),
         window,
     }
 }
 
 fn timed_heard(word: Range<u64>, source: Option<Range<u64>>) -> Heard {
-    let mut segment = crate::transcription::TranscriptSegment::new("word", Some(word.clone()))
+    let mut segment = crate::recognition::TranscriptSegment::new("word", Some(word.clone()))
         .unwrap()
         .with_word_spans(vec![word.clone()])
         .unwrap();
@@ -1197,7 +1197,7 @@ fn timed_heard(word: Range<u64>, source: Option<Range<u64>>) -> Heard {
 
 #[test]
 fn sentence_punctuation_does_not_move_an_owner_word_into_a_guest_turn() {
-    use crate::transcription::{TimedWord, TranscriptSegment, word_timings};
+    use crate::recognition::{TimedWord, TranscriptSegment, word_timings};
 
     let timeline = Timeline {
         turns: vec![

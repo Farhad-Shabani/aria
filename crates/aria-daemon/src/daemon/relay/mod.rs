@@ -251,7 +251,7 @@ pub(in crate::daemon) fn redacted(status: Status) -> Status {
         | RpcErrorCode::DeliveryTimeout
         | RpcErrorCode::CaptureFailed
         | RpcErrorCode::NoSpeech
-        | RpcErrorCode::TranscriptionFailed
+        | RpcErrorCode::RecognitionFailed
         | RpcErrorCode::DeliveryFailed
         | RpcErrorCode::DeliveryTargetChanged
         | RpcErrorCode::DeliveryInterrupted

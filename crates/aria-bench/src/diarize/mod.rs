@@ -37,7 +37,7 @@ use aria_kit::synthesis::{SpeechTextError, Synthesizer, VoiceError};
 use aria_kit::voice_activity::VoiceActivityError;
 use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
 use aria_voice::speaker::{Diarizer, Label};
-use aria_voice::transcription::{StreamingEngine, Transcription, TranscriptionError};
+use aria_voice::stt::{Recognition, RecognitionError, StreamingEngine};
 
 /// Longer than any scenario's realtime replay.
 const SCENARIO_LIMIT: Duration = Duration::from_secs(600);
@@ -48,10 +48,10 @@ pub(crate) const SAMPLE_RATE: f64 = CANONICAL_SAMPLE_RATE as f64;
 /// Where a recording's speech boundaries come from. Word spans stop at the
 /// last word, so the pauses inside a turn read as silence; the voice detector
 /// answers over the audio itself, and scores nine points better on AMI
-/// ES2004a for it. `Transcriber` stays available to measure the difference.
+/// ES2004a for it. `Recognizer` stays available to measure the difference.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Timeline {
-    Transcriber,
+    Recognizer,
     VoiceActivity,
 }
 
@@ -85,7 +85,7 @@ pub struct Embedded {
 
 /// Labels one real recording end to end, for scoring against a corpus's own
 /// ground truth. No script to synthesize, so no TTS — the audio already
-/// exists. It plays at its own speed because streaming transcription decodes
+/// exists. It plays at its own speed because streaming recognition decodes
 /// a window at a time; handed a whole recording at once, the encoder outruns
 /// its positional limit.
 pub fn label_recording<Stt: StreamingEngine>(
@@ -95,12 +95,12 @@ pub fn label_recording<Stt: StreamingEngine>(
     wav: &Path,
     timeline: Timeline,
 ) -> Result<Labeled, BenchError> {
-    let transcription = Transcription::streaming(stt);
+    let recognition = Recognition::streaming(stt);
     let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
 
     // Only the voice track's labels are scored, so no tracker runs.
     let (segments, dropped) = replay::hear(
-        &transcription,
+        &recognition,
         wav,
         workspace.path(),
         "recording",
@@ -180,7 +180,7 @@ pub(crate) fn embedder(speaker: SpeakerConfig) -> Result<WeSpeaker, BenchError> 
 }
 
 /// The recording's speech, as the voice detector hears it rather than as the
-/// transcriber chopped it.
+/// recognizer chopped it.
 fn speech_regions(wav: &Path) -> Result<Vec<Range<u64>>, BenchError> {
     let samples = sibling::read(wav)?;
     Ok(sibling::speech(&samples)?
@@ -195,7 +195,7 @@ fn speech_regions(wav: &Path) -> Result<Vec<Range<u64>>, BenchError> {
 const NAMING_REACH: f64 = 1.0;
 
 /// Names each stretch of speech after the words spoken over it, or failing
-/// that after the closest words within `NAMING_REACH`. Speech the transcriber
+/// that after the closest words within `NAMING_REACH`. Speech the recognizer
 /// never put words to is otherwise dropped, and a dropped stretch costs the
 /// same as a misnamed one — so a nearby name beats no name.
 fn attribute(regions: Vec<Range<u64>>, turns: &[Turn]) -> Vec<Turn> {
@@ -362,7 +362,7 @@ impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
             segmentation,
         } = self;
         // The same composition the daemon runs for system transcription.
-        let transcription = Transcription::streaming(stt);
+        let recognition = Recognition::streaming(stt);
         let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
 
         let mut scenarios = Vec::new();
@@ -373,7 +373,7 @@ impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
             };
             let mut diarizer = diarizer(model())?;
             let (segments, dropped) = replay::hear(
-                &transcription,
+                &recognition,
                 &wav,
                 workspace.path(),
                 scenario.name,
@@ -452,11 +452,11 @@ pub enum BenchError {
         source: CaptureError,
     },
 
-    #[error("failed to transcribe the {scenario} scenario")]
-    Transcription {
+    #[error("failed to recognize speech in the {scenario} scenario")]
+    Recognition {
         scenario: &'static str,
         #[source]
-        source: TranscriptionError,
+        source: RecognitionError,
     },
 }
 

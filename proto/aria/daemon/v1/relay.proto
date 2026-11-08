@@ -29,7 +29,7 @@ service RelayService {
   //   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
   //   SHUTTING_DOWN - the daemon is stopping
   //   CANCELLED - the client's own stream failed
-  //   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
+  //   RECOGNITION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
   //     DELIVERY_TARGET_CHANGED - as for a press on the Mac
   // Delivery failures do not return the text and can include partial delivery.
   rpc Relay(stream RelayRequest) returns (stream RelayEvent);
@@ -100,7 +100,7 @@ message RelayEvent {
 
 enum RelayStage {
   RELAY_STAGE_UNSPECIFIED = 0;
-  // The upload is complete; transcription is starting.
+  // The upload is complete; transcribing is starting.
   RELAY_STAGE_TRANSCRIBING = 1;
   // Transcription and delivery succeeded. Terminal.
   RELAY_STAGE_COMPLETED = 2;

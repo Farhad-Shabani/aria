@@ -54,7 +54,7 @@ pub(crate) struct Cli {
     /// Take the speech boundaries from the word spans, not the voice detector
     #[arg(long, conflicts_with = "by_voice")]
     word_timeline: bool,
-    /// Label from the voice alone, with no transcriber in the path
+    /// Label from the voice alone, with no recognizer in the path
     #[arg(long, requires = "audio")]
     by_voice: bool,
     /// Label through the pyannote segmentation net, which can report overlap
@@ -126,7 +126,7 @@ pub(crate) fn run(cli: &Cli) -> anyhow::Result<()> {
             .unwrap_or("recording")
             .to_owned();
         let timeline = match cli.word_timeline {
-            true => Timeline::Transcriber,
+            true => Timeline::Recognizer,
             false => Timeline::VoiceActivity,
         };
         if cli.as_shipped {

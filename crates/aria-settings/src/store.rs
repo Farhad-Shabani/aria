@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use aria_kit::recognition::Language;
 use aria_kit::synthesis::SpeakingRate;
-use aria_kit::transcription::Language;
 use tokio::sync::watch;
 
 use super::{ApplicationOverrides, Prompts, Settings, Shortcut, StoreError, view};

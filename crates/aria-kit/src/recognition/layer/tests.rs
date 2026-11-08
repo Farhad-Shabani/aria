@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::*;
 use crate::audio::Recording;
 use crate::audio::testing::recorded;
-use crate::transcription::{
-    Cadence, ChunkStream, Emitted, Hypothesis, Language, Session, Stream, TimedWord, Transcriber,
-    Transcription, TranscriptionAudio,
+use crate::recognition::{
+    Cadence, ChunkStream, Emitted, Hypothesis, Language, Recognition, RecognitionAudio, Recognizer,
+    Session, Stream, TimedWord,
 };
 
 struct Scripted(Mutex<VecDeque<Hypothesis>>);
@@ -20,17 +20,17 @@ impl Scripted {
     }
 }
 
-impl Transcriber for Scripted {
-    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
+impl Recognizer for Scripted {
+    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        _: TranscriptionAudio<'_>,
+        _: RecognitionAudio<'_>,
         _: &Language,
         _: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
+    ) -> Result<Hypothesis, RecognitionError> {
         Ok(self
             .0
             .lock()
@@ -43,7 +43,7 @@ impl Transcriber for Scripted {
 struct Replace(&'static str, &'static str);
 
 impl Layer for Replace {
-    fn apply(&self, text: &mut String, _: &CancelToken) -> Result<(), TranscriptionError> {
+    fn apply(&self, text: &mut String, _: &CancelToken) -> Result<(), RecognitionError> {
         *text = text.replace(self.0, self.1);
         Ok(())
     }
@@ -52,12 +52,12 @@ impl Layer for Replace {
 #[test]
 fn layers_apply_in_declaration_order_and_options_preserve_the_raw_path() {
     let (_directory, mut recording) = recorded(&[1, 2]);
-    let transcription = Transcription::complete_samples(Scripted::new(["one"]))
+    let recognition = Recognition::complete_samples(Scripted::new(["one"]))
         .with(Replace("one", "two"))
         .with(Replace("two", "three"));
     assert_eq!(
-        transcription
-            .transcribe(&mut recording, &Language::Automatic)
+        recognition
+            .recognize(&mut recording, &Language::Automatic)
             .unwrap()
             .as_str(),
         "three"
@@ -65,11 +65,11 @@ fn layers_apply_in_declaration_order_and_options_preserve_the_raw_path() {
 
     for enabled in [false, true] {
         let (_directory, mut recording) = recorded(&[1, 2]);
-        let transcription = Transcription::complete_samples(Scripted::new(["Um, hello."]))
+        let recognition = Recognition::complete_samples(Scripted::new(["Um, hello."]))
             .with(enabled.then_some(RemoveHesitations));
         assert_eq!(
-            transcription
-                .transcribe(&mut recording, &Language::Automatic)
+            recognition
+                .recognize(&mut recording, &Language::Automatic)
                 .unwrap()
                 .as_str(),
             if enabled { "Hello." } else { "Um, hello." }
@@ -81,27 +81,27 @@ fn layers_apply_in_declaration_order_and_options_preserve_the_raw_path() {
 fn complete_and_streaming_sessions_apply_real_layers() {
     let vocabulary = Vocabulary::new(["Cargo.toml"]).unwrap();
     let (_directory, mut recording) = recorded(&[1, 2]);
-    let transcription = Transcription::complete_samples(Scripted::new([
+    let recognition = Recognition::complete_samples(Scripted::new([
         "Um, open cargo dot toml. They had had enough.",
     ]))
     .with(RemoveHesitations)
     .with(&vocabulary);
     assert_eq!(
-        transcription
-            .transcribe(&mut recording, &Language::Automatic)
+        recognition
+            .recognize(&mut recording, &Language::Automatic)
             .unwrap()
             .as_str(),
         "Open Cargo.toml. They had had enough."
     );
 
     let (_directory, recording) = recorded(&[1; 1600]);
-    let transcription = Transcription::agreement(
+    let recognition = Recognition::agreement(
         Cadence::from_millis(100, 20_000),
         Scripted::new(["Um, open cargo dot toml."]),
     )
     .with(RemoveHesitations)
     .with(vocabulary);
-    let mut session = Session::over(&transcription, &Language::Automatic, recording).unwrap();
+    let mut session = Session::over(&recognition, &Language::Automatic, recording).unwrap();
     let segment = session.next_finalized().unwrap().unwrap();
     assert_eq!(segment.as_str(), "Open Cargo.toml.");
     assert!(session.next_finalized().unwrap().is_none());
@@ -110,17 +110,17 @@ fn complete_and_streaming_sessions_apply_real_layers() {
 
 struct WavScripted(&'static str);
 
-impl Transcriber for WavScripted {
-    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
+impl Recognizer for WavScripted {
+    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         _: &Language,
         _: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
+    ) -> Result<Hypothesis, RecognitionError> {
         let wav = audio.require_wav("scripted")?;
         assert!(wav.path().unwrap().is_file());
         Ok(Hypothesis::new(self.0))
@@ -134,39 +134,39 @@ fn whole_wav_layers_process_text_and_can_remove_all_speech() {
         ("Um, uh.", None),
     ] {
         let (_directory, recording) = recorded(&[1, 2]);
-        let transcription = Transcription::complete_wav(WavScripted(input))
+        let recognition = Recognition::complete_wav(WavScripted(input))
             .with(RemoveHesitations)
             .with(Vocabulary::new(["Cargo.toml"]).unwrap());
-        let session = Session::over(&transcription, &Language::Automatic, recording).unwrap();
+        let session = Session::over(&recognition, &Language::Automatic, recording).unwrap();
         let result = session.finish();
         match expected {
             Some(text) => assert_eq!(result.unwrap().as_str(), text),
-            None => assert!(matches!(result, Err(TranscriptionError::NoSpeech))),
+            None => assert!(matches!(result, Err(RecognitionError::NoSpeech))),
         }
     }
 }
 
 struct NativeScripted;
 
-impl Transcriber for NativeScripted {
-    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
+impl Recognizer for NativeScripted {
+    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        _: TranscriptionAudio<'_>,
+        _: RecognitionAudio<'_>,
         _: &Language,
         _: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
-        panic!("native transcription must use the chunk stream")
+    ) -> Result<Hypothesis, RecognitionError> {
+        panic!("native recognition must use the chunk stream")
     }
 
     fn open_stream(
         &self,
         _: &Language,
         _: &CancelToken,
-    ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
+    ) -> Result<Option<Box<dyn ChunkStream>>, RecognitionError> {
         Ok(Some(Box::new(ScriptedStream(VecDeque::from([
             ("um car", false),
             ("go dot toml done", true),
@@ -182,7 +182,7 @@ impl ChunkStream for ScriptedStream {
         1600
     }
 
-    fn feed(&mut self, chunk: &[f32]) -> Result<Emitted, TranscriptionError> {
+    fn feed(&mut self, chunk: &[f32]) -> Result<Emitted, RecognitionError> {
         assert_eq!(chunk.len(), self.chunk_samples());
         let (text, joins_previous) = self.0.pop_front().expect("script covers chunks and flush");
         Ok(Emitted {
@@ -202,10 +202,10 @@ fn native_layers_process_joined_words_and_flush_with_independent_opt_outs() {
     ] {
         for drain_tail in [false, true] {
             let (_directory, mut recording) = recorded(&[1; 3200]);
-            let transcription = Transcription::stream(Stream::Native, NativeScripted)
+            let recognition = Recognition::stream(Stream::Native, NativeScripted)
                 .with(hesitations.then_some(RemoveHesitations))
                 .with(vocabulary.then(|| Vocabulary::new(["Cargo.toml"]).unwrap()));
-            let mut operation = transcription.start(&Language::Automatic).unwrap();
+            let mut operation = recognition.start(&Language::Automatic).unwrap();
             for text in expected
                 .iter()
                 .take(if drain_tail { expected.len() } else { 1 })
@@ -229,12 +229,12 @@ fn native_layers_process_joined_words_and_flush_with_independent_opt_outs() {
 #[test]
 fn vocabulary_does_not_rewrite_across_finalized_segments() {
     let (mut recording, mut capture) = Recording::open();
-    let transcription = Transcription::agreement(
+    let recognition = Recognition::agreement(
         Cadence::from_millis(100, 20_000),
         Scripted::new(["cargo", "cargo dot toml"]),
     )
     .with(Vocabulary::new(["Cargo.toml"]).unwrap());
-    let mut operation = transcription.start(&Language::Automatic).unwrap();
+    let mut operation = recognition.start(&Language::Automatic).unwrap();
     capture.push(&[0.5; 1600]);
     operation.next_update(&mut recording).unwrap();
     capture.push(&[0.5; 1600]);
@@ -253,26 +253,26 @@ fn vocabulary_does_not_rewrite_across_finalized_segments() {
 #[test]
 fn removing_every_word_finishes_without_redecoding() {
     let (_directory, mut recording) = recorded(&[1, 2]);
-    let transcription =
-        Transcription::complete_samples(Scripted::new(["Um, uh, hmm."])).with(RemoveHesitations);
-    let mut operation = transcription.start(&Language::Automatic).unwrap();
+    let recognition =
+        Recognition::complete_samples(Scripted::new(["Um, uh, hmm."])).with(RemoveHesitations);
+    let mut operation = recognition.start(&Language::Automatic).unwrap();
     assert!(operation.next_finalized(&mut recording).unwrap().is_none());
     assert!(operation.completed().is_none());
     assert!(matches!(
         operation.finish(&mut recording),
-        Err(TranscriptionError::NoSpeech)
+        Err(RecognitionError::NoSpeech)
     ));
 }
 
 #[test]
 fn a_suppressed_streaming_segment_does_not_end_the_stream() {
     let (mut recording, mut capture) = Recording::open();
-    let transcription = Transcription::agreement(
+    let recognition = Recognition::agreement(
         Cadence::from_millis(100, 20_000),
         Scripted::new(["um", "um hello"]),
     )
     .with(RemoveHesitations);
-    let mut operation = transcription.start(&Language::Automatic).unwrap();
+    let mut operation = recognition.start(&Language::Automatic).unwrap();
     capture.push(&[0.5; 1600]);
     assert!(matches!(
         operation.next_update(&mut recording).unwrap(),
@@ -296,12 +296,12 @@ fn a_suppressed_streaming_segment_does_not_end_the_stream() {
 #[test]
 fn completion_without_a_final_segment_keeps_processed_text() {
     let (mut recording, mut capture) = Recording::open();
-    let transcription = Transcription::agreement(
+    let recognition = Recognition::agreement(
         Cadence::from_millis(100, 20_000),
         Scripted::new(["um hello", "um hello", "um hello"]),
     )
     .with(RemoveHesitations);
-    let mut operation = transcription.start(&Language::Automatic).unwrap();
+    let mut operation = recognition.start(&Language::Automatic).unwrap();
     capture.push(&[0.5; 1600]);
     operation.next_update(&mut recording).unwrap();
     capture.push(&[0.5; 1600]);
@@ -320,7 +320,7 @@ fn completion_without_a_final_segment_keeps_processed_text() {
 struct CountPreparations(AtomicUsize);
 
 impl Layer for CountPreparations {
-    fn apply(&self, _: &mut String, _: &CancelToken) -> Result<(), TranscriptionError> {
+    fn apply(&self, _: &mut String, _: &CancelToken) -> Result<(), RecognitionError> {
         Ok(())
     }
 
@@ -342,7 +342,7 @@ fn preparing_a_stack_prepares_every_layer_in_it() {
 struct CountApplications(AtomicUsize);
 
 impl Layer for CountApplications {
-    fn apply(&self, text: &mut String, _: &CancelToken) -> Result<(), TranscriptionError> {
+    fn apply(&self, text: &mut String, _: &CancelToken) -> Result<(), RecognitionError> {
         self.0.fetch_add(1, Ordering::Relaxed);
         text.push('!');
         Ok(())
@@ -354,12 +354,12 @@ fn completion_includes_the_processed_tail_without_reapplying_layers() {
     for drain_tail in [false, true] {
         let calls = CountApplications(AtomicUsize::new(0));
         let (mut recording, mut capture) = Recording::open();
-        let transcription = Transcription::agreement(
+        let recognition = Recognition::agreement(
             Cadence::from_millis(100, 20_000),
             Scripted::new(["one two", "one two three"]),
         )
         .with(&calls);
-        let mut operation = transcription.start(&Language::Automatic).unwrap();
+        let mut operation = recognition.start(&Language::Automatic).unwrap();
         capture.push(&[0.5; 1600]);
         assert!(matches!(
             operation.next_update(&mut recording).unwrap(),
@@ -408,9 +408,9 @@ fn processed_segments_keep_their_audio_spans_when_recording_is_released() {
         Hypothesis::with_words("um one two", timings),
     ])));
     let (mut recording, mut capture) = Recording::open();
-    let transcription = Transcription::agreement(Cadence::from_millis(100, 20_000), scripted)
-        .with(RemoveHesitations);
-    let mut operation = transcription.start(&Language::Automatic).unwrap();
+    let recognition =
+        Recognition::agreement(Cadence::from_millis(100, 20_000), scripted).with(RemoveHesitations);
+    let mut operation = recognition.start(&Language::Automatic).unwrap();
     capture.push(&[0.5; 1600]);
     operation.next_update(&mut recording).unwrap();
     capture.push(&[0.5; 1600]);
@@ -432,12 +432,12 @@ fn processed_segments_keep_their_audio_spans_when_recording_is_released() {
 struct StopOnTail(bool);
 
 impl Layer for StopOnTail {
-    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
+    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), RecognitionError> {
         if text == "three" {
             if self.0 {
                 cancel.cancel();
             } else {
-                return Err(TranscriptionError::Processing(Error::Failed(Box::new(
+                return Err(RecognitionError::Processing(Error::Failed(Box::new(
                     std::io::Error::other("rejected"),
                 ))));
             }
@@ -450,13 +450,13 @@ impl Layer for StopOnTail {
 fn cancellation_or_failure_in_the_tail_never_exposes_raw_completion() {
     for cancel_on_tail in [false, true] {
         let (mut recording, mut capture) = Recording::open();
-        let transcription = Transcription::agreement(
+        let recognition = Recognition::agreement(
             Cadence::from_millis(100, 20_000),
             Scripted::new(["one two", "one two three"]),
         )
         .with(StopOnTail(cancel_on_tail));
         let cancel = CancelToken::new();
-        let mut operation = transcription
+        let mut operation = recognition
             .start_with(&Language::Automatic, &cancel)
             .unwrap();
         capture.push(&[0.5; 1600]);
@@ -466,11 +466,11 @@ fn cancellation_or_failure_in_the_tail_never_exposes_raw_completion() {
         recording.fill().unwrap();
         let error = operation.next_finalized(&mut recording).unwrap_err();
         if cancel_on_tail {
-            assert!(matches!(error, TranscriptionError::Cancelled));
+            assert!(matches!(error, RecognitionError::Cancelled));
         } else {
             assert!(matches!(
                 error,
-                TranscriptionError::Processing(Error::Failed(_))
+                RecognitionError::Processing(Error::Failed(_))
             ));
         }
         assert!(operation.completed().is_none());
@@ -574,7 +574,7 @@ fn vocabulary_layer_rejects_personal_expansion_before_replacing_text() {
     let mut text = "x".to_owned();
     assert!(matches!(
         vocabulary.apply(&mut text, &CancelToken::never()),
-        Err(TranscriptionError::Processing(Error::TooLarge))
+        Err(RecognitionError::Processing(Error::TooLarge))
     ));
     assert_eq!(text, "x");
 }
@@ -582,7 +582,7 @@ fn vocabulary_layer_rejects_personal_expansion_before_replacing_text() {
 struct Expand(usize);
 
 impl Layer for Expand {
-    fn apply(&self, text: &mut String, _: &CancelToken) -> Result<(), TranscriptionError> {
+    fn apply(&self, text: &mut String, _: &CancelToken) -> Result<(), RecognitionError> {
         *text = "x".repeat(self.0);
         Ok(())
     }
@@ -596,16 +596,15 @@ fn text_bounds_cover_each_segment_before_and_after_a_layer() {
         (1, MAX_TEXT_BYTES + 1),
     ] {
         let (_directory, mut recording) = recorded(&[1, 2]);
-        let transcription =
-            Transcription::complete_samples(Scripted::new(["x".repeat(input_bytes)]))
-                .with(Expand(output_bytes));
-        let result = transcription.transcribe(&mut recording, &Language::Automatic);
+        let recognition = Recognition::complete_samples(Scripted::new(["x".repeat(input_bytes)]))
+            .with(Expand(output_bytes));
+        let result = recognition.recognize(&mut recording, &Language::Automatic);
         if input_bytes <= MAX_TEXT_BYTES && output_bytes <= MAX_TEXT_BYTES {
             assert_eq!(result.unwrap().as_str().len(), output_bytes);
         } else {
             assert!(matches!(
                 result,
-                Err(TranscriptionError::Processing(Error::TooLarge))
+                Err(RecognitionError::Processing(Error::TooLarge))
             ));
         }
     }
@@ -614,12 +613,12 @@ fn text_bounds_cover_each_segment_before_and_after_a_layer() {
 #[test]
 fn a_session_accumulates_past_the_segment_bound() {
     let (mut recording, mut capture) = Recording::open();
-    let transcription = Transcription::agreement(
+    let recognition = Recognition::agreement(
         Cadence::from_millis(100, 20_000),
         Scripted::new(["one", "one two"]),
     )
     .with(Expand(MAX_TEXT_BYTES / 2));
-    let mut operation = transcription.start(&Language::Automatic).unwrap();
+    let mut operation = recognition.start(&Language::Automatic).unwrap();
     capture.push(&[0.5; 1600]);
     operation.next_update(&mut recording).unwrap();
     capture.push(&[0.5; 1600]);

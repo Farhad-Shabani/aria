@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use super::{Tally, Timeline};
 use crate::audio::canonical_samples;
+use crate::recognition::Heard;
 use crate::speaker::Label;
-use crate::transcription::Heard;
 use crate::voice_activity::SpeechMap;
 
 /// Under [`Admission::Spoken`], a segment with less speech than this, whose

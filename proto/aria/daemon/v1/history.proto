@@ -20,7 +20,7 @@ service HistoryService {
   // unchanged. Do not retry automatically after a timeout or disconnect,
   // because the result is uncertain.
   rpc Clear(ClearHistoryRequest) returns (ClearHistoryResponse);
-  // Re-transcribe retained audio and replace saved text; never deliver it.
+  // Transcribe retained audio again and replace saved text; never deliver it.
   // Defaults to the original engine and language. Failure preserves saved text.
   rpc Regenerate(RegenerateHistoryRequest) returns (HistoryEntry);
   // Works on an entry being regenerated. A missing or deleting entry is
@@ -124,7 +124,7 @@ message HistoryEntry {
   optional string project_directory = 8;
 
   string text = 9;
-  // Whether transcription finished; List may still return a text preview.
+  // Whether recognition finished; List may still return a text preview.
   bool transcription_complete = 10;
   // Set for a SYSTEM_TRANSCRIPTION or CHAT entry. A DICTATION entry has none.
   oneof details {

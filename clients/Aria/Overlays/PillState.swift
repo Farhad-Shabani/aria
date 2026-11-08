@@ -220,7 +220,7 @@ extension Aria_Daemon_V1_ErrorCode {
         switch self {
         case .noSpeech: return "no speech"
         case .captureFailed: return "couldn’t record"
-        case .transcriptionFailed: return "couldn’t transcribe"
+        case .recognitionFailed: return "couldn’t transcribe"
         case .deliveryFailed, .deliveryTimeout: return "couldn’t type"
         case .recordingTimeout, .overallTimeout: return "timed out"
         default: return "couldn’t dictate"

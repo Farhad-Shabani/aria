@@ -67,9 +67,9 @@ pub(super) enum HistoryCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Transcribe a retained recording and replace its saved text
+    /// Transcribe a retained recording again and replace its saved text
     #[command(
-        long_about = "Transcribe a retained recording and replace its saved text. Uses the configured local or server speech recognition. Failure preserves the previous text."
+        long_about = "Transcribe a retained recording again and replace its saved text. Uses the configured local or server speech recognition. Failure preserves the previous text."
     )]
     Retry {
         #[arg(value_parser = clap::value_parser!(u64).range(1..=i64::MAX as u64))]
@@ -77,7 +77,7 @@ pub(super) enum HistoryCommand {
         #[arg(long)]
         engine: Option<String>,
         #[arg(long)]
-        language: Option<aria_voice::transcription::Language>,
+        language: Option<aria_voice::stt::Language>,
     },
 }
 
@@ -474,7 +474,7 @@ mod tests {
             command,
             Command::History {
                 command: HistoryCommand::Retry {
-                    id: 42, engine: Some(engine), language: Some(aria_voice::transcription::Language::Automatic)
+                    id: 42, engine: Some(engine), language: Some(aria_voice::stt::Language::Automatic)
                 }
             } if engine == "whisper"
         ));

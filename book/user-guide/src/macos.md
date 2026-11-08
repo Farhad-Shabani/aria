@@ -28,7 +28,7 @@ Aria needs two permissions:
 2. Tap **right Option (⌥)**, say a short sentence, then tap it again to stop.
 3. Keep that app and text field focused until processing finishes.
 
-Recognized words appear as segments become ready.
+Transcribed words appear as segments become ready.
 
 ## Tap or hold
 

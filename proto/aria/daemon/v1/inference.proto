@@ -13,7 +13,7 @@ service InferenceService {
   // Input idle timeout is 10 seconds; the whole session is at most 720 seconds.
   // Provisional and cumulative finalized text are limited to 128 KiB each.
   // One admitted session holds the model until its worker exits, even if cancelled.
-  rpc Transcribe(stream InferenceRequest) returns (stream InferenceResponse);
+  rpc Recognize(stream InferenceRequest) returns (stream InferenceResponse);
 }
 
 // Served by the inference host over TLS to a client presenting a one-time

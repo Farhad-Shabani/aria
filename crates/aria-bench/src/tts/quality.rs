@@ -1,7 +1,7 @@
 //! Round-trip intelligibility: what an ASR judge hears back.
 //!
 //! Speed says nothing about whether a synthesizer is understood. Each
-//! utterance is spoken once more, written as canonical audio, transcribed,
+//! utterance is spoken once more, written as canonical audio, recognized,
 //! and scored against its own text with the corpus scorer.
 
 use std::path::{Path, PathBuf};
@@ -12,9 +12,9 @@ use aria_kit::audio::{CaptureError, Clip, ClipError, RecordingReader, ResampleEr
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::error_chain;
 use aria_kit::synthesis::{SpeakingRate, SpeechText, Voice};
-use aria_voice::config::TranscriptionDevice;
-use aria_voice::transcription::{
-    Language, LanguageCode, Transcriber, Transcript, Transcription, TranscriptionError, Whole,
+use aria_voice::config::SttDevice;
+use aria_voice::stt::{
+    Language, LanguageCode, Recognition, RecognitionError, Recognizer, Transcript, Whole,
 };
 
 use super::backends::Loaded;
@@ -24,7 +24,7 @@ use super::latency;
 /// a blocked native call can exceed the limit.
 const JUDGE_CEILING: Duration = Duration::from_secs(120);
 
-/// How the round-trip judge transcribes, chosen from the benchmark's flags.
+/// How the round-trip judge recognizes, chosen from the benchmark's flags.
 #[derive(Clone)]
 pub enum AsrRequest {
     Parakeet { model_directory: PathBuf, gpu: bool },
@@ -33,20 +33,20 @@ pub enum AsrRequest {
 
 /// One loaded judge over one loaded ASR backend.
 pub(super) struct Judge {
-    transcription: Transcription<Box<dyn Transcriber>, Whole>,
+    recognition: Recognition<Box<dyn Recognizer>, Whole>,
 }
 
 impl Judge {
-    pub(super) fn load(request: &AsrRequest) -> Result<Self, TranscriptionError> {
-        let backend: Box<dyn Transcriber> = match request {
+    pub(super) fn load(request: &AsrRequest) -> Result<Self, RecognitionError> {
+        let backend: Box<dyn Recognizer> = match request {
             AsrRequest::Parakeet {
                 model_directory,
                 gpu,
             } => Box::new(aria_stt::parakeet::Parakeet::load(
                 model_directory.clone(),
                 match gpu {
-                    true => TranscriptionDevice::Gpu,
-                    false => TranscriptionDevice::Cpu,
+                    true => SttDevice::Gpu,
+                    false => SttDevice::Cpu,
                 },
             )?),
             AsrRequest::WhisperCandle { model_directory } => Box::new(
@@ -56,19 +56,19 @@ impl Judge {
         Ok(Self {
             // A whole-buffer decode: the recording is already complete, so
             // streaming would add nothing but pacing.
-            transcription: Transcription::complete_samples(backend),
+            recognition: Recognition::complete_samples(backend),
         })
     }
 
     /// What the judge hears in a finished WAV file.
-    fn hear(&self, mut recording: RecordingReader) -> Result<String, TranscriptionError> {
+    fn hear(&self, mut recording: RecordingReader) -> Result<String, RecognitionError> {
         let language = Language::Specific(LanguageCode::english());
         let cancel = CancelToken::from_fn({
             let started = Instant::now();
             move || started.elapsed() > JUDGE_CEILING
         });
-        self.transcription
-            .transcribe_with(&mut recording, &language, &cancel)
+        self.recognition
+            .recognize_with(&mut recording, &language, &cancel)
             .map(Transcript::into_text)
     }
 }
@@ -144,13 +144,13 @@ pub(super) fn hear_back(
                 error: None,
             }
         }
-        Err(TranscriptionError::Cancelled) => Heard::failed(
+        Err(RecognitionError::Cancelled) => Heard::failed(
             reference_words,
             "the judge ran past its time ceiling".to_owned(),
         ),
         Err(failure) => {
             tracing::warn!(error = %failure, "the judge heard nothing");
-            Heard::failed(reference_words, "transcription failed".to_owned())
+            Heard::failed(reference_words, "recognition failed".to_owned())
         }
     }
 }

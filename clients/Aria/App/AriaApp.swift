@@ -133,10 +133,10 @@ struct AriaApp: App {
                 paletteChord: appDelegate.palette.chord,
                 setupStatus: appDelegate.setupStatus,
                 modelDownload: appDelegate.modelDownload,
-                transcriptionEngineChange: appDelegate.transcriptionEngineChange,
+                sttEngineChange: appDelegate.sttEngineChange,
                 setupState: appDelegate.setupState,
                 voices: appDelegate.voices,
-                serverTranscription: appDelegate.serverTranscription,
+                serverStt: appDelegate.serverStt,
                 settingsHealth: appDelegate.settingsHealth,
                 paneRequest: appDelegate.settingsPaneRequest
             )

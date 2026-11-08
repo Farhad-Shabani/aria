@@ -15,8 +15,8 @@ struct SpeechModels: Equatable {
     init() {}
 
     init(_ inspection: Aria_Setup_V1_Inspection) {
-        current = inspection.defaults.transcriptionEngineID
-        models = inspection.transcriptionChoices.compactMap { choice in
+        current = inspection.defaults.sttEngineID
+        models = inspection.sttChoices.compactMap { choice in
             guard choice.settable || choice.id == current else {
                 return nil
             }

@@ -12,13 +12,13 @@ use std::time::Instant;
 
 use aria_kit::audio::RecordingReader;
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{Transcript, TranscriptUpdate};
+use aria_kit::recognition::{Transcript, TranscriptUpdate};
 use aria_settings::config::backend;
 use aria_stt::{EngineConfig, moonshine, nemotron, parakeet, parakeet_mlx, whisper};
-use aria_voice::config::{TranscriptionConfig, TranscriptionDevice};
-use aria_voice::transcription::{
-    Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Streaming, Transcriber,
-    Transcription, TranscriptionAudio, TranscriptionError, Whole, check_model,
+use aria_voice::config::{SttConfig, SttDevice};
+use aria_voice::stt::{
+    Cadence, ChunkStream, Emitted, Hypothesis, Language, Recognition, RecognitionAudio,
+    RecognitionError, Recognizer, Stream, Streaming, Whole, check_model,
 };
 
 use super::Mode;
@@ -88,43 +88,43 @@ pub struct Skipped {
 /// Defers loading so a benchmark can keep one model resident at a time.
 pub(super) struct Selection {
     pub(super) descriptor: Descriptor,
-    config: TranscriptionConfig,
+    config: SttConfig,
     cadence: Option<Cadence>,
 }
 
 impl Selection {
-    pub(super) fn load(&self) -> Result<Loaded, TranscriptionError> {
+    pub(super) fn load(&self) -> Result<Loaded, RecognitionError> {
         let timing = Timing::default();
         let config = EngineConfig::try_from(self.config.clone())?;
         let input = config.input();
         let engine = Timed {
-            inner: load_transcriber(config, self.cadence)?,
+            inner: load_recognizer(config, self.cadence)?,
             timing: timing.clone(),
         };
         let decoding = self.decoding();
-        let transcription = match decoding {
-            Decoding::ChunkedFile { .. } => Composed::Whole(Transcription::complete_wav(engine)),
+        let recognition = match decoding {
+            Decoding::ChunkedFile { .. } => Composed::Whole(Recognition::complete_wav(engine)),
             Decoding::Native { .. } => {
-                Composed::Streaming(Transcription::stream(Stream::Native, engine))
+                Composed::Streaming(Recognition::stream(Stream::Native, engine))
             }
-            Decoding::Agreement { .. } => Composed::Streaming(Transcription::agreement(
+            Decoding::Agreement { .. } => Composed::Streaming(Recognition::agreement(
                 self.cadence.expect("agreement cadence"),
                 engine,
             )),
-            Decoding::Whole => Composed::Whole(Transcription::complete(input, engine)),
+            Decoding::Whole => Composed::Whole(Recognition::complete(input, engine)),
         };
         Ok(Loaded {
-            transcription,
+            recognition,
             timing,
             decoding,
         })
     }
 }
 
-/// A loaded selection: the transcription to drive, where it reports
+/// A loaded selection: the recognition to drive, where it reports
 /// decode-busy time, and how its audio must arrive.
 pub(super) struct Loaded {
-    transcription: Composed,
+    recognition: Composed,
     timing: Timing,
     pub(super) decoding: Decoding,
 }
@@ -139,14 +139,14 @@ impl Loaded {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = advance;
         Attempt {
-            transcription: &self.transcription,
+            recognition: &self.recognition,
             timing: &self.timing,
         }
     }
 }
 
 pub(super) struct Attempt<'a> {
-    pub(super) transcription: &'a Composed,
+    pub(super) recognition: &'a Composed,
     timing: &'a Timing,
 }
 
@@ -173,22 +173,22 @@ impl Drop for Attempt<'_> {
 
 /// The bench picks a backend's mode from its inputs at run time.
 pub(super) enum Composed {
-    Streaming(Transcription<Timed, Streaming>),
-    Whole(Transcription<Timed, Whole>),
+    Streaming(Recognition<Timed, Streaming>),
+    Whole(Recognition<Timed, Whole>),
 }
 
 impl Composed {
-    pub(super) fn transcribe(
+    pub(super) fn recognize(
         &self,
         recording: &mut RecordingReader,
         language: &Language,
         started: Instant,
         segments: &mut Vec<Segment>,
         mut previews: Option<&mut Vec<Preview>>,
-    ) -> Result<Transcript, TranscriptionError> {
+    ) -> Result<Transcript, RecognitionError> {
         match self {
-            Self::Streaming(transcription) => {
-                let mut operation = transcription.start(language)?;
+            Self::Streaming(recognition) => {
+                let mut operation = recognition.start(language)?;
                 loop {
                     let segment = match operation.next(recording, previews.is_some())? {
                         Some(TranscriptUpdate::Finalized(segment)) => segment,
@@ -217,7 +217,7 @@ impl Composed {
                 }
                 operation.finish(recording)
             }
-            Self::Whole(transcription) => transcription.transcribe(recording, language),
+            Self::Whole(recognition) => recognition.recognize(recording, language),
         }
     }
 }
@@ -227,27 +227,27 @@ impl Composed {
 /// stepped replay it is also the clock: each finished decode releases the
 /// next stride of audio.
 pub(super) struct Timed {
-    inner: Box<dyn Transcriber>,
+    inner: Box<dyn Recognizer>,
     timing: Timing,
 }
 
-impl Transcriber for Timed {
+impl Recognizer for Timed {
     fn validate_language(
         &self,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<(), TranscriptionError> {
+    ) -> Result<(), RecognitionError> {
         self.inner.validate_language(language, cancel)
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
+    ) -> Result<Hypothesis, RecognitionError> {
         let started = Instant::now();
-        let heard = self.inner.transcribe_with(audio, language, cancel);
+        let heard = self.inner.recognize_with(audio, language, cancel);
         self.timing.decoded(started);
         heard
     }
@@ -256,7 +256,7 @@ impl Transcriber for Timed {
         &self,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
+    ) -> Result<Option<Box<dyn ChunkStream>>, RecognitionError> {
         let Some(inner) = self.inner.open_stream(language, cancel)? else {
             return Ok(None);
         };
@@ -304,7 +304,7 @@ impl ChunkStream for TimedStream {
         self.inner.chunk_samples()
     }
 
-    fn feed(&mut self, chunk: &[f32]) -> Result<Emitted, TranscriptionError> {
+    fn feed(&mut self, chunk: &[f32]) -> Result<Emitted, RecognitionError> {
         let started = Instant::now();
         let heard = self.inner.feed(chunk);
         self.timing.decoded(started);
@@ -312,10 +312,10 @@ impl ChunkStream for TimedStream {
     }
 }
 
-fn load_transcriber(
+fn load_recognizer(
     config: EngineConfig,
     cadence: Option<Cadence>,
-) -> Result<Box<dyn Transcriber>, TranscriptionError> {
+) -> Result<Box<dyn Recognizer>, RecognitionError> {
     // With a cadence the sidecar streams natively. `EngineConfig` has no
     // option for that, so this loads the engine directly.
     if let (EngineConfig::ParakeetMlx(config), Some(cadence)) = (&config, cadence) {
@@ -359,7 +359,7 @@ pub(super) fn selections(
             Ok(_) => selected.push(selection),
             Err(failure) => {
                 let detail = aria_kit::primitives::error_chain(&failure);
-                tracing::warn!(%detail, "a transcription backend cannot be used");
+                tracing::warn!(%detail, "a recognition backend cannot be used");
                 skipped.push(Skipped {
                     backend: request.name(),
                     reason: failure.to_string(),
@@ -416,10 +416,10 @@ fn effective_cadence(
 impl Selection {
     fn decoding(&self) -> Decoding {
         match (self.cadence, &self.config) {
-            (Some(cadence), TranscriptionConfig::ParakeetMlx { .. }) => Decoding::ChunkedFile {
+            (Some(cadence), SttConfig::ParakeetMlx { .. }) => Decoding::ChunkedFile {
                 chunk_samples: cadence.stride_samples(),
             },
-            (_, TranscriptionConfig::Nemotron { .. }) => Decoding::Native {
+            (_, SttConfig::Nemotron { .. }) => Decoding::Native {
                 chunk_samples: nemotron::CHUNK_SAMPLES,
             },
             (Some(cadence), _) => Decoding::agreement(cadence),
@@ -433,14 +433,14 @@ impl Selection {
         provisional: bool,
     ) -> Result<super::analysis::Engine, aria_harness::artifact::ArtifactError> {
         let model = match &self.config {
-            TranscriptionConfig::Whisper { model } => Some(model),
-            TranscriptionConfig::WhisperCandle { model_directory }
-            | TranscriptionConfig::Parakeet {
+            SttConfig::Whisper { model } => Some(model),
+            SttConfig::WhisperCandle { model_directory }
+            | SttConfig::Parakeet {
                 model_directory, ..
             }
-            | TranscriptionConfig::Moonshine { model_directory }
-            | TranscriptionConfig::Nemotron { model_directory } => Some(model_directory),
-            TranscriptionConfig::ParakeetMlx { .. } => None,
+            | SttConfig::Moonshine { model_directory }
+            | SttConfig::Nemotron { model_directory } => Some(model_directory),
+            SttConfig::ParakeetMlx { .. } => None,
         };
         let model_sha256 = model
             .map(|model| aria_harness::artifact::fingerprint(model))
@@ -464,7 +464,7 @@ impl Selection {
                     device: Some(whisper::gpu_backend().unwrap_or("cpu")),
                     model_bytes: model_bytes(model),
                 },
-                config: TranscriptionConfig::Whisper {
+                config: SttConfig::Whisper {
                     model: model.clone(),
                 },
                 cadence,
@@ -476,15 +476,15 @@ impl Selection {
                     device: None,
                     model_bytes: model_bytes(model),
                 },
-                config: TranscriptionConfig::WhisperCandle {
+                config: SttConfig::WhisperCandle {
                     model_directory: model.clone(),
                 },
                 cadence: None,
             },
             BackendRequest::Parakeet { model, gpu } => {
                 let device = match gpu {
-                    true => TranscriptionDevice::Gpu,
-                    false => TranscriptionDevice::Cpu,
+                    true => SttDevice::Gpu,
+                    false => SttDevice::Cpu,
                 };
                 Self {
                     descriptor: Descriptor {
@@ -493,7 +493,7 @@ impl Selection {
                         device: Some(device_name(device)),
                         model_bytes: model_bytes(model),
                     },
-                    config: TranscriptionConfig::Parakeet {
+                    config: SttConfig::Parakeet {
                         model_directory: model.clone(),
                         device,
                     },
@@ -507,7 +507,7 @@ impl Selection {
                     device: None,
                     model_bytes: model_bytes(model),
                 },
-                config: TranscriptionConfig::Moonshine {
+                config: SttConfig::Moonshine {
                     model_directory: model.clone(),
                 },
                 cadence,
@@ -519,7 +519,7 @@ impl Selection {
                     device: None,
                     model_bytes: model_bytes(model),
                 },
-                config: TranscriptionConfig::Nemotron {
+                config: SttConfig::Nemotron {
                     model_directory: model.clone(),
                 },
                 cadence: None,
@@ -533,7 +533,7 @@ impl Selection {
                     // path this side of the boundary knows.
                     model_bytes: None,
                 },
-                config: TranscriptionConfig::ParakeetMlx {
+                config: SttConfig::ParakeetMlx {
                     model: model.clone(),
                     interpreter: interpreter.clone(),
                 },
@@ -543,10 +543,10 @@ impl Selection {
     }
 }
 
-fn device_name(device: TranscriptionDevice) -> &'static str {
+fn device_name(device: SttDevice) -> &'static str {
     match device {
-        TranscriptionDevice::Cpu => "cpu",
-        TranscriptionDevice::Gpu => "gpu",
+        SttDevice::Cpu => "cpu",
+        SttDevice::Gpu => "gpu",
     }
 }
 
@@ -585,21 +585,17 @@ mod tests {
         fail_second: bool,
     }
 
-    impl Transcriber for TraceEngine {
-        fn validate_language(
-            &self,
-            _: &Language,
-            _: &CancelToken,
-        ) -> Result<(), TranscriptionError> {
+    impl Recognizer for TraceEngine {
+        fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _: TranscriptionAudio<'_>,
+            _: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
-        ) -> Result<Hypothesis, TranscriptionError> {
+        ) -> Result<Hypothesis, RecognitionError> {
             Ok(Hypothesis::new("one two three four"))
         }
 
@@ -607,7 +603,7 @@ mod tests {
             &self,
             _: &Language,
             _: &CancelToken,
-        ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
+        ) -> Result<Option<Box<dyn ChunkStream>>, RecognitionError> {
             Ok(Some(Box::new(TraceStream {
                 feeds: 0,
                 fail_second: self.fail_second,
@@ -625,10 +621,10 @@ mod tests {
             2
         }
 
-        fn feed(&mut self, _: &[f32]) -> Result<Emitted, TranscriptionError> {
+        fn feed(&mut self, _: &[f32]) -> Result<Emitted, RecognitionError> {
             self.feeds += 1;
             if self.fail_second && self.feeds == 2 {
-                return Err(TranscriptionError::Cancelled);
+                return Err(RecognitionError::Cancelled);
             }
             Ok(Emitted {
                 words: Hypothesis::new(match self.feeds {
@@ -654,7 +650,7 @@ mod tests {
         let engine = trace_engine(true);
         let mut loaded = Loaded {
             timing: engine.timing.clone(),
-            transcription: Composed::Streaming(Transcription::stream(Stream::Native, engine)),
+            recognition: Composed::Streaming(Recognition::stream(Stream::Native, engine)),
             decoding: Decoding::Native { chunk_samples: 2 },
         };
 
@@ -671,7 +667,7 @@ mod tests {
                 assert_eq!(attempt.decode_ms(), 0);
                 assert_eq!(attempt.decode_calls(), 0);
 
-                let result = attempt.transcription.transcribe(
+                let result = attempt.recognition.recognize(
                     &mut recording,
                     &Language::Automatic,
                     Instant::now(),
@@ -679,7 +675,7 @@ mod tests {
                     None,
                 );
 
-                assert!(matches!(result, Err(TranscriptionError::Cancelled)));
+                assert!(matches!(result, Err(RecognitionError::Cancelled)));
                 assert_eq!(attempt.decode_calls(), 2);
                 assert!(!unwind, "test attempt unwinding");
             }));
@@ -697,12 +693,12 @@ mod tests {
         let mut recording =
             aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4]).unwrap();
         let composed =
-            Composed::Streaming(Transcription::stream(Stream::Native, trace_engine(false)));
+            Composed::Streaming(Recognition::stream(Stream::Native, trace_engine(false)));
         let started = Instant::now();
         let mut segments = Vec::new();
 
         let transcript = composed
-            .transcribe(
+            .recognize(
                 &mut recording,
                 &Language::Automatic,
                 started,
@@ -751,21 +747,21 @@ mod tests {
                 let engine = trace_engine(false);
                 let calls = Arc::clone(&engine.timing.decode_calls);
                 *engine.timing.step.lock().expect("no poison") = Some(advance);
-                let composed = Composed::Streaming(Transcription::agreement(
+                let composed = Composed::Streaming(Recognition::agreement(
                     Cadence::from_millis(100, 20_000),
                     engine,
                 ));
                 let mut segments = Vec::new();
                 let mut previews = Vec::new();
                 let transcript = composed
-                    .transcribe(
+                    .recognize(
                         &mut recording,
                         &Language::Automatic,
                         Instant::now(),
                         &mut segments,
                         enabled.then_some(&mut previews),
                     )
-                    .expect("transcribes");
+                    .expect("recognizes");
                 let segments = segments
                     .into_iter()
                     .map(|segment| {
@@ -820,11 +816,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut recording =
             aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4]).unwrap();
-        let composed =
-            Composed::Streaming(Transcription::stream(Stream::Native, trace_engine(true)));
+        let composed = Composed::Streaming(Recognition::stream(Stream::Native, trace_engine(true)));
         let mut segments = Vec::new();
 
-        let outcome = composed.transcribe(
+        let outcome = composed.recognize(
             &mut recording,
             &Language::Automatic,
             Instant::now(),
@@ -832,7 +827,7 @@ mod tests {
             None,
         );
 
-        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
+        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].text, "one");
         assert_eq!(segments[0].span_samples, None);
@@ -840,15 +835,15 @@ mod tests {
     }
 
     #[test]
-    fn whole_transcription_has_no_streaming_trace() {
+    fn whole_recognition_has_no_streaming_trace() {
         let directory = tempfile::tempdir().unwrap();
         let mut recording =
             aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4]).unwrap();
-        let composed = Composed::Whole(Transcription::complete_samples(trace_engine(false)));
+        let composed = Composed::Whole(Recognition::complete_samples(trace_engine(false)));
         let mut segments = Vec::new();
 
         let transcript = composed
-            .transcribe(
+            .recognize(
                 &mut recording,
                 &Language::Automatic,
                 Instant::now(),

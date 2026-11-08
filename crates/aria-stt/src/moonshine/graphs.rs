@@ -11,7 +11,7 @@ use ort::value::{DynValue, Tensor, TensorElementType, ValueType};
 
 use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{TranscriptionError, check_cancelled};
+use aria_kit::recognition::{RecognitionError, check_cancelled};
 
 use super::BACKEND;
 
@@ -39,7 +39,7 @@ const END_TOKEN: u32 = 2;
 
 /// Positions the decoder was trained to write. Read speech reaches it at about
 /// fifty seconds, and what the model writes after it repeats rather than
-/// transcribes, so windows are cut to stay well inside it.
+/// recognizes, so windows are cut to stay well inside it.
 const MAX_TOKENS: usize = 194;
 
 /// Tokens a second of speech is worth. Read speech measures near four; the
@@ -57,14 +57,14 @@ fn token_budget(samples: usize) -> usize {
 /// of audio fails and 64 ms decodes.
 pub(super) const MIN_SAMPLES: usize = 1024;
 
-pub(super) struct Recognizer {
+pub(super) struct Graphs {
     encoder: Session,
     decoder: Session,
     cache: CacheLayout,
 }
 
-impl Recognizer {
-    pub(super) fn load(directory: &Path) -> Result<Self, TranscriptionError> {
+impl Graphs {
+    pub(super) fn load(directory: &Path) -> Result<Self, RecognitionError> {
         let encoder = open(directory, ENCODER_FILE)?;
         let decoder = open(directory, DECODER_FILE)?;
         declares(&encoder, ENCODER_FILE, &[AUDIO_INPUT], &[AUDIO_STATE])?;
@@ -84,16 +84,16 @@ impl Recognizer {
     }
 
     /// The tokens spoken in one window of audio.
-    pub(super) fn transcribe(
+    pub(super) fn recognize(
         &mut self,
         samples: &[f32],
         cancel: &CancelToken,
-    ) -> Result<Vec<u32>, TranscriptionError> {
+    ) -> Result<Vec<u32>, RecognitionError> {
         let audio = self.encode(samples)?;
         self.decode(&audio, samples.len(), cancel)
     }
 
-    fn encode(&mut self, samples: &[f32]) -> Result<DynValue, TranscriptionError> {
+    fn encode(&mut self, samples: &[f32]) -> Result<DynValue, RecognitionError> {
         let recording = tensor(vec![1, samples.len() as i64], samples.to_vec())?;
         let mut outputs = self
             .encoder
@@ -111,7 +111,7 @@ impl Recognizer {
         audio: &DynValue,
         samples: usize,
         cancel: &CancelToken,
-    ) -> Result<Vec<u32>, TranscriptionError> {
+    ) -> Result<Vec<u32>, RecognitionError> {
         let mut cached = self.cache.empty()?;
         let mut tokens = Vec::new();
         let mut token = START_TOKEN;
@@ -164,7 +164,7 @@ impl CacheLayout {
     /// Read from the graph rather than written down, so the same code serves
     /// every size of the model. Every input named as a cache entry must be one
     /// this code can fill, or the decode would be handed a partial cache.
-    fn read(decoder: &Session) -> Result<Self, TranscriptionError> {
+    fn read(decoder: &Session) -> Result<Self, RecognitionError> {
         let named = decoder
             .inputs()
             .iter()
@@ -187,7 +187,7 @@ impl CacheLayout {
 
     /// Every entry the decoder is handed must come back, or a decode would
     /// stop partway through its first step.
-    fn hands_back(&self, decoder: &Session) -> Result<(), TranscriptionError> {
+    fn hands_back(&self, decoder: &Session) -> Result<(), RecognitionError> {
         for entry in &self.entries {
             let returned = decoder
                 .outputs()
@@ -203,7 +203,7 @@ impl CacheLayout {
         Ok(())
     }
 
-    fn empty(&self) -> Result<Vec<DynValue>, TranscriptionError> {
+    fn empty(&self) -> Result<Vec<DynValue>, RecognitionError> {
         self.entries
             .iter()
             .map(|entry| tensor(entry.empty.clone(), Vec::<f32>::new()).map(Tensor::into_dyn))
@@ -226,7 +226,7 @@ impl CacheLayout {
         cached: &mut [DynValue],
         outputs: &mut SessionOutputs<'_>,
         first_step: bool,
-    ) -> Result<(), TranscriptionError> {
+    ) -> Result<(), RecognitionError> {
         for (entry, value) in self.entries.iter().zip(cached) {
             if entry.cross_attention && !first_step {
                 continue;
@@ -275,7 +275,7 @@ fn empty_shape(declared: &[i64]) -> Vec<i64> {
         .collect()
 }
 
-fn most_likely(outputs: &SessionOutputs<'_>) -> Result<u32, TranscriptionError> {
+fn most_likely(outputs: &SessionOutputs<'_>) -> Result<u32, RecognitionError> {
     let scored = outputs
         .get(SCORES_OUTPUT)
         .ok_or_else(|| unusable("the decoder returned no scores"))?;
@@ -298,11 +298,11 @@ fn best_token(shape: &[i64], scores: &[f32]) -> Option<u32> {
     u32::try_from(best).ok()
 }
 
-fn open(directory: &Path, file: &'static str) -> Result<Session, TranscriptionError> {
+fn open(directory: &Path, file: &'static str) -> Result<Session, RecognitionError> {
     let path = directory.join(file);
     Session::builder()
         .and_then(|mut builder| builder.commit_from_file(&path))
-        .map_err(|source| TranscriptionError::Load {
+        .map_err(|source| RecognitionError::Load {
             backend: BACKEND,
             model: path.display().to_string(),
             source: BackendError::engine(source),
@@ -316,7 +316,7 @@ fn declares(
     file: &'static str,
     inputs: &[&str],
     outputs: &[&str],
-) -> Result<(), TranscriptionError> {
+) -> Result<(), RecognitionError> {
     let declared = |outlets: &[ort::value::Outlet], wanted: &str| {
         outlets.iter().any(|outlet| outlet.name() == wanted)
     };
@@ -339,26 +339,26 @@ fn declares(
 fn tensor<T: ort::value::PrimitiveTensorElementType + std::fmt::Debug + Clone + 'static>(
     shape: Vec<i64>,
     data: Vec<T>,
-) -> Result<Tensor<T>, TranscriptionError> {
+) -> Result<Tensor<T>, RecognitionError> {
     Tensor::from_array((shape, data)).map_err(inference)
 }
 
-fn inference(source: ort::Error) -> TranscriptionError {
-    TranscriptionError::Inference {
+fn inference(source: ort::Error) -> RecognitionError {
+    RecognitionError::Inference {
         backend: BACKEND,
         source: BackendError::engine(source),
     }
 }
 
-fn unusable(detail: &str) -> TranscriptionError {
-    TranscriptionError::Inference {
+fn unusable(detail: &str) -> RecognitionError {
+    RecognitionError::Inference {
         backend: BACKEND,
         source: BackendError::Unusable(detail.to_owned()),
     }
 }
 
-fn unusable_model(file: &str, detail: &str) -> TranscriptionError {
-    TranscriptionError::Load {
+fn unusable_model(file: &str, detail: &str) -> RecognitionError {
+    RecognitionError::Load {
         backend: BACKEND,
         model: file.to_owned(),
         source: BackendError::Unusable(detail.to_owned()),

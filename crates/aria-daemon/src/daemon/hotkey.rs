@@ -205,7 +205,7 @@ impl HotkeyTrigger {
     /// the whole dictation, and the next tap must not wait behind it. A tap
     /// ends what the user is in the middle of: an open manual recording
     /// first, then a run a press started; with neither, it dictates. Between
-    /// a press's recording stopping and its ticket, transcription plus one
+    /// a press's recording stopping and its ticket, transcribing plus one
     /// round trip, a tap still dictates.
     fn tap(&self) {
         tracing::info!(trigger = "hotkey", "tap");

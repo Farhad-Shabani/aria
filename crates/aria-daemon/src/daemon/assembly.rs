@@ -393,7 +393,7 @@ fn build_workers(
     }
 }
 
-/// Settings, the transcription model, and the wake-word model load here, so a
+/// Settings, the speech model, and the wake-word model load here, so a
 /// daemon missing one says so before it accepts a press.
 fn eager_workers(
     context: &Context<'_>,

@@ -1,12 +1,12 @@
 import Foundation
 import os
 
-private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "ServerTranscription")
+private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "ServerStt")
 
-/// Each switch sets where transcription runs, and the service swaps engines
+/// Each switch sets where recognition runs, and the service swaps engines
 /// without a restart. The local engine stays configured on the server.
 @MainActor
-final class ServerTranscription: ObservableObject {
+final class ServerStt: ObservableObject {
     struct Effects {
         var inspect: () async throws -> Aria_Setup_V1_Inspection
         var pair: (_ invitation: String) async throws -> Void
@@ -46,7 +46,7 @@ final class ServerTranscription: ObservableObject {
 
     /// Going to the server needs a pairing; coming back never does.
     var needsPairing: Bool {
-        setup.server == nil && setup.transcriptionRunsOn != .server
+        setup.server == nil && setup.sttRunsOn != .server
     }
 
     var isBusy: Bool { progress != nil }
@@ -71,7 +71,7 @@ final class ServerTranscription: ObservableObject {
             } catch  where Task.isCancelled {
             } catch SetupClientError.cancelled {
             } catch {
-                log.error("Switching transcription failed: \(String(describing: error), privacy: .private)")
+                log.error("Switching recognition failed: \(String(describing: error), privacy: .private)")
                 failure = SetupClientError.message(for: error, otherwise: Self.switchFailure)
                 return false
             }
@@ -128,9 +128,9 @@ final class ServerTranscription: ObservableObject {
             Self.invitationAddress(clipboard).map { .confirming(invitation: clipboard, address: $0) } ?? .unreadable
     }
 
-    /// Only while transcription runs on your Mac: forgetting the server in use would fail every dictation.
+    /// Only while recognition runs on your Mac: forgetting the server in use would fail every dictation.
     var canForget: Bool {
-        !isBusy && setup.server != nil && setup.transcriptionRunsOn == .local
+        !isBusy && setup.server != nil && setup.sttRunsOn == .local
     }
 
     func forget() async {
@@ -193,16 +193,16 @@ final class ServerTranscription: ObservableObject {
     }
 }
 
-extension ServerTranscription.Effects {
+extension ServerStt.Effects {
     @MainActor static var live: Self {
         Self(
             inspect: { try await SetupClient.inspect() },
             pair: { invitation in try await DaemonProcess.pairServer(invitation: invitation) },
             forget: { try await DaemonProcess.forgetServer() },
             setRunsOn: { runsOn, onEvent in
-                var request = Aria_Setup_V1_SetTranscriptionRunsOnRequest()
+                var request = Aria_Setup_V1_SetSttRunsOnRequest()
                 request.runsOn = runsOn.wire
-                _ = try await SetupClient.setTranscriptionRunsOn(request, onEvent: onEvent)
+                _ = try await SetupClient.setSttRunsOn(request, onEvent: onEvent)
             }
         )
     }

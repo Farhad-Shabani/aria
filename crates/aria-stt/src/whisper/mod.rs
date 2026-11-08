@@ -1,4 +1,4 @@
-//! In-process transcription through whisper.cpp bindings.
+//! In-process recognition through whisper.cpp bindings.
 //!
 //! Each decoded word carries whisper.cpp's token timing, which the
 //! streaming path reads.
@@ -7,9 +7,9 @@
 //! use aria_stt::{whisper::Whisper, prelude::*};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let transcription = Transcription::streaming(Whisper::load("model")?)
+//! let recognition = Recognition::streaming(Whisper::load("model")?)
 //!     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
-//! let mut session = Session::microphone(&transcription, &Language::Automatic)?;
+//! let mut session = Session::microphone(&recognition, &Language::Automatic)?;
 //!
 //! // Committed words arrive as you speak and are never revised.
 //! while let Some(words) = session.next_finalized()? {
@@ -21,7 +21,7 @@
 //! # }
 //! ```
 //!
-//! For audio you already hold, [`crate::Transcription::transcribe_file`] decodes a
+//! For audio you already hold, [`crate::Recognition::recognize_file`] decodes a
 //! WAV in one call. Streaming runs at [`CADENCE`].
 
 pub use whisper_rs::install_logging_hooks;
@@ -39,9 +39,9 @@ use whisper_rs::{
 
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{
-    AudioInputKind, Cadence, Engine, Hypothesis, Language, SILENCE_FLOOR, Stream, StreamingEngine,
-    TimedWord, Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled, english_only,
+use aria_kit::recognition::{
+    AudioInputKind, Cadence, Engine, Hypothesis, Language, RecognitionAudio, RecognitionError,
+    Recognizer, SILENCE_FLOOR, Stream, StreamingEngine, TimedWord, check_cancelled, english_only,
     validate_model_file, word_timings,
 };
 
@@ -109,8 +109,8 @@ impl WhisperConfig {
 }
 
 impl Whisper {
-    /// Loads the model once; it stays resident for every transcription.
-    pub fn load(model: impl Into<PathBuf>) -> Result<Self, TranscriptionError> {
+    /// Loads the model once; it stays resident for every recognition.
+    pub fn load(model: impl Into<PathBuf>) -> Result<Self, RecognitionError> {
         Self::load_from(WhisperConfig::new(model), &CancelToken::never())
     }
 }
@@ -122,11 +122,11 @@ impl Engine for Whisper {
 
     type Config = WhisperConfig;
 
-    fn check_from(config: &WhisperConfig) -> Result<PathBuf, TranscriptionError> {
+    fn check_from(config: &WhisperConfig) -> Result<PathBuf, RecognitionError> {
         validate_model_file(config.model.clone(), BACKEND)
     }
 
-    fn load_from(config: WhisperConfig, cancel: &CancelToken) -> Result<Self, TranscriptionError> {
+    fn load_from(config: WhisperConfig, cancel: &CancelToken) -> Result<Self, RecognitionError> {
         check_cancelled(cancel)?;
         let model = Self::check_from(&config)?;
         let mut parameters = WhisperContextParameters::default();
@@ -149,21 +149,21 @@ impl StreamingEngine for Whisper {
     const STREAM: Stream = Stream::Agreement(CADENCE);
 }
 
-impl Transcriber for Whisper {
+impl Recognizer for Whisper {
     fn validate_language(
         &self,
         language: &Language,
         _cancel: &CancelToken,
-    ) -> Result<(), TranscriptionError> {
+    ) -> Result<(), RecognitionError> {
         supported_language(self.multilingual, language)
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
+    ) -> Result<Hypothesis, RecognitionError> {
         check_cancelled(cancel)?;
         let samples = audio.require_samples(BACKEND)?;
         if !audible(samples) {
@@ -188,23 +188,23 @@ pub fn gpu_backend() -> Option<&'static str> {
         .then_some(GPU_BACKEND)
 }
 
-fn load_failed(model: &Path, source: whisper_rs::WhisperError) -> TranscriptionError {
-    TranscriptionError::Load {
+fn load_failed(model: &Path, source: whisper_rs::WhisperError) -> RecognitionError {
+    RecognitionError::Load {
         backend: BACKEND,
         model: model.display().to_string(),
         source: BackendError::engine(source),
     }
 }
 
-fn supported_language(multilingual: bool, language: &Language) -> Result<(), TranscriptionError> {
+fn supported_language(multilingual: bool, language: &Language) -> Result<(), RecognitionError> {
     if multilingual {
         return Ok(());
     }
     english_only(BACKEND, language)
 }
 
-fn inference_failed(source: whisper_rs::WhisperError) -> TranscriptionError {
-    TranscriptionError::Inference {
+fn inference_failed(source: whisper_rs::WhisperError) -> RecognitionError {
+    RecognitionError::Inference {
         backend: BACKEND,
         source: BackendError::engine(source),
     }
@@ -215,13 +215,13 @@ fn run_inference(
     language: &Language,
     samples: &[f32],
     cancel: &CancelToken,
-) -> Result<(), TranscriptionError> {
+) -> Result<(), RecognitionError> {
     let cancelled = Arc::new(AtomicBool::new(false));
     let params = decode_params(language, &cancelled);
     let result = run_with_cancellation(&cancelled, cancel, || state.full(params, samples));
     match result {
         Ok(_decoded_segments) => Ok(()),
-        Err(_aborted) if cancelled.load(Ordering::Acquire) => Err(TranscriptionError::Cancelled),
+        Err(_aborted) if cancelled.load(Ordering::Acquire) => Err(RecognitionError::Cancelled),
         Err(error) => Err(inference_failed(error)),
     }
 }
@@ -267,7 +267,7 @@ fn audible(samples: &[f32]) -> bool {
 fn collect_transcript(
     state: &WhisperState,
     eot: WhisperTokenId,
-) -> Result<Hypothesis, TranscriptionError> {
+) -> Result<Hypothesis, RecognitionError> {
     let mut text = String::new();
     let mut words = Vec::new();
     let mut silent_segments = 0_usize;
@@ -346,7 +346,7 @@ fn run_with_cancellation<T: Send>(
 
 #[cfg(test)]
 mod load_engine_tests {
-    use aria_kit::transcription::LanguageCode;
+    use aria_kit::recognition::LanguageCode;
 
     use super::*;
 
@@ -390,7 +390,7 @@ mod load_engine_tests {
         assert!(supported_language(false, &Language::Automatic).is_ok());
         assert!(matches!(
             supported_language(false, &french),
-            Err(TranscriptionError::UnsupportedLanguage { backend, language })
+            Err(RecognitionError::UnsupportedLanguage { backend, language })
                 if backend == BACKEND && language == "fr"
         ));
     }
@@ -411,6 +411,6 @@ mod load_engine_tests {
 
         let outcome = Whisper::load_from(WhisperConfig::new("/nonexistent/model.bin"), &cancel);
 
-        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
+        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
     }
 }

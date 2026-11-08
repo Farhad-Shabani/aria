@@ -53,7 +53,7 @@ fn message(code: RpcErrorCode) -> &'static str {
     match code {
         RpcErrorCode::NoSpeech => "No speech detected. Check your mic.",
         RpcErrorCode::CaptureFailed => "Recording failed. Check your mic.",
-        RpcErrorCode::TranscriptionFailed => "Transcription failed.",
+        RpcErrorCode::RecognitionFailed => "Speech recognition failed.",
         RpcErrorCode::DeliveryTargetChanged => "The window changed, so nothing was inserted.",
         RpcErrorCode::DeliveryInterrupted => "Focus moved, so typing stopped.",
         RpcErrorCode::ApplicationExcluded => "Aria is off in this app.",

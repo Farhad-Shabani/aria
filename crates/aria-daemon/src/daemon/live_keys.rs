@@ -104,7 +104,7 @@ impl LiveHarness {
                 &self.home,
                 super::inference::pairing_id(&self.home),
             )
-            .transcription
+            .stt
         )
     }
 

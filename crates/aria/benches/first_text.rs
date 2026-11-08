@@ -5,9 +5,7 @@ use anyhow::{Context, ensure};
 use aria::audio::{AudioCapture, RecordingMode, ReplayPace, StopSignal, Stopper, WavReplayCapture};
 use aria_harness::{inputs, stats};
 use aria_stt::{CancelToken, EngineConfig};
-use aria_voice::transcription::{
-    Language, LanguageCode, Stream, Streaming, Transcriber, Transcription,
-};
+use aria_voice::stt::{Language, LanguageCode, Recognition, Recognizer, Stream, Streaming};
 
 mod engines;
 
@@ -119,12 +117,12 @@ fn measure(
     observation: &mut engines::Observation,
 ) -> anyhow::Result<()> {
     let started = Instant::now();
-    let transcriber = EngineConfig::try_from(engine.config.clone())?.load(&CancelToken::never())?;
+    let recognizer = EngineConfig::try_from(engine.config.clone())?.load(&CancelToken::never())?;
     observation.startup_ms = Some(started.elapsed().as_millis() as u64);
-    let transcription = Transcription::stream(stream, transcriber);
+    let recognition = Recognition::stream(stream, recognizer);
     let language = Language::Specific(LanguageCode::english());
     for run in 0..options.warmups + options.runs {
-        let elapsed = first_text_ms(&transcription, &language, &inputs.wav, Instant::now)
+        let elapsed = first_text_ms(&recognition, &language, &inputs.wav, Instant::now)
             .with_context(|| {
                 format!(
                     "{} run {} ({})",
@@ -147,8 +145,8 @@ fn measure(
     Ok(())
 }
 
-fn first_text_ms<T: Transcriber>(
-    transcription: &Transcription<T, Streaming>,
+fn first_text_ms<T: Recognizer>(
+    recognition: &Recognition<T, Streaming>,
     language: &Language,
     wav: &Path,
     now: impl FnOnce() -> Instant,
@@ -164,7 +162,7 @@ fn first_text_ms<T: Transcriber>(
     )?;
     // Every exit after capture starts must stop replay, including initialization failures.
     let result = (|| {
-        let mut operation = transcription.start(language)?;
+        let mut operation = recognition.start(language)?;
         let segment = operation.next_finalized(&mut recording)?;
         ensure!(segment.is_some(), "no segment was finalized");
         Ok(started.elapsed().as_millis() as u64)
@@ -193,7 +191,7 @@ mod tests {
     use super::*;
     use aria_kit::cancel::CancelToken;
     use aria_settings::config::backend;
-    use aria_voice::transcription::{Hypothesis, TranscriptionAudio, TranscriptionError};
+    use aria_voice::stt::{Hypothesis, RecognitionAudio, RecognitionError};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -201,25 +199,21 @@ mod tests {
 
     struct InitializationProbe(Arc<AtomicBool>);
 
-    impl Transcriber for InitializationProbe {
-        fn validate_language(
-            &self,
-            _: &Language,
-            _: &CancelToken,
-        ) -> Result<(), TranscriptionError> {
+    impl Recognizer for InitializationProbe {
+        fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
             assert!(
                 self.0.load(Ordering::Relaxed),
                 "initialization must be timed"
             );
-            Err(TranscriptionError::NoNativeStream)
+            Err(RecognitionError::NoNativeStream)
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _: TranscriptionAudio<'_>,
+            _: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
-        ) -> Result<Hypothesis, TranscriptionError> {
+        ) -> Result<Hypothesis, RecognitionError> {
             unreachable!("initialization fails before decoding")
         }
     }
@@ -229,16 +223,16 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let wav = aria::audio::fixture_of(directory.path(), 2);
         let clock_started = Arc::new(AtomicBool::new(false));
-        let transcription =
-            Transcription::stream(Stream::Native, InitializationProbe(clock_started.clone()));
-        let error = first_text_ms(&transcription, &Language::Automatic, &wav, || {
+        let recognition =
+            Recognition::stream(Stream::Native, InitializationProbe(clock_started.clone()));
+        let error = first_text_ms(&recognition, &Language::Automatic, &wav, || {
             clock_started.store(true, Ordering::Relaxed);
             Instant::now()
         })
         .unwrap_err();
         assert!(matches!(
-            error.downcast_ref::<TranscriptionError>(),
-            Some(TranscriptionError::NoNativeStream)
+            error.downcast_ref::<RecognitionError>(),
+            Some(RecognitionError::NoNativeStream)
         ));
     }
 

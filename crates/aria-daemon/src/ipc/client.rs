@@ -27,7 +27,7 @@ use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 
-/// Bounded by the longest dictation: recording, transcription, delivery.
+/// Bounded by the longest dictation: recording, transcribing, delivery.
 const DICTATION_TIMEOUT: Duration = Duration::from_secs(670);
 /// Base client deadline for one utterance; grows with the text.
 const SPEECH_BASE_TIMEOUT: Duration = Duration::from_secs(45);

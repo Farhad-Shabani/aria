@@ -189,7 +189,7 @@ fn hear(
     } = session;
     let samples = relay::decode(opening, &audio).map_err(|error| RpcFailure::from(&error))?;
     // A full recording is about 19 MB as bytes and again as samples, and
-    // transcription reads neither.
+    // recognition reads neither.
     drop(audio);
 
     // File-based engines need a WAV. The recording owns its temporary file.

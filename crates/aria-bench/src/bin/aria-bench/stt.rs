@@ -1,4 +1,4 @@
-//! Measures every configured transcription backend over one corpus.
+//! Measures every configured recognition backend over one corpus.
 //!
 //! ```text
 //! aria-bench corpus build/corpus
@@ -32,7 +32,7 @@ Examples:
   aria-bench stt --corpus build/corpus/manifest.tsv";
 
 #[derive(Parser)]
-#[command(about = "Word error rate per transcription backend", after_help = EXAMPLES)]
+#[command(about = "Word error rate per recognition backend", after_help = EXAMPLES)]
 pub(crate) struct Cli {
     /// Manifest of audio paths and reference text, one utterance per line.
     #[arg(long)]

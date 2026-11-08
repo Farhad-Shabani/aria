@@ -29,7 +29,7 @@ const CHUNK_SAMPLES: usize = canonical_samples(PACED_CHUNK) as usize;
 
 /// How a WAV replay delivers its samples. `Immediate` writes the whole file
 /// before `start` returns. `Realtime` writes it at recorded speed, so
-/// transcription overlaps capture as on a real press.
+/// recognition overlaps capture as on a real press.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayPace {
     Immediate,

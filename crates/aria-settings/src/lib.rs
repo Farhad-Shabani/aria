@@ -29,8 +29,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use aria_kit::recognition::LanguageCodeError;
 use aria_kit::synthesis::{SpeakingRateError, VoiceError};
-use aria_kit::transcription::LanguageCodeError;
 
 use aria_kit::audio::{AutoStopError, SilenceDurationError};
 

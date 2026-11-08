@@ -50,9 +50,9 @@ pub fn label_as_shipped(run: Run<'_>) -> Result<Labeled, BenchError> {
 /// Labels a recording by asking the track who owned each span, the way the
 /// transcript is written.
 ///
-/// System transcription asks about paragraphs, which the transcriber cut. Here the voice
+/// System transcription asks about paragraphs, which the recognizer cut. Here the voice
 /// detector cuts them: an independent source, as a paragraph is, without
-/// needing a transcriber in the path. What this measures is the ownership
+/// needing a recognizer in the path. What this measures is the ownership
 /// rule — `turns` shapes its runs before reporting them, and `attribute`
 /// does not, so a voice too small or too scattered to survive one can still
 /// win whole spans in the other.

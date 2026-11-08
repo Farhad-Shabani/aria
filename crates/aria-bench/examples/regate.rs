@@ -1,6 +1,6 @@
 //! Re-embeds a recording's segments at a chosen speech-gate threshold.
 //!
-//! Reuses saved segment spans to compare speech-gate thresholds without rerunning transcription.
+//! Reuses saved segment spans to compare speech-gate thresholds without rerunning recognition.
 //!
 //! usage: regate <wav> <spans.tsv> <threshold> [out.tsv]
 

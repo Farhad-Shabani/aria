@@ -48,7 +48,7 @@ impl DeliveryFactory {
     }
 }
 
-pub use aria_kit::transcription::Caret;
+pub use aria_kit::recognition::Caret;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {

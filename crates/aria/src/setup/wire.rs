@@ -1,7 +1,7 @@
 //! The setup contract as Aria.app speaks it: `aria.setup.v1` messages,
 //! one per length-delimited frame, over the stdio of `aria setup inspect`,
-//! `aria setup apply`, `aria setup set-transcription-engine` and
-//! `aria setup set-transcription-runs-on`.
+//! `aria setup apply`, `aria setup set-stt-engine` and
+//! `aria setup set-stt-runs-on`.
 
 use aria_voice::config::Section;
 use std::io::{Read, Write};
@@ -14,8 +14,8 @@ use aria_settings::RunsOn;
 
 use super::backends::ModelSource;
 use super::models::ModelFiles;
-use super::transcription_engine::SetTranscriptionEngineSummary;
-use super::transcription_runs_on::SetTranscriptionRunsOnSummary;
+use super::stt_engine::SetSttEngineSummary;
+use super::stt_runs_on::SetSttRunsOnSummary;
 use super::{
     ApplyOptions, Availability, Choice, Grant, Inspection, Missing, ModelState, Outcome, Pairing,
     Selections, SettingsWrite, SetupError, SetupEvent, Step, Summary, voice_model_present,
@@ -57,57 +57,44 @@ pub fn apply(input: &mut impl Read, output: &mut impl Write) -> Result<(), Setup
     write(output, &response)
 }
 
-/// Reads one `SetTranscriptionEngineRequest`, then answers a response per
+/// Reads one `SetSttEngineRequest`, then answers a response per
 /// event and one more carrying the summary.
-pub fn set_transcription_engine(
-    input: &mut impl Read,
-    output: &mut impl Write,
-) -> Result<(), SetupError> {
-    use generated::set_transcription_engine_response::Body;
+pub fn set_stt_engine(input: &mut impl Read, output: &mut impl Write) -> Result<(), SetupError> {
+    use generated::set_stt_engine_response::Body;
     let mut frame = Vec::new();
     input.read_to_end(&mut frame).map_err(SetupError::Request)?;
-    let request =
-        generated::SetTranscriptionEngineRequest::decode_length_delimited(frame.as_slice())
-            .map_err(SetupError::Decode)?;
+    let request = generated::SetSttEngineRequest::decode_length_delimited(frame.as_slice())
+        .map_err(SetupError::Decode)?;
 
-    let summary = super::transcription_engine::set_transcription_engine(
-        &request.engine_id,
-        false,
-        &mut |event| {
-            let response = generated::SetTranscriptionEngineResponse {
-                body: Some(Body::Event(event.into())),
-            };
-            write(output, &response)
-        },
-    )?;
-    let response = generated::SetTranscriptionEngineResponse {
+    let summary = super::stt_engine::set_stt_engine(&request.engine_id, false, &mut |event| {
+        let response = generated::SetSttEngineResponse {
+            body: Some(Body::Event(event.into())),
+        };
+        write(output, &response)
+    })?;
+    let response = generated::SetSttEngineResponse {
         body: Some(Body::Summary((&summary).into())),
     };
     write(output, &response)
 }
 
-/// Reads one `SetTranscriptionRunsOnRequest`, then answers a response per
+/// Reads one `SetSttRunsOnRequest`, then answers a response per
 /// event and one more carrying the summary.
-pub fn set_transcription_runs_on(
-    input: &mut impl Read,
-    output: &mut impl Write,
-) -> Result<(), SetupError> {
-    use generated::set_transcription_runs_on_response::Body;
+pub fn set_stt_runs_on(input: &mut impl Read, output: &mut impl Write) -> Result<(), SetupError> {
+    use generated::set_stt_runs_on_response::Body;
     let mut frame = Vec::new();
     input.read_to_end(&mut frame).map_err(SetupError::Request)?;
-    let request =
-        generated::SetTranscriptionRunsOnRequest::decode_length_delimited(frame.as_slice())
-            .map_err(SetupError::Decode)?;
+    let request = generated::SetSttRunsOnRequest::decode_length_delimited(frame.as_slice())
+        .map_err(SetupError::Decode)?;
     let runs_on = runs_on(request.runs_on)?;
 
-    let summary =
-        super::transcription_runs_on::set_transcription_runs_on(runs_on, false, &mut |event| {
-            let response = generated::SetTranscriptionRunsOnResponse {
-                body: Some(Body::Event(event.into())),
-            };
-            write(output, &response)
-        })?;
-    let response = generated::SetTranscriptionRunsOnResponse {
+    let summary = super::stt_runs_on::set_stt_runs_on(runs_on, false, &mut |event| {
+        let response = generated::SetSttRunsOnResponse {
+            body: Some(Body::Event(event.into())),
+        };
+        write(output, &response)
+    })?;
+    let response = generated::SetSttRunsOnResponse {
         body: Some(Body::Summary((&summary).into())),
     };
     write(output, &response)
@@ -146,19 +133,16 @@ impl TryFrom<generated::ApplyRequest> for (Selections, ApplyOptions) {
         let selections = request
             .selections
             .ok_or(SetupError::Invalid("no selections"))?;
-        if [
-            &selections.transcription_engine_id,
-            &selections.synthesis_engine_id,
-        ]
-        .iter()
-        .any(|key| key.is_empty())
+        if [&selections.stt_engine_id, &selections.tts_engine_id]
+            .iter()
+            .any(|key| key.is_empty())
         {
             return Err(SetupError::Invalid("a required selection is empty"));
         }
         Ok((
             Selections {
-                stt: selections.transcription_engine_id,
-                tts: selections.synthesis_engine_id,
+                stt: selections.stt_engine_id,
+                tts: selections.tts_engine_id,
                 wake: selections.wake,
             },
             ApplyOptions {
@@ -177,7 +161,7 @@ impl From<&Inspection> for generated::Inspection {
             defaults: Some(generated::Selections::from(&Selections::defaults(
                 inspection,
             ))),
-            transcription_choices: inspection
+            stt_choices: inspection
                 .stt
                 .iter()
                 .map(|c| generated::Choice {
@@ -185,7 +169,7 @@ impl From<&Inspection> for generated::Inspection {
                     ..choice(c)
                 })
                 .collect(),
-            synthesis_choices: inspection.tts.iter().map(choice).collect(),
+            tts_choices: inspection.tts.iter().map(choice).collect(),
             models: inspection.models.iter().map(Into::into).collect(),
             wakeword_installed: inspection.wakeword_installed,
             service: Some((&inspection.service).into()),
@@ -195,7 +179,7 @@ impl From<&Inspection> for generated::Inspection {
                 Pairing::Paired(paired) => Some(paired.into()),
                 Pairing::Unpaired | Pairing::Unusable => None,
             },
-            transcription_runs_on: generated::RunsOn::from(inspection.transcription_runs_on) as i32,
+            stt_runs_on: generated::RunsOn::from(inspection.stt_runs_on) as i32,
         }
     }
 }
@@ -212,8 +196,8 @@ impl From<&PairedServer> for generated::PairedServer {
 impl From<&Selections> for generated::Selections {
     fn from(selections: &Selections) -> Self {
         Self {
-            transcription_engine_id: selections.stt.clone(),
-            synthesis_engine_id: selections.tts.clone(),
+            stt_engine_id: selections.stt.clone(),
+            tts_engine_id: selections.tts.clone(),
             wake: selections.wake,
         }
     }
@@ -410,8 +394,8 @@ fn model_outcomes(models: &[(&'static str, Outcome)]) -> Vec<generated::ModelOut
         .collect()
 }
 
-impl From<&SetTranscriptionEngineSummary> for generated::SetTranscriptionEngineSummary {
-    fn from(summary: &SetTranscriptionEngineSummary) -> Self {
+impl From<&SetSttEngineSummary> for generated::SetSttEngineSummary {
+    fn from(summary: &SetSttEngineSummary) -> Self {
         Self {
             settings: generated::SettingsWrite::from(summary.settings) as i32,
             models: model_outcomes(&summary.models),
@@ -419,8 +403,8 @@ impl From<&SetTranscriptionEngineSummary> for generated::SetTranscriptionEngineS
     }
 }
 
-impl From<&SetTranscriptionRunsOnSummary> for generated::SetTranscriptionRunsOnSummary {
-    fn from(summary: &SetTranscriptionRunsOnSummary) -> Self {
+impl From<&SetSttRunsOnSummary> for generated::SetSttRunsOnSummary {
+    fn from(summary: &SetSttRunsOnSummary) -> Self {
         Self {
             settings: generated::SettingsWrite::from(summary.settings) as i32,
             models: model_outcomes(&summary.models),
@@ -458,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn only_transcription_choices_say_whether_they_can_be_set_in_place() {
+    fn only_stt_choices_say_whether_they_can_be_set_in_place() {
         let inspection = super::super::tests::inspection(super::super::tests::configured());
         assert!(
             inspection
@@ -470,13 +454,13 @@ mod tests {
         let wire = generated::Inspection::from(&inspection);
 
         let moonshine = wire
-            .transcription_choices
+            .stt_choices
             .iter()
             .find(|choice| choice.id == "moonshine")
             .unwrap();
         assert!(moonshine.settable);
         let kokoro = wire
-            .synthesis_choices
+            .tts_choices
             .iter()
             .find(|choice| choice.id == "kokoro")
             .unwrap();
@@ -522,8 +506,8 @@ mod tests {
         assert!(matches!(error, SetupError::Invalid(_)), "{error}");
 
         let empty = generated::Selections {
-            transcription_engine_id: String::new(),
-            synthesis_engine_id: "system".to_owned(),
+            stt_engine_id: String::new(),
+            tts_engine_id: "system".to_owned(),
             wake: false,
         };
         let error = requested(request(Some(empty))).unwrap_err();
@@ -533,8 +517,8 @@ mod tests {
     #[test]
     fn a_request_carries_the_answers_and_the_downloads() {
         let selections = generated::Selections {
-            transcription_engine_id: "whisper".to_owned(),
-            synthesis_engine_id: "system".to_owned(),
+            stt_engine_id: "whisper".to_owned(),
+            tts_engine_id: "system".to_owned(),
             wake: false,
         };
 

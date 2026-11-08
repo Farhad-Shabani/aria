@@ -15,11 +15,11 @@ use std::thread::Scope;
 use aria_kit::audio::{RecordingReader, canonical_samples};
 use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
+use aria_kit::recognition::HeardUpdate;
 use aria_kit::speaker::{Admission, Gate, Released, SpeakerTracker, Timeline, TurnFeed};
-use aria_kit::transcription::HeardUpdate;
 use aria_kit::voice_activity::{SpeechMap, VoiceActivityDetector};
 
-use crate::transcription::{Operation, Transcriber, Transcript, TranscriptionError};
+use crate::stt::{Operation, RecognitionError, Recognizer, Transcript};
 pub(crate) use board::Board;
 use board::Wake;
 use decoder::DecodeThread;
@@ -32,7 +32,7 @@ const BACKEND: &str = "hearing";
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HearingError {
     #[error(transparent)]
-    Transcription(TranscriptionError),
+    Recognition(RecognitionError),
     #[error(transparent)]
     Tracking(TrackingError),
 }
@@ -151,7 +151,7 @@ fn verdict<T: Borrow<Timeline>>(
     admission: Admission,
 ) -> Result<Option<T>, HearingError> {
     if admission != Admission::Spoken && speech.is_some_and(|speech| !held_speech(speech)) {
-        return Err(HearingError::Transcription(TranscriptionError::NoSpeech));
+        return Err(HearingError::Recognition(RecognitionError::NoSpeech));
     }
     match admission {
         Admission::Everyone => Ok(None),
@@ -222,7 +222,7 @@ impl<'scope> Hearing<'scope> {
         cancel: &CancelToken,
     ) -> Result<Self, HearingError>
     where
-        T: Transcriber,
+        T: Recognizer,
         V: VoiceActivityDetector + Send + 'scope,
         K: SpeakerTracker + Send + 'scope,
     {
@@ -260,7 +260,7 @@ impl<'scope> Hearing<'scope> {
         )
         .map_err(|error| {
             tracing::error!(%error, "the decoder thread did not start");
-            HearingError::Transcription(TranscriptionError::Inference {
+            HearingError::Recognition(RecognitionError::Inference {
                 backend: BACKEND,
                 source: BackendError::engine(error),
             })
@@ -341,12 +341,12 @@ impl<'scope> Hearing<'scope> {
         let transcript = decoder
             .finish()
             .unwrap_or_else(|| {
-                Err(TranscriptionError::Inference {
+                Err(RecognitionError::Inference {
                     backend: BACKEND,
                     source: BackendError::Engine("the decoder panicked".into()),
                 })
             })
-            .map_err(HearingError::Transcription)?;
+            .map_err(HearingError::Recognition)?;
         let admission = gate.admission();
         let snapshot = match turns {
             Some(turns) if admission == Admission::OwnerOnly => Some(turns.finish()),
@@ -378,7 +378,7 @@ impl<'scope> Hearing<'scope> {
                 segments = unspoken,
                 "segments decoded before speech was heard dropped"
             );
-            Transcript::new(trusted.join(" ")).map_err(HearingError::Transcription)?
+            Transcript::new(trusted.join(" ")).map_err(HearingError::Recognition)?
         } else {
             transcript
         };
@@ -471,34 +471,34 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use aria_kit::audio::Recording;
-    use aria_kit::speaker::{LevelSegmenter, VoiceprintTracker};
-    use aria_kit::transcription::{
+    use aria_kit::recognition::{
         OperationSource, OperationStep, TranscriptSegment, TranscriptUpdate,
     };
+    use aria_kit::speaker::{LevelSegmenter, VoiceprintTracker};
     use aria_kit::voice_activity::SpeechDetector;
 
     use super::*;
     use crate::dictation::testing::{Loud, Operations};
     use crate::speaker::testing::{OWN, Voice, diarizer, tracker};
-    use crate::transcription::{Language, Streaming, Transcription};
+    use crate::stt::{Language, Recognition, Streaming};
 
     const SECOND: u64 = 16_000;
 
     /// Starts a hearing of `recording` under `admission`, decoded by
-    /// `transcriber`, with `tracker` judging voices, and hands it to `act`.
+    /// `recognizer`, with `tracker` judging voices, and hands it to `act`.
     fn hearing<R>(
-        transcriber: impl Transcriber,
+        recognizer: impl Recognizer,
         mut recording: RecordingReader,
         tracker: Option<VoiceprintTracker<'_, Voice, LevelSegmenter>>,
         admission: Admission,
         act: impl FnOnce(Hearing<'_>) -> R,
     ) -> R {
-        let transcription = Transcription::<_, Streaming>::delegated(transcriber);
+        let recognition = Recognition::<_, Streaming>::delegated(recognizer);
         let speech = SpeechDetector::new(Loud, recording.held_from());
         let feed = TurnFeed::start(&mut recording, speech, tracker);
         let board = Board::new();
         let cancel = board.token(|| false);
-        let operation = transcription
+        let operation = recognition
             .start_with(&Language::Automatic, &cancel)
             .unwrap();
         std::thread::scope(|scope| {
@@ -514,7 +514,7 @@ mod tests {
     }
 
     /// Finalizes "hello" at once, then stalls until `go_on` says to.
-    fn stalling(go_on: Receiver<()>) -> impl Transcriber {
+    fn stalling(go_on: Receiver<()>) -> impl Recognizer {
         let go_on = Mutex::new(Some(go_on));
         Operations(move |_: &CancelToken| {
             let go_on = go_on.lock().unwrap().take().expect("one operation");
@@ -623,7 +623,7 @@ mod tests {
     }
 
     /// Finalizes each `(text, span)` in turn, then completes at `end`.
-    fn scripted(segments: Vec<(&'static str, Range<u64>)>, end: u64) -> impl Transcriber {
+    fn scripted(segments: Vec<(&'static str, Range<u64>)>, end: u64) -> impl Recognizer {
         let segments = Mutex::new(Some(segments));
         Operations(move |_: &CancelToken| {
             let mut segments = segments
@@ -698,7 +698,7 @@ mod tests {
             let breaking = Operations(move |_: &CancelToken| {
                 OperationSource::new("breaking", move |_, _| {
                     assert!(!panics, "the decoder broke");
-                    Err(TranscriptionError::Inference {
+                    Err(RecognitionError::Inference {
                         backend: "breaking",
                         source: aria_kit::backend::BackendError::Unusable(
                             "the decoder broke".into(),
@@ -732,7 +732,7 @@ mod tests {
             if panics {
                 assert!(matches!(
                     ended,
-                    Err(HearingError::Transcription(TranscriptionError::Inference {
+                    Err(HearingError::Recognition(RecognitionError::Inference {
                         backend: BACKEND,
                         ..
                     }))
@@ -740,8 +740,8 @@ mod tests {
             } else {
                 assert!(matches!(
                     ended,
-                    Err(HearingError::Transcription(
-                        TranscriptionError::Inference { .. }
+                    Err(HearingError::Recognition(
+                        RecognitionError::Inference { .. }
                     ))
                 ));
             }
@@ -804,7 +804,7 @@ mod tests {
                     assert!(
                         matches!(
                             heard,
-                            Err(HearingError::Transcription(TranscriptionError::NoSpeech))
+                            Err(HearingError::Recognition(RecognitionError::NoSpeech))
                         ),
                         "saved={saved}"
                     );

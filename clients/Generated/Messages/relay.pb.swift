@@ -31,7 +31,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
   public typealias RawValue = Int
   case unspecified // = 0
 
-  /// The upload is complete; transcription is starting.
+  /// The upload is complete; transcribing is starting.
   case transcribing // = 1
 
   /// Transcription and delivery succeeded. Terminal.

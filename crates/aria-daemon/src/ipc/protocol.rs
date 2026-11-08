@@ -32,11 +32,11 @@ use aria_voice::enrollment::{
 use aria_voice::history::{ClearHistoryResult, PromptResult};
 use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
+use aria_voice::stt::LanguageCodeError;
 use aria_voice::system_transcription::{
     SystemTranscriptionSnapshot, SystemTranscriptionStage, SystemTranscriptionStarted,
     SystemTranscriptionStopped,
 };
-use aria_voice::transcription::LanguageCodeError;
 use prost::Message;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -183,7 +183,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         }
         RpcErrorCode::Internal
         | RpcErrorCode::CaptureFailed
-        | RpcErrorCode::TranscriptionFailed
+        | RpcErrorCode::RecognitionFailed
         | RpcErrorCode::DeliveryFailed
         | RpcErrorCode::SynthesisFailed
         | RpcErrorCode::PlaybackFailed
@@ -2936,7 +2936,7 @@ pub(crate) fn error_code_to_wire(code: RpcErrorCode) -> i32 {
         RpcErrorCode::DeliveryTimeout => wire::ErrorCode::DeliveryTimeout,
         RpcErrorCode::CaptureFailed => wire::ErrorCode::CaptureFailed,
         RpcErrorCode::NoSpeech => wire::ErrorCode::NoSpeech,
-        RpcErrorCode::TranscriptionFailed => wire::ErrorCode::TranscriptionFailed,
+        RpcErrorCode::RecognitionFailed => wire::ErrorCode::RecognitionFailed,
         RpcErrorCode::DeliveryFailed => wire::ErrorCode::DeliveryFailed,
         RpcErrorCode::DeliveryTargetChanged => wire::ErrorCode::DeliveryTargetChanged,
         RpcErrorCode::DeliveryInterrupted => wire::ErrorCode::DeliveryInterrupted,
@@ -2997,7 +2997,7 @@ pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolEr
         Ok(wire::ErrorCode::DeliveryTimeout) => RpcErrorCode::DeliveryTimeout,
         Ok(wire::ErrorCode::CaptureFailed) => RpcErrorCode::CaptureFailed,
         Ok(wire::ErrorCode::NoSpeech) => RpcErrorCode::NoSpeech,
-        Ok(wire::ErrorCode::TranscriptionFailed) => RpcErrorCode::TranscriptionFailed,
+        Ok(wire::ErrorCode::RecognitionFailed) => RpcErrorCode::RecognitionFailed,
         Ok(wire::ErrorCode::DeliveryFailed) => RpcErrorCode::DeliveryFailed,
         Ok(wire::ErrorCode::DeliveryTargetChanged) => RpcErrorCode::DeliveryTargetChanged,
         Ok(wire::ErrorCode::DeliveryInterrupted) => RpcErrorCode::DeliveryInterrupted,
@@ -4665,7 +4665,7 @@ mod tests {
 mod history_tests {
     use super::*;
     use aria_voice::history::{HistoryEntry, HistoryPage, HistoryQuery};
-    use aria_voice::transcription::Language;
+    use aria_voice::stt::Language;
 
     fn entry() -> HistoryEntry {
         HistoryEntry {

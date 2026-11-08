@@ -236,17 +236,17 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             command: None,
             stt: Some(engine),
             ..
-        } => setup::set_transcription_engine(&engine),
+        } => setup::set_stt_engine(&engine),
         Command::Setup {
             command: None,
             server: true,
             ..
-        } => setup::set_transcription_runs_on(RunsOn::Server),
+        } => setup::set_stt_runs_on(RunsOn::Server),
         Command::Setup {
             command: None,
             local: true,
             ..
-        } => setup::set_transcription_runs_on(RunsOn::Local),
+        } => setup::set_stt_runs_on(RunsOn::Local),
         Command::Setup {
             command: None,
             yes,

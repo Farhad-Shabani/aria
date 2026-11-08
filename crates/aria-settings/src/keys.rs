@@ -163,7 +163,7 @@ keys! {
     DictationCleanupLlmEnabled: "dictation.cleanup.llm.enabled", Live, Mac, [], Kind::Bool, Some("true"),
         "Runs the local model. Off keeps its endpoint and model.";
     DictationCleanupLlmEndpoint: "dictation.cleanup.llm.endpoint", Restart, Mac, [], Kind::Text, None,
-        "A loopback chat-completions endpoint that also cleans the transcript while delivery is complete.";
+        "A loopback chat-completions endpoint that also cleans the text while delivery is complete.";
     DictationCleanupLlmModel: "dictation.cleanup.llm.model", Restart, Mac, [], Kind::Text, None,
         "The model that endpoint serves.";
     DictationVocabularyEnabled: "dictation.vocabulary.enabled", Live, Phone, [], Kind::Bool, Some("false"),
@@ -174,13 +174,13 @@ keys! {
         "Saves dictation history.";
     HistoryKeepAudio: "history.keep_audio", Live, Phone, [], Kind::Bool, Some("false"),
         "Keeps each recording's audio for 24 hours.";
-    SystemTranscriptionBackend: "transcription.backend", Live, Mac, ["listen.backend"], Kind::Choice(backend::STREAMING), None,
+    SystemTranscriptionBackend: "transcription.backend", Live, Mac, [], Kind::Choice(backend::STREAMING), None,
         "Transcribes your Mac's audio with an engine that streams.";
-    SystemTranscriptionModel: "transcription.model", Live, Mac, ["listen.model"], Kind::Path, None,
+    SystemTranscriptionModel: "transcription.model", Live, Mac, [], Kind::Path, None,
         "Absent means setup's download for that engine.";
-    SystemTranscriptionDevice: "transcription.device", Live, Mac, ["listen.device"], Kind::Choice(&["cpu", "gpu"]), None,
+    SystemTranscriptionDevice: "transcription.device", Live, Mac, [], Kind::Choice(&["cpu", "gpu"]), None,
         "cpu or gpu. parakeet only.";
-    SystemTranscriptionTranscriptsDir: "transcription.transcripts_dir", Live, Mac, ["listen.transcripts_dir"], Kind::Path, Some("\"~/.aria/transcripts\""),
+    SystemTranscriptionTranscriptsDir: "transcription.transcripts_dir", Live, Mac, [], Kind::Path, Some("\"~/.aria/transcripts\""),
         "Where Transcription saves transcripts.";
     AssistantId: "assistant.id", Live, Mac, [], Kind::Choice(&["claude-code", "codex"]), Some("claude-code"),
         "Who answers `aria ask`: claude-code or codex.";
@@ -364,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn the_runs_on_choices_are_every_place_transcription_runs() {
+    fn the_runs_on_choices_are_every_place_recognition_runs() {
         let names: Vec<&str> = crate::RunsOn::ALL
             .iter()
             .map(|runs_on| runs_on.name())

@@ -39,9 +39,7 @@ transcripts_dir = "~/.aria/transcripts"
 ```
 
 Check it with `aria settings check`. The next `aria transcribe start` reads it,
-with no restart. Keep Aria's background service running. Aria also reads
-`listen.*` keys and renames them to `transcription.*` the next time it saves
-the file.
+with no restart. Keep Aria's background service running.
 
 ## Record
 
@@ -56,7 +54,7 @@ You need two terminals: one to show the transcript and one to stop recording.
 
 2. Allow **System Audio Recording** if macOS asks. The terminal prints
    `transcribing ->` and an output path when the request is accepted. Confirm
-   that recognized text appears as the audio plays.
+   that transcribed text appears as the audio plays.
 3. When finished, stop capture in a **second terminal**:
 
    ```sh

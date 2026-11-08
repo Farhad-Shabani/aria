@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::transcription::Language;
+use crate::stt::Language;
 use aria_kit::audio::{AutoStop, SilenceDuration};
 use aria_settings::DeliveryMode;
 

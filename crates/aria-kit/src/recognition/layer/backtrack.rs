@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::cancel::CancelToken;
 
-use super::{Layer, TranscriptionError};
+use super::{Layer, RecognitionError};
 
 const ONE_WORD_CUE: &str = "actually";
 const TWO_WORD_CUES: &[(&str, &str)] = &[("scratch", "that"), ("i", "mean"), ("no", "wait")];
@@ -15,7 +15,7 @@ const PREPOSITIONS: &[&str] = &["to", "at", "on", "in", "for", "from", "with"];
 pub struct Backtrack;
 
 impl Layer for Backtrack {
-    fn apply(&self, text: &mut String, _cancel: &CancelToken) -> Result<(), TranscriptionError> {
+    fn apply(&self, text: &mut String, _cancel: &CancelToken) -> Result<(), RecognitionError> {
         if let Some(corrected) = correct(text) {
             *text = corrected;
         }

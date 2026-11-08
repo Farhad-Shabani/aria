@@ -8,7 +8,7 @@ mod evaluation;
 pub mod extract;
 pub mod select;
 
-pub use aria_kit::transcription::layer::vocabulary::{MatchError, PersonalRules, Term, Vocabulary};
+pub use aria_kit::recognition::layer::vocabulary::{MatchError, PersonalRules, Term, Vocabulary};
 
 use std::ops::Range;
 use std::path::PathBuf;

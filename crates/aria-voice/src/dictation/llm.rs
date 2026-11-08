@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use aria_kit::transcription::{
-    TranscriptionError,
+use aria_kit::recognition::{
+    RecognitionError,
     layer::{self, Layer},
 };
 use aria_primitives::cancel::CancelToken;
@@ -55,7 +55,7 @@ pub enum LlmCleanupError {
     ModelMissing,
 }
 
-impl From<LlmCleanupError> for TranscriptionError {
+impl From<LlmCleanupError> for RecognitionError {
     fn from(error: LlmCleanupError) -> Self {
         Self::Processing(layer::Error::Failed(Box::new(error)))
     }
@@ -138,7 +138,7 @@ impl LlmCleanup {
         text: &str,
         cancel: &CancelToken,
         deadline: Instant,
-    ) -> Result<String, TranscriptionError> {
+    ) -> Result<String, RecognitionError> {
         let mut request = self.request(text, 2048);
         request["response_format"] = serde_json::json!({ "type": "json_object" });
         let body = self.post(request.to_string(), cancel, deadline)?;
@@ -175,7 +175,7 @@ impl LlmCleanup {
         request: String,
         cancel: &CancelToken,
         deadline: Instant,
-    ) -> Result<Vec<u8>, TranscriptionError> {
+    ) -> Result<Vec<u8>, RecognitionError> {
         check_budget(cancel, deadline)?;
         let mut response = self
             .agent
@@ -194,7 +194,7 @@ impl LlmCleanup {
 }
 
 impl Layer for LlmCleanup {
-    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
+    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), RecognitionError> {
         let deadline = Instant::now() + REQUEST_BUDGET;
         check_budget(cancel, deadline)?;
         let result = if text.len() > MAX_INPUT_BYTES {
@@ -263,12 +263,12 @@ impl Drop for Warming {
 
 /// The log category of a failed cleanup, or `None` when the failure
 /// isn't cleanup's own.
-pub(super) fn failure_category(error: &TranscriptionError) -> Option<&'static str> {
+pub(super) fn failure_category(error: &RecognitionError) -> Option<&'static str> {
     match error {
-        TranscriptionError::Processing(layer::Error::Failed(error)) => error
+        RecognitionError::Processing(layer::Error::Failed(error)) => error
             .downcast_ref::<LlmCleanupError>()
             .map(LlmCleanupError::category),
-        TranscriptionError::Processing(layer::Error::TooLarge) => Some("processing_size"),
+        RecognitionError::Processing(layer::Error::TooLarge) => Some("processing_size"),
         _ => None,
     }
 }
@@ -309,9 +309,9 @@ fn read_bounded<E: From<LlmCleanupError>>(
     }
 }
 
-fn check_budget(cancel: &CancelToken, deadline: Instant) -> Result<(), TranscriptionError> {
+fn check_budget(cancel: &CancelToken, deadline: Instant) -> Result<(), RecognitionError> {
     if cancel.is_cancelled() {
-        return Err(TranscriptionError::Cancelled);
+        return Err(RecognitionError::Cancelled);
     }
     if Instant::now() >= deadline {
         return Err(LlmCleanupError::Timeout.into());

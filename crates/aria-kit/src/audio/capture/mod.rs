@@ -32,7 +32,7 @@ pub trait AudioCapture: Send + Sync + 'static {
     /// ended in error.
     ///
     /// A live source writes from its own thread and polls `stop` there, so
-    /// the caller can transcribe while audio arrives.
+    /// the caller can recognize while audio arrives.
     fn start(&self, mode: RecordingMode, stop: StopSignal)
     -> Result<RecordingReader, CaptureError>;
 }

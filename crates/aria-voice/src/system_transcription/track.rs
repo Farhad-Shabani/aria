@@ -23,7 +23,7 @@ const MAX_LAG_SAMPLES: u64 = canonical_samples(Duration::from_secs(30));
 /// One slow inference call can exceed it.
 const DRAIN_LIMIT: Duration = Duration::from_secs(3);
 
-/// A voice track running beside the transcriber, inside the session's scope.
+/// A voice track running beside the recognizer, inside the session's scope.
 pub(crate) struct VoiceThread<'scope> {
     track: Arc<Mutex<VoiceTrack>>,
     merges: Receiver<Merged>,
@@ -109,7 +109,7 @@ fn walk<S: Segmenter, E: Embedder>(
 
         let mut voices = lock(track);
         for merged in voices.group(&chunk).merges {
-            // A closed channel means the transcriber is gone, and the walk
+            // A closed channel means the recognizer is gone, and the walk
             // is about to run out of audio anyway.
             let _ = merges.send(merged);
         }

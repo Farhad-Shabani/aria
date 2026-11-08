@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 
 use aria_kit::audio::{Recording, RecordingReader, RecordingWriter};
 use aria_kit::primitives::error_chain;
-use aria_kit::transcription::{Language, Transcription, TranscriptionError, Whole};
+use aria_kit::recognition::{Language, Recognition, RecognitionError, Whole};
 use aria_stt::whisper_candle::WhisperCandle;
 
 use crate::silence::SilenceGate;
@@ -12,7 +12,7 @@ use crate::silence::SilenceGate;
 pub struct Dictation {
     capture: RecordingWriter,
     recording: RecordingReader,
-    transcription: Transcription<WhisperCandle, Whole>,
+    recognition: Recognition<WhisperCandle, Whole>,
     gate: SilenceGate,
 }
 
@@ -33,12 +33,12 @@ impl Dictation {
         let gate = SilenceGate::new(trailing_silence_ms)
             .map_err(|error| JsError::new(&error_chain(&error)))?;
         let engine = WhisperCandle::from_bytes(weights, tokenizer, config).map_err(failed)?;
-        let transcription = Transcription::complete_samples(engine);
+        let recognition = Recognition::complete_samples(engine);
         let (recording, capture) = Recording::open();
         Ok(Self {
             capture,
             recording,
-            transcription,
+            recognition,
             gate,
         })
     }
@@ -55,21 +55,21 @@ impl Dictation {
         self.gate.stopped()
     }
 
-    /// Ends the recording and transcribes everything pushed. A recording with
+    /// Ends the recording and recognizes everything pushed. A recording with
     /// no speech in it answers with empty text rather than an error.
     pub fn finish(mut self) -> Result<String, JsError> {
         self.capture.finish();
         match self
-            .transcription
-            .transcribe(&mut self.recording, &Language::Automatic)
+            .recognition
+            .recognize(&mut self.recording, &Language::Automatic)
         {
             Ok(transcript) => Ok(transcript.into_text()),
-            Err(TranscriptionError::NoSpeech) => Ok(String::new()),
+            Err(RecognitionError::NoSpeech) => Ok(String::new()),
             Err(error) => Err(failed(error)),
         }
     }
 }
 
-fn failed(error: TranscriptionError) -> JsError {
+fn failed(error: RecognitionError) -> JsError {
     JsError::new(&error_chain(&error))
 }

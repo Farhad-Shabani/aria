@@ -29,7 +29,7 @@ final class SpeechModelsTests: XCTestCase {
 
     private static func mac(running current: String) -> Aria_Setup_V1_Inspection {
         var inspection = Aria_Setup_V1_Inspection()
-        inspection.transcriptionChoices = [
+        inspection.sttChoices = [
             engine("parakeet"),
             engine("moonshine"),
             engine("whisper-candle"),
@@ -42,7 +42,7 @@ final class SpeechModelsTests: XCTestCase {
             model("whisper-candle", files: .complete),
             model("nemotron", files: .external),
         ]
-        inspection.defaults.transcriptionEngineID = current
+        inspection.defaults.sttEngineID = current
         return inspection
     }
 

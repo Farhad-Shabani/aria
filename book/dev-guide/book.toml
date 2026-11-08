@@ -13,5 +13,8 @@ preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/Farhad-Shabani/aria"
 site-url = "/aria/dev-guide/"
 
+[output.html.redirect]
+"/transcription.html" = "recognition.html"
+
 [output.html.playground]
 runnable = false

@@ -6,12 +6,12 @@ use super::{
     TranscriptSink, Utterance,
 };
 use crate::history::HistorySource;
-use crate::transcription::{
-    Hypothesis, Language, Transcriber, Transcript, TranscriptionAudio, TranscriptionError,
+use crate::stt::{
+    Hypothesis, Language, RecognitionAudio, RecognitionError, Recognizer, Transcript,
 };
 use aria_kit::audio::{RecordingReader, SilenceDuration};
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{OperationSource, TimedWord};
+use aria_kit::recognition::{OperationSource, TimedWord};
 use aria_kit::voice_activity::{VoiceActivityDetector, VoiceActivityError};
 use aria_platform::delivery::{
     DeliveryError, DeliveryOutcome, OutputMode, Placement, Rect, TextDelivery,
@@ -206,22 +206,22 @@ impl VoiceActivityDetector for Loud {
 /// An engine that decodes whole audio by calling its closure.
 pub struct Hypotheses<F>(pub F)
 where
-    F: Fn(TranscriptionAudio<'_>) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static;
+    F: Fn(RecognitionAudio<'_>) -> Result<Hypothesis, RecognitionError> + Send + Sync + 'static;
 
-impl<F> Transcriber for Hypotheses<F>
+impl<F> Recognizer for Hypotheses<F>
 where
-    F: Fn(TranscriptionAudio<'_>) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static,
+    F: Fn(RecognitionAudio<'_>) -> Result<Hypothesis, RecognitionError> + Send + Sync + 'static,
 {
-    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
+    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         _: &Language,
         _: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
+    ) -> Result<Hypothesis, RecognitionError> {
         (self.0)(audio)
     }
 }
@@ -231,20 +231,20 @@ pub struct Operations<F>(pub F)
 where
     F: Fn(&CancelToken) -> OperationSource + Send + Sync + 'static;
 
-impl<F> Transcriber for Operations<F>
+impl<F> Recognizer for Operations<F>
 where
     F: Fn(&CancelToken) -> OperationSource + Send + Sync + 'static,
 {
-    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
+    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
         Ok(())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        _: TranscriptionAudio<'_>,
+        _: RecognitionAudio<'_>,
         _: &Language,
         _: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
+    ) -> Result<Hypothesis, RecognitionError> {
         panic!("the delegated operation owns decoding")
     }
 
@@ -253,7 +253,7 @@ where
         _: &Language,
         _: bool,
         cancel: &CancelToken,
-    ) -> Result<Option<OperationSource>, TranscriptionError> {
+    ) -> Result<Option<OperationSource>, RecognitionError> {
         Ok(Some((self.0)(cancel)))
     }
 }
@@ -356,7 +356,7 @@ impl DictationExecutor for RecordsUntilStopped {
         _cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
         Ok(Transcribed {
-            transcript: Transcript::new(HEARD).map_err(DictationError::Transcription)?,
+            transcript: Transcript::new(HEARD).map_err(DictationError::Recognition)?,
             engine: "test",
         })
     }

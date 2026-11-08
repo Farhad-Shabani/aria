@@ -13,10 +13,9 @@
 /// Setup as `aria::setup` exposes it: look at what the machine has, then
 /// put the chosen pieces in place. Aria.app speaks it over the stdio of
 /// the hidden `aria setup inspect`, `aria setup apply`,
-/// `aria setup set-transcription-engine` and
-/// `aria setup set-transcription-runs-on`, one message per length-delimited
-/// frame. Apply runs the whole of setup; the two setters each change one
-/// choice alone.
+/// `aria setup set-stt-engine` and `aria setup set-stt-runs-on`, one
+/// message per length-delimited frame. Apply runs the whole of setup; the
+/// two setters each change one choice alone.
 ///
 /// Recording a voice and the test press are not here: they are ordinary
 /// daemon RPCs (SpeakerService, DictationService, SpeechService), and the
@@ -546,14 +545,14 @@ public nonisolated struct Aria_Setup_V1_Inspection: @unchecked Sendable {
   /// Clears the value of `defaults`. Subsequent reads from it will return its default value.
   public mutating func clearDefaults() {_uniqueStorage()._defaults = nil}
 
-  public var transcriptionChoices: [Aria_Setup_V1_Choice] {
-    get {_storage._transcriptionChoices}
-    set {_uniqueStorage()._transcriptionChoices = newValue}
+  public var sttChoices: [Aria_Setup_V1_Choice] {
+    get {_storage._sttChoices}
+    set {_uniqueStorage()._sttChoices = newValue}
   }
 
-  public var synthesisChoices: [Aria_Setup_V1_Choice] {
-    get {_storage._synthesisChoices}
-    set {_uniqueStorage()._synthesisChoices = newValue}
+  public var ttsChoices: [Aria_Setup_V1_Choice] {
+    get {_storage._ttsChoices}
+    set {_uniqueStorage()._ttsChoices = newValue}
   }
 
   /// In the order setup offers them.
@@ -598,9 +597,9 @@ public nonisolated struct Aria_Setup_V1_Inspection: @unchecked Sendable {
   public mutating func clearServer() {_uniqueStorage()._server = nil}
 
   /// On the server, the local engine stays configured for the way back.
-  public var transcriptionRunsOn: Aria_Setup_V1_RunsOn {
-    get {_storage._transcriptionRunsOn}
-    set {_uniqueStorage()._transcriptionRunsOn = newValue}
+  public var sttRunsOn: Aria_Setup_V1_RunsOn {
+    get {_storage._sttRunsOn}
+    set {_uniqueStorage()._sttRunsOn = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -610,7 +609,7 @@ public nonisolated struct Aria_Setup_V1_Inspection: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-/// The server the pairing pins. Transcription on the server reaches only it.
+/// The server the pairing pins. Recognition on the server reaches only it.
 public nonisolated struct Aria_Setup_V1_PairedServer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -646,8 +645,8 @@ public nonisolated struct Aria_Setup_V1_Choice: Sendable {
 
   public var modelSource: Aria_Setup_V1_ModelSource = .unspecified
 
-  /// Set only on transcription choices. True when a
-  /// `SetTranscriptionEngineRequest` can set this engine without the rest of
+  /// Set only on stt choices. True when a
+  /// `SetSttEngineRequest` can set this engine without the rest of
   /// setup: it runs on this Mac, and setup can download its model or it
   /// needs none.
   public var settable: Bool = false
@@ -772,9 +771,9 @@ public nonisolated struct Aria_Setup_V1_Selections: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var transcriptionEngineID: String = String()
+  public var sttEngineID: String = String()
 
-  public var synthesisEngineID: String = String()
+  public var ttsEngineID: String = String()
 
   public var wake: Bool = false
 
@@ -931,7 +930,7 @@ public nonisolated struct Aria_Setup_V1_Summary: Sendable {
 /// Sets the speech-to-text engine in place: that engine's own missing models
 /// first, then the settings that name it. Every other choice stays, and
 /// nothing restarts.
-public nonisolated struct Aria_Setup_V1_SetTranscriptionEngineRequest: Sendable {
+public nonisolated struct Aria_Setup_V1_SetSttEngineRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -945,12 +944,12 @@ public nonisolated struct Aria_Setup_V1_SetTranscriptionEngineRequest: Sendable 
 
 /// Events until the change ends, then exactly one summary. STEP_MODELS starts
 /// only when it fetches something; STEP_SETTINGS starts the write.
-public nonisolated struct Aria_Setup_V1_SetTranscriptionEngineResponse: Sendable {
+public nonisolated struct Aria_Setup_V1_SetSttEngineResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var body: Aria_Setup_V1_SetTranscriptionEngineResponse.OneOf_Body? = nil
+  public var body: Aria_Setup_V1_SetSttEngineResponse.OneOf_Body? = nil
 
   public var event: Aria_Setup_V1_SetupEvent {
     get {
@@ -960,10 +959,10 @@ public nonisolated struct Aria_Setup_V1_SetTranscriptionEngineResponse: Sendable
     set {body = .event(newValue)}
   }
 
-  public var summary: Aria_Setup_V1_SetTranscriptionEngineSummary {
+  public var summary: Aria_Setup_V1_SetSttEngineSummary {
     get {
       if case .summary(let v)? = body {return v}
-      return Aria_Setup_V1_SetTranscriptionEngineSummary()
+      return Aria_Setup_V1_SetSttEngineSummary()
     }
     set {body = .summary(newValue)}
   }
@@ -972,14 +971,14 @@ public nonisolated struct Aria_Setup_V1_SetTranscriptionEngineResponse: Sendable
 
   public nonisolated enum OneOf_Body: Equatable, Sendable {
     case event(Aria_Setup_V1_SetupEvent)
-    case summary(Aria_Setup_V1_SetTranscriptionEngineSummary)
+    case summary(Aria_Setup_V1_SetSttEngineSummary)
 
   }
 
   public init() {}
 }
 
-public nonisolated struct Aria_Setup_V1_SetTranscriptionEngineSummary: Sendable {
+public nonisolated struct Aria_Setup_V1_SetSttEngineSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -993,10 +992,10 @@ public nonisolated struct Aria_Setup_V1_SetTranscriptionEngineSummary: Sendable 
   public init() {}
 }
 
-/// Sets where dictation transcribes. Going to the server needs a pairing.
+/// Sets where dictation recognizes speech. Going to the server needs a pairing.
 /// Coming back first fetches the local engine's missing models. Only
 /// `stt.runs_on` changes, and nothing restarts.
-public nonisolated struct Aria_Setup_V1_SetTranscriptionRunsOnRequest: Sendable {
+public nonisolated struct Aria_Setup_V1_SetSttRunsOnRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1010,12 +1009,12 @@ public nonisolated struct Aria_Setup_V1_SetTranscriptionRunsOnRequest: Sendable 
 
 /// Events until the change ends, then exactly one summary. STEP_MODELS starts
 /// only when it fetches something; STEP_SETTINGS starts the write.
-public nonisolated struct Aria_Setup_V1_SetTranscriptionRunsOnResponse: Sendable {
+public nonisolated struct Aria_Setup_V1_SetSttRunsOnResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var body: Aria_Setup_V1_SetTranscriptionRunsOnResponse.OneOf_Body? = nil
+  public var body: Aria_Setup_V1_SetSttRunsOnResponse.OneOf_Body? = nil
 
   public var event: Aria_Setup_V1_SetupEvent {
     get {
@@ -1025,10 +1024,10 @@ public nonisolated struct Aria_Setup_V1_SetTranscriptionRunsOnResponse: Sendable
     set {body = .event(newValue)}
   }
 
-  public var summary: Aria_Setup_V1_SetTranscriptionRunsOnSummary {
+  public var summary: Aria_Setup_V1_SetSttRunsOnSummary {
     get {
       if case .summary(let v)? = body {return v}
-      return Aria_Setup_V1_SetTranscriptionRunsOnSummary()
+      return Aria_Setup_V1_SetSttRunsOnSummary()
     }
     set {body = .summary(newValue)}
   }
@@ -1037,14 +1036,14 @@ public nonisolated struct Aria_Setup_V1_SetTranscriptionRunsOnResponse: Sendable
 
   public nonisolated enum OneOf_Body: Equatable, Sendable {
     case event(Aria_Setup_V1_SetupEvent)
-    case summary(Aria_Setup_V1_SetTranscriptionRunsOnSummary)
+    case summary(Aria_Setup_V1_SetSttRunsOnSummary)
 
   }
 
   public init() {}
 }
 
-public nonisolated struct Aria_Setup_V1_SetTranscriptionRunsOnSummary: Sendable {
+public nonisolated struct Aria_Setup_V1_SetSttRunsOnSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1146,21 +1145,21 @@ nonisolated extension Aria_Setup_V1_DaemonState: SwiftProtobuf._ProtoNameProvidi
 
 nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Inspection"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}settings_path\0\u{1}macos\0\u{1}defaults\0\u{3}transcription_choices\0\u{3}synthesis_choices\0\u{2}\u{2}models\0\u{3}wakeword_installed\0\u{1}service\0\u{1}grant\0\u{1}missing\0\u{1}server\0\u{3}transcription_runs_on\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}settings_path\0\u{1}macos\0\u{1}defaults\0\u{3}stt_choices\0\u{3}tts_choices\0\u{2}\u{2}models\0\u{3}wakeword_installed\0\u{1}service\0\u{1}grant\0\u{1}missing\0\u{1}server\0\u{3}stt_runs_on\0")
 
   fileprivate class _StorageClass {
     var _settingsPath: String = String()
     var _macos: Bool = false
     var _defaults: Aria_Setup_V1_Selections? = nil
-    var _transcriptionChoices: [Aria_Setup_V1_Choice] = []
-    var _synthesisChoices: [Aria_Setup_V1_Choice] = []
+    var _sttChoices: [Aria_Setup_V1_Choice] = []
+    var _ttsChoices: [Aria_Setup_V1_Choice] = []
     var _models: [Aria_Setup_V1_Model] = []
     var _wakewordInstalled: Bool = false
     var _service: Aria_Setup_V1_ServiceStatus? = nil
     var _grant: Aria_Setup_V1_Grant = .unspecified
     var _missing: [Aria_Setup_V1_Missing] = []
     var _server: Aria_Setup_V1_PairedServer? = nil
-    var _transcriptionRunsOn: Aria_Setup_V1_RunsOn = .unspecified
+    var _sttRunsOn: Aria_Setup_V1_RunsOn = .unspecified
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1174,15 +1173,15 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
       _settingsPath = source._settingsPath
       _macos = source._macos
       _defaults = source._defaults
-      _transcriptionChoices = source._transcriptionChoices
-      _synthesisChoices = source._synthesisChoices
+      _sttChoices = source._sttChoices
+      _ttsChoices = source._ttsChoices
       _models = source._models
       _wakewordInstalled = source._wakewordInstalled
       _service = source._service
       _grant = source._grant
       _missing = source._missing
       _server = source._server
-      _transcriptionRunsOn = source._transcriptionRunsOn
+      _sttRunsOn = source._sttRunsOn
     }
   }
 
@@ -1204,15 +1203,15 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
         case 1: try { try decoder.decodeSingularStringField(value: &_storage._settingsPath) }()
         case 2: try { try decoder.decodeSingularBoolField(value: &_storage._macos) }()
         case 3: try { try decoder.decodeSingularMessageField(value: &_storage._defaults) }()
-        case 4: try { try decoder.decodeRepeatedMessageField(value: &_storage._transcriptionChoices) }()
-        case 5: try { try decoder.decodeRepeatedMessageField(value: &_storage._synthesisChoices) }()
+        case 4: try { try decoder.decodeRepeatedMessageField(value: &_storage._sttChoices) }()
+        case 5: try { try decoder.decodeRepeatedMessageField(value: &_storage._ttsChoices) }()
         case 7: try { try decoder.decodeRepeatedMessageField(value: &_storage._models) }()
         case 8: try { try decoder.decodeSingularBoolField(value: &_storage._wakewordInstalled) }()
         case 9: try { try decoder.decodeSingularMessageField(value: &_storage._service) }()
         case 10: try { try decoder.decodeSingularEnumField(value: &_storage._grant) }()
         case 11: try { try decoder.decodeRepeatedMessageField(value: &_storage._missing) }()
         case 12: try { try decoder.decodeSingularMessageField(value: &_storage._server) }()
-        case 13: try { try decoder.decodeSingularEnumField(value: &_storage._transcriptionRunsOn) }()
+        case 13: try { try decoder.decodeSingularEnumField(value: &_storage._sttRunsOn) }()
         default: break
         }
       }
@@ -1234,11 +1233,11 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
       try { if let v = _storage._defaults {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
       } }()
-      if !_storage._transcriptionChoices.isEmpty {
-        try visitor.visitRepeatedMessageField(value: _storage._transcriptionChoices, fieldNumber: 4)
+      if !_storage._sttChoices.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._sttChoices, fieldNumber: 4)
       }
-      if !_storage._synthesisChoices.isEmpty {
-        try visitor.visitRepeatedMessageField(value: _storage._synthesisChoices, fieldNumber: 5)
+      if !_storage._ttsChoices.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._ttsChoices, fieldNumber: 5)
       }
       if !_storage._models.isEmpty {
         try visitor.visitRepeatedMessageField(value: _storage._models, fieldNumber: 7)
@@ -1258,8 +1257,8 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
       try { if let v = _storage._server {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
       } }()
-      if _storage._transcriptionRunsOn != .unspecified {
-        try visitor.visitSingularEnumField(value: _storage._transcriptionRunsOn, fieldNumber: 13)
+      if _storage._sttRunsOn != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._sttRunsOn, fieldNumber: 13)
       }
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -1273,15 +1272,15 @@ nonisolated extension Aria_Setup_V1_Inspection: SwiftProtobuf.Message, SwiftProt
         if _storage._settingsPath != rhs_storage._settingsPath {return false}
         if _storage._macos != rhs_storage._macos {return false}
         if _storage._defaults != rhs_storage._defaults {return false}
-        if _storage._transcriptionChoices != rhs_storage._transcriptionChoices {return false}
-        if _storage._synthesisChoices != rhs_storage._synthesisChoices {return false}
+        if _storage._sttChoices != rhs_storage._sttChoices {return false}
+        if _storage._ttsChoices != rhs_storage._ttsChoices {return false}
         if _storage._models != rhs_storage._models {return false}
         if _storage._wakewordInstalled != rhs_storage._wakewordInstalled {return false}
         if _storage._service != rhs_storage._service {return false}
         if _storage._grant != rhs_storage._grant {return false}
         if _storage._missing != rhs_storage._missing {return false}
         if _storage._server != rhs_storage._server {return false}
-        if _storage._transcriptionRunsOn != rhs_storage._transcriptionRunsOn {return false}
+        if _storage._sttRunsOn != rhs_storage._sttRunsOn {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -1492,7 +1491,7 @@ nonisolated extension Aria_Setup_V1_Missing.Kind: SwiftProtobuf._ProtoNameProvid
 
 nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Selections"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}transcription_engine_id\0\u{3}synthesis_engine_id\0\u{2}\u{2}wake\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}stt_engine_id\0\u{3}tts_engine_id\0\u{2}\u{2}wake\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1500,8 +1499,8 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.transcriptionEngineID) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.synthesisEngineID) }()
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sttEngineID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.ttsEngineID) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.wake) }()
       default: break
       }
@@ -1509,11 +1508,11 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.transcriptionEngineID.isEmpty {
-      try visitor.visitSingularStringField(value: self.transcriptionEngineID, fieldNumber: 1)
+    if !self.sttEngineID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sttEngineID, fieldNumber: 1)
     }
-    if !self.synthesisEngineID.isEmpty {
-      try visitor.visitSingularStringField(value: self.synthesisEngineID, fieldNumber: 2)
+    if !self.ttsEngineID.isEmpty {
+      try visitor.visitSingularStringField(value: self.ttsEngineID, fieldNumber: 2)
     }
     if self.wake != false {
       try visitor.visitSingularBoolField(value: self.wake, fieldNumber: 4)
@@ -1522,8 +1521,8 @@ nonisolated extension Aria_Setup_V1_Selections: SwiftProtobuf.Message, SwiftProt
   }
 
   public static func ==(lhs: Aria_Setup_V1_Selections, rhs: Aria_Setup_V1_Selections) -> Bool {
-    if lhs.transcriptionEngineID != rhs.transcriptionEngineID {return false}
-    if lhs.synthesisEngineID != rhs.synthesisEngineID {return false}
+    if lhs.sttEngineID != rhs.sttEngineID {return false}
+    if lhs.ttsEngineID != rhs.ttsEngineID {return false}
     if lhs.wake != rhs.wake {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
@@ -1802,8 +1801,8 @@ nonisolated extension Aria_Setup_V1_Summary: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-nonisolated extension Aria_Setup_V1_SetTranscriptionEngineRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".SetTranscriptionEngineRequest"
+nonisolated extension Aria_Setup_V1_SetSttEngineRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetSttEngineRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}engine_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -1825,15 +1824,15 @@ nonisolated extension Aria_Setup_V1_SetTranscriptionEngineRequest: SwiftProtobuf
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Setup_V1_SetTranscriptionEngineRequest, rhs: Aria_Setup_V1_SetTranscriptionEngineRequest) -> Bool {
+  public static func ==(lhs: Aria_Setup_V1_SetSttEngineRequest, rhs: Aria_Setup_V1_SetSttEngineRequest) -> Bool {
     if lhs.engineID != rhs.engineID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
 }
 
-nonisolated extension Aria_Setup_V1_SetTranscriptionEngineResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".SetTranscriptionEngineResponse"
+nonisolated extension Aria_Setup_V1_SetSttEngineResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetSttEngineResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}event\0\u{1}summary\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -1856,7 +1855,7 @@ nonisolated extension Aria_Setup_V1_SetTranscriptionEngineResponse: SwiftProtobu
         }
       }()
       case 2: try {
-        var v: Aria_Setup_V1_SetTranscriptionEngineSummary?
+        var v: Aria_Setup_V1_SetSttEngineSummary?
         var hadOneofValue = false
         if let current = self.body {
           hadOneofValue = true
@@ -1892,15 +1891,15 @@ nonisolated extension Aria_Setup_V1_SetTranscriptionEngineResponse: SwiftProtobu
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Setup_V1_SetTranscriptionEngineResponse, rhs: Aria_Setup_V1_SetTranscriptionEngineResponse) -> Bool {
+  public static func ==(lhs: Aria_Setup_V1_SetSttEngineResponse, rhs: Aria_Setup_V1_SetSttEngineResponse) -> Bool {
     if lhs.body != rhs.body {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
 }
 
-nonisolated extension Aria_Setup_V1_SetTranscriptionEngineSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".SetTranscriptionEngineSummary"
+nonisolated extension Aria_Setup_V1_SetSttEngineSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetSttEngineSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}settings\0\u{1}models\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -1926,7 +1925,7 @@ nonisolated extension Aria_Setup_V1_SetTranscriptionEngineSummary: SwiftProtobuf
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Setup_V1_SetTranscriptionEngineSummary, rhs: Aria_Setup_V1_SetTranscriptionEngineSummary) -> Bool {
+  public static func ==(lhs: Aria_Setup_V1_SetSttEngineSummary, rhs: Aria_Setup_V1_SetSttEngineSummary) -> Bool {
     if lhs.settings != rhs.settings {return false}
     if lhs.models != rhs.models {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
@@ -1934,8 +1933,8 @@ nonisolated extension Aria_Setup_V1_SetTranscriptionEngineSummary: SwiftProtobuf
   }
 }
 
-nonisolated extension Aria_Setup_V1_SetTranscriptionRunsOnRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".SetTranscriptionRunsOnRequest"
+nonisolated extension Aria_Setup_V1_SetSttRunsOnRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetSttRunsOnRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}runs_on\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -1957,15 +1956,15 @@ nonisolated extension Aria_Setup_V1_SetTranscriptionRunsOnRequest: SwiftProtobuf
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Setup_V1_SetTranscriptionRunsOnRequest, rhs: Aria_Setup_V1_SetTranscriptionRunsOnRequest) -> Bool {
+  public static func ==(lhs: Aria_Setup_V1_SetSttRunsOnRequest, rhs: Aria_Setup_V1_SetSttRunsOnRequest) -> Bool {
     if lhs.runsOn != rhs.runsOn {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
 }
 
-nonisolated extension Aria_Setup_V1_SetTranscriptionRunsOnResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".SetTranscriptionRunsOnResponse"
+nonisolated extension Aria_Setup_V1_SetSttRunsOnResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetSttRunsOnResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}event\0\u{1}summary\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -1988,7 +1987,7 @@ nonisolated extension Aria_Setup_V1_SetTranscriptionRunsOnResponse: SwiftProtobu
         }
       }()
       case 2: try {
-        var v: Aria_Setup_V1_SetTranscriptionRunsOnSummary?
+        var v: Aria_Setup_V1_SetSttRunsOnSummary?
         var hadOneofValue = false
         if let current = self.body {
           hadOneofValue = true
@@ -2024,15 +2023,15 @@ nonisolated extension Aria_Setup_V1_SetTranscriptionRunsOnResponse: SwiftProtobu
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Setup_V1_SetTranscriptionRunsOnResponse, rhs: Aria_Setup_V1_SetTranscriptionRunsOnResponse) -> Bool {
+  public static func ==(lhs: Aria_Setup_V1_SetSttRunsOnResponse, rhs: Aria_Setup_V1_SetSttRunsOnResponse) -> Bool {
     if lhs.body != rhs.body {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
 }
 
-nonisolated extension Aria_Setup_V1_SetTranscriptionRunsOnSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".SetTranscriptionRunsOnSummary"
+nonisolated extension Aria_Setup_V1_SetSttRunsOnSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetSttRunsOnSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}settings\0\u{1}models\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -2058,7 +2057,7 @@ nonisolated extension Aria_Setup_V1_SetTranscriptionRunsOnSummary: SwiftProtobuf
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Setup_V1_SetTranscriptionRunsOnSummary, rhs: Aria_Setup_V1_SetTranscriptionRunsOnSummary) -> Bool {
+  public static func ==(lhs: Aria_Setup_V1_SetSttRunsOnSummary, rhs: Aria_Setup_V1_SetSttRunsOnSummary) -> Bool {
     if lhs.settings != rhs.settings {return false}
     if lhs.models != rhs.models {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}

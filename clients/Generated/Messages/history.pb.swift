@@ -593,7 +593,7 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
     set {_uniqueStorage()._text = newValue}
   }
 
-  /// Whether transcription finished; List may still return a text preview.
+  /// Whether recognition finished; List may still return a text preview.
   public var transcriptionComplete: Bool {
     get {_storage._transcriptionComplete}
     set {_uniqueStorage()._transcriptionComplete = newValue}

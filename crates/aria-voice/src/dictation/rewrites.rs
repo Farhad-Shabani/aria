@@ -3,12 +3,12 @@
 use std::time::Instant;
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::check_cancelled;
-use aria_kit::transcription::layer::{Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats};
+use aria_kit::recognition::check_cancelled;
+use aria_kit::recognition::layer::{Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats};
 
 use super::{LlmCleanup, LlmCleanupError, llm};
 use crate::config::DictationConfig;
-use crate::transcription::{Transcript, TranscriptionError};
+use crate::stt::{RecognitionError, Transcript};
 use crate::vocabulary::Vocabulary;
 
 /// The layers the settings can add after the deterministic passes.
@@ -77,7 +77,7 @@ impl<L: Layer> Rewrites<L> {
         cleanup: Cleanup,
         vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
-    ) -> Result<(), TranscriptionError> {
+    ) -> Result<(), RecognitionError> {
         check_cancelled(cancel)?;
         if cleanup.enabled && cleanup.fillers {
             RemoveHesitations.apply(text, cancel)?;
@@ -101,7 +101,7 @@ impl<L: Layer> Rewrites<L> {
         cleanup: Cleanup,
         vocabulary: Option<&Vocabulary>,
         cancel: &CancelToken,
-    ) -> Result<Transcript, TranscriptionError> {
+    ) -> Result<Transcript, RecognitionError> {
         let mut text = transcript.into_text();
         if cleanup.enabled && cleanup.backtrack {
             Backtrack.apply(&mut text, cancel)?;

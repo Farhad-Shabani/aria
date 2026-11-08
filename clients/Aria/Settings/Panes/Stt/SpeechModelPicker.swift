@@ -6,7 +6,7 @@ struct SpeechModelPicker: View {
     private static let serverTag = "server"
 
     @ObservedObject var setup: SetupStatus
-    @ObservedObject var engineChange: TranscriptionEngineChange
+    @ObservedObject var engineChange: SttEngineChange
     @EnvironmentObject private var runner: SetupRunner
 
     private var models: SpeechModels { setup.speechModels }
@@ -15,7 +15,7 @@ struct SpeechModelPicker: View {
         engineChange.engine.flatMap(models.model)
     }
 
-    private var usesServer: Bool { setup.transcriptionRunsOn == .server }
+    private var usesServer: Bool { setup.sttRunsOn == .server }
 
     /// The menu shows a new choice at once, so a change reads as done.
     private var shown: String {

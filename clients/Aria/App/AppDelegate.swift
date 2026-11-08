@@ -14,9 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var setupState = SetupState(effects: .live, runner: setupRunner)
     let setupStatus = SetupStatus()
     lazy var modelDownload = ModelDownload(effects: .live, runner: setupRunner)
-    lazy var transcriptionEngineChange = TranscriptionEngineChange(effects: .live, runner: setupRunner)
+    lazy var sttEngineChange = SttEngineChange(effects: .live, runner: setupRunner)
     let voices: VoiceProfiles
-    lazy var serverTranscription = ServerTranscription(effects: .live, setup: setupStatus, runner: setupRunner)
+    lazy var serverStt = ServerStt(effects: .live, setup: setupStatus, runner: setupRunner)
     let updates = UpdateController()
     let history = HistoryState(effects: HistoryClient.effects)
 

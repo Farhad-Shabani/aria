@@ -3,7 +3,7 @@
 # Welcome to Aria
 
 Aria's Rust libraries turn speech into text and text into spoken audio. Use
-them to add microphone input, transcription, or speech playback to your
+them to add microphone input, speech recognition, or speech playback to your
 application. They also power the Aria voice assistant.
 
 This guide assumes you know Rust and Cargo.
@@ -12,12 +12,12 @@ This guide assumes you know Rust and Cargo.
 
 First, [add Aria to your project](./workflow.md). Then choose a task:
 
-- [Transcribe a WAV file](./transcription.md) with Whisper.
-- [Record and transcribe microphone input](./recording.md).
+- [Recognize speech in a WAV file](./recognition.md) with Whisper.
+- [Record and recognize microphone input](./recording.md).
 - [Read text aloud](./synthesis.md#system-voice) with the system voice.
 - [Generate audio samples](./synthesis.md#kokoro-audio) with Kokoro.
 
-For a first transcription, start with a short WAV file. That lets you check
+For your first recognition, start with a short WAV file. That lets you check
 the model and its output before adding microphone capture.
 
 Whisper and Kokoro run on your machine. Downloading models and build dependencies

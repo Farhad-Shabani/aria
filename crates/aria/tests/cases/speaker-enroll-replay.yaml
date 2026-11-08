@@ -3,7 +3,7 @@ name: enrolling a replayed voice stores a profile
 # WAV, so this runs the whole enrollment path off recorded speech. Set
 # ARIA_TEST_SPEECH_WAV to any 16 kHz mono recording with half a second of
 # voice in it, and ARIA_TEST_SPEAKER_MODEL to the WeSpeaker graph `aria setup`
-# fetches. A daemon will not start without a transcription model either, so
+# fetches. A daemon will not start without a speech model either, so
 # ARIA_TEST_WHISPER_MODEL is needed too. Any unset, the case skips.
 settings: |
   [stt]

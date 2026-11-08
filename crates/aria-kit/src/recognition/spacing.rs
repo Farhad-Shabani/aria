@@ -8,7 +8,7 @@
 /// field you can't read; text then goes in unchanged.
 ///
 /// ```
-/// use aria_kit::transcription::Caret;
+/// use aria_kit::recognition::Caret;
 ///
 /// // The field holds "Hello." and the cursor is at its end.
 /// let mut caret = Caret::between("Hello.", "");

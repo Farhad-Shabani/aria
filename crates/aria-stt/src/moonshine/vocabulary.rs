@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn special_markers_are_not_transcribed() {
+    fn special_markers_are_not_recognized() {
         let vocabulary = vocabulary(&[("<s>", 1), ("</s>", 2), ("▁the", 10)]);
 
         assert_eq!(vocabulary.decode(&[1, 10, 2]), "the");

@@ -2,7 +2,7 @@
 
 # Terminal dictation
 
-Use `aria dictate` to record one utterance and copy the recognized words.
+Use `aria dictate` to record one utterance and copy the transcribed words.
 Complete [setup](./installation.md#setup) and keep the background service
 running. On Linux, the service also keeps copied text available for pasting.
 It runs with your graphical desktop session so Aria can reach the clipboard.

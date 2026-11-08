@@ -1,6 +1,6 @@
 //! Runtime engine selection over the speech-to-text contract in `aria-kit`.
 
-use crate::config::TranscriptionConfig;
+use crate::config::SttConfig;
 
 use aria_stt::EngineConfig;
 use aria_stt::moonshine::MoonshineConfig;
@@ -14,65 +14,63 @@ use aria_stt::whisper::WhisperConfig;
 use aria_stt::whisper_candle::WhisperCandleConfig;
 
 pub use aria_kit::backend::ModelError;
-pub use aria_kit::transcription::{
+pub use aria_kit::recognition::{
     AudioInputKind, Cadence, ChunkStream, Emitted, Engine, Hypothesis, Language, LanguageCode,
-    LanguageCodeError, Mode, Operation, Stream, Streaming, StreamingEngine, Transcriber,
-    Transcript, TranscriptSegment, TranscriptUpdate, Transcription, TranscriptionAudio,
-    TranscriptionError, Whole,
+    LanguageCodeError, Mode, Operation, Recognition, RecognitionAudio, RecognitionError,
+    Recognizer, Stream, Streaming, StreamingEngine, Transcript, TranscriptSegment,
+    TranscriptUpdate, Whole,
 };
 
-impl TryFrom<TranscriptionConfig> for EngineConfig {
-    type Error = TranscriptionError;
+impl TryFrom<SttConfig> for EngineConfig {
+    type Error = RecognitionError;
 
-    fn try_from(config: TranscriptionConfig) -> Result<Self, TranscriptionError> {
+    fn try_from(config: SttConfig) -> Result<Self, RecognitionError> {
         match config {
-            TranscriptionConfig::Whisper { model } => Ok(Self::Whisper(WhisperConfig::new(model))),
-            TranscriptionConfig::WhisperCandle { model_directory } => Ok(Self::WhisperCandle(
+            SttConfig::Whisper { model } => Ok(Self::Whisper(WhisperConfig::new(model))),
+            SttConfig::WhisperCandle { model_directory } => Ok(Self::WhisperCandle(
                 WhisperCandleConfig::new(model_directory),
             )),
-            TranscriptionConfig::Parakeet {
+            SttConfig::Parakeet {
                 model_directory,
                 device,
             } => Ok(Self::Parakeet(ParakeetConfig::new(model_directory, device))),
-            TranscriptionConfig::Moonshine { model_directory } => {
+            SttConfig::Moonshine { model_directory } => {
                 Ok(Self::Moonshine(MoonshineConfig::new(model_directory)))
             }
-            TranscriptionConfig::Nemotron { model_directory } => {
+            SttConfig::Nemotron { model_directory } => {
                 Ok(Self::Nemotron(NemotronConfig::new(model_directory)))
             }
             #[cfg(target_os = "macos")]
-            TranscriptionConfig::ParakeetMlx { model, interpreter } => {
+            SttConfig::ParakeetMlx { model, interpreter } => {
                 Ok(Self::ParakeetMlx(ParakeetMlxConfig { interpreter, model }))
             }
             #[cfg(not(target_os = "macos"))]
-            TranscriptionConfig::ParakeetMlx { .. } => {
-                Err(TranscriptionError::UnsupportedBackend {
-                    backend: aria_settings::config::backend::PARAKEET_MLX,
-                })
-            }
+            SttConfig::ParakeetMlx { .. } => Err(RecognitionError::UnsupportedBackend {
+                backend: aria_settings::config::backend::PARAKEET_MLX,
+            }),
         }
     }
 }
 
 /// Whether the engine decodes while audio arrives, as the engine declares.
-pub(crate) fn streams(config: &TranscriptionConfig) -> bool {
+pub(crate) fn streams(config: &SttConfig) -> bool {
     EngineConfig::try_from(config.clone()).is_ok_and(|engine| engine.stream().is_some())
 }
 
 /// Resolves the model a backend would load, without reading it or starting a
 /// child.
-pub fn check_model(config: &TranscriptionConfig) -> Result<String, TranscriptionError> {
+pub fn check_model(config: &SttConfig) -> Result<String, RecognitionError> {
     let checked = EngineConfig::try_from(config.clone())?.check()?;
     let checked = checked.display();
     Ok(match config {
-        TranscriptionConfig::ParakeetMlx { model, .. } => {
+        SttConfig::ParakeetMlx { model, .. } => {
             format!("{checked}, model {model} from its own cache")
         }
-        TranscriptionConfig::Whisper { .. }
-        | TranscriptionConfig::WhisperCandle { .. }
-        | TranscriptionConfig::Parakeet { .. }
-        | TranscriptionConfig::Moonshine { .. }
-        | TranscriptionConfig::Nemotron { .. } => checked.to_string(),
+        SttConfig::Whisper { .. }
+        | SttConfig::WhisperCandle { .. }
+        | SttConfig::Parakeet { .. }
+        | SttConfig::Moonshine { .. }
+        | SttConfig::Nemotron { .. } => checked.to_string(),
     })
 }
 
@@ -84,7 +82,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::config::TranscriptionDevice;
+    use crate::config::SttDevice;
     use aria_primitives::file_inspection::InspectionError;
 
     use super::*;
@@ -94,24 +92,24 @@ mod tests {
         use aria_settings::config::backend;
         let models = Path::new("/models");
         let configs = [
-            TranscriptionConfig::Whisper {
+            SttConfig::Whisper {
                 model: models.join("whisper.bin"),
             },
-            TranscriptionConfig::WhisperCandle {
+            SttConfig::WhisperCandle {
                 model_directory: models.to_path_buf(),
             },
-            TranscriptionConfig::Parakeet {
+            SttConfig::Parakeet {
                 model_directory: models.to_path_buf(),
-                device: TranscriptionDevice::Cpu,
+                device: SttDevice::Cpu,
             },
-            TranscriptionConfig::Moonshine {
+            SttConfig::Moonshine {
                 model_directory: models.to_path_buf(),
             },
-            TranscriptionConfig::Nemotron {
+            SttConfig::Nemotron {
                 model_directory: models.to_path_buf(),
             },
             #[cfg(target_os = "macos")]
-            TranscriptionConfig::ParakeetMlx {
+            SttConfig::ParakeetMlx {
                 model: "mlx-community/parakeet-tdt-0.6b-v3".to_owned(),
                 interpreter: models.join("python3"),
             },
@@ -150,13 +148,13 @@ mod tests {
         let directory = model_directory();
         let models = directory.path().to_path_buf();
 
-        let whisper = check_model(&TranscriptionConfig::Whisper {
+        let whisper = check_model(&SttConfig::Whisper {
             model: models.join("vocab.txt"),
         })
         .expect("a whisper model is one file");
-        let parakeet = check_model(&TranscriptionConfig::Parakeet {
+        let parakeet = check_model(&SttConfig::Parakeet {
             model_directory: models.clone(),
-            device: TranscriptionDevice::Cpu,
+            device: SttDevice::Cpu,
         })
         .expect("a parakeet model is a directory holding vocab.txt");
         for name in [
@@ -166,7 +164,7 @@ mod tests {
         ] {
             write_model_file(&models, name, SECURE_MODE);
         }
-        let moonshine = check_model(&TranscriptionConfig::Moonshine {
+        let moonshine = check_model(&SttConfig::Moonshine {
             model_directory: models,
         })
         .expect("a moonshine model is a directory holding its graphs and tokenizer");
@@ -185,7 +183,7 @@ mod tests {
         const MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v3";
         let directory = model_directory();
         write_model_file(directory.path(), "python3", EXECUTABLE_MODE);
-        let mlx = |interpreter: &str| TranscriptionConfig::ParakeetMlx {
+        let mlx = |interpreter: &str| SttConfig::ParakeetMlx {
             model: MODEL.to_owned(),
             interpreter: directory.path().join(interpreter),
         };
@@ -195,21 +193,21 @@ mod tests {
 
         assert!(checked.contains("python3"));
         assert!(checked.contains(MODEL));
-        assert!(matches!(unusable, TranscriptionError::Load { .. }));
+        assert!(matches!(unusable, RecognitionError::Load { .. }));
     }
 
     #[test]
     fn a_whisper_model_that_is_a_directory_is_refused() {
         let directory = model_directory();
 
-        let error = check_model(&TranscriptionConfig::Whisper {
+        let error = check_model(&SttConfig::Whisper {
             model: directory.path().to_path_buf(),
         })
         .expect_err("whisper needs a file, not a directory");
 
         assert!(matches!(
             error,
-            TranscriptionError::Model {
+            RecognitionError::Model {
                 backend: aria_settings::config::backend::WHISPER,
                 source: ModelError::Path(InspectionError::NotRegularFile { .. }),
             }
@@ -220,15 +218,15 @@ mod tests {
     fn a_parakeet_directory_without_a_vocabulary_is_refused() {
         let directory = TempDir::new().expect("test directory should be created");
 
-        let error = check_model(&TranscriptionConfig::Parakeet {
+        let error = check_model(&SttConfig::Parakeet {
             model_directory: directory.path().to_path_buf(),
-            device: TranscriptionDevice::Cpu,
+            device: SttDevice::Cpu,
         })
         .expect_err("parakeet needs a vocabulary");
 
         assert!(matches!(
             error,
-            TranscriptionError::Model {
+            RecognitionError::Model {
                 source: ModelError::Missing {
                     file: "vocab.txt",
                     ..

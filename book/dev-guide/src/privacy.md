@@ -4,7 +4,7 @@
 
 Whisper, Kokoro, and the system voice run on your machine and make no network
 requests. Only builds and model downloads use the network. Your code decides
-what to save or send. The Aria app can also send transcription to a server
+what to save or send. The Aria app can also run recognition on a server
 you pair; the user guide's privacy page covers that.
 
 ## Temporary recordings
@@ -21,7 +21,7 @@ secure erasure and cannot remove snapshots or backups.
 
 ## Your files and output
 
-`transcribe_file` reads your WAV and leaves it in place. Transcripts and
+`recognize_file` reads your WAV and leaves it in place. Transcripts and
 generated audio stay in memory until your code saves them.
 
 ## Model files

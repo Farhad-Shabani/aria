@@ -1,7 +1,7 @@
 use aria_stt::{prelude::*, whisper::Whisper};
 
 const USAGE: &str =
-    "usage: transcribe [--english-hesitations] MODEL_FILE AUDIO.wav [VOCABULARY_TERM ...]";
+    "usage: recognize [--english-hesitations] MODEL_FILE AUDIO.wav [VOCABULARY_TERM ...]";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args_os().skip(1).peekable();
@@ -18,10 +18,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect::<Result<Vec<_>, _>>()?;
     let vocabulary = Vocabulary::new(terms)?;
     let engine = Whisper::load(model)?;
-    let transcription = Transcription::streaming(engine)
+    let recognition = Recognition::streaming(engine)
         .with(english_hesitations.then_some(RemoveHesitations))
         .with(vocabulary);
 
-    println!("{}", transcription.transcribe_file(audio)?.as_str());
+    println!("{}", recognition.recognize_file(audio)?.as_str());
     Ok(())
 }

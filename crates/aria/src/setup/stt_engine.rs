@@ -13,17 +13,17 @@ use super::settings_file::{self, SettingsWrite};
 use super::{ModelState, Outcome, SetupError, SetupEvent, Step, fetch, lock_setup, model_states};
 
 #[derive(Debug)]
-pub struct SetTranscriptionEngineSummary {
+pub struct SetSttEngineSummary {
     pub engine: &'static str,
     pub models: Vec<(&'static str, Outcome)>,
     pub settings: SettingsWrite,
 }
 
-pub fn set_transcription_engine(
+pub fn set_stt_engine(
     engine: &str,
     transfer_meter: bool,
     observe: &mut dyn FnMut(SetupEvent) -> Result<(), SetupError>,
-) -> Result<SetTranscriptionEngineSummary, SetupError> {
+) -> Result<SetSttEngineSummary, SetupError> {
     let home = user_home::resolve().map_err(SetupError::Home)?;
     set_in(&home, &Host::probe(), engine, transfer_meter, observe)
 }
@@ -68,7 +68,7 @@ fn set_in(
     engine: &str,
     transfer_meter: bool,
     observe: &mut dyn FnMut(SetupEvent) -> Result<(), SetupError>,
-) -> Result<SetTranscriptionEngineSummary, SetupError> {
+) -> Result<SetSttEngineSummary, SetupError> {
     let _lock = lock_setup(&aria_settings::default_path(home))?;
     let file = settings_file::read(home)?;
     let choice = choices::<Stt>(file.stt.backend.as_deref(), host)
@@ -80,12 +80,12 @@ fn set_in(
     if !choice.settable() {
         return Err(SetupError::NotSettable { name: choice.key });
     }
-    settings_file::check_transcription(home, &file, choice.key)?;
+    settings_file::check_stt(home, &file, choice.key)?;
     let models = fetch_engine_models(home, &file, choice.key, transfer_meter, observe)?;
 
     observe(SetupEvent::Started(Step::Settings))?;
-    let settings = settings_file::write_transcription(home, choice.key)?;
-    Ok(SetTranscriptionEngineSummary {
+    let settings = settings_file::write_stt(home, choice.key)?;
+    Ok(SetSttEngineSummary {
         engine: choice.key,
         models,
         settings,
@@ -122,10 +122,7 @@ mod tests {
     fn set_engine(
         home: &Path,
         engine: &str,
-    ) -> (
-        Result<SetTranscriptionEngineSummary, SetupError>,
-        Vec<SetupEvent>,
-    ) {
+    ) -> (Result<SetSttEngineSummary, SetupError>, Vec<SetupEvent>) {
         let mut events = Vec::new();
         let host = Host {
             macos: true,

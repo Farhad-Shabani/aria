@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use aria_kit::backend::{ModelDownload, ModelError};
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{
-    AudioInputKind, Engine, TranscriptionError, check_cancelled, validate_model_directory,
+use aria_kit::recognition::{
+    AudioInputKind, Engine, RecognitionError, check_cancelled, validate_model_directory,
 };
 
 use super::{BACKEND, CONFIG_FILE, MODEL, NAME, TOKENIZER_FILE, WEIGHTS_FILE, WhisperCandle};
@@ -26,7 +26,7 @@ impl WhisperCandleConfig {
 }
 
 impl WhisperCandle {
-    pub fn load(directory: impl Into<PathBuf>) -> Result<Self, TranscriptionError> {
+    pub fn load(directory: impl Into<PathBuf>) -> Result<Self, RecognitionError> {
         Self::load_from(WhisperCandleConfig::new(directory), &CancelToken::never())
     }
 }
@@ -38,7 +38,7 @@ impl Engine for WhisperCandle {
 
     type Config = WhisperCandleConfig;
 
-    fn check_from(config: &WhisperCandleConfig) -> Result<PathBuf, TranscriptionError> {
+    fn check_from(config: &WhisperCandleConfig) -> Result<PathBuf, RecognitionError> {
         validate_model_directory(
             config.model_directory.clone(),
             BACKEND,
@@ -49,7 +49,7 @@ impl Engine for WhisperCandle {
     fn load_from(
         config: WhisperCandleConfig,
         cancel: &CancelToken,
-    ) -> Result<Self, TranscriptionError> {
+    ) -> Result<Self, RecognitionError> {
         check_cancelled(cancel)?;
         let directory = Self::check_from(&config)?;
         let weights = read(&directory, WEIGHTS_FILE)?;
@@ -61,9 +61,9 @@ impl Engine for WhisperCandle {
     }
 }
 
-fn read(directory: &Path, file: &str) -> Result<Vec<u8>, TranscriptionError> {
+fn read(directory: &Path, file: &str) -> Result<Vec<u8>, RecognitionError> {
     let path = directory.join(file);
-    std::fs::read(&path).map_err(|source| TranscriptionError::Model {
+    std::fs::read(&path).map_err(|source| RecognitionError::Model {
         backend: BACKEND,
         source: ModelError::Unreadable { path, source },
     })
@@ -73,7 +73,7 @@ fn read(directory: &Path, file: &str) -> Result<Vec<u8>, TranscriptionError> {
 mod tests {
     use super::*;
 
-    fn load_error(directory: &Path) -> TranscriptionError {
+    fn load_error(directory: &Path) -> RecognitionError {
         match WhisperCandle::load(directory) {
             Err(error) => error,
             Ok(_) => panic!("a model must not load from this directory"),
@@ -100,6 +100,6 @@ mod tests {
         let outcome =
             WhisperCandle::load_from(WhisperCandleConfig::new("/nonexistent/model"), &cancel);
 
-        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
+        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
     }
 }

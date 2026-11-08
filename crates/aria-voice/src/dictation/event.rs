@@ -203,8 +203,8 @@ mod tests {
             DictationStage::Cancelled
         );
         assert_eq!(
-            DictationStage::ended_by(RpcErrorCode::TranscriptionFailed),
-            DictationStage::Failed(RpcErrorCode::TranscriptionFailed)
+            DictationStage::ended_by(RpcErrorCode::RecognitionFailed),
+            DictationStage::Failed(RpcErrorCode::RecognitionFailed)
         );
     }
 }

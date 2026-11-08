@@ -219,7 +219,7 @@ impl AudioAvailability {
 #[derive(Clone, Debug, Default)]
 pub struct RetryOptions {
     pub engine: Option<String>,
-    pub language: Option<crate::transcription::Language>,
+    pub language: Option<crate::stt::Language>,
 }
 
 pub struct HistoryQuery {

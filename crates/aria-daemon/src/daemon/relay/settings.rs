@@ -330,7 +330,7 @@ mod tests {
             RpcErrorCode::Internal,
             RpcErrorCode::PermissionDenied,
             RpcErrorCode::SettingsInvalid,
-            RpcErrorCode::TranscriptionFailed,
+            RpcErrorCode::RecognitionFailed,
             RpcErrorCode::Unknown(999),
         ] {
             let status = redacted(failure_status(RpcFailure::new(code, path)));

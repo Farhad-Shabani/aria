@@ -7,8 +7,8 @@ use crate::cancel::CancelToken;
 use crate::primitives::error_chain;
 
 use super::{
-    ChunkStep, ChunkStream, Emitted, Transcript, TranscriptSegment, TranscriptUpdate,
-    TranscriptionError, check_cancelled,
+    ChunkStep, ChunkStream, Emitted, RecognitionError, Transcript, TranscriptSegment,
+    TranscriptUpdate, check_cancelled,
 };
 
 /// Silence fed once the audio has ended, in chunks. The model holds a word
@@ -66,7 +66,7 @@ impl NativeState {
         recording: &mut RecordingReader,
         cancel: &CancelToken,
         previews: bool,
-    ) -> Result<Option<ChunkStep>, TranscriptionError> {
+    ) -> Result<Option<ChunkStep>, RecognitionError> {
         if self.finished {
             return Ok(None);
         }
@@ -75,7 +75,7 @@ impl NativeState {
             check_cancelled(cancel)?;
             let whole_chunk = recording
                 .fill_through(self.fed + chunk)
-                .map_err(TranscriptionError::Capture)?;
+                .map_err(RecognitionError::Capture)?;
             check_cancelled(cancel)?;
             if !whole_chunk {
                 return self.finish(recording, cancel);
@@ -176,7 +176,7 @@ impl NativeState {
         &mut self,
         recording: &RecordingReader,
         cancel: &CancelToken,
-    ) -> Result<Option<ChunkStep>, TranscriptionError> {
+    ) -> Result<Option<ChunkStep>, RecognitionError> {
         self.finished = true;
         let chunk = self.chunk();
         let audio_end = recording.held_to();
@@ -233,7 +233,7 @@ fn chunk_windows(
     if heard.words().is_empty() {
         return None;
     }
-    let windows: Result<Vec<_>, TranscriptionError> = heard
+    let windows: Result<Vec<_>, RecognitionError> = heard
         .words()
         .iter()
         .map(|timing| super::bounded_span(timing.span_from(at)?, at + chunk))
@@ -269,7 +269,7 @@ mod tests {
 
     use super::*;
     use crate::audio::testing::{Pace, paced, recorded};
-    use crate::transcription::{Hypothesis, TimedWord};
+    use crate::recognition::{Hypothesis, TimedWord};
 
     /// 100 ms, the batch a test recording is fed in.
     const CHUNK: usize = 1_600;
@@ -327,7 +327,7 @@ mod tests {
             CHUNK
         }
 
-        fn feed(&mut self, chunk: &[f32]) -> Result<Emitted, TranscriptionError> {
+        fn feed(&mut self, chunk: &[f32]) -> Result<Emitted, RecognitionError> {
             self.fed.lock().expect("no poison").push(chunk.len());
             if let Some(pace) = &self.pace {
                 pace.advance();
@@ -717,7 +717,7 @@ mod tests {
 
         let outcome = state.next_finalized_with(&mut recording, &CancelToken::never(), false);
 
-        assert!(matches!(outcome, Err(TranscriptionError::Capture(_))));
+        assert!(matches!(outcome, Err(RecognitionError::Capture(_))));
         assert!(fed.lock().expect("no poison").is_empty());
     }
 
@@ -731,7 +731,7 @@ mod tests {
 
         let outcome = state.next_finalized_with(&mut recording, &cancel, false);
 
-        assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
+        assert!(matches!(outcome, Err(RecognitionError::Cancelled)));
         assert!(fed.lock().expect("no poison").is_empty());
     }
 }

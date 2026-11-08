@@ -3,10 +3,9 @@
 /// Setup as `aria::setup` exposes it: look at what the machine has, then
 /// put the chosen pieces in place. Aria.app speaks it over the stdio of
 /// the hidden `aria setup inspect`, `aria setup apply`,
-/// `aria setup set-transcription-engine` and
-/// `aria setup set-transcription-runs-on`, one message per length-delimited
-/// frame. Apply runs the whole of setup; the two setters each change one
-/// choice alone.
+/// `aria setup set-stt-engine` and `aria setup set-stt-runs-on`, one
+/// message per length-delimited frame. Apply runs the whole of setup; the
+/// two setters each change one choice alone.
 ///
 /// Recording a voice and the test press are not here: they are ordinary
 /// daemon RPCs (SpeakerService, DictationService, SpeechService), and the

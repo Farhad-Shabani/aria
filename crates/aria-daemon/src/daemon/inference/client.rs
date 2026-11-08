@@ -10,7 +10,7 @@ use std::time::Duration;
 use aria_kit::audio::{CaptureError, RecordingReader, pcm16_from_f32};
 use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{OperationSource, OperationStep, TranscriptUpdate};
+use aria_kit::recognition::{OperationSource, OperationStep, TranscriptUpdate};
 use tonic::transport::Channel;
 
 use super::identity::{self, ClientIdentity, MAX_DOCUMENT_BYTES};
@@ -26,8 +26,8 @@ use aria_primitives::local_socket::LocalSocketError;
 use aria_primitives::private_document::DocumentError;
 use aria_settings::rpc::RpcErrorCode;
 use aria_voice::config::PairingId;
-use aria_voice::transcription::{
-    Hypothesis, Language, Transcriber, Transcription, TranscriptionAudio, TranscriptionError, Whole,
+use aria_voice::stt::{
+    Hypothesis, Language, Recognition, RecognitionAudio, RecognitionError, Recognizer, Whole,
 };
 
 pub(super) const ADMIN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -97,10 +97,10 @@ pub enum RemoteClientError {
     Decode(#[source] Cause),
     #[error("remote audio exceeds {MAX_AUDIO_SECONDS} seconds")]
     AudioTooLong,
-    #[error("cannot read audio for remote transcription")]
+    #[error("cannot read audio for remote recognition")]
     Audio(#[source] CaptureError),
     /// The recording released audio the server must receive.
-    #[error("cannot read audio for remote transcription")]
+    #[error("cannot read audio for remote recognition")]
     PartialAudio,
     #[error("remote output was not consumed in time")]
     Backpressure,
@@ -121,7 +121,7 @@ impl RemoteClientError {
 }
 
 #[derive(Clone)]
-pub(crate) struct RemoteTranscriber {
+pub(crate) struct RemoteRecognizer {
     connection: Arc<Connection>,
     required_engine: Option<&'static str>,
 }
@@ -132,14 +132,14 @@ struct Binding {
     strategy: Strategy,
 }
 
-/// Shared by every operation on a transcriber, so a press reuses one
+/// Shared by every operation on a recognizer, so a press reuses one
 /// handshake.
 struct Connection {
     channel: Channel,
     runtime: RemoteRuntime,
 }
 
-/// Shut down without waiting, because the last transcriber may be dropped
+/// Shut down without waiting, because the last recognizer may be dropped
 /// inside another runtime.
 struct RemoteRuntime {
     handle: tokio::runtime::Handle,
@@ -169,12 +169,12 @@ impl Drop for RemoteRuntime {
     }
 }
 
-impl RemoteTranscriber {
+impl RemoteRecognizer {
     /// Opens the pinned server without the network. Each operation asks the
     /// server what it runs, so a server that is down or changed fails only
     /// that operation.
-    pub(crate) fn open(home: &Path) -> Result<Self, TranscriptionError> {
-        Self::open_pinned(home).map_err(transcription_error)
+    pub(crate) fn open(home: &Path) -> Result<Self, RecognitionError> {
+        Self::open_pinned(home).map_err(recognition_error)
     }
 
     /// Opens only `pairing`, so an engine never sends audio under a pairing
@@ -182,14 +182,14 @@ impl RemoteTranscriber {
     pub(crate) fn open_matching(
         home: &Path,
         pairing: Option<&PairingId>,
-    ) -> Result<Self, TranscriptionError> {
-        let identity = Self::identity(home).map_err(transcription_error)?;
+    ) -> Result<Self, RecognitionError> {
+        let identity = Self::identity(home).map_err(recognition_error)?;
         if super::pairing_id_of(&identity).ok().as_ref() != pairing {
-            return Err(transcription_error(RemoteClientError::Identity(
+            return Err(recognition_error(RemoteClientError::Identity(
                 identity::Error::PairingMoved,
             )));
         }
-        Self::connect(&identity).map_err(transcription_error)
+        Self::connect(&identity).map_err(recognition_error)
     }
 
     fn open_pinned(home: &Path) -> Result<Self, RemoteClientError> {
@@ -216,9 +216,9 @@ impl RemoteTranscriber {
     }
 
     /// Refuses operations on a server that runs anything but `engine`.
-    pub(crate) fn require_engine(self, engine: &str) -> Result<Self, TranscriptionError> {
+    pub(crate) fn require_engine(self, engine: &str) -> Result<Self, RecognitionError> {
         let engine = aria_settings::config::backend::local(engine)
-            .ok_or_else(|| transcription_error(RemoteClientError::Unsupported))?;
+            .ok_or_else(|| recognition_error(RemoteClientError::Unsupported))?;
         Ok(Self {
             required_engine: Some(engine),
             ..self
@@ -295,7 +295,7 @@ async fn receive(
     let mut request = tonic::Request::new(tokio_stream::wrappers::ReceiverStream::new(outgoing));
     request.set_timeout(OVERALL_TIMEOUT);
     let mut responses = inference_client(channel)
-        .transcribe(request)
+        .recognize(request)
         .await
         .map_err(rpc_error)?
         .into_inner();
@@ -571,9 +571,9 @@ impl Session {
         recording: &mut RecordingReader,
         previews: bool,
         cancel: &CancelToken,
-    ) -> Result<OperationStep, TranscriptionError> {
+    ) -> Result<OperationStep, RecognitionError> {
         loop {
-            match self.next(cancel).map_err(transcription_error)? {
+            match self.next(cancel).map_err(recognition_error)? {
                 Event::Update {
                     update: TranscriptUpdate::Provisional { .. },
                     ..
@@ -586,18 +586,16 @@ impl Session {
                 } => {
                     recording
                         .fill_available()
-                        .map_err(TranscriptionError::Capture)?;
+                        .map_err(RecognitionError::Capture)?;
                     if completed.is_some() {
-                        recording.fill().map_err(TranscriptionError::Capture)?;
+                        recording.fill().map_err(RecognitionError::Capture)?;
                     } else {
                         recording
                             .fill_through(read_to)
-                            .map_err(TranscriptionError::Capture)?;
+                            .map_err(RecognitionError::Capture)?;
                     }
                     let completed = completed
-                        .map(|transcript| {
-                            aria_voice::transcription::Transcript::new(transcript.text)
-                        })
+                        .map(|transcript| aria_voice::stt::Transcript::new(transcript.text))
                         .transpose()?;
                     return Ok(OperationStep::Update {
                         update,
@@ -607,10 +605,10 @@ impl Session {
                     });
                 }
                 Event::Complete(transcript) => {
-                    recording.fill().map_err(TranscriptionError::Capture)?;
+                    recording.fill().map_err(RecognitionError::Capture)?;
                     let end = recording.held_to();
                     return Ok(OperationStep::Complete {
-                        transcript: aria_voice::transcription::Transcript::new(transcript.text)?,
+                        transcript: aria_voice::stt::Transcript::new(transcript.text)?,
                         retained_from: end,
                         read_to: end,
                     });
@@ -628,29 +626,29 @@ impl Drop for Session {
     }
 }
 
-impl Transcriber for RemoteTranscriber {
+impl Recognizer for RemoteRecognizer {
     fn validate_language(
         &self,
         _language: &Language,
         cancel: &CancelToken,
-    ) -> Result<(), TranscriptionError> {
+    ) -> Result<(), RecognitionError> {
         if cancel.is_cancelled() {
-            Err(TranscriptionError::Cancelled)
+            Err(RecognitionError::Cancelled)
         } else {
             Ok(())
         }
     }
 
     /// One bounded input, run as a whole-recording operation on the server.
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
+    ) -> Result<Hypothesis, RecognitionError> {
         let mut recording = RecordingReader::from_samples(audio.require_samples("remote")?);
-        Transcription::<_, Whole>::delegated(self.clone())
-            .transcribe_with(&mut recording, language, cancel)
+        Recognition::<_, Whole>::delegated(self.clone())
+            .recognize_with(&mut recording, language, cancel)
             .map(|transcript| Hypothesis::new(transcript.into_text()))
     }
 
@@ -661,8 +659,8 @@ impl Transcriber for RemoteTranscriber {
         language: &Language,
         incremental: bool,
         cancel: &CancelToken,
-    ) -> Result<Option<OperationSource>, TranscriptionError> {
-        let binding = self.bind(cancel).map_err(transcription_error)?;
+    ) -> Result<Option<OperationSource>, RecognitionError> {
+        let binding = self.bind(cancel).map_err(recognition_error)?;
         let start = Start {
             engine: binding.engine.to_owned(),
             language: language.clone(),
@@ -693,10 +691,10 @@ impl Transcriber for RemoteTranscriber {
     }
 }
 
-fn transcription_error(error: RemoteClientError) -> TranscriptionError {
+fn recognition_error(error: RemoteClientError) -> RecognitionError {
     match error {
-        RemoteClientError::Cancelled => TranscriptionError::Cancelled,
-        RemoteClientError::Rpc(RpcErrorCode::NoSpeech) => TranscriptionError::NoSpeech,
+        RemoteClientError::Cancelled => RecognitionError::Cancelled,
+        RemoteClientError::Rpc(RpcErrorCode::NoSpeech) => RecognitionError::NoSpeech,
         error @ (RemoteClientError::Config(_)
         | RemoteClientError::Storage(_)
         | RemoteClientError::PairingLock(_)
@@ -718,7 +716,7 @@ fn transcription_error(error: RemoteClientError) -> TranscriptionError {
         | RemoteClientError::AudioTooLong
         | RemoteClientError::Audio(_)
         | RemoteClientError::PartialAudio
-        | RemoteClientError::Backpressure) => TranscriptionError::Inference {
+        | RemoteClientError::Backpressure) => RecognitionError::Inference {
             backend: "remote",
             source: BackendError::engine(error),
         },
@@ -830,8 +828,8 @@ mod tests {
     use super::*;
     use crate::daemon::inference::host::tests::{Fixture, Observed};
     use aria_kit::audio::Recording;
-    use aria_kit::transcription::{AudioInputKind, Cadence, TimedWord, TranscriptSegment};
-    use aria_voice::transcription::{Stream, Streaming};
+    use aria_kit::recognition::{AudioInputKind, Cadence, TimedWord, TranscriptSegment};
+    use aria_voice::stt::{Stream, Streaming};
 
     #[tokio::test]
     async fn live_native_words_arrive_before_stop_and_use_one_server_stream() {
@@ -842,8 +840,8 @@ mod tests {
         writer.push(&[0.5; 320]);
         let (first, received) = tokio::sync::oneshot::channel();
         let task = tokio::task::spawn_blocking(move || {
-            let transcription = Transcription::<_, Streaming>::delegated(client.transcriber());
-            let mut operation = transcription.start(&Language::Automatic).unwrap();
+            let recognition = Recognition::<_, Streaming>::delegated(client.recognizer());
+            let mut operation = recognition.start(&Language::Automatic).unwrap();
             assert_eq!(operation.served_by(), Some("whisper"));
             let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
             assert!(!recording.reached_end());
@@ -876,10 +874,10 @@ mod tests {
         let server = Fixture::start().await;
         let client = server.paired_client().await;
         let task = tokio::task::spawn_blocking(move || {
-            let remote = client.transcriber();
-            let transcription = Transcription::<_, Streaming>::delegated(remote);
+            let remote = client.recognizer();
+            let recognition = Recognition::<_, Streaming>::delegated(remote);
             let mut recording = RecordingReader::from_samples(&[0.5; 32_000]);
-            let mut operation = transcription.start(&Language::Automatic).unwrap();
+            let mut operation = recognition.start(&Language::Automatic).unwrap();
             assert!(operation.next_finalized(&mut recording).unwrap().is_some());
             std::thread::sleep(Duration::from_millis(150));
             let transcript = operation.finish(&mut recording).unwrap();
@@ -895,21 +893,17 @@ mod tests {
 
     struct Agreement;
 
-    impl Transcriber for Agreement {
-        fn validate_language(
-            &self,
-            _: &Language,
-            _: &CancelToken,
-        ) -> Result<(), TranscriptionError> {
+    impl Recognizer for Agreement {
+        fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), RecognitionError> {
             Ok(())
         }
 
-        fn transcribe_with(
+        fn recognize_with(
             &self,
-            _: TranscriptionAudio<'_>,
+            _: RecognitionAudio<'_>,
             _: &Language,
             _: &CancelToken,
-        ) -> Result<Hypothesis, TranscriptionError> {
+        ) -> Result<Hypothesis, RecognitionError> {
             Ok(Hypothesis::with_words(
                 "hello world",
                 vec![
@@ -961,10 +955,10 @@ mod tests {
         let running = Arc::clone(&control);
         let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::task::spawn_blocking(move || {
-            let remote = client.transcriber();
+            let remote = client.recognizer();
             let pipeline = DictationPipeline::new(
                 capture,
-                Transcription::<_, Streaming>::delegated(remote),
+                Recognition::<_, Streaming>::delegated(remote),
                 (log.history(), log.cursor()),
             )
             .hearing_speech(Some(Loud));
@@ -1058,7 +1052,7 @@ mod tests {
         let result = tokio::task::spawn_blocking(move || {
             DictationPipeline::new(
                 Capture(Mutex::new(Some(recording))),
-                Transcription::<_, Streaming>::delegated(client.transcriber()),
+                Recognition::<_, Streaming>::delegated(client.recognizer()),
                 (log.history(), log.cursor()),
             )
             .hearing_speech(Some(Loud))
@@ -1084,7 +1078,7 @@ mod tests {
         use std::sync::Mutex;
 
         use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
-        use aria_kit::transcription::{ChunkStream, Emitted};
+        use aria_kit::recognition::{ChunkStream, Emitted};
         use aria_platform::delivery::OutputMode;
         use aria_settings::DeliveryMode;
         use aria_voice::dictation::testing::{CallLog, Loud, settings};
@@ -1108,27 +1102,27 @@ mod tests {
             release: Mutex<mpsc::Receiver<()>>,
         }
         struct Delayed(Arc<DecodeGate>);
-        impl Transcriber for Delayed {
+        impl Recognizer for Delayed {
             fn validate_language(
                 &self,
                 _: &Language,
                 _: &CancelToken,
-            ) -> Result<(), TranscriptionError> {
+            ) -> Result<(), RecognitionError> {
                 Ok(())
             }
-            fn transcribe_with(
+            fn recognize_with(
                 &self,
-                _: TranscriptionAudio<'_>,
+                _: RecognitionAudio<'_>,
                 _: &Language,
                 _: &CancelToken,
-            ) -> Result<Hypothesis, TranscriptionError> {
+            ) -> Result<Hypothesis, RecognitionError> {
                 panic!("the native decoder owns this recording")
             }
             fn open_stream(
                 &self,
                 _: &Language,
                 _: &CancelToken,
-            ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
+            ) -> Result<Option<Box<dyn ChunkStream>>, RecognitionError> {
                 Ok(Some(Box::new(Decoder {
                     gate: Arc::clone(&self.0),
                     first: true,
@@ -1143,7 +1137,7 @@ mod tests {
             fn chunk_samples(&self) -> usize {
                 1600
             }
-            fn feed(&mut self, audio: &[f32]) -> Result<Emitted, TranscriptionError> {
+            fn feed(&mut self, audio: &[f32]) -> Result<Emitted, RecognitionError> {
                 let words = if std::mem::take(&mut self.first) {
                     assert!(audio.iter().all(|sample| *sample == 0.0));
                     self.gate.entered.notify_one();
@@ -1196,10 +1190,10 @@ mod tests {
             let log = CallLog::default();
             let delivered = log.clone();
             let task = tokio::task::spawn_blocking(move || {
-                let remote = client.transcriber();
+                let remote = client.recognizer();
                 let pipeline = DictationPipeline::new(
                     Capture(Mutex::new(Some(recording))),
-                    Transcription::<_, Streaming>::delegated(remote),
+                    Recognition::<_, Streaming>::delegated(remote),
                     (log.history(), log.cursor()),
                 )
                 .hearing_speech(Some(Loud));
@@ -1242,14 +1236,14 @@ mod tests {
         let cancel = CancelToken::new();
         let worker_cancel = cancel.clone();
         let task = tokio::task::spawn_blocking(move || {
-            let remote = client.transcriber();
-            let transcription = Transcription::<_, Streaming>::delegated(remote);
-            let mut operation = transcription
+            let remote = client.recognizer();
+            let recognition = Recognition::<_, Streaming>::delegated(remote);
+            let mut operation = recognition
                 .start_with(&Language::Automatic, &worker_cancel)
                 .unwrap();
             assert!(matches!(
                 operation.next_update(&mut recording),
-                Err(TranscriptionError::Cancelled)
+                Err(RecognitionError::Cancelled)
             ));
             assert!(recording.ended_at().is_none());
         });
@@ -1504,7 +1498,7 @@ mod tests {
     async fn own_voice_rejection_precedes_upload_and_corrections_stay_on_device() {
         use aria_kit::speaker::{Diarizer, Embedder, LevelSegmenter, SpeakerError};
         use aria_voice::dictation::{DictationPipeline, testing::Loud};
-        use aria_voice::transcription::Transcription;
+        use aria_voice::stt::Recognition;
         use aria_voice::vocabulary::{PersonalRules, Vocabulary};
 
         struct Voice([f32; 2]);
@@ -1537,9 +1531,9 @@ mod tests {
                     vec![1.0, 0.0],
                 )];
                 let diarizer = Diarizer::new(Voice(voice), enrolled);
-                let remote = client.transcriber();
+                let remote = client.recognizer();
                 let pipeline =
-                    DictationPipeline::new((), Transcription::<_, Whole>::delegated(remote), ())
+                    DictationPipeline::new((), Recognition::<_, Whole>::delegated(remote), ())
                         .hearing_speech(Some(Loud))
                         .tracking_voices(Some(diarizer), Some(LevelSegmenter))
                         .rewriting(aria_voice::dictation::Rewrites::new());
@@ -1686,7 +1680,7 @@ mod tests {
     fn an_unpaired_home_builds_nothing_and_creates_no_credentials() {
         let home = tempfile::tempdir().unwrap();
         assert!(matches!(
-            RemoteTranscriber::open_pinned(home.path()),
+            RemoteRecognizer::open_pinned(home.path()),
             Err(RemoteClientError::Identity(_))
         ));
         assert!(!home.path().join(".aria/inference/client.json").exists());

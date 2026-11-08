@@ -12,17 +12,17 @@ use super::{
 };
 use crate::config::SpeakerConfig;
 use crate::speaker::Diarizer;
-use crate::transcription::Transcription;
+use crate::stt::Recognition;
 use aria_harness::own_voice::{ArtifactKind, Placed, SPEAKERS_DIR, Truth};
 use aria_kit::audio::{
     AudioCapture, CaptureError, RecordingMode, RecordingReader, ReplayPace, StopSignal,
     WavReplayCapture,
 };
 use aria_kit::cancel::CancelToken;
-use aria_kit::speaker::{ProfileStore, Role};
-use aria_kit::transcription::{
-    Hypothesis, Language, StreamingEngine as _, Transcriber, TranscriptionAudio, TranscriptionError,
+use aria_kit::recognition::{
+    Hypothesis, Language, RecognitionAudio, RecognitionError, Recognizer, StreamingEngine as _,
 };
+use aria_kit::speaker::{ProfileStore, Role};
 use aria_kit::voice_activity::SileroVad;
 use aria_platform::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
 use aria_segmentation::pyannote::Pyannote;
@@ -183,22 +183,22 @@ struct ReplayParakeet {
     timed: bool,
 }
 
-impl Transcriber for ReplayParakeet {
+impl Recognizer for ReplayParakeet {
     fn validate_language(
         &self,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<(), TranscriptionError> {
+    ) -> Result<(), RecognitionError> {
         self.model.validate_language(language, cancel)
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
-        let hypothesis = self.model.transcribe_with(audio, language, cancel)?;
+    ) -> Result<Hypothesis, RecognitionError> {
+        let hypothesis = self.model.recognize_with(audio, language, cancel)?;
         Ok(if self.timed {
             hypothesis
         } else {
@@ -418,7 +418,7 @@ fn the_tracker_keeps_the_owner_and_drops_other_voices() {
     }
 }
 
-/// How many presses replay at once, each with its own transcription model.
+/// How many presses replay at once, each with its own speech model.
 /// The more share the machine, the longer the delays measure.
 const DEFAULT_JOBS: usize = 4;
 
@@ -997,7 +997,7 @@ fn dictate(speaker: &SpeakerConfig, wav: &Path, parakeet: &Arc<Parakeet>, press:
             capture,
             started: Arc::clone(&started),
         },
-        Transcription::stream(
+        Recognition::stream(
             Parakeet::STREAM,
             ReplayParakeet {
                 model: Arc::clone(parakeet),

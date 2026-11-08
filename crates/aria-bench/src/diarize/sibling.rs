@@ -1,4 +1,4 @@
-//! Labels speakers independently of transcription, using fixed embedding windows
+//! Labels speakers independently of recognition, using fixed embedding windows
 //! and voice-activity detection to identify speech regions.
 
 use std::ops::Range;
@@ -31,7 +31,7 @@ impl Default for Windowing {
     }
 }
 
-/// Labels a recording from its voice alone — no transcriber in the path.
+/// Labels a recording from its voice alone — no recognizer in the path.
 pub fn label_by_voice(
     speaker: SpeakerConfig,
     wav: &Path,

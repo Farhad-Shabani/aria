@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn an_engine_that_times_no_words_still_stamps_by_the_recording() {
-        // Moonshine is a transcription backend that times no words.
+        // Moonshine is a recognition backend that times no words.
         let (_directory, mut sink, path) = open_in_tempdir();
 
         sink.segment(untimed(0, Some(&Label::Anonymous(1)), "hello"))

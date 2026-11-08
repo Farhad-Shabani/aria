@@ -77,7 +77,7 @@ pub fn paired_server(home: &Path) -> Result<Option<PairedServer>, identity::Erro
     }
 }
 
-/// The pairing as it stands now. Anything that keeps a transcriber from opening
+/// The pairing as it stands now. Anything that keeps a recognizer from opening
 /// it reads as no pairing.
 pub(crate) fn pairing_id(home: &Path) -> Option<PairingId> {
     let path = Paths::in_home(home).client_identity();

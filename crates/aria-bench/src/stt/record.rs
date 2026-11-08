@@ -1,7 +1,7 @@
 //! The per-utterance result rows a run leaves behind.
 //!
 //! Every number the benchmark reports is derived from these rows. A finished
-//! run can then be re-scored or sliced by speaker without transcribing
+//! run can then be re-scored or sliced by speaker without recognizing
 //! anything again.
 
 use std::fs::{File, Permissions};
@@ -71,7 +71,7 @@ pub(super) struct Record {
     pub(super) substitutions: usize,
     pub(super) deletions: usize,
     pub(super) insertions: usize,
-    /// Set when the backend failed instead of transcribing. The row still
+    /// Set when the backend failed instead of recognizing. The row still
     /// carries the reference, so a failure counts as words missed rather than
     /// quietly shrinking the corpus.
     pub(super) error: Option<String>,

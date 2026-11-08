@@ -1,4 +1,4 @@
-//! In-process transcription through candle's Whisper implementation.
+//! In-process recognition through candle's Whisper implementation.
 //!
 //! Whisper in pure Rust, which is what makes this the one engine that reaches
 //! a browser: the others bind a native runtime with no wasm build. It loads
@@ -8,10 +8,10 @@
 //! use aria_stt::{whisper_candle::WhisperCandle, prelude::*};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let transcription = Transcription::complete_samples(WhisperCandle::load("model")?)
+//! let recognition = Recognition::complete_samples(WhisperCandle::load("model")?)
 //!     .with(RemoveHesitations)
 //!     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
-//! let session = Session::microphone(&transcription, &Language::Automatic)?;
+//! let session = Session::microphone(&recognition, &Language::Automatic)?;
 //!
 //! // ... the speaker talks ...
 //!
@@ -35,8 +35,8 @@ use tokenizers::Tokenizer;
 
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{
-    Hypothesis, Language, Transcriber, TranscriptionAudio, TranscriptionError, check_cancelled,
+use aria_kit::recognition::{
+    Hypothesis, Language, RecognitionAudio, RecognitionError, Recognizer, check_cancelled,
 };
 
 #[cfg(not(target_family = "wasm"))]
@@ -86,7 +86,7 @@ const MEL_BANDS: usize = 80;
 
 pub struct WhisperCandle {
     /// One resident model. Decoding mutates its key-value cache, so a
-    /// transcription holds it for the whole utterance.
+    /// recognition holds it for the whole utterance.
     model: Mutex<Whisper>,
     tokenizer: Tokenizer,
     config: Config,
@@ -103,7 +103,7 @@ impl WhisperCandle {
         weights: &[u8],
         tokenizer: &[u8],
         config: &[u8],
-    ) -> Result<Self, TranscriptionError> {
+    ) -> Result<Self, RecognitionError> {
         let config: Config = serde_json::from_slice(config).map_err(load_failed)?;
         if config.num_mel_bins != MEL_BANDS {
             return Err(load_failed(EngineError(format!(
@@ -129,21 +129,21 @@ impl WhisperCandle {
     }
 }
 
-impl Transcriber for WhisperCandle {
+impl Recognizer for WhisperCandle {
     fn validate_language(
         &self,
         language: &Language,
         _cancel: &CancelToken,
-    ) -> Result<(), TranscriptionError> {
+    ) -> Result<(), RecognitionError> {
         decode::Prompt::new(&self.tokenizer, &self.config, language).map(|_prompt| ())
     }
 
-    fn transcribe_with(
+    fn recognize_with(
         &self,
-        audio: TranscriptionAudio<'_>,
+        audio: RecognitionAudio<'_>,
         language: &Language,
         cancel: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
+    ) -> Result<Hypothesis, RecognitionError> {
         check_cancelled(cancel)?;
         let samples = audio.require_samples(BACKEND)?;
         let prompt = decode::Prompt::new(&self.tokenizer, &self.config, language)?;
@@ -169,16 +169,16 @@ fn decode_mel_filters() -> Vec<f32> {
         .collect()
 }
 
-fn load_failed(source: impl std::error::Error + Send + Sync + 'static) -> TranscriptionError {
-    TranscriptionError::Load {
+fn load_failed(source: impl std::error::Error + Send + Sync + 'static) -> RecognitionError {
+    RecognitionError::Load {
         backend: BACKEND,
         model: "safetensors".to_owned(),
         source: BackendError::engine(source),
     }
 }
 
-fn inference_failed(source: impl std::error::Error + Send + Sync + 'static) -> TranscriptionError {
-    TranscriptionError::Inference {
+fn inference_failed(source: impl std::error::Error + Send + Sync + 'static) -> RecognitionError {
+    RecognitionError::Inference {
         backend: BACKEND,
         source: BackendError::engine(source),
     }

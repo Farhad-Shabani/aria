@@ -3,7 +3,7 @@ import SwiftUI
 struct RecognitionSettings: View {
     let settings: DaemonSettings
     @ObservedObject var voices: VoiceProfiles
-    let serverTranscription: ServerTranscription
+    let serverStt: ServerStt
     let setup: SetupStatus
 
     var body: some View {
@@ -17,7 +17,7 @@ struct RecognitionSettings: View {
                 vocabularyFolder(editor)
                     .disabled(!editor.snapshot.vocabularyEnabled)
             }
-            TranscriptionSection(server: serverTranscription, setup: setup)
+            ServerSttSection(server: serverStt, setup: setup)
         }
     }
 

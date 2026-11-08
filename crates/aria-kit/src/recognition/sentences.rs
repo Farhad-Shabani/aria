@@ -10,7 +10,7 @@
 /// [`SentenceEnds::finish`] when nothing follows.
 ///
 /// ```
-/// use aria_kit::transcription::SentenceEnds;
+/// use aria_kit::recognition::SentenceEnds;
 ///
 /// let mut sentences = SentenceEnds::default();
 /// let first = sentences.punctuate("I think we should.", None);
