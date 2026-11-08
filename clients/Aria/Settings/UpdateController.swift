@@ -54,7 +54,7 @@ final class UpdateController: ObservableObject {
 }
 
 // Sparkle calls its user driver's delegate on the main thread.
-final class ReminderDriverDelegate: NSObject, SPUStandardUserDriverDelegate {
+private final class ReminderDriverDelegate: NSObject, SPUStandardUserDriverDelegate {
     var setAvailableVersion: @MainActor (String?) -> Void = { _ in }
 
     var supportsGentleScheduledUpdateReminders: Bool { true }
