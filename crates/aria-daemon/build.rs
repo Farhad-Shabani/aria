@@ -10,11 +10,11 @@ const PROTOS: &[&str] = &[
     "../../proto/aria/daemon/v1/events.proto",
     "../../proto/aria/daemon/v1/history.proto",
     "../../proto/aria/daemon/v1/inference.proto",
-    "../../proto/aria/daemon/v1/system_transcription.proto",
-    "../../proto/aria/daemon/v1/settings.proto",
     "../../proto/aria/daemon/v1/relay.proto",
+    "../../proto/aria/daemon/v1/settings.proto",
     "../../proto/aria/daemon/v1/speaker.proto",
     "../../proto/aria/daemon/v1/speech.proto",
+    "../../proto/aria/daemon/v1/transcription.proto",
     "../../proto/aria/daemon/v1/vocabulary.proto",
 ];
 fn main() -> Result<(), Box<dyn Error>> {

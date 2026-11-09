@@ -238,11 +238,11 @@ _swift-stubs out: _swift-plugins
         proto/aria/daemon/v1/errors.proto \
         proto/aria/daemon/v1/events.proto \
         proto/aria/daemon/v1/history.proto \
-        proto/aria/daemon/v1/system_transcription.proto \
-        proto/aria/daemon/v1/settings.proto \
         proto/aria/daemon/v1/relay.proto \
+        proto/aria/daemon/v1/settings.proto \
         proto/aria/daemon/v1/speaker.proto \
         proto/aria/daemon/v1/speech.proto \
+        proto/aria/daemon/v1/transcription.proto \
         proto/aria/setup/v1/setup.proto \
         proto/grpc/health/v1/health.proto
 
