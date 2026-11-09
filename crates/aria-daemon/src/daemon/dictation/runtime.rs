@@ -268,6 +268,14 @@ impl DictationRuntime {
         self.microphone.stop_manual_recording()
     }
 
+    /// Takes a Return the person pressed for the dictation typing into the
+    /// app in front, which then presses it after its text. Runs inside the
+    /// hotkey tap.
+    pub(in crate::daemon) fn take_return(&self) -> bool {
+        self.microphone
+            .take_return(aria_platform::delivery::frontmost_process)
+    }
+
     /// Ends the named recording and lets it finish transcribing. Returns false
     /// if it is not running, without loading a deferred coordinator.
     pub(in crate::daemon) fn stop_recording(&self, recording: RecordingId) -> bool {

@@ -41,7 +41,8 @@ const UNITS_PER_EVENT: usize = 20;
 /// them. `0x00` is `kVK_ANSI_A`, so an application that ignores the payload and
 /// translates the keycode itself types "a" — the price of arriving at all.
 const CARRIER_VIRTUAL_KEY: u16 = 0x00;
-const RETURN_VIRTUAL_KEY: u16 = 0x24;
+/// kVK_Return, the main Return key. The hotkey tap watches for it too.
+pub(crate) const RETURN_VIRTUAL_KEY: u16 = 0x24;
 
 /// Carbon's `noErr`.
 const NO_ERR: i32 = 0;
@@ -154,6 +155,22 @@ impl TextDelivery for MacOsTextDelivery {
         })
     }
 
+    /// No field check, unlike submission: the user chose to press Return,
+    /// so it only has to reach the app the text went to.
+    fn press_return(
+        &self,
+        prepared: &Self::Prepared,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        let process = self
+            .process(prepared)
+            .ok_or(DeliveryError::TargetUnavailable)?;
+        autoreleasepool(|_| {
+            guard(process, &should_cancel, observe())?;
+            post_return()
+        })
+    }
+
     fn deliver(
         &self,
         prepared: &Self::Prepared,
@@ -206,6 +223,15 @@ impl TextDelivery for MacOsTextDelivery {
                     .map(|()| DeliveryOutcome::Copied)
             }
         })
+    }
+
+    fn process(&self, prepared: &Self::Prepared) -> Option<u32> {
+        match prepared {
+            MacOsDeliveryTarget::Application { process, .. }
+            | MacOsDeliveryTarget::ApplicationAndSubmit { process, .. }
+            | MacOsDeliveryTarget::ApplicationOrClipboard(process) => Some(*process),
+            MacOsDeliveryTarget::Clipboard => None,
+        }
     }
 
     fn caret(&self, prepared: &Self::Prepared) -> Caret {
@@ -394,7 +420,7 @@ fn secure_input_enabled() -> bool {
 /// has talked to the window server, which the daemon never does. The window
 /// list names the front *window's* owner, which misses Spotlight and every
 /// application showing no window.
-fn frontmost_process() -> Result<u32, DeliveryError> {
+pub(super) fn frontmost_process() -> Result<u32, DeliveryError> {
     front_process_id()
         .and_then(|process| u32::try_from(process).ok())
         .filter(|process| *process > 0)

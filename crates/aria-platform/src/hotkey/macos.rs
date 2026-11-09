@@ -1,14 +1,16 @@
-//! The macOS hotkey listener: a listen-only CGEventTap, plus, while Fn is
-//! the Aria key, an active one that keeps Fn's macOS action from running.
+//! The macOS hotkey listener: a listen-only CGEventTap, plus an active one
+//! that keeps Fn's macOS action from running while Fn is the Aria key, and
+//! swallows a Return a dictation takes.
 //!
 //! Everything runs on the caller's thread. The tap callbacks only ever
 //! execute inside [`CFRunLoop::run_in_mode`] on that same thread, so the
 //! shared state needs interior mutability but no synchronization. Shutdown
 //! and health checks happen between 100 ms run-loop slices.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -17,12 +19,13 @@ use objc2::runtime::AnyObject;
 use objc2_core_foundation::{CFMachPort, CFRetained, CFRunLoop, CFString};
 use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventTapCallBack, CGEventTapLocation, CGEventTapOptions,
-    CGEventTapPlacement, CGEventTapProxy, CGEventType,
+    CGEventTapPlacement, CGEventTapProxy, CGEventTimestamp, CGEventType,
 };
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults};
 
 use super::{AriaKey, KeyEvent, ListenerEvent, Modifiers, Press, PressDetector};
 use crate::accessibility::{self, Trust};
+use crate::delivery::RETURN_VIRTUAL_KEY;
 
 const PERMISSION_RETRY: Duration = Duration::from_secs(3);
 /// One run-loop slice: bounds shutdown latency, not press latency — the
@@ -41,6 +44,14 @@ const SHIFT: u64 = 0x0002_0000;
 const CONTROL: u64 = 0x0004_0000;
 /// kCGEventFlagMaskCommand
 const COMMAND: u64 = 0x0010_0000;
+/// kCGEventFlagMaskAlternate
+const OPTION: u64 = 0x0008_0000;
+/// NX_DEVICELALTKEYMASK
+const LEFT_OPTION: u64 = 0x20;
+
+const RETURN_KEY_CODE: i64 = RETURN_VIRTUAL_KEY as i64;
+/// kVK_ANSI_KeypadEnter, which Fn+Return also sends on Apple keyboards.
+const KEYPAD_ENTER_KEY_CODE: i64 = 0x4C;
 
 /// The key code of the key down and up macOS sends after Fn comes up alone.
 /// They run the action set in "Press fn key to".
@@ -109,12 +120,68 @@ fn translate(key: AriaKey, key_code: i64, flags: u64, synthetic: bool) -> Option
     (!synthetic).then_some(KeyEvent::Modifiers { held })
 }
 
+/// One Return key event, as the tap sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyEdge {
+    Down,
+    Repeat,
+    Up,
+}
+
+/// What the tap does with a Return key event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReturnAction {
+    /// Swallow it if a dictation takes it.
+    Take,
+    /// Swallow it: it belongs to a taken press.
+    Swallow,
+    /// Swallow the taken press's release, which ends it.
+    Release,
+    Pass,
+}
+
+/// The main Return with no modifier on it: Shift+Return and the like add a
+/// line. The Aria key held for a hold doesn't count, though Right Option
+/// sets Option and Fn turns Return into keypad Enter.
+fn is_bare_return(key: AriaKey, key_code: i64, flags: u64) -> bool {
+    let holding = key.is_down(flags);
+    let returns = key_code == RETURN_KEY_CODE
+        || (holding && key == AriaKey::Fn && key_code == KEYPAD_ENTER_KEY_CODE);
+    let option = if holding && key == AriaKey::RightOption {
+        flags & LEFT_OPTION
+    } else {
+        flags & OPTION
+    };
+    returns && option == 0 && flags & (SHIFT | CONTROL | COMMAND) == 0
+}
+
+/// Only the person's own Return ends a dictation: the Return delivery posts
+/// must reach the app.
+fn return_action(edge: KeyEdge, bare: bool, synthetic: bool, swallowing: bool) -> ReturnAction {
+    if synthetic {
+        return ReturnAction::Pass;
+    }
+    match (edge, swallowing) {
+        (KeyEdge::Down, _) if bare => ReturnAction::Take,
+        (KeyEdge::Repeat, true) => ReturnAction::Swallow,
+        (KeyEdge::Up, true) => ReturnAction::Release,
+        _ => ReturnAction::Pass,
+    }
+}
+
 pub struct MacOsHotkeyListener;
 
 /// Shared between `listen` and the tap callbacks, same thread only — the
 /// callbacks run inside the run-loop slices `listen` drives.
-struct TapState {
+struct TapState<'a> {
     key: AriaKey,
+    take_return: &'a dyn Fn() -> bool,
+    /// A taken Return is still down: its repeats and release are swallowed too.
+    swallowing_return: Cell<bool>,
+    /// The last Return key event judged, by timestamp, and whether it was
+    /// swallowed. Both taps see each event, in an order Apple doesn't
+    /// document, and must agree on it.
+    judged_return: Cell<Option<(CGEventTimestamp, bool)>>,
     detector: RefCell<PressDetector>,
     /// The live taps, so a callback can re-enable them on a disable event.
     taps: RefCell<Vec<CFRetained<CFMachPort>>>,
@@ -122,7 +189,58 @@ struct TapState {
     presses: RefCell<Vec<Press>>,
 }
 
-impl TapState {
+impl<'a> TapState<'a> {
+    fn new(key: AriaKey, take_return: &'a dyn Fn() -> bool) -> Self {
+        Self {
+            key,
+            take_return,
+            swallowing_return: Cell::new(false),
+            judged_return: Cell::new(None),
+            detector: RefCell::new(PressDetector::new()),
+            taps: RefCell::new(Vec::new()),
+            presses: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// True when a Return or keypad Enter key event must not reach the app.
+    /// Judged once, by whichever tap sees the event first.
+    fn swallows_return(&self, event_type: CGEventType, event: &CGEvent) -> bool {
+        let timestamp = CGEvent::timestamp(Some(event));
+        if let Some((judged, swallowed)) = self.judged_return.get()
+            && judged == timestamp
+        {
+            return swallowed;
+        }
+        let key_code =
+            CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventKeycode);
+        let flags = CGEvent::flags(Some(event)).0;
+        let synthetic =
+            CGEvent::integer_value_field(Some(event), CGEventField::EventSourceUnixProcessID) != 0;
+        let swallowed = self.judge_return(
+            key_edge(event_type, event),
+            is_bare_return(self.key, key_code, flags),
+            synthetic,
+        );
+        self.judged_return.set(Some((timestamp, swallowed)));
+        swallowed
+    }
+
+    fn judge_return(&self, edge: KeyEdge, bare: bool, synthetic: bool) -> bool {
+        match return_action(edge, bare, synthetic, self.swallowing_return.get()) {
+            ReturnAction::Take => {
+                let taken = (self.take_return)();
+                self.swallowing_return.set(taken);
+                taken
+            }
+            ReturnAction::Swallow => true,
+            ReturnAction::Release => {
+                self.swallowing_return.set(false);
+                true
+            }
+            ReturnAction::Pass => false,
+        }
+    }
+
     fn feed(&self, event: KeyEvent) {
         let press = self.detector.borrow_mut().handle(event, Instant::now());
         self.presses.borrow_mut().extend(press);
@@ -134,6 +252,8 @@ impl TapState {
     }
 
     fn reset(&self) {
+        // The taken Return's release may be among the lost events.
+        self.swallowing_return.set(false);
         let press = self.detector.borrow_mut().reset();
         self.presses.borrow_mut().extend(press);
     }
@@ -165,7 +285,7 @@ impl TapState {
 
 /// A panic out of `listen` still invalidates the taps, so no callback ever
 /// sees a dropped `TapState`.
-impl Drop for TapState {
+impl Drop for TapState<'_> {
     fn drop(&mut self) {
         self.disarm();
     }
@@ -188,13 +308,16 @@ impl MacOsHotkeyListener {
         remaps_away(&modifier_remaps(), key)
     }
 
-    pub fn listen(key: AriaKey, events: impl Fn(ListenerEvent), should_stop: impl Fn() -> bool) {
-        let state = TapState {
-            key,
-            detector: RefCell::new(PressDetector::new()),
-            taps: RefCell::new(Vec::new()),
-            presses: RefCell::new(Vec::new()),
-        };
+    /// `take_return` runs inside the tap callback for each bare Return the
+    /// person presses, and the key is swallowed when it returns true. It
+    /// must not block: every key event waits on it.
+    pub fn listen(
+        key: AriaKey,
+        take_return: impl Fn() -> bool,
+        events: impl Fn(ListenerEvent),
+        should_stop: impl Fn() -> bool,
+    ) {
+        let state = TapState::new(key, &take_return);
         let mut grant_requested = false;
         loop {
             if should_stop() {
@@ -273,7 +396,7 @@ fn hid_usage_in(remap: &NSDictionary, field: &str) -> Option<i64> {
 
 /// Creates the taps and hooks them into this thread's run loop. A tap
 /// created before the grant never recovers.
-fn arm(state: &TapState) -> bool {
+fn arm(state: &TapState<'_>) -> bool {
     if !Trust::check_now().is_trusted() {
         return false;
     }
@@ -288,7 +411,7 @@ fn arm(state: &TapState) -> bool {
 
 /// Each tap joins `state` as soon as it exists, so a later failure still
 /// invalidates it.
-fn add_taps(state: &TapState) -> Option<()> {
+fn add_taps(state: &TapState<'_>) -> Option<()> {
     let listener = create_tap(
         state,
         CGEventTapOptions::ListenOnly,
@@ -296,22 +419,16 @@ fn add_taps(state: &TapState) -> Option<()> {
         Some(listener_callback),
     )?;
     state.taps.borrow_mut().push(listener);
-    match state.key {
-        AriaKey::Fn => {
-            // An active tap holds each event until it returns, so this one
-            // takes key events only, and only while Fn is the Aria key.
-            // Revoking the grant stalls those events until `watch`'s next
-            // trust check disarms it, at most a REARM_INTERVAL later.
-            let blocker = create_tap(
-                state,
-                CGEventTapOptions::Default,
-                BLOCKER_EVENTS,
-                Some(blocker_callback),
-            )?;
-            state.taps.borrow_mut().push(blocker);
-        }
-        AriaKey::RightOption => {}
-    }
+    // An active tap holds each event until it returns, so this one takes key
+    // events only. Revoking the grant stalls them until `watch`'s next trust
+    // check disarms it, at most a REARM_INTERVAL later.
+    let blocker = create_tap(
+        state,
+        CGEventTapOptions::Default,
+        BLOCKER_EVENTS,
+        Some(blocker_callback),
+    )?;
+    state.taps.borrow_mut().push(blocker);
     let run_loop = CFRunLoop::current()?;
     for tap in state.taps.borrow().iter() {
         let source = CFMachPort::new_run_loop_source(None, Some(tap), 0)?;
@@ -323,9 +440,61 @@ fn add_taps(state: &TapState) -> Option<()> {
 /// Drives the run loop and reports presses until shutdown or tap death.
 /// Returns true when stopping for shutdown.
 fn watch(
-    state: &TapState,
+    state: &TapState<'_>,
     events: &impl Fn(ListenerEvent),
     should_stop: &impl Fn() -> bool,
+) -> bool {
+    let grant = GrantWatch::default();
+    thread::scope(|scope| {
+        let checker = thread::Builder::new()
+            .name("aria-hotkey-grant".into())
+            .spawn_scoped(scope, || grant.run());
+        if let Err(error) = checker {
+            tracing::error!(trigger = "hotkey", %error, "could not watch the grant; re-arming");
+            // Nothing drives the run loop meanwhile, and every keystroke
+            // would wait on the active tap.
+            state.disarm();
+            return wait(REARM_INTERVAL, should_stop);
+        }
+        // Dropped on unwind too: the scope waits for the checker to end.
+        let _stop = CheckerStop(&grant.done);
+        drive(state, events, should_stop, &grant)
+    })
+}
+
+/// Ends the grant checker when dropped.
+struct CheckerStop<'a>(&'a AtomicBool);
+
+impl Drop for CheckerStop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+/// Checks the grant off the tap thread. The check waits on a subprocess,
+/// and while the active tap exists every keystroke waits on the tap thread.
+#[derive(Default)]
+struct GrantWatch {
+    revoked: AtomicBool,
+    done: AtomicBool,
+}
+
+impl GrantWatch {
+    fn run(&self) {
+        while !wait(REARM_INTERVAL, &|| self.done.load(Ordering::Acquire)) {
+            if !Trust::check_now().is_trusted() {
+                self.revoked.store(true, Ordering::Release);
+                return;
+            }
+        }
+    }
+}
+
+fn drive(
+    state: &TapState<'_>,
+    events: &impl Fn(ListenerEvent),
+    should_stop: &impl Fn() -> bool,
+    grant: &GrantWatch,
 ) -> bool {
     let mode = default_mode();
     let mut last_health_check = Instant::now();
@@ -338,6 +507,11 @@ fn watch(
         if should_stop() {
             return true;
         }
+        // macOS leaves a running tap alive after the grant is revoked.
+        if grant.revoked.load(Ordering::Acquire) {
+            tracing::warn!(trigger = "hotkey", "the grant was revoked; disarming");
+            return false;
+        }
         if last_health_check.elapsed() >= REARM_INTERVAL {
             last_health_check = Instant::now();
             let taps = state.taps.borrow();
@@ -348,11 +522,6 @@ fn watch(
             // Re-enabling a tap disabled for a missing grant never works.
             if !taps.iter().all(|tap| CGEvent::tap_is_enabled(tap)) {
                 tracing::warn!(trigger = "hotkey", "event tap disabled; re-arming");
-                return false;
-            }
-            // macOS leaves a running tap alive after the grant is revoked.
-            if !Trust::check_now().is_trusted() {
-                tracing::warn!(trigger = "hotkey", "the grant was revoked; disarming");
                 return false;
             }
         }
@@ -394,7 +563,7 @@ const BLOCKER_EVENTS: u64 =
               nothing outside this file's tap items is unsafe"
 )]
 fn create_tap(
-    state: &TapState,
+    state: &TapState<'_>,
     options: CGEventTapOptions,
     events: u64,
     callback: CGEventTapCallBack,
@@ -432,7 +601,7 @@ unsafe extern "C-unwind" fn listener_callback(
     // SAFETY: `user_info` is the `TapState` pointer `create_tap` registered;
     // see the invariants there. Shared reborrow only — interior mutability
     // handles the writes.
-    let state = unsafe { &*user_info.cast::<TapState>() };
+    let state = unsafe { &*user_info.cast::<TapState<'_>>() };
     // SAFETY: CGEventTap guarantees `event` is a valid event for the duration
     // of the callback; it is only read here.
     let event = unsafe { event.as_ref() };
@@ -464,7 +633,11 @@ unsafe extern "C-unwind" fn listener_callback(
             // either.
             let key_code =
                 CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventKeycode);
-            if source_pid == 0 && key_code != GLOBE_KEY_CODE {
+            // A swallowed Return is the stop, not a chord that cancels a
+            // hold.
+            let swallowed = matches!(key_code, RETURN_KEY_CODE | KEYPAD_ENTER_KEY_CODE)
+                && state.swallows_return(event_type, event);
+            if source_pid == 0 && key_code != GLOBE_KEY_CODE && !swallowed {
                 state.feed(KeyEvent::KeyDown);
             }
         }
@@ -498,24 +671,42 @@ unsafe extern "C-unwind" fn blocker_callback(
     user_info: *mut c_void,
 ) -> *mut CGEvent {
     // SAFETY: as in `listener_callback`.
-    let state = unsafe { &*user_info.cast::<TapState>() };
+    let state = unsafe { &*user_info.cast::<TapState<'_>>() };
     // SAFETY: as in `listener_callback`.
     let event = unsafe { event.as_ref() };
     match event_type {
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
-            tracing::warn!(trigger = "hotkey", "fn blocker disabled; re-enabling");
+            tracing::warn!(trigger = "hotkey", "key blocker disabled; re-enabling");
+            // The taken Return's release may be among the lost events.
+            state.swallowing_return.set(false);
             state.enable_taps();
         }
         CGEventType::KeyDown | CGEventType::KeyUp => {
             let key_code =
                 CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventKeycode);
-            if key_code == GLOBE_KEY_CODE {
+            let held = match key_code {
+                GLOBE_KEY_CODE => state.key == AriaKey::Fn,
+                RETURN_KEY_CODE | KEYPAD_ENTER_KEY_CODE => state.swallows_return(event_type, event),
+                _ => false,
+            };
+            if held {
                 return std::ptr::null_mut();
             }
         }
         _ => {}
     }
     std::ptr::from_ref(event).cast_mut()
+}
+
+fn key_edge(event_type: CGEventType, event: &CGEvent) -> KeyEdge {
+    if event_type == CGEventType::KeyUp {
+        KeyEdge::Up
+    } else if CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventAutorepeat) != 0
+    {
+        KeyEdge::Repeat
+    } else {
+        KeyEdge::Down
+    }
 }
 
 #[cfg(test)]
@@ -580,6 +771,118 @@ mod tests {
             true,
         );
         assert!(posted_shift.is_none());
+    }
+
+    #[test]
+    fn only_a_bare_return_is_bare() {
+        const RIGHT_OPTION_HELD: u64 = OPTION | 0x40;
+        const FN_HELD: u64 = 0x0080_0000;
+        let cases = [
+            (AriaKey::Fn, RETURN_KEY_CODE, 0, true),
+            (AriaKey::Fn, RETURN_KEY_CODE, SHIFT, false),
+            (AriaKey::Fn, RETURN_KEY_CODE, OPTION, false),
+            (AriaKey::Fn, RETURN_KEY_CODE, COMMAND, false),
+            (AriaKey::Fn, RETURN_KEY_CODE, CONTROL, false),
+            (AriaKey::Fn, KEYPAD_ENTER_KEY_CODE, 0, false),
+            // A hold: the Aria key is down, and only it.
+            (AriaKey::Fn, KEYPAD_ENTER_KEY_CODE, FN_HELD, true),
+            (
+                AriaKey::RightOption,
+                RETURN_KEY_CODE,
+                RIGHT_OPTION_HELD,
+                true,
+            ),
+            (
+                AriaKey::RightOption,
+                RETURN_KEY_CODE,
+                RIGHT_OPTION_HELD | LEFT_OPTION,
+                false,
+            ),
+            (
+                AriaKey::RightOption,
+                KEYPAD_ENTER_KEY_CODE,
+                RIGHT_OPTION_HELD,
+                false,
+            ),
+        ];
+        for (key, key_code, flags, bare) in cases {
+            assert_eq!(
+                is_bare_return(key, key_code, flags),
+                bare,
+                "{key:?}, key code {key_code:#x}, flags {flags:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_persons_bare_return_is_taken() {
+        let cases = [
+            (true, false, ReturnAction::Take),
+            (false, false, ReturnAction::Pass),
+            (true, true, ReturnAction::Pass),
+        ];
+        for (bare, synthetic, action) in cases {
+            assert_eq!(
+                return_action(KeyEdge::Down, bare, synthetic, false),
+                action,
+                "bare {bare}, synthetic {synthetic}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_panic_while_driving_still_ends_the_grant_checker() {
+        let grant = GrantWatch::default();
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            thread::scope(|scope| {
+                scope.spawn(|| grant.run());
+                let _stop = CheckerStop(&grant.done);
+                panic!("drive panicked");
+            })
+        }));
+        assert!(unwound.is_err());
+    }
+
+    #[test]
+    fn both_taps_agree_on_a_return_judged_once() {
+        let asked = Cell::new(0);
+        let take_return = || {
+            asked.set(asked.get() + 1);
+            true
+        };
+        let state = TapState::new(AriaKey::Fn, &take_return);
+        let event =
+            CGEvent::new_keyboard_event(None, RETURN_VIRTUAL_KEY, true).expect("keyboard event");
+        CGEvent::set_flags(Some(&event), objc2_core_graphics::CGEventFlags(0));
+        CGEvent::set_integer_value_field(Some(&event), CGEventField::EventSourceUnixProcessID, 0);
+
+        assert!(state.swallows_return(CGEventType::KeyDown, &event));
+        assert!(state.swallows_return(CGEventType::KeyDown, &event));
+        assert_eq!(asked.get(), 1, "the second tap reuses the first's judgment");
+    }
+
+    #[test]
+    fn a_taken_return_is_swallowed_until_released() {
+        assert_eq!(
+            return_action(KeyEdge::Repeat, true, false, true),
+            ReturnAction::Swallow
+        );
+        assert_eq!(
+            return_action(KeyEdge::Up, true, false, true),
+            ReturnAction::Release
+        );
+    }
+
+    #[test]
+    fn an_untaken_return_repeats_and_releases_untouched() {
+        assert_eq!(
+            return_action(KeyEdge::Repeat, true, false, false),
+            ReturnAction::Pass
+        );
+        assert_eq!(
+            return_action(KeyEdge::Up, true, false, false),
+            ReturnAction::Pass
+        );
     }
 
     const KEYBOARD_PAGE: i64 = 0x7_0000_0000;

@@ -77,8 +77,11 @@ impl TranscriptSink for RecordingSink {
     }
 }
 
-/// Logs `prepare:`, `deliver:`, and `submit`. With `fail`, delivery and
-/// submission report an unavailable target once logged.
+/// The process `RecordingDelivery` types into.
+pub const TYPED_PROCESS: u32 = 7;
+
+/// Logs `prepare:`, `deliver:`, `submit`, and `return`. With `fail`,
+/// delivery and submission report an unavailable target once logged.
 pub struct RecordingDelivery {
     pub log: CallLog,
     pub fail: bool,
@@ -117,6 +120,22 @@ impl TextDelivery for RecordingDelivery {
                 return Err(DeliveryError::TargetUnavailable);
             }
         }
+        Ok(())
+    }
+
+    fn process(&self, prepared: &Self::Prepared) -> Option<u32> {
+        (*prepared != OutputMode::Copy).then_some(TYPED_PROCESS)
+    }
+
+    fn press_return(
+        &self,
+        _prepared: &Self::Prepared,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        if should_cancel() {
+            return Err(DeliveryError::Cancelled);
+        }
+        self.log.push("return".to_owned());
         Ok(())
     }
 

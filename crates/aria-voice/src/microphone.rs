@@ -220,6 +220,22 @@ impl Gate {
         }
     }
 
+    /// A Return the person pressed during a dictation, in the process
+    /// `front` names. True when the dictation takes the key to press after
+    /// its text; false lets it reach the app. Runs inside the hotkey tap,
+    /// which every keystroke waits on; the lock is only ever held briefly.
+    pub fn take_return(&self, front: impl FnOnce() -> Option<u32>) -> bool {
+        match self.hold().as_ref() {
+            Some(Holder::Dictation(running)) => {
+                !running.is_cancelled() && running.take_return(front)
+            }
+            Some(
+                Holder::Enrollment | Holder::Relay | Holder::HistoryRetry | Holder::EngineSwap,
+            )
+            | None => false,
+        }
+    }
+
     /// A panic while an operation held the lock leaves the state it was
     /// reading, not a poisoned daemon that can never record again.
     fn hold(&self) -> MutexGuard<'_, Option<Holder>> {
@@ -251,6 +267,9 @@ mod tests {
     use crate::dictation::testing::EDGE_WAIT;
 
     use super::*;
+
+    /// The app a test dictation types into.
+    const TYPED: u32 = 7;
 
     fn control(stop_mode: StopMode) -> Arc<ExecutionControl> {
         ExecutionControl::for_test(stop_mode)
@@ -493,6 +512,97 @@ mod tests {
             .expect("recording starts");
         let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&manual));
         assert!(gate.stop_manual_recording());
+    }
+
+    #[test]
+    fn a_return_goes_to_the_app_unless_a_dictation_is_typing() {
+        let gate = Gate::new();
+        assert!(!gate.take_return(|| Some(TYPED)), "nothing is dictating");
+
+        let dictation = control(StopMode::Manual);
+        let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&dictation));
+        assert!(!gate.take_return(|| Some(TYPED)), "nothing is typing yet");
+
+        let armed = dictation.arm_return(TYPED);
+        assert!(gate.take_return(|| Some(TYPED)));
+        assert!(armed.disarm(), "the dictation learns of the Return");
+        assert!(
+            !gate.take_return(|| Some(TYPED)),
+            "a disarmed dictation lets Return through"
+        );
+    }
+
+    #[test]
+    fn only_a_return_in_the_typed_app_ends_recording_and_is_taken() {
+        for (front, taken) in [(TYPED, true), (TYPED + 1, false)] {
+            let gate = Gate::new();
+            let dictation = control(StopMode::Manual);
+            let _recording = dictation
+                .start_recording(
+                    aria_settings::DeliveryMode::Streaming,
+                    &DictationEventEmitter::unsubscribed(),
+                )
+                .expect("recording starts");
+            let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&dictation));
+            let armed = dictation.arm_return(TYPED);
+
+            assert_eq!(gate.take_return(|| Some(front)), taken);
+            assert_eq!(
+                dictation.request_recording_stop(),
+                !taken,
+                "only the typed app's Return already stopped recording"
+            );
+            assert_eq!(armed.disarm(), taken);
+        }
+    }
+
+    #[test]
+    fn a_recording_that_types_nowhere_lets_return_through() {
+        let gate = Gate::new();
+        let dictation = control(StopMode::Manual);
+        let _recording = dictation
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                &DictationEventEmitter::unsubscribed(),
+            )
+            .expect("recording starts");
+        let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&dictation));
+
+        assert!(!gate.take_return(|| Some(TYPED)), "the key reaches the app");
+        assert!(
+            dictation.request_recording_stop(),
+            "recording goes on, for a tap to stop"
+        );
+    }
+
+    #[test]
+    fn a_taken_return_ends_any_recording() {
+        let gate = Gate::new();
+        let on_silence = control(StopMode::OnSilence);
+        let _recording = on_silence
+            .start_recording(
+                aria_settings::DeliveryMode::Streaming,
+                &DictationEventEmitter::unsubscribed(),
+            )
+            .expect("recording starts");
+        let _dictating = gate.admit_dictation(StopMode::OnSilence, Arc::clone(&on_silence));
+        let _armed = on_silence.arm_return(TYPED);
+
+        assert!(gate.take_return(|| Some(TYPED)));
+        assert!(
+            !on_silence.request_recording_stop(),
+            "the Return already asked recording to stop"
+        );
+    }
+
+    #[test]
+    fn a_dropped_dictation_lets_return_through() {
+        let gate = Gate::new();
+        let dictation = control(StopMode::Manual);
+        let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&dictation));
+        drop(dictation.arm_return(TYPED));
+
+        assert!(!gate.take_return(|| Some(TYPED)));
     }
 
     /// A phone that walks out of range mid-upload drops its session, and

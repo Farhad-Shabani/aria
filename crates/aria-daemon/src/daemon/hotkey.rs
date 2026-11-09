@@ -20,7 +20,7 @@ use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
 
 /// The blocking platform listener; tests swap in a fake.
-type Listener = fn(AriaKey, &dyn Fn(ListenerEvent), &dyn Fn() -> bool);
+type Listener = fn(AriaKey, &dyn Fn() -> bool, &dyn Fn(ListenerEvent), &dyn Fn() -> bool);
 
 pub(super) struct HotkeyTrigger {
     key: watch::Receiver<AriaKey>,
@@ -75,8 +75,8 @@ impl HotkeyTrigger {
             runtime,
             subscriptions,
             health,
-            listener: |key, events, should_stop| {
-                PlatformHotkeyListener::listen(key, events, should_stop);
+            listener: |key, take_return, events, should_stop| {
+                PlatformHotkeyListener::listen(key, take_return, events, should_stop);
             },
         }
     }
@@ -117,14 +117,16 @@ impl HotkeyTrigger {
         // change made after this listener started.
         let rearm = key.clone();
         let listener = self.listener;
+        let runtime = Arc::clone(&self.runtime);
         let mut listener = tokio::task::spawn_blocking(move || {
+            let take_return = || runtime.take_return();
             let events = |event| {
                 if events.try_send(event).is_err() {
                     tracing::warn!(trigger = "hotkey", ?event, "hotkey event dropped");
                 }
             };
             let should_stop = || stop.is_cancelled() || rearm.has_changed().unwrap_or(true);
-            listener(current, &events, &should_stop);
+            listener(current, &take_return, &events, &should_stop);
         });
 
         let mut waiting = false;
@@ -459,7 +461,7 @@ mod tests {
         let trigger = trigger(
             watch,
             Arc::new(Subscriptions::new()),
-            |key, _events, should_stop| {
+            |key, _take_return, _events, should_stop| {
                 ARMED.lock().expect("armed keys").push(key);
                 park_until(should_stop);
             },
@@ -489,7 +491,7 @@ mod tests {
         let trigger = trigger(
             watch,
             subscriptions,
-            |_key, events, should_stop| {
+            |_key, _take_return, events, should_stop| {
                 events(ListenerEvent::Press(Press::Combo(Combo::Shift)));
                 park_until(should_stop);
             },
@@ -557,7 +559,7 @@ mod tests {
             runtime: dictation,
             subscriptions,
             health,
-            listener: |_key, events, should_stop| {
+            listener: |_key, _take_return, events, should_stop| {
                 events(ListenerEvent::Press(Press::Tap));
                 park_until(should_stop);
             },

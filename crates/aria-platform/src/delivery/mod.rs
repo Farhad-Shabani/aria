@@ -110,6 +110,17 @@ pub trait TextDelivery: Send + Sync + 'static {
         should_cancel: impl Fn() -> bool,
     ) -> Result<(), DeliveryError>;
 
+    /// Presses the Return the user pressed while dictating, after the last
+    /// of the text, into the app `process` names. Only asked when `process`
+    /// names one.
+    fn press_return(
+        &self,
+        _prepared: &Self::Prepared,
+        _should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        Err(DeliveryError::InsertionUnsupported)
+    }
+
     /// Under plain insertion, `TargetChanged` means nothing of `text` was
     /// typed, so the caller may offer the same text again.
     fn deliver(
@@ -122,6 +133,14 @@ pub trait TextDelivery: Send + Sync + 'static {
     /// The application keystrokes would reach now. `None` where the
     /// platform cannot tell.
     fn frontmost(&self) -> Option<Application>;
+
+    /// The process `deliver` types into, so a key the person presses there
+    /// can be told from one pressed in another app. `None` when it types
+    /// into no app, or the platform cannot tell. Naming one takes the
+    /// person's Return there, so `press_return` must press it.
+    fn process(&self, _prepared: &Self::Prepared) -> Option<u32> {
+        None
+    }
 
     /// The text beside the caret where `deliver` would type. Unknown unless
     /// the destination shows it.
@@ -160,7 +179,20 @@ pub struct Font {
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) use macos::RETURN_VIRTUAL_KEY;
+#[cfg(target_os = "macos")]
 pub use macos::frontmost_application;
+
+/// The process in front, when the platform can tell.
+#[cfg(target_os = "macos")]
+pub fn frontmost_process() -> Option<u32> {
+    macos::frontmost_process().ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn frontmost_process() -> Option<u32> {
+    None
+}
 
 #[cfg(not(target_os = "macos"))]
 pub fn frontmost_application() -> Option<Application> {

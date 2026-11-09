@@ -1,3 +1,4 @@
+use super::execution::ArmedReturn;
 use super::{
     Delivered, DeliveryMode, DeliveryOutcome, DictationSettings, ExecutionControl, TranscriptSink,
     Utterance,
@@ -19,9 +20,13 @@ struct Target<P> {
     /// The app in front as the press started, when the platform can tell.
     start: Option<aria_platform::delivery::Application>,
     mode: DeliveryMode,
+    output: OutputMode,
     absence: Absence,
     control: Arc<ExecutionControl>,
     prepared: P,
+    /// Holds Return back while the text is still coming. `None` once the
+    /// press stops typing, or when it never types into an app.
+    armed: Option<ArmedReturn>,
     /// Read from the field before the first segment, then moved past each
     /// segment typed.
     caret: Option<Caret>,
@@ -60,6 +65,14 @@ enum Leftover {
     History,
     /// Nothing keeps it: history saving is off.
     Nowhere,
+}
+
+impl<P> Target<P> {
+    /// Ends typing for good. True when the person pressed Return meanwhile.
+    fn finish(&mut self) -> bool {
+        self.finished = true;
+        self.armed.take().is_some_and(ArmedReturn::disarm)
+    }
 }
 
 impl<D: TextDelivery> Cursor<D> {
@@ -127,9 +140,23 @@ impl<D: TextDelivery> Cursor<D> {
                 Ok(())
             }
             Err(error) => {
-                target.finished = true;
+                // A Return taken earlier stays unpressed: it would send
+                // text cut short. One pressed from here on reaches the app.
+                target.finish();
                 Err(error)
             }
+        }
+    }
+
+    /// Presses the Return the person pressed while the text was coming. It
+    /// is their key, not the transcript, so a refusal fails nothing.
+    fn press_return(delivery: &D, target: &Target<D::Prepared>) {
+        if target.control.should_stop() {
+            return;
+        }
+        if let Err(error) = delivery.press_return(&target.prepared, should_cancel(&target.control))
+        {
+            tracing::warn!(%error, "the Return the person pressed was not pressed");
         }
     }
 
@@ -243,13 +270,19 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         if matches!(absence, Absence::Queues(_)) {
             let _ = self.delivery.caret(&prepared);
         }
+        let armed = self
+            .delivery
+            .process(&prepared)
+            .map(|process| control.arm_return(process));
         self.target = Some(Target {
             policy: settings.target.clone(),
             start: self.delivery.frontmost(),
             mode: settings.delivery_mode,
+            output,
             absence,
             control: Arc::clone(control),
             prepared,
+            armed,
             caret: None,
             queue: Vec::new(),
             owes_mark: false,
@@ -281,10 +314,18 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         let Some(target) = self.target.as_mut() else {
             return Ok(());
         };
-        target.finished = true;
-        if target.delivered.map(|delivered| delivered.outcome) == Some(DeliveryOutcome::Inserted) {
+        // Disarmed first, so a Return pressed from here on reaches the app.
+        let taken = target.finish();
+        let inserted =
+            target.delivered.map(|delivered| delivered.outcome) == Some(DeliveryOutcome::Inserted);
+        if inserted {
             self.delivery
                 .finish(&target.prepared, should_cancel(&target.control))?;
+        }
+        // Submission already pressed Return.
+        let submitted = inserted && target.output == OutputMode::InsertAndSubmit;
+        if taken && !submitted {
+            Self::press_return(&self.delivery, target);
         }
         Ok(())
     }
@@ -323,7 +364,13 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
     }
 
     fn dictation_finished(&mut self) {
-        self.target = None;
+        // A press that never completed, such as one that heard no speech,
+        // still owes the person their Return.
+        if let Some(mut target) = self.target.take()
+            && target.finish()
+        {
+            Self::press_return(&self.delivery, &target);
+        }
     }
 }
 
@@ -346,7 +393,9 @@ fn streaming_output_mode(mode: OutputMode) -> Option<OutputMode> {
 #[cfg(test)]
 mod tests {
     use crate::dictation::StopMode;
-    use crate::dictation::testing::{CallLog, PlacedDelivery, RecordingDelivery, settings};
+    use crate::dictation::testing::{
+        CallLog, PlacedDelivery, RecordingDelivery, TYPED_PROCESS, settings,
+    };
 
     use super::*;
     use aria_platform::delivery::DeliveryOutcome as Posted;
@@ -416,6 +465,21 @@ mod tests {
                 return Err(refusal());
             }
             self.delivery.deliver(prepared, text, should_cancel)
+        }
+
+        fn process(&self, prepared: &OutputMode) -> Option<u32> {
+            self.delivery.process(prepared)
+        }
+
+        fn press_return(
+            &self,
+            prepared: &OutputMode,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            if let Some(refusal) = *self.refusal.lock().unwrap() {
+                return Err(refusal());
+            }
+            self.delivery.press_return(prepared, should_cancel)
         }
 
         fn caret(&self, _prepared: &OutputMode) -> Caret {
@@ -859,6 +923,147 @@ mod tests {
             log.entries(),
             ["prepare:InsertAndSubmit", "deliver:hello", "submit"]
         );
+    }
+
+    #[test]
+    fn a_return_taken_mid_stream_is_pressed_after_the_last_text() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Streaming, OutputMode::Insert),
+                &control,
+            )
+            .unwrap();
+        cursor.segment(Utterance::anonymous("hello")).unwrap();
+
+        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        cursor.segment(Utterance::anonymous("there")).unwrap();
+        cursor
+            .completed(Utterance::anonymous("hello there"))
+            .unwrap();
+
+        assert_eq!(
+            log.entries(),
+            [
+                "prepare:Insert",
+                "deliver:hello",
+                "deliver: there",
+                "return"
+            ]
+        );
+        assert!(
+            !control.take_return(|| Some(TYPED_PROCESS)),
+            "a finished press lets Return through"
+        );
+    }
+
+    #[test]
+    fn failed_delivery_lets_the_next_return_through() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Streaming, OutputMode::Insert),
+                &control,
+            )
+            .unwrap();
+        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        cursor.delivery.fail = true;
+        assert!(cursor.segment(Utterance::anonymous("hello")).is_err());
+
+        assert!(
+            !control.take_return(|| Some(TYPED_PROCESS)),
+            "typing ended with the failure"
+        );
+        let _ = cursor.completed(Utterance::anonymous("hello"));
+        assert!(!log.entries().iter().any(|entry| entry == "return"));
+    }
+
+    #[test]
+    fn a_taken_return_under_submission_presses_return_once() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Complete, OutputMode::InsertAndSubmit),
+                &control,
+            )
+            .unwrap();
+
+        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+
+        assert_eq!(
+            log.entries(),
+            ["prepare:InsertAndSubmit", "deliver:hello", "submit"]
+        );
+    }
+
+    #[test]
+    fn a_return_taken_before_any_text_is_still_pressed() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Streaming, OutputMode::Insert),
+                &control,
+            )
+            .unwrap();
+
+        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        // No speech: the press ends without completing.
+        cursor.dictation_finished();
+
+        assert_eq!(log.entries(), ["prepare:Insert", "return"]);
+    }
+
+    #[test]
+    fn a_return_the_app_refuses_fails_nothing() {
+        let (log, mut cursor) = left_after_hello(OutputMode::Insert);
+        let control = Arc::clone(&cursor.target.as_ref().unwrap().control);
+        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        cursor.segment(Utterance::anonymous("there")).unwrap();
+
+        cursor
+            .completed(Utterance::anonymous("hello there"))
+            .unwrap();
+
+        assert!(!log.entries().iter().any(|entry| entry == "return"));
+    }
+
+    #[test]
+    fn a_cancelled_press_drops_its_return() {
+        let (log, mut cursor) = cursor();
+        let cancel = aria_kit::cancel::CancelToken::new();
+        let control =
+            ExecutionControl::for_test_with_cancellation(StopMode::Manual, cancel.clone());
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Streaming, OutputMode::Insert),
+                &control,
+            )
+            .unwrap();
+        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+
+        cancel.cancel();
+        cursor.dictation_finished();
+
+        assert!(!log.entries().iter().any(|entry| entry == "return"));
+    }
+
+    #[test]
+    fn a_press_that_only_copies_leaves_return_alone() {
+        let (_log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Complete, OutputMode::Copy),
+                &control,
+            )
+            .unwrap();
+
+        assert!(!control.take_return(|| Some(TYPED_PROCESS)));
     }
 
     #[test]
