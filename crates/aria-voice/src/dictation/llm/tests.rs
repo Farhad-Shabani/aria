@@ -337,9 +337,12 @@ fn a_valid_response_after_the_callers_deadline_is_rejected() {
     let (endpoint, worker) = serve(move |mut stream| {
         read_request(&mut stream);
         thread::sleep(Duration::from_millis(30));
-        respond(
-            &mut stream,
-            &completion(r#"{"text":"Meet Alice at 3."}"#).to_string(),
+        let body = completion(r#"{"text":"Meet Alice at 3."}"#).to_string();
+        // The client gave up and hung up, so this write may fail.
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
         );
     });
     let home = tempfile::tempdir().unwrap();
