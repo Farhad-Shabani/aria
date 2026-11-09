@@ -90,7 +90,7 @@ impl AssistantId {
         }
     }
 
-    /// The local provider has no model of its own to fall back on.
+    /// The local provider has no default model.
     pub const fn needs_model(self) -> bool {
         matches!(self, Self::LocalModel)
     }

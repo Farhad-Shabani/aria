@@ -32,8 +32,8 @@ These choices still depend on the selected model's supported languages.
 
 ## Assistant
 
-In **Settings → General → Assistant**, choose **App** (Claude Code, Codex, or
-Local Provider) and **Model**.
+In **Settings → General → Assistant**, choose **Assistant** (Claude Code,
+Codex, or Local Provider) and **Model**.
 [Install and sign in](./chat.md#before-you-start) first, or
 [set up a local model](./chat.md#use-a-local-model).
 Changes apply to the next chat or prompt in both the Mac app and terminal.

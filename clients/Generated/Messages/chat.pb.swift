@@ -126,7 +126,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
   /// The check itself failed, so the status is not known.
   case unchecked // = 4
 
-  /// The settings file lacks the provider endpoint.
+  /// The daemon started without a provider endpoint.
   case notConfigured // = 5
 
   /// The local provider's endpoint fails or doesn't answer in time.
@@ -809,7 +809,7 @@ public nonisolated struct Aria_Daemon_V1_Assistant: Sendable {
   /// when READY.
   public var fix: String = String()
 
-  /// It has no model of its own to fall back on, so one must be chosen.
+  /// It has no default model, so the user must choose one.
   public var needsModel: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

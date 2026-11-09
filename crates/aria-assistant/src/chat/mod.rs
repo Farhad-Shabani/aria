@@ -324,7 +324,7 @@ pub enum AssistantStatus {
     SignedOut {
         fix: &'static str,
     },
-    /// The settings file lacks the provider endpoint.
+    /// The daemon started without a provider endpoint.
     NotConfigured {
         fix: &'static str,
     },

@@ -110,7 +110,6 @@ extension Assistant {
         return sentence.hasSuffix(".") ? sentence : sentence + "."
     }
 
-    /// What the user must know before choosing this assistant.
     fileprivate var requirement: String? {
         switch id {
         case .claudeCode, .codex: return "\(name) needs its command-line app."
@@ -119,8 +118,6 @@ extension Assistant {
         }
     }
 
-    /// What stops the assistant answering, as a status row says it. Nil
-    /// when nothing does, or when the Model row is where the user fixes it.
     var problem: String? {
         switch status {
         case .notInstalled: return "\(name) isn’t installed"
@@ -128,6 +125,7 @@ extension Assistant {
         case .notConfigured: return "\(name) isn’t set up"
         case .unreachable: return "\(name) isn’t answering"
         case .modelMissing: return "\(name) isn’t available on the server"
+        // The Model row is where the user fixes this.
         case .modelUnset: return nil
         case .unchecked: return "Aria couldn’t check \(name)"
         case .ready: return nil
@@ -136,8 +134,7 @@ extension Assistant {
 }
 
 extension Assistant.Status {
-    /// Whether the assistant answers, so it can list its models. One that
-    /// doesn't always has a `problem` that says why.
+    /// An assistant that doesn't answer always has a `problem` that says why.
     var answers: Bool {
         switch self {
         case .ready, .modelMissing, .modelUnset: return true

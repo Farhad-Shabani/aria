@@ -15,7 +15,7 @@ struct Assistant: Equatable, Sendable {
     /// How to make an unready assistant ready, as the daemon writes it: a
     /// clause with commands in backticks.
     let fix: String
-    /// It has no model of its own to fall back on, so one must be chosen.
+    /// It has no default model, so the user must choose one.
     let needsModel: Bool
 
     init(

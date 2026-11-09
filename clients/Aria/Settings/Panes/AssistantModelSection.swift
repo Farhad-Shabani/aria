@@ -58,8 +58,8 @@ struct AssistantModelSection: View {
                     Text("Loading models…").foregroundStyle(.secondary)
                 }
             }
-            // The status row above already says why an assistant that
-            // doesn't answer can't list its models.
+            // The status row above says why an assistant that doesn't
+            // answer can't list its models.
             if assistant.status.answers {
                 NoticeText(notice: models.failure)
             }
@@ -70,9 +70,6 @@ struct AssistantModelSection: View {
         }
     }
 
-    /// The picker's entry for no model: the assistant's own default, or a
-    /// placeholder until the user chooses one. Nil once one is chosen and
-    /// there's no default to go back to.
     static func noModelChoice(needsModel: Bool, modelID: String) -> String? {
         if !needsModel { return "Default" }
         return modelID.isEmpty ? "Choose a model" : nil
