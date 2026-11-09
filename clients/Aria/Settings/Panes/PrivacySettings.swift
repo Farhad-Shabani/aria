@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PrivacySettings: View {
     let settings: DaemonSettings
+    @State private var confirmingMemory = false
 
     var body: some View {
         SettingsForm(settings: settings) { editor in
@@ -20,10 +21,33 @@ struct PrivacySettings: View {
                 .disabled(!editor.snapshot.historyEnabled)
             }
             Section {
-                Toggle("Memory", isOn: editor.binding(\.memoryEnabled, \.memoryEnabled))
+                Toggle(
+                    "Memory",
+                    isOn: Self.memorySwitch(
+                        editor.binding(\.memoryEnabled, \.memoryEnabled),
+                        confirm: { confirmingMemory = true }
+                    )
+                )
+                .confirmationDialog("Turn On Memory?", isPresented: $confirmingMemory) {
+                    Button("Turn On") { editor.set(\.memoryEnabled, to: true) }
+                } message: {
+                    Text(
+                        "Aria sends the requests you speak to Claude to find facts about you. This includes chats with a local model."
+                    )
+                }
             } footer: {
-                Text("Questions you speak are sent to Claude to remember facts.")
+                Text("Aria sends the requests you speak to Claude to remember facts.")
             }
         }
+    }
+
+    /// Turning Memory on sends text off your Mac, so it waits for `confirm`.
+    static func memorySwitch(_ stored: Binding<Bool>, confirm: @escaping () -> Void) -> Binding<Bool> {
+        Binding(
+            get: { stored.wrappedValue },
+            set: { isOn in
+                if isOn { confirm() } else { stored.wrappedValue = false }
+            }
+        )
     }
 }

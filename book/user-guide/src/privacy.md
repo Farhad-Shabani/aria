@@ -106,13 +106,14 @@ and settings. Prompt recordings are not kept in dictation history.
 
 ## Memory
 
-**Memory** is off by default. Turn it on in **Settings → Privacy**.
+**Memory** is off by default. Turn it on in **Settings → Privacy**. On a Mac,
+Aria asks you to confirm first.
 
 With **Memory** on, Aria saves the text of what you ask in your own voice. It
 sends that text to Claude to find facts about you and words Aria mishears. Aria
-adds those facts to later chats. Aria never saves a **Local model** chat for
-Memory, but adds the facts it already has to it. Memory needs your voice profile. Without one,
-Aria saves nothing.
+adds those facts to later chats. This includes **Local model** chats, so their
+text reaches Claude too. Memory needs your voice profile. Without one, Aria
+saves nothing.
 
 Memory lives in `~/.aria/memory/`, or the folder `memory.dir` names. Only your
 user account and administrators can read it. Aria deletes a saved chat once

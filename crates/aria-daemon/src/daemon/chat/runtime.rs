@@ -456,10 +456,8 @@ impl ChatRuntime {
             config.timeout,
             cancel,
         )?;
-        // Extraction runs on Claude, so a local chat is never kept for it.
         if let Some(memory) = &memory
             && request.own_voice
-            && request.assistant_id != AssistantId::Local
         {
             self.remember(memory, &request);
         }
@@ -1569,9 +1567,18 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_local_chat_is_never_kept_for_extraction() {
+    fn a_local_chat_in_the_owners_voice_is_kept() {
         let home = home_with_memory();
         enroll_owner(home.path());
+        let endpoint = serve_local_reply("hi there");
+        std::fs::write(
+            home.path().join(".aria/settings.toml"),
+            format!(
+                "[memory]\nenabled = true\n[local_provider]\nendpoint = \"{endpoint}\"\n\
+                 [assistant.models]\nlocal = \"m\"\n"
+            ),
+        )
+        .expect("the settings file");
         let log = Arc::new(Mutex::new(Log::default()));
         let (runtime, events, mut woken) = runtime_waking(home.path(), logging_assistants(&log));
         let heard = ChatRequest {
@@ -1580,10 +1587,49 @@ pub(super) mod tests {
             ..request("hello", home.path(), false)
         };
 
-        run(&runtime, &events, 1, heard.clone());
+        let ended = run(&runtime, &events, 1, heard.clone());
 
-        assert!(turns(home.path(), &heard).is_empty());
-        assert!(woken.try_recv().is_err());
+        assert!(matches!(ended, ChatStageKind::Replied(_)), "{ended:?}");
+        assert_eq!(turns(home.path(), &heard), ["hello"]);
+        assert!(woken.try_recv().is_ok());
+    }
+
+    /// A loopback model server that streams `reply` to every request.
+    fn serve_local_reply(reply: &str) -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let address = listener.local_addr().expect("its address");
+        let chunk = format!(
+            r#"{{"choices":[{{"delta":{{"content":"{reply}"}},"finish_reason":"stop"}}]}}"#
+        );
+        let body = format!("data: {chunk}\n\ndata: [DONE]\n\n");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{body}",
+            body.len()
+        );
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.expect("a connection");
+                let mut reader = BufReader::new(stream.try_clone().expect("a reader"));
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).expect("a header");
+                    if line.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().expect("a length");
+                    }
+                }
+                let mut request = vec![0; length];
+                reader.read_exact(&mut request).expect("the body");
+                stream.write_all(response.as_bytes()).expect("the reply");
+            }
+        });
+        format!("http://{address}/v1/chat/completions")
     }
 
     #[test]
