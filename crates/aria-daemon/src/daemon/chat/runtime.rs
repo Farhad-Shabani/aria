@@ -24,6 +24,7 @@ use aria_platform::delivery::{
     TargetPolicy, TextDelivery,
 };
 use aria_primitives::error_chain;
+use aria_provider::ProviderError;
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{ApplicationId, Prompt, PromptId, PromptKind, SettingsCache, SettingsStore};
@@ -215,39 +216,31 @@ impl ChatRuntime {
             (overrides.execute)(self, ticket, job, cancellation);
             return;
         }
-        // Read as the run starts rather than at admission, so turning history
-        // off while the job waited keeps it out of history.
-        let history = match self.enabled_history() {
-            Ok(history) => history,
-            Err(error) => return self.report(ticket, job.assistant_id(), Err(error)),
-        };
         match job.assistant_id() {
             AssistantId::ClaudeCode => self.execute_with(
-                &ClaudeCodeAssistant::new(CLAUDE_BINARY.into()),
+                |_| ClaudeCodeAssistant::new(CLAUDE_BINARY.into()),
                 ticket,
                 job,
-                history,
                 cancellation,
             ),
             AssistantId::Codex => self.execute_with(
-                &CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone()),
+                |_| CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone()),
                 ticket,
                 job,
-                history,
                 cancellation,
             ),
             AssistantId::LocalModel => {
-                self.execute_with(&self.local(history), ticket, job, history, cancellation);
+                self.execute_with(|history| self.local(history), ticket, job, cancellation);
             }
         }
     }
 
-    fn execute_with<A: Assistant>(
-        &self,
-        assistant: &A,
+    /// Builds the assistant from the history the run may recall from.
+    fn execute_with<'a, A: Assistant>(
+        &'a self,
+        assistant: impl FnOnce(Option<&'a HistoryStore>) -> A,
         ticket: Ticket,
         job: ChatJob,
-        history: Option<&HistoryStore>,
         cancellation: CancelToken,
     ) {
         let assistant_id = job.assistant_id();
@@ -255,13 +248,27 @@ impl ChatRuntime {
             self.cancel_unstarted(ticket, assistant_id);
             return;
         }
+        // Read as the run starts rather than at admission, so turning history
+        // off while the job waited keeps it out of history. A prompt run with
+        // no entry saves nothing, so it doesn't read the settings.
+        let reads_history = match &job {
+            ChatJob::Ask(_) => true,
+            ChatJob::Prompt(request) => request.entry.is_some(),
+        };
+        let history = match reads_history.then(|| self.enabled_history()).transpose() {
+            Ok(history) => history.flatten(),
+            Err(error) => return self.report(ticket, assistant_id, Err(error)),
+        };
+        let assistant = assistant(history);
         let mut steps = StepRelay::new(&self.emitter, ticket, assistant_id);
         steps.step(Step::Thinking);
         let outcome = match job {
             ChatJob::Ask(request) => {
-                self.ask(assistant, &mut steps, request, history, &cancellation)
+                self.ask(&assistant, &mut steps, request, history, &cancellation)
             }
-            ChatJob::Prompt(request) => self.run_prompt(assistant, request, history, &cancellation),
+            ChatJob::Prompt(request) => {
+                self.run_prompt(&assistant, request, history, &cancellation)
+            }
         };
         self.report(ticket, assistant_id, outcome);
     }
@@ -724,27 +731,31 @@ impl StepSink for StepRelay<'_> {
     }
 }
 
-/// A failed run may mean the CLI is signed out. Its error text differs
-/// across versions, so its status command decides.
+/// A failed run may mean the CLI is signed out, and an HTTP error may mean
+/// the model server lacks the model. The error text differs across versions
+/// and servers, so the readiness check decides.
 fn diagnosed<A: Assistant>(
     assistant: &A,
     assistant_id: AssistantId,
     error: AssistantError,
     cancel: &CancelToken,
 ) -> AssistantError {
-    let AssistantError::Failed(_) = error else {
+    if !matches!(
+        error,
+        AssistantError::Failed(_) | AssistantError::Provider(ProviderError::HttpStatus)
+    ) {
         return error;
-    };
+    }
     match assistant.check_ready(cancel) {
         AssistantStatus::SignedOut { fix } => AssistantError::SignedOut {
             assistant: assistant_id,
             fix,
         },
+        AssistantStatus::ModelMissing { model } => AssistantError::ModelMissing { model },
         AssistantStatus::Ready
         | AssistantStatus::NotInstalled { .. }
         | AssistantStatus::NotConfigured { .. }
         | AssistantStatus::Unreachable { .. }
-        | AssistantStatus::ModelMissing { .. }
         | AssistantStatus::Unchecked(_) => error,
     }
 }
@@ -1104,14 +1115,8 @@ pub(super) mod tests {
             }),
             assistant_overrides: Some(AssistantOverrides {
                 execute: Box::new(move |runtime, ticket, job, cancel| {
-                    let history = runtime.enabled_history().expect("settings");
-                    runtime.execute_with(
-                        &for_execution(job.assistant_id()),
-                        ticket,
-                        job,
-                        history,
-                        cancel,
-                    );
+                    let assistant_id = job.assistant_id();
+                    runtime.execute_with(|_| for_execution(assistant_id), ticket, job, cancel);
                 }),
                 models: Box::new(move |assistant_id, cancel| {
                     for_models(assistant_id).models(cancel)
@@ -2013,6 +2018,55 @@ pub(super) mod tests {
 
         assert!(matches!(kind, ChatStageKind::Failed { .. }));
         assert!(turns(home.path(), &heard).is_empty());
+    }
+
+    #[test]
+    fn a_server_error_for_a_model_the_server_lacks_says_to_load_it() {
+        let error = diagnosed(
+            &ServerWithout("qwen"),
+            AssistantId::LocalModel,
+            AssistantError::Provider(ProviderError::HttpStatus),
+            &CancelToken::never(),
+        );
+
+        assert!(
+            matches!(&error, AssistantError::ModelMissing { model } if model == "qwen"),
+            "{error:?}"
+        );
+        assert_eq!(
+            RpcErrorCode::from(&ChatError::Assistant(error)),
+            RpcErrorCode::AssistantUnavailable
+        );
+    }
+
+    /// A model server that answers but doesn't list its one model.
+    struct ServerWithout(&'static str);
+
+    impl Assistant for ServerWithout {
+        type Session = FailingSession;
+
+        fn models(&self, _cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
+            Ok(Vec::new())
+        }
+
+        fn check_ready(&self, _cancel: &CancelToken) -> AssistantStatus {
+            AssistantStatus::ModelMissing {
+                model: self.0.to_owned(),
+            }
+        }
+
+        fn open(&self, _spec: SessionSpec<'_>) -> Self::Session {
+            FailingSession
+        }
+
+        fn run_prompt(
+            &self,
+            _request: &PromptRun<'_>,
+            _cancel: &CancelToken,
+            _timeout: Duration,
+        ) -> Result<String, AssistantError> {
+            Err(AssistantError::Provider(ProviderError::HttpStatus))
+        }
     }
 
     struct FailingAssistant {

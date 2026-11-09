@@ -435,7 +435,8 @@ impl Store {
     }
 
     /// The chats saved under `conversation`, oldest first: the newest whose
-    /// requests and replies fit in `max_bytes` together.
+    /// requests and replies fit in `max_bytes` together. A chat too big to
+    /// fit on its own is left out, so it doesn't cost the ones before it.
     pub fn conversation(
         &self,
         conversation: &str,
@@ -451,7 +452,11 @@ impl Store {
         let mut used = 0;
         while let Some(row) = rows.next()? {
             let chat = decode(row)?;
-            used += stored_bytes(&chat);
+            let bytes = stored_bytes(&chat);
+            if bytes > max_bytes {
+                continue;
+            }
+            used += bytes;
             if used > max_bytes {
                 break;
             }
@@ -1740,6 +1745,9 @@ mod tests {
         // "three" and "two" with their replies take 12 bytes; "one" doesn't fit.
         assert_eq!(questions("c1", 12), ["two", "three"]);
         assert_eq!(questions("c2", 1024), ["other"]);
+        // A chat bigger than the whole budget doesn't hide the ones before it.
+        chat("a request far longer than the budget", Some("c1"));
+        assert_eq!(questions("c1", 12), ["two", "three"]);
         assert!(questions("c3", 1024).is_empty());
     }
 

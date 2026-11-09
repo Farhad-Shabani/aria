@@ -503,14 +503,12 @@ fn cleanup_check(
             CLEANUP_MODEL,
             format!("{endpoint} doesn't list {model}; dictation types the rule-cleaned text"),
         ),
-        Err(error @ LlmCleanupError::Server(ProviderError::Timeout | ProviderError::Transport)) => {
-            Check::warning(
-                CLEANUP_MODEL,
-                format!(
-                    "{endpoint} doesn't answer ({error}); dictation types the rule-cleaned text"
-                ),
-            )
-        }
+        Err(
+            error @ (LlmCleanupError::Timeout | LlmCleanupError::Server(ProviderError::Transport)),
+        ) => Check::warning(
+            CLEANUP_MODEL,
+            format!("{endpoint} doesn't answer ({error}); dictation types the rule-cleaned text"),
+        ),
         Err(error) => Check::warning(
             CLEANUP_MODEL,
             format!("{endpoint} answered, but {error}; dictation types the rule-cleaned text"),
@@ -572,6 +570,12 @@ mod tests {
             (
                 true,
                 Some(LlmCleanupError::Server(ProviderError::Transport)),
+                Status::Warning,
+                "doesn't answer",
+            ),
+            (
+                true,
+                Some(LlmCleanupError::from(ProviderError::Timeout)),
                 Status::Warning,
                 "doesn't answer",
             ),

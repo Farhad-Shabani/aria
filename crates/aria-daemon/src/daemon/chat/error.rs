@@ -66,6 +66,7 @@ impl From<&ChatError> for RpcErrorCode {
             ChatError::Assistant(
                 AssistantError::Missing { .. }
                 | AssistantError::NotConfigured { .. }
+                | AssistantError::ModelMissing { .. }
                 | AssistantError::Provider(ProviderError::Transport),
             ) => Self::AssistantUnavailable,
             ChatError::Assistant(AssistantError::Provider(

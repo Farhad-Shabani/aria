@@ -414,6 +414,9 @@ pub enum AssistantError {
     #[error("the local assistant isn't set up; {fix}")]
     NotConfigured { fix: &'static str },
 
+    #[error("the model server doesn't list {model}; load it, such as with ollama pull")]
+    ModelMissing { model: String },
+
     #[error("the local provider failed")]
     Provider(#[source] aria_provider::ProviderError),
 

@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Read};
-use std::time::Instant;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::{Duration, Instant};
 
 use aria_primitives::cancel::CancelToken;
 use serde::Deserialize;
@@ -8,12 +9,17 @@ use crate::client::{agent, check_budget};
 use crate::error::transport_error;
 use crate::{Client, ProviderError};
 
+/// How soon a cancel returns while the server has sent nothing.
+const CANCEL_POLL: Duration = Duration::from_millis(50);
+
 impl Client {
     /// Sends `request`, which must set `"stream": true`, and returns the
     /// text of its one assistant message. Reads the reply as server-sent
-    /// events.
-    /// Cancelling hangs up at the next event, so the server stops
-    /// generating. A reply over `max_bytes` fails.
+    /// events. A reply over `max_bytes` fails.
+    ///
+    /// Cancelling returns at once, even before the server sends anything.
+    /// The request runs on its own thread, which hangs up at the next event
+    /// so the server stops generating, and ends by `deadline` at the latest.
     pub fn stream(
         &self,
         request: &serde_json::Value,
@@ -22,6 +28,31 @@ impl Client {
         cancel: &CancelToken,
     ) -> Result<String, ProviderError> {
         check_budget(deadline, cancel)?;
+        let (done, result) = mpsc::channel();
+        let (client, request, worker_cancel) = (self.clone(), request.clone(), cancel.clone());
+        std::thread::Builder::new()
+            .name("aria-provider-stream".to_owned())
+            .spawn(move || {
+                let _ =
+                    done.send(client.read_stream(&request, max_bytes, deadline, &worker_cancel));
+            })
+            .map_err(|_| ProviderError::Transport)?;
+        loop {
+            match result.recv_timeout(CANCEL_POLL) {
+                Ok(reply) => return reply,
+                Err(RecvTimeoutError::Timeout) => check_budget(deadline, cancel)?,
+                Err(RecvTimeoutError::Disconnected) => return Err(ProviderError::Transport),
+            }
+        }
+    }
+
+    fn read_stream(
+        &self,
+        request: &serde_json::Value,
+        max_bytes: usize,
+        deadline: Instant,
+        cancel: &CancelToken,
+    ) -> Result<String, ProviderError> {
         let mut response = agent(deadline)
             .post(self.endpoint())
             .header("Content-Type", "application/json")
@@ -215,6 +246,25 @@ mod tests {
             assert_eq!(stream(&client, &CancelToken::never()), Err(expected));
             worker.join().unwrap();
         }
+    }
+
+    #[test]
+    fn cancelling_returns_before_the_server_sends_anything() {
+        let cancel = CancelToken::new();
+        let canceller = cancel.clone();
+        let (client, worker) = serve(move |stream| {
+            canceller.cancel();
+            // Silent until the client hangs up or the deadline passes.
+            let _ = std::io::copy(&mut &stream, &mut std::io::sink());
+        });
+
+        let started = Instant::now();
+        assert_eq!(stream(&client, &cancel), Err(ProviderError::Cancelled));
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "waited for the server"
+        );
+        drop(worker);
     }
 
     #[test]

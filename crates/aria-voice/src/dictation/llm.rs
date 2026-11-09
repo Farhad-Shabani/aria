@@ -49,6 +49,17 @@ pub enum LlmCleanupError {
     ModelMissing,
 }
 
+/// A server timeout is the cleanup's own timeout, so each meaning keeps
+/// one variant.
+impl From<ProviderError> for LlmCleanupError {
+    fn from(error: ProviderError) -> Self {
+        match error {
+            ProviderError::Timeout => Self::Timeout,
+            error => Self::Server(error),
+        }
+    }
+}
+
 impl From<LlmCleanupError> for TranscriptionError {
     fn from(error: LlmCleanupError) -> Self {
         Self::Processing(layer::Error::Failed(Box::new(error)))
@@ -94,7 +105,7 @@ impl LlmCleanup {
         let deadline = Instant::now() + REQUEST_BUDGET;
         if client(target)
             .serves(target.model(), deadline)
-            .map_err(LlmCleanupError::Server)?
+            .map_err(LlmCleanupError::from)?
         {
             Ok(())
         } else {
@@ -232,7 +243,7 @@ fn client(target: &LlmCleanupTarget) -> Client {
 fn server_error(error: ProviderError) -> TranscriptionError {
     match error {
         ProviderError::Cancelled => TranscriptionError::Cancelled,
-        error => LlmCleanupError::Server(error).into(),
+        error => LlmCleanupError::from(error).into(),
     }
 }
 
