@@ -7,6 +7,7 @@
 mod config;
 pub use config::ChatConfig;
 mod assistants;
+mod local;
 mod models;
 pub use models::AssistantModel;
 mod process;
@@ -33,6 +34,7 @@ use aria_settings::rpc::RpcErrorCode;
 
 pub use assistants::{CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant};
 pub(crate) use assistants::{claude_command, parse_claude};
+pub use local::{Exchange, LocalAssistant, LocalSession};
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
 pub use prompt_run::{
@@ -322,6 +324,18 @@ pub enum AssistantStatus {
     SignedOut {
         fix: &'static str,
     },
+    /// The settings file doesn't say where or what to run.
+    NotConfigured {
+        fix: &'static str,
+    },
+    /// Nothing answers at the local provider's endpoint.
+    Unreachable {
+        endpoint: String,
+    },
+    /// The local provider answers but doesn't list the model.
+    ModelMissing {
+        model: String,
+    },
     /// The check itself failed, so the status is not known.
     Unchecked(AssistantError),
 }
@@ -334,7 +348,13 @@ impl AssistantStatus {
             Self::NotInstalled { binary } => {
                 Some(format!("install the `{}` command", binary.display()))
             }
-            Self::SignedOut { fix } => Some((*fix).to_owned()),
+            Self::SignedOut { fix } | Self::NotConfigured { fix } => Some((*fix).to_owned()),
+            Self::Unreachable { endpoint } => {
+                Some(format!("start the model server that serves {endpoint}"))
+            }
+            Self::ModelMissing { model } => Some(format!(
+                "load {model} into the model server, such as with ollama pull"
+            )),
             Self::Unchecked(error) => Some(error_chain(error)),
         }
     }
@@ -391,6 +411,12 @@ pub enum AssistantError {
 
     #[error("the assistant's output could not be understood: {0}")]
     Malformed(String),
+
+    #[error("the local assistant isn't set up; {fix}")]
+    NotConfigured { fix: &'static str },
+
+    #[error("the local provider failed")]
+    Provider(#[source] aria_provider::ProviderError),
 
     #[error("the assistant exceeded its deadline of {0:?}")]
     Timeout(Duration),

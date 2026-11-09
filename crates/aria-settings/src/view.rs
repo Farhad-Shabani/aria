@@ -289,7 +289,7 @@ fn assistant_id(name: &str, key: Key) -> Result<AssistantId, SettingsError> {
                     .iter()
                     .map(|id| id.name())
                     .collect::<Vec<_>>()
-                    .join(" and "),
+                    .join(", "),
             },
         )
     })

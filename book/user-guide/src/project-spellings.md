@@ -47,7 +47,7 @@ Aria doesn't search upward for a project root.
 For a spoken question, `aria ask --project "$PWD"` looks up spellings in that
 folder and gives the assistant the same folder to work in. The assistant may
 send project content to cloud services. Read
-[Chat with Claude Code or Codex](./chat.md) first.
+[Chat with an assistant](./chat.md) first.
 
 Transcription doesn't use project vocabulary. Live dictation corrects
 each finalized segment separately, so a name split across segments may stay

@@ -20,6 +20,7 @@ aria-assistant    = { workspace = true }
 aria-kit          = { workspace = true, features = [ "microphone", "playback" ] }
 aria-platform     = { workspace = true }
 aria-primitives   = { workspace = true }
+aria-provider     = { workspace = true }
 aria-stt          = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "whisper", "whisper-candle" ] }
 aria-voice        = { workspace = true }
 aria-wake         = { workspace = true, features = [ "livekit", "openwakeword" ] }

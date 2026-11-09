@@ -18,7 +18,7 @@ Read [Privacy](./privacy.md#prompts) before using a prompt.
 ## Before you start
 
 Set up Claude Code or Codex by following
-[Chat with Claude Code or Codex](./chat.md#before-you-start). Prompts use the
+[Chat with an assistant](./chat.md#before-you-start). Prompts use the
 same assistant and model as Chat. You can change both in
 [Assistant settings](./settings.md#assistant).
 

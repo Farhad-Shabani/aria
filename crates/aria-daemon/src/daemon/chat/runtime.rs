@@ -11,9 +11,9 @@ use aria_assistant::chat::ChatConfig;
 use aria_assistant::chat::{
     Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY, CODEX_BINARY,
     ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind, ChatSubscribers,
-    ChatTarget, ClaudeCodeAssistant, CodexAssistant, DeliverCall, Projects, PromptCall,
-    PromptChoice, PromptInput, PromptInstructions, PromptRequest, PromptRun, Session, SessionSpec,
-    SessionStore, Step, Ticket, TurnSink, read_instructions,
+    ChatTarget, ClaudeCodeAssistant, CodexAssistant, DeliverCall, Exchange, LocalAssistant,
+    Projects, PromptCall, PromptChoice, PromptInput, PromptInstructions, PromptRequest, PromptRun,
+    Session, SessionSpec, SessionStore, Step, Ticket, TurnSink, read_instructions,
 };
 use aria_assistant::memory::MemoryConfig;
 use aria_assistant::memory::{DB_FILE, Store, load_profile_block};
@@ -28,7 +28,7 @@ use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{ApplicationId, Prompt, PromptId, PromptKind, SettingsCache, SettingsStore};
 use aria_voice::config::SpeakerConfig;
-use aria_voice::history::HistoryEntry;
+use aria_voice::history::{HistoryContent, HistoryEntry};
 use aria_voice::speaker::{ProfileStore, Role};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -37,6 +37,8 @@ use tokio::sync::mpsc;
 
 /// Resume ids outlive the daemon and a reboot, like the assistants' own history.
 const SESSION_FILE: &str = "chat-session.json";
+/// How much of a conversation the local model rereads with each chat.
+const RECALL_BYTES: usize = 32 * 1024;
 
 pub(in crate::daemon) enum ChatJob {
     Ask(ChatRequest),
@@ -121,7 +123,38 @@ impl ChatRuntime {
             AssistantId::Codex => {
                 CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone()).models(cancel)
             }
+            AssistantId::Local => self.local().models(cancel),
         }
+    }
+
+    /// The local assistant on the provider frozen at startup, with the model
+    /// the settings name now. It recalls a conversation only while history
+    /// is on, so turning history off starts every chat fresh.
+    fn local(&self) -> LocalAssistant<impl Fn(&str) -> Vec<Exchange> + Send + Sync + '_> {
+        let effective = self.cache.effective();
+        let model = self.settings.snapshot().ok().and_then(|snapshot| {
+            snapshot
+                .settings
+                .model_id(AssistantId::Local)
+                .map(str::to_owned)
+        });
+        let recall = move |conversation: &str| {
+            let history_on = self
+                .settings
+                .snapshot()
+                .is_ok_and(|snapshot| snapshot.settings.history_enabled);
+            if !history_on {
+                return Vec::new();
+            }
+            match self.history.conversation(conversation, RECALL_BYTES) {
+                Ok(chats) => chats.into_iter().filter_map(exchange).collect(),
+                Err(error) => {
+                    tracing::warn!(error = %error_chain(&error), "the conversation could not be recalled");
+                    Vec::new()
+                }
+            }
+        };
+        LocalAssistant::new(effective.choices().local_provider.as_ref(), model, recall)
     }
 
     pub(in crate::daemon) fn assistants(
@@ -145,6 +178,7 @@ impl ChatRuntime {
             }
             AssistantId::Codex => CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone())
                 .check_ready(cancel),
+            AssistantId::Local => self.local().check_ready(cancel),
         }
     }
 
@@ -195,6 +229,7 @@ impl ChatRuntime {
                 job,
                 cancellation,
             ),
+            AssistantId::Local => self.execute_with(&self.local(), ticket, job, cancellation),
         }
     }
 
@@ -421,8 +456,10 @@ impl ChatRuntime {
             config.timeout,
             cancel,
         )?;
+        // Extraction runs on Claude, so a local chat is never kept for it.
         if let Some(memory) = &memory
             && request.own_voice
+            && request.assistant_id != AssistantId::Local
         {
             self.remember(memory, &request);
         }
@@ -707,7 +744,21 @@ fn diagnosed<A: Assistant>(
         },
         AssistantStatus::Ready
         | AssistantStatus::NotInstalled { .. }
+        | AssistantStatus::NotConfigured { .. }
+        | AssistantStatus::Unreachable { .. }
+        | AssistantStatus::ModelMissing { .. }
         | AssistantStatus::Unchecked(_) => error,
+    }
+}
+
+/// A saved chat as the local model reads it back.
+fn exchange(chat: HistoryEntry) -> Option<Exchange> {
+    match chat.content {
+        HistoryContent::Chat { reply } => Some(Exchange {
+            question: chat.text,
+            reply,
+        }),
+        HistoryContent::Dictation(_) | HistoryContent::SystemTranscription { .. } => None,
     }
 }
 
@@ -1518,6 +1569,24 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_local_chat_is_never_kept_for_extraction() {
+        let home = home_with_memory();
+        enroll_owner(home.path());
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events, mut woken) = runtime_waking(home.path(), logging_assistants(&log));
+        let heard = ChatRequest {
+            own_voice: true,
+            assistant_id: AssistantId::Local,
+            ..request("hello", home.path(), false)
+        };
+
+        run(&runtime, &events, 1, heard.clone());
+
+        assert!(turns(home.path(), &heard).is_empty());
+        assert!(woken.try_recv().is_err());
+    }
+
+    #[test]
     fn without_an_enrolled_owner_nothing_is_kept() {
         let home = home_with_memory();
         let log = Arc::new(Mutex::new(Log::default()));
@@ -2145,6 +2214,9 @@ pub(super) mod tests {
             Box::new(|assistant_id, _cancel| match assistant_id {
                 AssistantId::ClaudeCode => AssistantStatus::SignedOut { fix: "sign in" },
                 AssistantId::Codex => AssistantStatus::Ready,
+                AssistantId::Local => AssistantStatus::ModelMissing {
+                    model: "qwen".to_owned(),
+                },
             });
         let runtime = Arc::new(runtime);
         let (handle, _actor) = crate::daemon::chat::channel(Arc::clone(&runtime));
@@ -2178,6 +2250,11 @@ pub(super) mod tests {
                     wire::AssistantId::Codex as i32,
                     wire::AssistantStatus::Ready as i32,
                     ""
+                ),
+                (
+                    wire::AssistantId::Local as i32,
+                    wire::AssistantStatus::ModelMissing as i32,
+                    "load qwen into the model server, such as with ollama pull"
                 ),
             ]
         );

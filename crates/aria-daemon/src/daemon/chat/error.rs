@@ -2,6 +2,7 @@
 
 use aria_assistant::chat::{AssistantError, InstructionsError, ProjectsError, SessionStoreError};
 use aria_platform::delivery::DeliveryError;
+use aria_provider::ProviderError;
 use aria_settings::rpc::RpcErrorCode;
 
 #[derive(Debug, thiserror::Error)]
@@ -62,7 +63,20 @@ impl From<&ChatError> for RpcErrorCode {
     fn from(error: &ChatError) -> Self {
         match error {
             ChatError::Session(_) | ChatError::Settings(_) => Self::Internal,
-            ChatError::Assistant(AssistantError::Missing { .. }) => Self::AssistantUnavailable,
+            ChatError::Assistant(
+                AssistantError::Missing { .. }
+                | AssistantError::NotConfigured { .. }
+                | AssistantError::Provider(ProviderError::Transport),
+            ) => Self::AssistantUnavailable,
+            ChatError::Assistant(AssistantError::Provider(
+                ProviderError::Cancelled
+                | ProviderError::Timeout
+                | ProviderError::HttpStatus
+                | ProviderError::HeadersTooLarge
+                | ProviderError::ResponseTooLarge
+                | ProviderError::InvalidResponse
+                | ProviderError::Truncated,
+            )) => Self::AssistantFailed,
             ChatError::Assistant(AssistantError::NoWorkdir(_)) | ChatError::PromptOff => {
                 Self::InvalidRequest
             }

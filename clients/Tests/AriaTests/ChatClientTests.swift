@@ -25,6 +25,16 @@ final class ChatClientTests: XCTestCase {
             ])
     }
 
+    func testTheLocalAssistantsStatusesComeThrough() throws {
+        let statuses: [(Aria_Daemon_V1_AssistantStatus, Assistant.Status)] = [
+            (.notConfigured, .notConfigured), (.unreachable, .unreachable), (.modelMissing, .modelMissing),
+        ]
+        for (wire, status) in statuses {
+            let assistants = try ChatClient.assistants(from: [assistant(.local, name: "Local model", status: wire)])
+            XCTAssertEqual(assistants, [Assistant(id: .local, name: "Local model", status: status)])
+        }
+    }
+
     func testAnEmptyDuplicateUnknownUnnamedOrStatuslessListIsInvalid() {
         let codex = assistant(.codex, name: "Codex")
         for wire in [

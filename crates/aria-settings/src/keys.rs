@@ -180,8 +180,8 @@ keys! {
         "cpu or gpu. parakeet only.";
     SystemTranscriptionTranscriptsDir: "transcription.transcripts_dir", Live, Mac, [], Kind::Path, Some("\"~/.aria/transcripts\""),
         "Where Transcription saves transcripts.";
-    AssistantId: "assistant.id", Live, Mac, [], Kind::Choice(&["claude-code", "codex"]), Some("claude-code"),
-        "Who answers `aria ask`: claude-code or codex.";
+    AssistantId: "assistant.id", Live, Mac, [], Kind::Choice(&["claude-code", "codex", "local"]), Some("claude-code"),
+        "Who answers `aria ask`: claude-code, codex, or local.";
     AssistantModels: "assistant.models", Live, Mac, [], Kind::Models, None,
         "The model each assistant uses. A missing assistant uses its own default.";
     AssistantWorkdir: "assistant.workdir", Live, Mac, [], Kind::Path, None,
@@ -261,7 +261,7 @@ keys! {
     SpeakerProfilesDir: "speaker.profiles_dir", Restart, Mac, [], Kind::Path, Some("\"~/.aria/speakers\""),
         "Enrolled voice profiles.";
     LocalProviderEndpoint: "local_provider.endpoint", Restart, Mac, [], Kind::Text, None,
-        "A loopback chat-completions endpoint on this Mac, such as Ollama's. Cleanup's local model runs on it.";
+        "A loopback chat-completions endpoint on this Mac, such as Ollama's. Cleanup's model and the local assistant run on it.";
     CaptureBackend: "capture.backend", Restart, Mac, [], Kind::Choice(&["microphone", "wav_file"]), Some("microphone"),
         "Testing only. microphone or wav_file.";
     CapturePath: "capture.path", Restart, Mac, [], Kind::Path, None,

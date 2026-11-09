@@ -31,17 +31,19 @@ These choices still depend on the selected model's supported languages.
 
 ## Assistant
 
-In **Settings → General → Assistant**, choose **App** (Claude Code or Codex)
-and **Model**. [Install and sign in](./chat.md#before-you-start) first.
+In **Settings → General → Assistant**, choose **App** (Claude Code, Codex, or
+Local model) and **Model**. [Install and sign in](./chat.md#before-you-start)
+first, or [set up a local model](./chat.md#use-a-local-model).
 Changes apply to the next chat or prompt in both the Mac app and terminal.
 
 Each assistant remembers its own model. **Default** lets the assistant choose.
+Local model has no default, so it needs a model.
 **Other…** accepts a model ID. An unavailable model causes an error, not a
 switch to another model.
 
 ```sh
 aria settings show assistant.id                     # show the assistant
-aria settings set assistant.id codex                # choose codex or claude-code
+aria settings set assistant.id codex                # choose claude-code, codex, or local
 aria assistant models                               # list model IDs
 aria settings set assistant.models.codex "MODEL_ID"  # choose a model from the list
 aria settings reset assistant.models.codex          # let the assistant choose

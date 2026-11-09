@@ -17,7 +17,7 @@ Once that works, choose what you need next:
 
 - [Review or delete saved dictations](./history.md).
 - [Read text aloud](./tts.md).
-- [Chat with Claude Code or Codex](./chat.md).
+- [Chat with an assistant](./chat.md).
 - [Correct project names](./project-spellings.md).
 - [Create voice profiles](./speaker-verification.md).
 - [Transcribe audio playing on your Mac](./transcribe-system-audio.md).

@@ -72,10 +72,17 @@ it. It skips password fields and never saves or logs them.
 
 ## Chats
 
-[Chat](./chat.md) sends your question to Claude Code or Codex. That
-assistant may send the question and project content to cloud services. It
-also keeps its own conversation records. Aria uses read-only settings to
-limit file changes, but those settings do not prevent network access.
+[Chat](./chat.md) sends your question to the assistant you choose. Claude Code
+and Codex may send the question and project content to cloud services. They
+also keep their own conversation records. Aria uses read-only settings to
+limit file changes, but those settings don't prevent network access.
+
+**Local model** sends your question to the model server that
+`local_provider.endpoint` names, never your project's files. Aria connects
+only to an address on your own Mac. The server decides where the text goes
+next, as with [text cleanup](#text-cleanup-with-a-local-model). With history
+on, each question also carries the conversation's earlier questions and
+replies.
 
 With history on, Aria also saves each question and its reply in
 [history](./history.md) for up to 30 days. Starting a fresh conversation
@@ -103,7 +110,8 @@ and settings. Prompt recordings are not kept in dictation history.
 
 With **Memory** on, Aria saves the text of what you ask in your own voice. It
 sends that text to Claude to find facts about you and words Aria mishears. Aria
-adds those facts to later chats. Memory needs your voice profile. Without one,
+adds those facts to later chats. Aria never saves a **Local model** chat for
+Memory, but adds the facts it already has to it. Memory needs your voice profile. Without one,
 Aria saves nothing.
 
 Memory lives in `~/.aria/memory/`, or the folder `memory.dir` names. Only your

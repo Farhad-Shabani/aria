@@ -66,7 +66,7 @@ keep_audio = false
 transcripts_dir = "~/.aria/transcripts"
 
 [assistant]
-# Who answers `aria ask`: claude-code or codex. `--assistant` overrides it for one question.
+# Who answers `aria ask`: claude-code, codex, or local. `--assistant` overrides it for one question.
 id = "claude-code"
 # Where the assistant works. Absent means the caller's directory.
 # workdir = "~/src"
@@ -75,9 +75,11 @@ project_roots = []
 # The longest a reply may take, at most 570.
 timeout_secs = 300.0
 
-# The model each assistant uses. A missing assistant uses its own default.
+# The model each assistant uses. A missing CLI assistant uses its own default.
+# local has none: it needs a model the local provider serves.
 [assistant.models]
 # claude-code = "sonnet"
+# local = "MODEL_ID"
 
 [memory]
 # Remembers facts you state while asking, and shows them to the assistant in later chats.

@@ -1,7 +1,7 @@
 //! A client for a model server on this machine that speaks the OpenAI
 //! chat-completions API, such as Ollama or llama-server.
 
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::time::{Duration, Instant};
 
 use aria_primitives::cancel::CancelToken;
@@ -60,8 +60,12 @@ impl Client {
         }
     }
 
-    /// Whether the server lists `model`. Spends no tokens.
-    pub fn serves(&self, model: &str, deadline: Instant) -> Result<bool, ProviderError> {
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// The IDs of the models the server lists. Spends no tokens.
+    pub fn models(&self, deadline: Instant) -> Result<Vec<String>, ProviderError> {
         let mut response = agent(deadline)
             .get(&self.listing)
             .header("Accept", "application/json")
@@ -78,10 +82,20 @@ impl Client {
         )?;
         let listed: ModelList =
             serde_json::from_slice(&body).map_err(|_| ProviderError::InvalidResponse)?;
+        Ok(listed
+            .data
+            .into_iter()
+            .flatten()
+            .map(|entry| entry.id)
+            .collect())
+    }
+
+    /// Whether the server lists `model`. Spends no tokens.
+    pub fn serves(&self, model: &str, deadline: Instant) -> Result<bool, ProviderError> {
         // Ollama lists "llama3.2:latest" and serves it as "llama3.2".
         let latest = format!("{model}:latest");
         let serves = |id: &str| id == model || (!model.contains(':') && id == latest);
-        Ok(listed.data.iter().flatten().any(|entry| serves(&entry.id)))
+        Ok(self.models(deadline)?.iter().any(|id| serves(id)))
     }
 
     /// Sends one request with `"stream": false` and returns the text of
@@ -105,6 +119,111 @@ impl Client {
         }
         let body = read_bounded(response.body_mut().as_reader(), max_bytes, deadline, cancel)?;
         parse_reply(&body)
+    }
+}
+
+impl Client {
+    /// Sends one request with `"stream": true` and returns the text of its
+    /// one assistant message. Reads the reply as server-sent events, so
+    /// `cancel` takes effect at the next event and hangs up, which stops
+    /// the server generating. A reply over `max_bytes` fails.
+    pub fn stream(
+        &self,
+        request: &serde_json::Value,
+        max_bytes: usize,
+        deadline: Instant,
+        cancel: &CancelToken,
+    ) -> Result<String, ProviderError> {
+        check(deadline, cancel)?;
+        let mut response = agent(deadline)
+            .post(&self.endpoint)
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream")
+            .send(request.to_string())
+            .map_err(transport_error)?;
+        if !response.status().is_success() {
+            return Err(ProviderError::HttpStatus);
+        }
+        let mut events = BufReader::new(
+            response
+                .body_mut()
+                .as_reader()
+                .take(u64::try_from(max_bytes).unwrap_or(u64::MAX) + 1),
+        );
+        let mut reply = Reply::default();
+        let mut line = Vec::new();
+        let mut read = 0;
+        loop {
+            check(deadline, cancel)?;
+            line.clear();
+            let count = events
+                .read_until(b'\n', &mut line)
+                .map_err(|error| transport_error(error.into()))?;
+            read += count;
+            if read > max_bytes {
+                return Err(ProviderError::ResponseTooLarge);
+            }
+            if count == 0 {
+                return reply.finish();
+            }
+            let Some(data) = line.strip_prefix(b"data:") else {
+                continue;
+            };
+            let data = data.trim_ascii();
+            if data == b"[DONE]" {
+                return reply.finish();
+            }
+            reply.push(data)?;
+        }
+    }
+}
+
+/// A streamed reply as its events arrive.
+#[derive(Default)]
+struct Reply {
+    text: String,
+    finish_reason: Option<String>,
+}
+
+impl Reply {
+    fn push(&mut self, data: &[u8]) -> Result<(), ProviderError> {
+        let chunk: Chunk =
+            serde_json::from_slice(data).map_err(|_| ProviderError::InvalidResponse)?;
+        // A usage report comes without choices.
+        if chunk.choices.is_empty() {
+            return Ok(());
+        }
+        let [choice]: [ChunkChoice; 1] = chunk
+            .choices
+            .try_into()
+            .map_err(|_| ProviderError::InvalidResponse)?;
+        let delta = choice.delta;
+        if self.finish_reason.is_some()
+            || delta
+                .role
+                .as_deref()
+                .is_some_and(|role| role != "assistant")
+            || delta.tool_calls.is_some()
+            || delta.function_call.is_some()
+            || delta.refusal.is_some()
+        {
+            return Err(ProviderError::InvalidResponse);
+        }
+        if let Some(content) = delta.content {
+            self.text.push_str(&content);
+        }
+        self.finish_reason = choice.finish_reason;
+        Ok(())
+    }
+
+    fn finish(self) -> Result<String, ProviderError> {
+        match self.finish_reason.as_deref() {
+            Some("stop") => Ok(self.text),
+            Some("length") => Err(ProviderError::Truncated),
+            // A reply that ends without saying why was cut off.
+            None => Err(ProviderError::Transport),
+            Some(_) => Err(ProviderError::InvalidResponse),
+        }
     }
 }
 
@@ -212,6 +331,26 @@ struct Choice {
 }
 
 #[derive(Deserialize)]
+struct Chunk {
+    choices: Vec<ChunkChoice>,
+}
+
+#[derive(Deserialize)]
+struct ChunkChoice {
+    finish_reason: Option<String>,
+    delta: Delta,
+}
+
+#[derive(Deserialize)]
+struct Delta {
+    role: Option<String>,
+    content: Option<String>,
+    tool_calls: Option<serde_json::Value>,
+    function_call: Option<serde_json::Value>,
+    refusal: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
 struct Message {
     role: String,
     content: String,
@@ -235,6 +374,105 @@ mod tests {
 
     fn parse(value: &serde_json::Value) -> Result<String, ProviderError> {
         parse_reply(&serde_json::to_vec(value).unwrap())
+    }
+
+    /// Serves one connection on a loopback port with `respond`, and
+    /// returns a client for it.
+    fn serve(
+        respond: impl FnOnce(std::net::TcpStream) + Send + 'static,
+    ) -> (Client, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            let _ = std::io::Read::read(&mut stream, &mut request);
+            respond(stream);
+        });
+        let client = Client::new(
+            &format!("http://{address}/v1/chat/completions"),
+            &format!("http://{address}/v1/models"),
+        );
+        (client, worker)
+    }
+
+    fn event(delta: &str, finish_reason: Option<&str>) -> String {
+        let chunk = serde_json::json!({
+            "choices": [{ "delta": { "role": "assistant", "content": delta }, "finish_reason": finish_reason }]
+        });
+        format!("data: {chunk}\n\n")
+    }
+
+    const EVENT_HEADERS: &str =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+
+    fn stream(client: &Client, cancel: &CancelToken) -> Result<String, ProviderError> {
+        let request = serde_json::json!({ "stream": true });
+        client.stream(
+            &request,
+            64 * 1024,
+            Instant::now() + Duration::from_secs(5),
+            cancel,
+        )
+    }
+
+    #[test]
+    fn a_streamed_reply_joins_its_events_until_it_stops() {
+        let (client, worker) = serve(|mut stream| {
+            let body = format!(
+                "{EVENT_HEADERS}: comment\n\n{}{}{}data: {{\"choices\":[]}}\n\ndata: [DONE]\n\n",
+                event("Hel", None),
+                event("lo", None),
+                event("", Some("stop")),
+            );
+            std::io::Write::write_all(&mut stream, body.as_bytes()).unwrap();
+        });
+
+        assert_eq!(
+            stream(&client, &CancelToken::never()),
+            Ok("Hello".to_owned())
+        );
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn a_streamed_reply_that_hits_its_token_limit_or_just_ends_fails() {
+        for (tail, expected) in [
+            (event("", Some("length")), ProviderError::Truncated),
+            (String::new(), ProviderError::Transport),
+        ] {
+            let (client, worker) = serve(move |mut stream| {
+                let body = format!("{EVENT_HEADERS}{}{tail}", event("Hel", None));
+                std::io::Write::write_all(&mut stream, body.as_bytes()).unwrap();
+                // Ends the reply without resetting a request still unread.
+                stream.shutdown(std::net::Shutdown::Write).unwrap();
+                let _ = std::io::copy(&mut stream, &mut std::io::sink());
+            });
+
+            assert_eq!(stream(&client, &CancelToken::never()), Err(expected));
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn cancelling_a_stream_hangs_up_at_the_next_event() {
+        let cancel = CancelToken::new();
+        let canceller = cancel.clone();
+        let (client, worker) = serve(move |mut stream| {
+            let first = format!("{EVENT_HEADERS}{}", event("Hel", None));
+            std::io::Write::write_all(&mut stream, first.as_bytes()).unwrap();
+            canceller.cancel();
+            // The client hangs up, so writing soon fails instead of
+            // running on.
+            let started = Instant::now();
+            while std::io::Write::write_all(&mut stream, event("lo", None).as_bytes()).is_ok() {
+                assert!(started.elapsed() < Duration::from_secs(5), "never hung up");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        assert_eq!(stream(&client, &cancel), Err(ProviderError::Cancelled));
+        worker.join().unwrap();
     }
 
     #[test]

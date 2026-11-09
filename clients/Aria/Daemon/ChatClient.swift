@@ -5,7 +5,7 @@ import GRPCProtobuf
 /// An assistant the daemon can run.
 struct Assistant: Equatable, Sendable {
     enum Status: Equatable, Sendable {
-        case ready, notInstalled, signedOut, unchecked
+        case ready, notInstalled, signedOut, notConfigured, unreachable, modelMissing, unchecked
     }
 
     /// The wire id, because settings stores the chosen assistant by it.
@@ -33,6 +33,9 @@ struct Assistant: Equatable, Sendable {
         case .ready: status = .ready
         case .notInstalled: status = .notInstalled
         case .signedOut: status = .signedOut
+        case .notConfigured: status = .notConfigured
+        case .unreachable: status = .unreachable
+        case .modelMissing: status = .modelMissing
         case .unchecked: status = .unchecked
         case .unspecified, .UNRECOGNIZED: throw DaemonFailure.invalidResponse
         }

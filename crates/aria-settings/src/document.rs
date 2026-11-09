@@ -1061,7 +1061,8 @@ impl SettingsFile {
 
     pub(crate) fn check(&self) -> Result<Choices, SettingsError> {
         let settings = Settings::from_file(self)?;
-        let cleanup = self.validate_dictation()?;
+        let local_provider = self.validate_local_provider()?;
+        let cleanup = self.validate_dictation(local_provider.clone())?;
         let timeouts = self.validate_timeouts()?;
         let system_transcription = self.validate_system_transcription()?;
         let assistant_timeout = self.validate_assistant()?;
@@ -1080,6 +1081,7 @@ impl SettingsFile {
             voices,
             rate: settings.tts_rate,
             timeouts,
+            local_provider,
             cleanup,
             capture,
             wake,
@@ -1087,9 +1089,8 @@ impl SettingsFile {
         })
     }
 
-    fn validate_dictation(&self) -> Result<Option<LlmCleanupTarget>, SettingsError> {
-        let provider = self
-            .local_provider
+    fn validate_local_provider(&self) -> Result<Option<LocalProvider>, SettingsError> {
+        self.local_provider
             .endpoint
             .as_deref()
             .map(LocalProvider::new)
@@ -1099,7 +1100,13 @@ impl SettingsFile {
                     Key::LocalProviderEndpoint,
                     InvalidValue::LocalProvider(source),
                 )
-            })?;
+            })
+    }
+
+    fn validate_dictation(
+        &self,
+        provider: Option<LocalProvider>,
+    ) -> Result<Option<LlmCleanupTarget>, SettingsError> {
         let Some(model) = &self.dictation.cleanup.llm.model else {
             return Ok(None);
         };

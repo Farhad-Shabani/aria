@@ -25,7 +25,7 @@ these commands:
   silence.
 - **Aria Ask** starts a chat. It opens Terminal, records a question, and
   prints the reply. First, install and sign in to Claude Code or Codex as
-  described in [Chat with Claude Code or Codex](./chat.md#before-you-start).
+  described in [Chat with an assistant](./chat.md#before-you-start).
 
 For insertion, keep an editable field focused in the intended app when
 opening Raycast and grant [Accessibility access](./macos.md#permissions).
