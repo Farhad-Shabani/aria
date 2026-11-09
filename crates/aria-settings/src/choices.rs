@@ -21,6 +21,9 @@ pub struct Settings {
     /// `None` leaves a manual recording running until it is stopped.
     pub auto_stop: Option<AutoStop>,
     pub mute_sound: bool,
+    /// Return in the app a dictation types into ends it, then sends after
+    /// the text.
+    pub return_sends: bool,
     /// Dictation types only what an enrolled voice said.
     pub own_voice_only: bool,
     /// Lets the cleanups below run.
@@ -120,6 +123,7 @@ impl Default for Settings {
             silence_duration: SilenceDuration::default(),
             auto_stop: Some(AutoStop::default()),
             mute_sound: true,
+            return_sends: true,
             own_voice_only: false,
             cleanup_enabled: false,
             cleanup_fillers: true,

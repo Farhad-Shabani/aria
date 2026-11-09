@@ -184,6 +184,9 @@ enum DictationStage {
   // field has focus again, and SEGMENT_DELIVERED follows, unless the press
   // ends first.
   DICTATION_STAGE_SEGMENT_QUEUED = 10;
+  // The person's Return was held back to press after the text, and never
+  // pressed: Aria could not confirm the field. Comes after the terminal stage.
+  DICTATION_STAGE_RETURN_DROPPED = 11;
 }
 
 // Where delivered text went.

@@ -44,6 +44,18 @@ settings, such as changing the input source.
 
 Other keyboard or mouse input while you hold the key can cancel the recording.
 
+## Stop and send with Return
+
+Press **Return** in the app you're dictating into. Aria stops recording, types
+the rest, then presses **Return** for you.
+
+If Aria can't type the rest, or sees you moved to another field, it doesn't
+press **Return**. The status pill then says **return not sent**.
+
+**Return** in another app reaches that app, and recording goes on. With
+**Output** set to **Copy to the clipboard**, **Return** always reaches the app.
+Turn this off with **Return sends** under **Settings → Dictation**.
+
 ## Ask or pick a prompt
 
 Settings calls the key you tap the **Aria key**: right Option, or Fn if you

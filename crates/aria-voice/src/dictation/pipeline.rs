@@ -440,7 +440,7 @@ where
         }
         let mut sinks = self.sinks();
         let result = self.execute_stages(settings, control, events, &mut *sinks, vocabulary);
-        sinks.dictation_finished();
+        sinks.dictation_finished(result.as_ref().map(|_| ()));
         if captions {
             events.emit(CaptionSnapshot::empty(control.recording_id(), true));
         }
@@ -450,6 +450,10 @@ where
             // announces.
             control.await_capture_release();
             events.emit(DictationStage::ended_by(error.into()));
+        }
+        // After the terminal stage, so the overlay shows it last.
+        if control.return_dropped() {
+            events.emit(DictationStage::ReturnDropped);
         }
         result
     }
@@ -476,9 +480,12 @@ where
             &mut *sinks,
             vocabulary,
         );
-        sinks.dictation_finished();
+        sinks.dictation_finished(result.as_ref().map(|_| ()));
         if let Err(error) = &result {
             events.emit(DictationStage::ended_by(error.into()));
+        }
+        if control.return_dropped() {
+            events.emit(DictationStage::ReturnDropped);
         }
         result
     }
@@ -1406,9 +1413,9 @@ where
         self.0.placement().or_else(|| self.1.placement())
     }
 
-    fn dictation_finished(&mut self) {
-        self.0.dictation_finished();
-        self.1.dictation_finished();
+    fn dictation_finished(&mut self, result: Result<(), &DictationError>) {
+        self.0.dictation_finished(result);
+        self.1.dictation_finished(result);
     }
 
     fn recording_finished(
@@ -4502,8 +4509,17 @@ mod tests {
             &self,
             _prepared: &(),
             _should_cancel: impl Fn() -> bool,
+        ) -> Result<aria_platform::delivery::Finished, DeliveryError> {
+            Ok(aria_platform::delivery::Finished::Typed)
+        }
+
+        fn press_return(
+            &self,
+            _prepared: &Self::Prepared,
+            _should_cancel: impl Fn() -> bool,
         ) -> Result<(), DeliveryError> {
-            Ok(())
+            // Names no target process, so it never takes a Return.
+            Err(DeliveryError::TargetUnavailable)
         }
 
         fn deliver(
@@ -4594,8 +4610,17 @@ mod tests {
             &self,
             _prepared: &(),
             _should_cancel: impl Fn() -> bool,
+        ) -> Result<aria_platform::delivery::Finished, DeliveryError> {
+            Ok(aria_platform::delivery::Finished::Typed)
+        }
+
+        fn press_return(
+            &self,
+            _prepared: &Self::Prepared,
+            _should_cancel: impl Fn() -> bool,
         ) -> Result<(), DeliveryError> {
-            Ok(())
+            // Names no target process, so it never takes a Return.
+            Err(DeliveryError::TargetUnavailable)
         }
 
         fn deliver(
@@ -4726,8 +4751,17 @@ mod tests {
             &self,
             _prepared: &(),
             _should_cancel: impl Fn() -> bool,
+        ) -> Result<aria_platform::delivery::Finished, DeliveryError> {
+            Ok(aria_platform::delivery::Finished::Typed)
+        }
+
+        fn press_return(
+            &self,
+            _prepared: &Self::Prepared,
+            _should_cancel: impl Fn() -> bool,
         ) -> Result<(), DeliveryError> {
-            Ok(())
+            // Names no target process, so it never takes a Return.
+            Err(DeliveryError::TargetUnavailable)
         }
 
         fn deliver(
@@ -5220,6 +5254,59 @@ mod tests {
             [
                 DictationStage::SpeakerChanged(HeardSpeaker::KeptOut),
                 DictationStage::Failed(RpcErrorCode::NoSpeech),
+            ]
+        );
+    }
+
+    /// A dropped Return comes after the terminal stage, so the overlay
+    /// shows it last.
+    #[test]
+    fn a_dropped_return_follows_the_terminal_stage() {
+        struct DropsReturn;
+
+        impl TranscriptSink for DropsReturn {
+            type Error = DictationError;
+
+            fn segment(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
+                Ok(())
+            }
+
+            fn completed(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
+                Ok(())
+            }
+
+            fn dictation_started(
+                &mut self,
+                _settings: &DictationSettings,
+                control: &Arc<ExecutionControl>,
+            ) -> Result<(), DictationError> {
+                let _armed = control.arm_return(1);
+                assert!(control.take_return());
+                Ok(())
+            }
+        }
+
+        let (events, stages) = stage_events();
+        let (_directory, capture) = judged_capture();
+        let log = CallLog::default();
+        let pipeline = filtered_pipeline(
+            capture,
+            diarizer(Voice(OTHER)),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
+            (log.history(), DropsReturn),
+        );
+        let settings = own_voice_only(settings(DeliveryMode::Streaming, OutputMode::Insert));
+
+        let result = pipeline.run_observed(settings, &events);
+        drop(events);
+
+        assert!(matches!(result, Err(DictationError::NoSpeech)));
+        let stages: Vec<_> = stages.iter().collect();
+        assert_eq!(
+            stages[stages.len().saturating_sub(2)..],
+            [
+                DictationStage::Failed(RpcErrorCode::NoSpeech),
+                DictationStage::ReturnDropped,
             ]
         );
     }

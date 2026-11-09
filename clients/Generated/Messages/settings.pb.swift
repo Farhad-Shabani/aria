@@ -457,6 +457,13 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
     set {_uniqueStorage()._muteSound = newValue}
   }
 
+  /// Return in the app being dictated into ends recording, then is pressed
+  /// after the text.
+  public var returnSends: Bool {
+    get {_storage._returnSends}
+    set {_uniqueStorage()._returnSends = newValue}
+  }
+
   /// Runs the cleanups turned on below. Off, none of them runs.
   public var cleanupEnabled: Bool {
     get {_storage._cleanupEnabled}
@@ -652,6 +659,15 @@ public nonisolated struct Aria_Daemon_V1_SettingsPatch: @unchecked Sendable {
   public var hasMuteSound: Bool {_storage._muteSound != nil}
   /// Clears the value of `muteSound`. Subsequent reads from it will return its default value.
   public mutating func clearMuteSound() {_uniqueStorage()._muteSound = nil}
+
+  public var returnSends: Bool {
+    get {_storage._returnSends ?? false}
+    set {_uniqueStorage()._returnSends = newValue}
+  }
+  /// Returns true if `returnSends` has been explicitly set.
+  public var hasReturnSends: Bool {_storage._returnSends != nil}
+  /// Clears the value of `returnSends`. Subsequent reads from it will return its default value.
+  public mutating func clearReturnSends() {_uniqueStorage()._returnSends = nil}
 
   public var cleanupEnabled: Bool {
     get {_storage._cleanupEnabled ?? false}
@@ -1494,7 +1510,7 @@ nonisolated extension Aria_Daemon_V1_AssistantModelSetting: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Settings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0\u{3}return_sends\0")
 
   fileprivate class _StorageClass {
     var _outputMode: Aria_Daemon_V1_OutputMode = .unspecified
@@ -1502,6 +1518,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
     var _silenceDurationMs: UInt64 = 0
     var _autoStopMs: UInt64? = nil
     var _muteSound: Bool = false
+    var _returnSends: Bool = false
     var _cleanupEnabled: Bool = false
     var _cleanupFillers: Bool = false
     var _cleanupBacktrack: Bool = false
@@ -1536,6 +1553,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
       _silenceDurationMs = source._silenceDurationMs
       _autoStopMs = source._autoStopMs
       _muteSound = source._muteSound
+      _returnSends = source._returnSends
       _cleanupEnabled = source._cleanupEnabled
       _cleanupFillers = source._cleanupFillers
       _cleanupBacktrack = source._cleanupBacktrack
@@ -1597,6 +1615,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
         case 22: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupEnabled) }()
         case 23: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupFillers) }()
         case 24: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupLlmEnabled) }()
+        case 25: try { try decoder.decodeSingularBoolField(value: &_storage._returnSends) }()
         default: break
         }
       }
@@ -1681,6 +1700,9 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
       if _storage._cleanupLlmEnabled != false {
         try visitor.visitSingularBoolField(value: _storage._cleanupLlmEnabled, fieldNumber: 24)
       }
+      if _storage._returnSends != false {
+        try visitor.visitSingularBoolField(value: _storage._returnSends, fieldNumber: 25)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1695,6 +1717,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
         if _storage._silenceDurationMs != rhs_storage._silenceDurationMs {return false}
         if _storage._autoStopMs != rhs_storage._autoStopMs {return false}
         if _storage._muteSound != rhs_storage._muteSound {return false}
+        if _storage._returnSends != rhs_storage._returnSends {return false}
         if _storage._cleanupEnabled != rhs_storage._cleanupEnabled {return false}
         if _storage._cleanupFillers != rhs_storage._cleanupFillers {return false}
         if _storage._cleanupBacktrack != rhs_storage._cleanupBacktrack {return false}
@@ -1725,7 +1748,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
 
 nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SettingsPatch"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0\u{3}return_sends\0")
 
   fileprivate class _StorageClass {
     var _outputMode: Aria_Daemon_V1_OutputMode? = nil
@@ -1733,6 +1756,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
     var _silenceDurationMs: UInt64? = nil
     var _autoStopMs: UInt64? = nil
     var _muteSound: Bool? = nil
+    var _returnSends: Bool? = nil
     var _cleanupEnabled: Bool? = nil
     var _cleanupFillers: Bool? = nil
     var _cleanupBacktrack: Bool? = nil
@@ -1767,6 +1791,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
       _silenceDurationMs = source._silenceDurationMs
       _autoStopMs = source._autoStopMs
       _muteSound = source._muteSound
+      _returnSends = source._returnSends
       _cleanupEnabled = source._cleanupEnabled
       _cleanupFillers = source._cleanupFillers
       _cleanupBacktrack = source._cleanupBacktrack
@@ -1828,6 +1853,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
         case 22: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupEnabled) }()
         case 23: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupFillers) }()
         case 24: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupLlmEnabled) }()
+        case 25: try { try decoder.decodeSingularBoolField(value: &_storage._returnSends) }()
         default: break
         }
       }
@@ -1912,6 +1938,9 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
       try { if let v = _storage._cleanupLlmEnabled {
         try visitor.visitSingularBoolField(value: v, fieldNumber: 24)
       } }()
+      try { if let v = _storage._returnSends {
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 25)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1926,6 +1955,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
         if _storage._silenceDurationMs != rhs_storage._silenceDurationMs {return false}
         if _storage._autoStopMs != rhs_storage._autoStopMs {return false}
         if _storage._muteSound != rhs_storage._muteSound {return false}
+        if _storage._returnSends != rhs_storage._returnSends {return false}
         if _storage._cleanupEnabled != rhs_storage._cleanupEnabled {return false}
         if _storage._cleanupFillers != rhs_storage._cleanupFillers {return false}
         if _storage._cleanupBacktrack != rhs_storage._cleanupBacktrack {return false}

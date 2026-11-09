@@ -35,6 +35,7 @@ impl LinuxFeedback {
             | DictationStage::SegmentDelivered
             | DictationStage::SegmentQueued
             | DictationStage::SpeakerChanged(..)
+            | DictationStage::ReturnDropped
             | DictationStage::Cancelled => {}
         }
     }

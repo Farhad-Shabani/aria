@@ -46,6 +46,10 @@ pub enum DictationStage {
     /// when the field has focus again, and `SegmentDelivered` follows,
     /// unless the press ends first.
     SegmentQueued,
+    /// The person's Return was held back to press after the text, and never
+    /// pressed: Aria could not confirm the field. Comes after the terminal
+    /// stage.
+    ReturnDropped,
 }
 
 /// What a press does with the current speaker's words.
@@ -90,6 +94,7 @@ impl DictationStage {
             Self::SegmentTranscribed { .. } => "segment transcribed",
             Self::SegmentDelivered => "segment delivered",
             Self::SegmentQueued => "segment queued",
+            Self::ReturnDropped => "return dropped",
             Self::SpeakerChanged(..) => "voice heard",
         }
     }

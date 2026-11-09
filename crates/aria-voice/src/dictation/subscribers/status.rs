@@ -41,11 +41,13 @@ impl StatusFile {
             DictationStage::Recording { .. }
             | DictationStage::Transcribing
             | DictationStage::Delivering => self.publish(stage.label()),
-            // A segment lands while the speaker is still talking.
+            // A segment lands while the speaker is still talking. A dropped
+            // Return comes after the terminal stage published idle.
             DictationStage::SegmentTranscribed { .. }
             | DictationStage::SegmentDelivered
             | DictationStage::SegmentQueued
-            | DictationStage::SpeakerChanged(..) => {}
+            | DictationStage::SpeakerChanged(..)
+            | DictationStage::ReturnDropped => {}
             DictationStage::Delivered { .. }
             | DictationStage::Cancelled
             | DictationStage::Failed(..) => {

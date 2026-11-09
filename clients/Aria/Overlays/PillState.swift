@@ -20,6 +20,9 @@ enum PillState: Equatable {
     case asking(String, since: Date)
     case replied(copied: Bool)
     case noReply
+    /// The person's Return was held back to press after the text, and never
+    /// pressed. Keeps the pill it follows.
+    indirect case returnDropped(after: PillState?)
 
     init?(
         _ event: Aria_Daemon_V1_DictationEvent?,
@@ -40,6 +43,8 @@ enum PillState: Equatable {
         // A segment or a voice arrives while the speaker is still talking,
         // so it says nothing about the press.
         case .segmentTranscribed, .segmentDelivered, .segmentQueued, .speakerChanged: return nil
+        // Follows the terminal stage, whose pill it keeps.
+        case .returnDropped: return nil
         case .unspecified, .UNRECOGNIZED: return nil
         }
     }
@@ -92,7 +97,7 @@ enum PillState: Equatable {
         // Words that missed the field leave the user something to do, so
         // their notice stays to be read.
         case .delivered(.copied, _), .delivered(.inHistory, _), .delivered(.notTyped, _),
-            .replied(copied: true):
+            .replied(copied: true), .returnDropped:
             return .seconds(4)
         case .delivered, .replied: return .milliseconds(1200)
         case .cancelled: return .milliseconds(800)
@@ -109,7 +114,7 @@ enum PillState: Equatable {
         case .transcribing, .delivering, .asking:
             return OverlayStyle.workingTint
         // Words that never reached the field get no success color.
-        case .delivered(.inHistory, _), .delivered(.notTyped, _), .interrupted, .excluded:
+        case .delivered(.inHistory, _), .delivered(.notTyped, _), .interrupted, .excluded, .returnDropped:
             return OverlayStyle.quietTint
         case .delivered, .replied:
             return OverlayStyle.doneTint
@@ -120,7 +125,7 @@ enum PillState: Equatable {
         switch self {
         case .asking, .delivering: return .breathe
         case .recording, .transcribing, .delivered, .cancelled, .interrupted, .excluded, .failed, .replied,
-            .noReply:
+            .noReply, .returnDropped:
             return .still
         }
     }
@@ -163,6 +168,8 @@ enum PillState: Equatable {
         case .asking(let step, _): return step
         case .replied(let copied): return copied ? "copied" : "replied"
         case .noReply: return "no reply"
+        case .returnDropped(let after):
+            return [after?.detail, "return not sent"].compactMap { $0 }.joined(separator: " · ")
         }
     }
 

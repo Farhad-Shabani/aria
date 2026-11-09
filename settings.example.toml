@@ -18,6 +18,9 @@ auto_stop_ms = 10000
 # Mutes other apps while recording, so Aria's own sounds still play.
 # Their sound comes back when recording stops.
 mute_sound = true
+# Return in the app being dictated into ends recording, types the rest, then
+# sends. Off, Return reaches the app at once.
+return_sends = true
 # Types only what your enrolled voice said. Removing your voice profile turns it off.
 own_voice_only = false
 # The longest one recording may run. (restart)

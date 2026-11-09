@@ -115,6 +115,9 @@ message Settings {
   optional uint64 auto_stop_ms = 18;
   // Mutes the Mac's sound while recording.
   bool mute_sound = 2;
+  // Return in the app being dictated into ends recording, then is pressed
+  // after the text.
+  bool return_sends = 25;
   // Runs the cleanups turned on below. Off, none of them runs.
   bool cleanup_enabled = 22;
   // Drops "um", "uh" and repeated words before delivery, while cleanup is on.
@@ -188,6 +191,7 @@ message SettingsPatch {
   // absent leaves it unchanged.
   optional uint64 auto_stop_ms = 18;
   optional bool mute_sound = 2;
+  optional bool return_sends = 25;
   optional bool cleanup_enabled = 22;
   optional bool cleanup_fillers = 23;
   optional bool cleanup_backtrack = 20;

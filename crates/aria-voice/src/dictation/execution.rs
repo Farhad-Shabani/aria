@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -290,6 +290,23 @@ enum RecordingState {
     Finished,
 }
 
+/// Whether a Return the person presses belongs to this dictation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum ReturnState {
+    /// Nothing is typing into an app, so Return reaches it.
+    Unarmed,
+    /// Text is still coming, so a Return would cut it short.
+    Armed,
+    /// The person pressed Return; it goes to the app after the text.
+    Taken,
+    /// Typing ended and the taken Return reached the app.
+    Pressed,
+    /// Typing ended without pressing the taken Return, so the person
+    /// hears of it.
+    Dropped,
+}
+
 /// How long a terminal stage waits for capture to let go before it goes out
 /// anyway. Capture polls its stop every chunk, so this is only ever a
 /// backstop against a wedged worker.
@@ -304,6 +321,10 @@ pub struct ExecutionControl {
     cancellation: CancelToken,
     deadline: Deadline,
     recording_state: AtomicU8,
+    return_state: AtomicU8,
+    /// The process the armed text types into: only a Return pressed there
+    /// would cut it short.
+    target_process: AtomicU32,
     /// Set by the first poll of the stop signal, which only a live capture
     /// makes. A scope that was never polled never captured anything.
     capture_polled: AtomicBool,
@@ -332,6 +353,8 @@ impl ExecutionControl {
             cancellation,
             deadline,
             recording_state: AtomicU8::new(RecordingState::NotStarted as u8),
+            return_state: AtomicU8::new(ReturnState::Unarmed as u8),
+            target_process: AtomicU32::new(0),
             capture_polled: AtomicBool::new(false),
             capture_abandoned: AtomicBool::new(false),
             #[cfg(target_os = "macos")]
@@ -501,6 +524,54 @@ impl ExecutionControl {
             .is_ok()
     }
 
+    /// Holds Return back until the returned value disarms or drops, so
+    /// every way a dictation ends lets Return through again.
+    pub(crate) fn arm_return(self: &Arc<Self>, process: u32) -> ArmedReturn {
+        self.target_process.store(process, Ordering::Relaxed);
+        self.return_state
+            .store(ReturnState::Armed as u8, Ordering::Release);
+        ArmedReturn {
+            control: Arc::clone(self),
+        }
+    }
+
+    /// The process the text still goes to, where a Return would cut it
+    /// short. `None` once typing ended, or when it types into no app. Kept
+    /// after the Return is taken, so a second one there joins it.
+    fn target_process(&self) -> Option<u32> {
+        let state = self.return_state.load(Ordering::Acquire);
+        let armed = state == ReturnState::Armed as u8 || state == ReturnState::Taken as u8;
+        // Read after the state's Acquire, which the arming Release orders.
+        armed.then(|| self.target_process.load(Ordering::Relaxed))
+    }
+
+    /// The person's Return was taken and never pressed. Final once the
+    /// sinks heard the dictation finish.
+    pub(crate) fn return_dropped(&self) -> bool {
+        self.return_state.load(Ordering::Acquire) == ReturnState::Dropped as u8
+    }
+
+    /// Takes a Return pressed where the text goes: it ends recording,
+    /// whatever the stop mode, and waits to be pressed after the rest of
+    /// the text. False once typing ended.
+    pub(crate) fn take_return(&self) -> bool {
+        // Taken before recording stops: typing that ends in between keeps
+        // the recording and lets the key through.
+        let taken = match self.return_state.compare_exchange(
+            ReturnState::Armed as u8,
+            ReturnState::Taken as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => true,
+            Err(state) => state == ReturnState::Taken as u8,
+        };
+        if taken {
+            self.request_recording_stop();
+        }
+        taken
+    }
+
     /// Asks capture to stop and waits for it to let go of its scope, up to
     /// `CAPTURE_RELEASE_TIMEOUT`, so a terminal stage never lands ahead of
     /// the `Transcribing` the guard announces.
@@ -527,6 +598,102 @@ impl ExecutionControl {
     fn recording_open(&self) -> bool {
         let state = self.recording_state.load(Ordering::Acquire);
         state == RecordingState::Recording as u8 || state == RecordingState::StopRequested as u8
+    }
+}
+
+/// The dictation holding the microphone, as a key sees it. Its commands
+/// act on this dictation only, so a decision made on a stale look fails
+/// instead of landing on the next one.
+#[derive(Clone)]
+pub struct ActiveDictation {
+    control: Arc<ExecutionControl>,
+}
+
+impl ActiveDictation {
+    pub(crate) fn new(control: Arc<ExecutionControl>) -> Self {
+        Self { control }
+    }
+
+    pub fn stop_mode(&self) -> StopMode {
+        self.control.stop_mode
+    }
+
+    /// Still capturing, with no stop asked for yet.
+    pub fn is_recording(&self) -> bool {
+        self.control.recording_state.load(Ordering::Acquire) == RecordingState::Recording as u8
+    }
+
+    /// Cancelled, or out of time: it ends without its Return or a stop.
+    pub fn is_ending(&self) -> bool {
+        self.control.should_stop()
+    }
+
+    /// The process its text still goes to, where a Return would cut it
+    /// short.
+    pub fn target_process(&self) -> Option<u32> {
+        self.control.target_process()
+    }
+
+    /// Ends recording; the dictation goes on to transcribe. False when it
+    /// was not recording.
+    pub fn stop_recording(&self) -> bool {
+        self.control.request_recording_stop()
+    }
+
+    /// Takes a Return pressed where the text goes, to press after it. Ends
+    /// recording. False once typing ended: the key belongs to the app.
+    pub fn take_return(&self) -> bool {
+        self.control.take_return()
+    }
+}
+
+/// A dictation holding Return back while its text is still coming.
+#[derive(Debug)]
+pub(crate) struct ArmedReturn {
+    control: Arc<ExecutionControl>,
+}
+
+impl ArmedReturn {
+    /// Lets Return through again. A Return the person pressed meanwhile
+    /// counts as dropped until its token says it was pressed.
+    pub(crate) fn finish(self) -> Option<TakenReturn> {
+        self.release().then(|| TakenReturn {
+            control: Arc::clone(&self.control),
+        })
+    }
+
+    /// True when the Return was taken. A second call changes nothing.
+    fn release(&self) -> bool {
+        let released =
+            self.control
+                .return_state
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| match state {
+                    s if s == ReturnState::Armed as u8 => Some(ReturnState::Unarmed as u8),
+                    s if s == ReturnState::Taken as u8 => Some(ReturnState::Dropped as u8),
+                    _ => None,
+                });
+        released == Ok(ReturnState::Taken as u8)
+    }
+}
+
+impl Drop for ArmedReturn {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// A Return the person pressed while the text was coming, not yet pressed
+/// in the app. Gone unpressed, it stays dropped.
+#[derive(Debug)]
+pub(crate) struct TakenReturn {
+    control: Arc<ExecutionControl>,
+}
+
+impl TakenReturn {
+    pub(crate) fn mark_pressed(self) {
+        self.control
+            .return_state
+            .store(ReturnState::Pressed as u8, Ordering::Release);
     }
 }
 
@@ -804,6 +971,7 @@ mod tests {
             history_enabled: true,
             history_keep_audio: false,
             mute_sound: false,
+            return_sends: true,
             stt_language: Language::Specific(LanguageCode::english()),
             output_mode: OutputMode::Copy,
             delivery_mode: DeliveryMode::Complete,
@@ -1380,5 +1548,17 @@ mod tests {
                 delivery: DeliveryMode::Complete
             }]
         );
+    }
+
+    #[test]
+    fn a_taken_return_dropped_before_its_press_stays_dropped() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let armed = control.arm_return(1);
+        assert!(control.take_return());
+
+        drop(armed);
+
+        assert!(control.return_dropped());
+        assert!(!control.take_return(), "typing ended");
     }
 }

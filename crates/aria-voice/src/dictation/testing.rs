@@ -14,7 +14,7 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{OperationSource, TimedWord};
 use aria_kit::voice_activity::{VoiceActivityDetector, VoiceActivityError};
 use aria_platform::delivery::{
-    DeliveryError, DeliveryOutcome, OutputMode, Placement, Rect, TextDelivery,
+    DeliveryError, DeliveryOutcome, Finished, OutputMode, Placement, Rect, TextDelivery,
 };
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -77,8 +77,11 @@ impl TranscriptSink for RecordingSink {
     }
 }
 
-/// Logs `prepare:`, `deliver:`, and `submit`. With `fail`, delivery and
-/// submission report an unavailable target once logged.
+/// The process `RecordingDelivery` types into.
+pub const TYPED_PROCESS: u32 = 7;
+
+/// Logs `prepare:`, `deliver:`, `submit`, and `return`. With `fail`,
+/// delivery and submission report an unavailable target once logged.
 pub struct RecordingDelivery {
     pub log: CallLog,
     pub fail: bool,
@@ -107,7 +110,7 @@ impl TextDelivery for RecordingDelivery {
         &self,
         prepared: &Self::Prepared,
         should_cancel: impl Fn() -> bool,
-    ) -> Result<(), DeliveryError> {
+    ) -> Result<Finished, DeliveryError> {
         if *prepared == OutputMode::InsertAndSubmit {
             if should_cancel() {
                 return Err(DeliveryError::Cancelled);
@@ -116,7 +119,24 @@ impl TextDelivery for RecordingDelivery {
             if self.fail {
                 return Err(DeliveryError::TargetUnavailable);
             }
+            return Ok(Finished::Submitted);
         }
+        Ok(Finished::Typed)
+    }
+
+    fn target_process(&self, prepared: &Self::Prepared) -> Option<u32> {
+        (*prepared != OutputMode::Copy).then_some(TYPED_PROCESS)
+    }
+
+    fn press_return(
+        &self,
+        _prepared: &Self::Prepared,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        if should_cancel() {
+            return Err(DeliveryError::Cancelled);
+        }
+        self.log.push("return".to_owned());
         Ok(())
     }
 
@@ -166,8 +186,17 @@ impl TextDelivery for PlacedDelivery {
         &self,
         _prepared: &(),
         _should_cancel: impl Fn() -> bool,
+    ) -> Result<Finished, DeliveryError> {
+        Ok(Finished::Typed)
+    }
+
+    fn press_return(
+        &self,
+        _prepared: &Self::Prepared,
+        _should_cancel: impl Fn() -> bool,
     ) -> Result<(), DeliveryError> {
-        Ok(())
+        // Names no target process, so it never takes a Return.
+        Err(DeliveryError::TargetUnavailable)
     }
 
     fn deliver(
@@ -275,6 +304,7 @@ pub fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> Dictati
         history_enabled: true,
         history_keep_audio: false,
         mute_sound: false,
+        return_sends: true,
         stt_language: Language::Automatic,
         output_mode,
         delivery_mode,
@@ -376,5 +406,88 @@ pub fn recording_started(edges: &mpsc::Receiver<Edge>) -> RecordingId {
     match edges.recv_timeout(EDGE_WAIT).expect("a press records") {
         Edge::Recording(id) => id,
         other => panic!("expected a recording, got {other:?}"),
+    }
+}
+
+/// Builds an active dictation in a chosen state, for code that only reads
+/// one, such as the key router.
+pub struct ActiveDictationBuilder {
+    stop_mode: StopMode,
+    recording: bool,
+    target_process: Option<u32>,
+    cancelled: bool,
+    out_of_time: bool,
+}
+
+/// Keeps what the built dictation's state rests on alive: dropping it ends
+/// the recording and the typing.
+pub struct BuiltDictation {
+    pub dictation: super::ActiveDictation,
+    _recording: Option<super::execution::RecordingGuard>,
+    _armed: Option<super::execution::ArmedReturn>,
+}
+
+impl ActiveDictationBuilder {
+    pub fn new(stop_mode: StopMode) -> Self {
+        Self {
+            stop_mode,
+            recording: false,
+            target_process: None,
+            cancelled: false,
+            out_of_time: false,
+        }
+    }
+
+    pub fn with_recording(mut self) -> Self {
+        self.recording = true;
+        self
+    }
+
+    pub fn with_target_process(mut self, process: u32) -> Self {
+        self.target_process = Some(process);
+        self
+    }
+
+    pub fn with_cancellation(mut self) -> Self {
+        self.cancelled = true;
+        self
+    }
+
+    pub fn with_deadline_passed(mut self) -> Self {
+        self.out_of_time = true;
+        self
+    }
+
+    pub fn build(self) -> BuiltDictation {
+        let cancellation = CancelToken::new();
+        let overall = if self.out_of_time {
+            Duration::from_millis(1)
+        } else {
+            Duration::from_secs(5)
+        };
+        let control =
+            ExecutionControl::for_test_lasting(self.stop_mode, cancellation.clone(), overall);
+        let recording = self.recording.then(|| {
+            control
+                .start_recording(
+                    DeliveryMode::Streaming,
+                    &DictationEventEmitter::unsubscribed(),
+                )
+                .expect("recording starts")
+        });
+        let armed = self
+            .target_process
+            .map(|process| control.arm_return(process));
+        if self.cancelled {
+            cancellation.cancel();
+        }
+        if self.out_of_time {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        BuiltDictation {
+            dictation: super::ActiveDictation::new(control),
+            _recording: recording,
+            _armed: armed,
+        }
     }
 }

@@ -64,6 +64,11 @@ final class StatusController: ObservableObject {
                 self.show(state, run: self.foregroundRun)
                 return
             }
+            // It follows the terminal stage, whose pill it keeps.
+            if event.stage == .returnDropped {
+                self.show(.returnDropped(after: self.foregroundState), run: self.lastRecording.map(RunID.recording))
+                return
+            }
             guard let state = PillState(event) else { return }
             self.show(state, run: self.lastRecording.map(RunID.recording))
         }

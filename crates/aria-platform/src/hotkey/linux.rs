@@ -117,7 +117,14 @@ impl LinuxHotkeyListener {
         }
     }
 
-    pub fn listen(key: AriaKey, events: impl Fn(ListenerEvent), should_stop: impl Fn() -> bool) {
+    /// Devices are only read, so Return always reaches the app and
+    /// `take_return` is never asked.
+    pub fn listen(
+        key: AriaKey,
+        _take_return: impl Fn() -> bool,
+        events: impl Fn(ListenerEvent),
+        should_stop: impl Fn() -> bool,
+    ) {
         let Some(aria_key) = key.key_code() else {
             tracing::warn!(trigger = "hotkey", ?key, "this key is invisible to Linux");
             events(ListenerEvent::KeyUnavailable);

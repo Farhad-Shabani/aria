@@ -93,6 +93,10 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
   /// field has focus again, and SEGMENT_DELIVERED follows, unless the press
   /// ends first.
   case segmentQueued // = 10
+
+  /// The person's Return was held back to press after the text, and never
+  /// pressed: Aria could not confirm the field. Comes after the terminal stage.
+  case returnDropped // = 11
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -112,6 +116,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     case 8: self = .segmentDelivered
     case 9: self = .speakerChanged
     case 10: self = .segmentQueued
+    case 11: self = .returnDropped
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -129,6 +134,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     case .segmentDelivered: return 8
     case .speakerChanged: return 9
     case .segmentQueued: return 10
+    case .returnDropped: return 11
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -146,6 +152,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     .segmentDelivered,
     .speakerChanged,
     .segmentQueued,
+    .returnDropped,
   ]
 
 }
@@ -739,7 +746,7 @@ nonisolated extension Aria_Daemon_V1_HeardSpeaker: SwiftProtobuf._ProtoNameProvi
 }
 
 nonisolated extension Aria_Daemon_V1_DictationStage: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DICTATION_STAGE_UNSPECIFIED\0\u{1}DICTATION_STAGE_RECORDING\0\u{1}DICTATION_STAGE_TRANSCRIBING\0\u{1}DICTATION_STAGE_DELIVERING\0\u{1}DICTATION_STAGE_DELIVERED\0\u{1}DICTATION_STAGE_CANCELLED\0\u{1}DICTATION_STAGE_FAILED\0\u{1}DICTATION_STAGE_SEGMENT_TRANSCRIBED\0\u{1}DICTATION_STAGE_SEGMENT_DELIVERED\0\u{1}DICTATION_STAGE_SPEAKER_CHANGED\0\u{1}DICTATION_STAGE_SEGMENT_QUEUED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DICTATION_STAGE_UNSPECIFIED\0\u{1}DICTATION_STAGE_RECORDING\0\u{1}DICTATION_STAGE_TRANSCRIBING\0\u{1}DICTATION_STAGE_DELIVERING\0\u{1}DICTATION_STAGE_DELIVERED\0\u{1}DICTATION_STAGE_CANCELLED\0\u{1}DICTATION_STAGE_FAILED\0\u{1}DICTATION_STAGE_SEGMENT_TRANSCRIBED\0\u{1}DICTATION_STAGE_SEGMENT_DELIVERED\0\u{1}DICTATION_STAGE_SPEAKER_CHANGED\0\u{1}DICTATION_STAGE_SEGMENT_QUEUED\0\u{1}DICTATION_STAGE_RETURN_DROPPED\0")
 }
 
 nonisolated extension Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf._ProtoNameProviding {

@@ -84,6 +84,8 @@ impl Cue {
             | DictationStage::SegmentDelivered
             | DictationStage::SegmentQueued
             | DictationStage::SpeakerChanged(..)
+            // The overlay shows it; the stop cue already played.
+            | DictationStage::ReturnDropped
             | DictationStage::Cancelled => None,
         }
     }

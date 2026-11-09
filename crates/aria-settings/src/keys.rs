@@ -152,6 +152,8 @@ keys! {
         "The longest a whole dictation may take, recording included.";
     DictationMuteSound: "dictation.mute_sound", Live, Mac, [], Kind::Bool, Some("true"),
         "Mutes other apps while recording.";
+    DictationReturnSends: "dictation.return_sends", Live, Mac, [], Kind::Bool, Some("true"),
+        "Return in the app being dictated into ends recording, then sends after the text.";
     DictationOwnVoiceOnly: "dictation.own_voice_only", Live, Phone, [], Kind::Bool, Some("false"),
         "Types only what your enrolled voice said.";
     DictationCleanupEnabled: "dictation.cleanup.enabled", Live, Mac, [], Kind::Bool, Some("false"),

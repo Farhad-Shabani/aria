@@ -21,9 +21,9 @@ use aria_settings::rpc::{Categorized, RpcErrorCode};
 use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
-    DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
-    DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode, Transcribed,
-    subscribers::DictationSubscribers,
+    ActiveDictation, DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter,
+    DictationOutcome, DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode,
+    Transcribed, subscribers::DictationSubscribers,
 };
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
@@ -264,8 +264,9 @@ impl DictationRuntime {
         ))
     }
 
-    pub(in crate::daemon) fn stop_manual_recording(&self) -> bool {
-        self.microphone.stop_manual_recording()
+    /// The dictation holding the microphone, as a key sees it.
+    pub(in crate::daemon) fn active_dictation(&self) -> Option<ActiveDictation> {
+        self.microphone.active_dictation()
     }
 
     /// Ends the named recording and lets it finish transcribing. Returns false
@@ -280,12 +281,15 @@ impl DictationRuntime {
         sink: impl Fn(DictationStage) + Send + 'static,
     ) -> DictationEventEmitter {
         DictationEventEmitter::subscribed_by(CALL_EVENT_THREAD, move |event: DictationEvent| {
-            // Some callers reject unknown progress stages. Voice feedback
-            // and queued segments reach the overlay subscription instead.
+            // Some callers reject unknown progress stages, or end on the
+            // terminal one. Voice feedback, queued segments and a dropped
+            // Return reach the overlay subscription instead.
             if let DictationEvent::Stage(stage) = event
                 && !matches!(
                     stage,
-                    DictationStage::SpeakerChanged(_) | DictationStage::SegmentQueued
+                    DictationStage::SpeakerChanged(_)
+                        | DictationStage::SegmentQueued
+                        | DictationStage::ReturnDropped
                 )
             {
                 sink(stage);

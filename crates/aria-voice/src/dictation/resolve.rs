@@ -57,6 +57,7 @@ impl DictationSettings {
             history_enabled: settings.history_enabled,
             history_keep_audio: settings.history_keep_audio,
             mute_sound: settings.mute_sound,
+            return_sends: settings.return_sends,
             stt_language: settings.stt_language,
             output_mode,
             delivery_mode,

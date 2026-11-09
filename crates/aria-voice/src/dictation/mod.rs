@@ -30,8 +30,8 @@ pub use event::{
 };
 pub use event::{DictationStage, HeardSpeaker};
 pub use execution::{
-    DictationCoordinator, DictationError, DictationExecutor, DictationPolicy, DictationPolicyError,
-    ExecutionControl, Transcribed,
+    ActiveDictation, DictationCoordinator, DictationError, DictationExecutor, DictationPolicy,
+    DictationPolicyError, ExecutionControl, Transcribed,
 };
 use level::Meter;
 pub use level::MicLevel;
@@ -130,6 +130,8 @@ pub struct DictationSettings {
     pub history_enabled: bool,
     pub history_keep_audio: bool,
     pub mute_sound: bool,
+    /// Return in the app the text goes to ends recording, then sends.
+    pub return_sends: bool,
     pub stt_language: Language,
     pub output_mode: OutputMode,
     pub delivery_mode: DeliveryMode,

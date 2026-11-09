@@ -7,7 +7,8 @@ use objc2_foundation::{NSArray, NSString};
 use objc2_ui_kit::UIPasteboard;
 
 use super::{
-    DeliveryError, DeliveryOutcome, OutputMode, TextDelivery, validate_text, validate_timeout,
+    DeliveryError, DeliveryOutcome, Finished, OutputMode, TextDelivery, validate_text,
+    validate_timeout,
 };
 
 pub struct IosTextDelivery;
@@ -55,8 +56,16 @@ impl TextDelivery for IosTextDelivery {
         &self,
         _prepared: &Self::Prepared,
         _should_cancel: impl Fn() -> bool,
+    ) -> Result<Finished, DeliveryError> {
+        Ok(Finished::Typed)
+    }
+
+    fn press_return(
+        &self,
+        _prepared: &Self::Prepared,
+        _should_cancel: impl Fn() -> bool,
     ) -> Result<(), DeliveryError> {
-        Ok(())
+        Err(DeliveryError::InsertionUnsupported)
     }
 
     fn deliver(

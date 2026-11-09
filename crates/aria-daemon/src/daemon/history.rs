@@ -333,7 +333,7 @@ impl TranscriptSink for History {
         self.save_recording(recording, entry);
     }
 
-    fn dictation_finished(&mut self) {
+    fn dictation_finished(&mut self, _result: Result<(), &DictationError>) {
         self.live = None;
     }
 }
@@ -417,7 +417,7 @@ mod tests {
                 Err(&error)
             };
             sink.recording_finished(&mut recording, outcome);
-            sink.dictation_finished();
+            sink.dictation_finished(Ok(()));
             let found = entries(&saved);
             assert_eq!(found.len(), 1);
             assert_eq!(found[0].text, "hello world");
@@ -470,7 +470,7 @@ mod tests {
                 TranscriptionError::NoNativeStream,
             )),
         );
-        sink.dictation_finished();
+        sink.dictation_finished(Ok(()));
         drop(recording);
         assert!(!original.exists());
         let found = entries(&saved);
@@ -544,7 +544,7 @@ mod tests {
                 .unwrap();
             sink.segment(Utterance::anonymous("partial")).unwrap();
             sink.recording_finished(&mut recording, failure.as_ref().map_or(Ok(()), Err));
-            sink.dictation_finished();
+            sink.dictation_finished(Ok(()));
         }
         assert!(entries(&saved).is_empty());
         assert_eq!(
@@ -609,7 +609,7 @@ mod tests {
         sink.completed(Utterance::anonymous("delivered words"))
             .unwrap();
         sink.recording_finished(&mut recording, Ok(()));
-        sink.dictation_finished();
+        sink.dictation_finished(Ok(()));
         assert!(saved.warning.lock().unwrap().is_some());
         assert!(matches!(
             saved.list(HistoryQuery {

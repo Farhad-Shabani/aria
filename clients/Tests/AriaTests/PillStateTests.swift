@@ -32,6 +32,13 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(PillState(ended: failed), .noReply)
     }
 
+    func testADroppedReturnKeepsThePillItFollows() {
+        let dropped = PillState.returnDropped(after: .delivered(.copied, words: 3))
+        XCTAssertEqual(dropped.label(), "copied · 3 words · return not sent")
+        XCTAssertEqual(dropped.life, .seconds(4))
+        XCTAssertEqual(PillState.returnDropped(after: nil).label(), "return not sent")
+    }
+
     func testARefusedPromptReadsAsItsFailedRun() {
         let name = "Formal email to the leadership team"
         XCTAssertEqual(

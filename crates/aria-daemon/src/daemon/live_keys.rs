@@ -134,6 +134,7 @@ impl LiveHarness {
             | Key::DictationSilenceDurationMs
             | Key::DictationAutoStopMs
             | Key::DictationMuteSound
+            | Key::DictationReturnSends
             | Key::DictationCleanupEnabled
             | Key::DictationCleanupFillers
             | Key::DictationCleanupBacktrack
@@ -267,7 +268,8 @@ fn change(key: Key) -> Patch {
         | Key::DictationOwnVoiceOnly
         | Key::HistoryKeepAudio
         | Key::MemoryEnabled => set(key, true),
-        Key::DictationCleanupFillers
+        Key::DictationReturnSends
+        | Key::DictationCleanupFillers
         | Key::DictationCleanupBacktrack
         | Key::DictationCleanupLlmEnabled => set(key, false),
         Key::ProviderEndpoint

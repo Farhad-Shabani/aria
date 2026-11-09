@@ -185,6 +185,8 @@ private struct Mark: View {
             Glyph(name: "hand.raised", tint: state.tint)
         case .excluded:
             Glyph(name: "nosign", tint: state.tint)
+        case .returnDropped:
+            Glyph(name: "return", tint: state.tint)
         case .asking:
             // The symbol Mac apps use for work an AI model is doing.
             Glyph(name: "sparkles", tint: state.tint)

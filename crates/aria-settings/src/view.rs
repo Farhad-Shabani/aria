@@ -52,6 +52,7 @@ impl Settings {
                 None => defaults.auto_stop,
             },
             mute_sound: dictation.mute_sound.unwrap_or(defaults.mute_sound),
+            return_sends: dictation.return_sends.unwrap_or(defaults.return_sends),
             own_voice_only: dictation.own_voice_only.unwrap_or(defaults.own_voice_only),
             cleanup_enabled: dictation
                 .cleanup
@@ -130,6 +131,7 @@ pub(super) fn patch(current: &Settings, next: &Settings) -> Result<Patch, Settin
         silence_duration,
         auto_stop,
         mute_sound,
+        return_sends,
         own_voice_only,
         cleanup_enabled,
         cleanup_fillers,
@@ -175,6 +177,9 @@ pub(super) fn patch(current: &Settings, next: &Settings) -> Result<Patch, Settin
     }
     if *mute_sound != current.mute_sound {
         patch.set(Key::DictationMuteSound, *mute_sound);
+    }
+    if *return_sends != current.return_sends {
+        patch.set(Key::DictationReturnSends, *return_sends);
     }
     if *own_voice_only != current.own_voice_only {
         patch.set(Key::DictationOwnVoiceOnly, *own_voice_only);
@@ -388,6 +393,7 @@ mod tests {
             cleanup_enabled: true,
             tts_rate: SpeakingRate::new(1.5).expect("valid"),
             mute_sound: true,
+            return_sends: false,
             stt_language: "de".parse().expect("a language"),
             output_mode: OutputMode::Copy,
             delivery_mode: crate::DeliveryMode::Complete,

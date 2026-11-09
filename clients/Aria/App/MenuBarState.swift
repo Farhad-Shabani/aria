@@ -19,7 +19,8 @@ enum MenuBarState: Equatable {
         case (.running, .transcribing), (.running, .delivering), (.running, .asking): self = .working
         case (.running, .delivered), (.running, .replied): self = .done
         case (.running, .failed), (.running, .noReply): self = .attention
-        case (.running, .cancelled), (.running, .interrupted), (.running, .excluded), (.running, nil):
+        case (.running, .cancelled), (.running, .interrupted), (.running, .excluded), (.running, .returnDropped),
+            (.running, nil):
             if isSystemTranscriptionRunning {
                 self = .transcribingSystemAudio
             } else {

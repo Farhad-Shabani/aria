@@ -124,7 +124,8 @@ pub trait TranscriptSink {
         None
     }
 
-    fn dictation_finished(&mut self) {}
+    /// The dictation ended, as `result` says.
+    fn dictation_finished(&mut self, _result: Result<(), &super::DictationError>) {}
 
     fn recording_finished(
         &mut self,
