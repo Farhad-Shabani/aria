@@ -419,6 +419,7 @@ pub struct Dictation {
     pub max_recording_secs: Option<f64>,
     pub timeout_secs: Option<f64>,
     pub(crate) mute_sound: Option<bool>,
+    pub(crate) return_sends: Option<bool>,
     pub(crate) own_voice_only: Option<bool>,
     #[serde(skip_serializing_if = "is_default")]
     pub(crate) cleanup: Cleanup,

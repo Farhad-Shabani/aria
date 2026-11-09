@@ -271,9 +271,10 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         if matches!(absence, Absence::Queues(_)) {
             let _ = self.delivery.caret(&prepared);
         }
-        let armed = self
-            .delivery
-            .target_process(&prepared)
+        let armed = settings
+            .return_sends
+            .then(|| self.delivery.target_process(&prepared))
+            .flatten()
             .map(|process| control.arm_return(process));
         self.target = Some(Target {
             policy: settings.target.clone(),
@@ -1111,6 +1112,19 @@ mod tests {
         cursor.dictation_finished(Err(&DictationError::Cancelled));
 
         assert!(!log.entries().iter().any(|entry| entry == "return"));
+    }
+
+    #[test]
+    fn with_return_sends_off_return_reaches_the_app() {
+        let (_log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let off = DictationSettings {
+            return_sends: false,
+            ..settings(DeliveryMode::Streaming, OutputMode::Insert)
+        };
+        cursor.dictation_started(&off, &control).unwrap();
+
+        assert!(!control.take_return());
     }
 
     #[test]

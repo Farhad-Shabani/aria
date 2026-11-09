@@ -85,6 +85,7 @@ extension Aria_Daemon_V1_SettingsPatch {
         if hasSilenceDurationMs { patch.silenceDurationMs = silenceDurationMs }
         if hasAutoStopMs { patch.autoStopMs = autoStopMs }
         if hasMuteSound { patch.muteSound = muteSound }
+        if hasReturnSends { patch.returnSends = returnSends }
         if hasCleanupEnabled { patch.cleanupEnabled = cleanupEnabled }
         if hasCleanupFillers { patch.cleanupFillers = cleanupFillers }
         if hasCleanupBacktrack { patch.cleanupBacktrack = cleanupBacktrack }
@@ -122,6 +123,7 @@ extension Aria_Daemon_V1_SettingsPatch {
             }
         }
         if hasMuteSound { settings.muteSound = muteSound }
+        if hasReturnSends { settings.returnSends = returnSends }
         if hasCleanupEnabled { settings.cleanupEnabled = cleanupEnabled }
         if hasCleanupFillers { settings.cleanupFillers = cleanupFillers }
         if hasCleanupBacktrack { settings.cleanupBacktrack = cleanupBacktrack }

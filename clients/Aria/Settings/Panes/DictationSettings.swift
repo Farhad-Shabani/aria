@@ -31,6 +31,10 @@ struct DictationSettings: View {
                     Text("Mute while recording")
                     Text("Mutes other apps. Their sound comes back when recording stops.")
                 }
+                Toggle(isOn: editor.binding(\.returnSends, \.returnSends)) {
+                    Text("Return sends")
+                    Text("Return in the app you're dictating into stops recording, types the rest, then sends.")
+                }
                 autoStop(editor)
             }
         }

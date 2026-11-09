@@ -933,6 +933,7 @@ mod tests {
             history_enabled: true,
             history_keep_audio: false,
             mute_sound: false,
+            return_sends: true,
             stt_language: Language::Specific(LanguageCode::english()),
             output_mode: OutputMode::Copy,
             delivery_mode: DeliveryMode::Complete,

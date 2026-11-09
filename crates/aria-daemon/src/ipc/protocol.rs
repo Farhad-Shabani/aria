@@ -2215,6 +2215,7 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                     .map(|milliseconds| AutoStop::new(Duration::from_millis(milliseconds)))
                     .transpose()?,
                 mute_sound: settings.mute_sound,
+                return_sends: settings.return_sends,
                 cleanup_enabled: settings.cleanup_enabled,
                 cleanup_fillers: settings.cleanup_fillers,
                 cleanup_backtrack: settings.cleanup_backtrack,
@@ -2361,6 +2362,7 @@ impl From<SettingsPatch> for wire::SettingsPatch {
                 auto_stop.map_or(0, |auto_stop| auto_stop.get().as_millis() as u64)
             }),
             mute_sound: patch.mute_sound,
+            return_sends: patch.return_sends,
             cleanup_enabled: patch.cleanup_enabled,
             cleanup_fillers: patch.cleanup_fillers,
             cleanup_backtrack: patch.cleanup_backtrack,
@@ -2406,6 +2408,7 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
                     .auto_stop
                     .map(|auto_stop| auto_stop.get().as_millis() as u64),
                 mute_sound: snapshot.settings.mute_sound,
+                return_sends: snapshot.settings.return_sends,
                 cleanup_enabled: snapshot.settings.cleanup_enabled,
                 cleanup_fillers: snapshot.settings.cleanup_fillers,
                 cleanup_backtrack: snapshot.settings.cleanup_backtrack,
@@ -2497,6 +2500,7 @@ impl TryFrom<wire::SettingsPatch> for SettingsPatch {
                 })
                 .transpose()?,
             mute_sound: patch.mute_sound,
+            return_sends: patch.return_sends,
             cleanup_enabled: patch.cleanup_enabled,
             cleanup_fillers: patch.cleanup_fillers,
             cleanup_backtrack: patch.cleanup_backtrack,
@@ -3875,6 +3879,32 @@ mod tests {
         for mute_sound in [None, Some(false), Some(true)] {
             let patch = SettingsPatch {
                 mute_sound,
+                ..Default::default()
+            };
+            let encoded = wire::SettingsPatch::from(patch.clone()).encode_to_vec();
+            let decoded = wire::SettingsPatch::decode(encoded.as_slice()).unwrap();
+            assert_eq!(SettingsPatch::try_from(decoded).unwrap(), patch);
+        }
+    }
+
+    #[test]
+    fn return_sends_survives_the_wire() {
+        for return_sends in [false, true] {
+            let snapshot = SettingsSnapshot {
+                streaming_unavailable: StreamingSupport::default(),
+                revision: 4,
+                settings: Settings {
+                    return_sends,
+                    ..Default::default()
+                },
+            };
+            let encoded = wire::SettingsSnapshot::from(&snapshot).encode_to_vec();
+            let decoded = wire::SettingsSnapshot::decode(encoded.as_slice()).unwrap();
+            assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
+        }
+        for return_sends in [None, Some(false), Some(true)] {
+            let patch = SettingsPatch {
+                return_sends,
                 ..Default::default()
             };
             let encoded = wire::SettingsPatch::from(patch.clone()).encode_to_vec();

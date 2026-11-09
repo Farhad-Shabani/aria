@@ -304,6 +304,7 @@ pub fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> Dictati
         history_enabled: true,
         history_keep_audio: false,
         mute_sound: false,
+        return_sends: true,
         stt_language: Language::Automatic,
         output_mode,
         delivery_mode,
