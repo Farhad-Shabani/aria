@@ -28,11 +28,14 @@ final class ChatClientTests: XCTestCase {
     func testTheLocalAssistantsStatusesComeThrough() throws {
         let statuses: [(Aria_Daemon_V1_AssistantStatus, Assistant.Status)] = [
             (.notConfigured, .notConfigured), (.unreachable, .unreachable), (.modelMissing, .modelMissing),
+            (.modelUnset, .modelUnset),
         ]
         for (wire, status) in statuses {
-            let assistants = try ChatClient.assistants(from: [assistant(.localModel, name: "Local model", status: wire)]
-            )
-            XCTAssertEqual(assistants, [Assistant(id: .localModel, name: "Local model", status: status)])
+            var local = assistant(.localModel, name: "Local Provider", status: wire)
+            local.needsModel = true
+            let assistants = try ChatClient.assistants(from: [local])
+            XCTAssertEqual(
+                assistants, [Assistant(id: .localModel, name: "Local Provider", status: status, needsModel: true)])
         }
     }
 

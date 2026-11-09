@@ -31,28 +31,33 @@ final class AssistantCatalogTests: XCTestCase {
         XCTAssertFalse(catalog.isLoading)
     }
 
-    func testLoadUnlessReadyRetriesUntilEveryAssistantIsReady() async {
+    func testLoadUnlessReadyRechecksOnlyTheChosenAssistantUntilNothingOutsideAriaIsLeft() async {
         struct Failure: Error {}
         @MainActor final class ResponseState {
             var shouldFail = true
-            var status = Assistant.Status.signedOut
+            var local = Assistant.Status.unreachable
             var calls = 0
         }
         let state = ResponseState()
         let catalog = AssistantCatalog {
             state.calls += 1
             if state.shouldFail { throw Failure() }
-            return [self.assistant(.codex, name: "Codex", status: state.status)]
+            return [
+                self.assistant(.localModel, name: "Local Provider", status: state.local),
+                self.assistant(.claudeCode, name: "Claude Code", status: .notInstalled),
+            ]
         }
-        await catalog.loadUnlessReady()
+        await catalog.loadUnlessReady(selected: .localModel)
         XCTAssertNotNil(catalog.failure)
         state.shouldFail = false
-        await catalog.loadUnlessReady()
+        await catalog.loadUnlessReady(selected: .localModel)
         XCTAssertNil(catalog.failure)
-        state.status = .ready
-        await catalog.loadUnlessReady()
-        await catalog.loadUnlessReady()
+        state.local = .modelUnset
+        await catalog.loadUnlessReady(selected: .localModel)
+        await catalog.loadUnlessReady(selected: .localModel)
         XCTAssertEqual(state.calls, 3)
+        await catalog.loadUnlessReady(selected: .claudeCode)
+        XCTAssertEqual(state.calls, 4)
     }
 
     func testOlderResponseCannotReplaceTheLatestCatalog() async {

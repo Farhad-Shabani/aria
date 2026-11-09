@@ -4,8 +4,8 @@ import GRPCProtobuf
 
 /// An assistant the daemon can run.
 struct Assistant: Equatable, Sendable {
-    enum Status: Equatable, Sendable {
-        case ready, notInstalled, signedOut, notConfigured, unreachable, modelMissing, unchecked
+    enum Status: Equatable, Sendable, CaseIterable {
+        case ready, notInstalled, signedOut, notConfigured, unreachable, modelMissing, modelUnset, unchecked
     }
 
     /// The wire id, because settings stores the chosen assistant by it.
@@ -15,12 +15,17 @@ struct Assistant: Equatable, Sendable {
     /// How to make an unready assistant ready, as the daemon writes it: a
     /// clause with commands in backticks.
     let fix: String
+    /// It has no default model, so the user must choose one.
+    let needsModel: Bool
 
-    init(id: Aria_Daemon_V1_AssistantId, name: String, status: Status, fix: String = "") {
+    init(
+        id: Aria_Daemon_V1_AssistantId, name: String, status: Status, fix: String = "", needsModel: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.status = status
         self.fix = fix
+        self.needsModel = needsModel
     }
 
     init(_ wire: Aria_Daemon_V1_Assistant) throws {
@@ -36,6 +41,7 @@ struct Assistant: Equatable, Sendable {
         case .notConfigured: status = .notConfigured
         case .unreachable: status = .unreachable
         case .modelMissing: status = .modelMissing
+        case .modelUnset: status = .modelUnset
         case .unchecked: status = .unchecked
         case .unspecified, .UNRECOGNIZED: throw DaemonFailure.invalidResponse
         }
@@ -43,7 +49,7 @@ struct Assistant: Equatable, Sendable {
             wire.name.utf8.count <= 200,
             !wire.name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
         else { throw DaemonFailure.invalidResponse }
-        self.init(id: wire.id, name: wire.name, status: status, fix: wire.fix)
+        self.init(id: wire.id, name: wire.name, status: status, fix: wire.fix, needsModel: wire.needsModel)
     }
 }
 

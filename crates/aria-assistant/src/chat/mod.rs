@@ -324,7 +324,7 @@ pub enum AssistantStatus {
     SignedOut {
         fix: &'static str,
     },
-    /// The settings file lacks the provider endpoint or the model.
+    /// The daemon started without a provider endpoint.
     NotConfigured {
         fix: &'static str,
     },
@@ -335,6 +335,10 @@ pub enum AssistantStatus {
     /// The local provider answers but doesn't list the model.
     ModelMissing {
         model: String,
+    },
+    /// The local provider answers, but no model is chosen.
+    ModelUnset {
+        fix: &'static str,
     },
     /// The check itself failed, so the status is not known.
     Unchecked(AssistantError),
@@ -348,7 +352,9 @@ impl AssistantStatus {
             Self::NotInstalled { binary } => {
                 Some(format!("install the `{}` command", binary.display()))
             }
-            Self::SignedOut { fix } | Self::NotConfigured { fix } => Some((*fix).to_owned()),
+            Self::SignedOut { fix } | Self::NotConfigured { fix } | Self::ModelUnset { fix } => {
+                Some((*fix).to_owned())
+            }
             Self::Unreachable { endpoint } => {
                 Some(format!("start the model server that serves {endpoint}"))
             }
@@ -413,6 +419,9 @@ pub enum AssistantError {
 
     #[error("the local assistant isn't set up; {fix}")]
     NotConfigured { fix: &'static str },
+
+    #[error("the local assistant has no model; {fix}")]
+    ModelUnset { fix: &'static str },
 
     #[error("the model server doesn't list {model}; load it, such as with ollama pull")]
     ModelMissing { model: String },

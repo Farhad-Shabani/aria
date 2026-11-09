@@ -92,7 +92,7 @@ To see or change your usual assistant and model, follow
 
 ## Use a local model
 
-The **Local model** assistant sends your request to a model server on your
+The **Local Provider** assistant sends your request to a model server on your
 Mac, such as [Ollama](https://ollama.com). It can't read your project.
 
 **A cloud model sends your request off your Mac.** Pick a model that runs on
@@ -115,7 +115,7 @@ your Mac.
    ```
 
 3. Follow the [service restart steps](./settings.md#apply-changes).
-4. Choose **Local model** in **Settings → General → Assistant**, or run
+4. Choose **Local Provider** in **Settings → General → Assistant**, or run
    `aria settings set assistant.id local-model`.
 
 Send a request as in [Type a request](#type-a-request). The reply should

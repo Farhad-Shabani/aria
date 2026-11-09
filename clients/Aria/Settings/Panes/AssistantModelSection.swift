@@ -1,14 +1,14 @@
 import SwiftUI
 
 struct AssistantModelSection: View {
-    let assistantID: Aria_Daemon_V1_AssistantId
+    let assistant: Assistant
     @Binding var modelID: String
     @StateObject private var models = AssistantModels()
     @State private var isChoosingCustomModel = false
     @State private var customModelID = ""
 
     private enum Selection: Hashable {
-        case defaultModel
+        case noModel
         case model(String)
         case custom
     }
@@ -18,7 +18,7 @@ struct AssistantModelSection: View {
             LabeledContent("Model") {
                 HStack {
                     Button("Refresh Models", systemImage: "arrow.clockwise") {
-                        Task { await models.load(assistantID) }
+                        Task { await models.load(assistant.id) }
                     }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
@@ -32,7 +32,9 @@ struct AssistantModelSection: View {
                             set: { select($0) }
                         )
                     ) {
-                        Text("Default").tag(Selection.defaultModel)
+                        if let noModel = Self.noModelChoice(needsModel: assistant.needsModel, modelID: modelID) {
+                            Text(noModel).tag(Selection.noModel)
+                        }
                         if !modelID.isEmpty && !models.choices.contains(where: { $0.id == modelID }) {
                             Text(modelID).tag(Selection.model(modelID))
                         }
@@ -56,20 +58,32 @@ struct AssistantModelSection: View {
                     Text("Loading models…").foregroundStyle(.secondary)
                 }
             }
-            NoticeText(notice: models.failure)
+            // The status row above says why an assistant that doesn't
+            // answer can't list its models.
+            if assistant.status.answers {
+                NoticeText(notice: models.failure)
+            }
         }
-        .task { await models.load(assistantID) }
+        .task(id: assistant.status.answers) {
+            guard assistant.status.answers else { return }
+            await models.load(assistant.id)
+        }
+    }
+
+    static func noModelChoice(needsModel: Bool, modelID: String) -> String? {
+        if !needsModel { return "Default" }
+        return modelID.isEmpty ? "Choose a model" : nil
     }
 
     private var selection: Selection {
         if isChoosingCustomModel { return .custom }
-        if modelID.isEmpty { return .defaultModel }
+        if modelID.isEmpty { return .noModel }
         return .model(modelID)
     }
 
     private func select(_ selection: Selection) {
         switch selection {
-        case .defaultModel: saveModel("")
+        case .noModel: saveModel("")
         case .model(let modelID): saveModel(modelID)
         case .custom:
             customModelID = modelID
