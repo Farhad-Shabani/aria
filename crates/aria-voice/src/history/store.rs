@@ -66,6 +66,13 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
         "reply TEXT CHECK(reply IS NULL OR length(CAST(reply AS BLOB))<=131072)
          CHECK((section=2)=(reply IS NOT NULL))",
     ),
+    // Which conversation a chat continued, so the next chat on it can
+    // recall it. Clients never see it.
+    (
+        "conversation",
+        "conversation TEXT CHECK(conversation IS NULL
+         OR (section=2 AND length(CAST(conversation AS BLOB)) BETWEEN 1 AND 128))",
+    ),
 ];
 /// Prompt results live beside the entries, so an older daemon, which never
 /// names this table, reads and writes `entries` as before. An older daemon
@@ -195,8 +202,17 @@ impl Store {
 
     pub fn insert(
         &self,
+        entry: HistoryEntry,
+        audio: Option<&Path>,
+    ) -> Result<HistoryEntry, HistoryError> {
+        self.insert_into(entry, audio, None)
+    }
+
+    fn insert_into(
+        &self,
         mut entry: HistoryEntry,
         audio: Option<&Path>,
+        conversation: Option<&str>,
     ) -> Result<HistoryEntry, HistoryError> {
         validate_entry(&entry)?;
         let mut state = self.lock();
@@ -247,8 +263,8 @@ impl Store {
             .and_then(|app| app.bundle_id.as_deref());
         let dictation = entry.dictation();
         transaction.execute(
-            "INSERT INTO entries(created,source,app_name,bundle_id,duration,text,complete,status,error,language,own_voice,project,engine,section,title,transcript,reply)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+            "INSERT INTO entries(created,source,app_name,bundle_id,duration,text,complete,status,error,language,own_voice,project,engine,section,title,transcript,reply,conversation)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
             params![sql_integer(entry.created_at_ms)?, source_number(entry.source), app_name, bundle_id,
                 entry.duration_ms.map(sql_integer).transpose()?, entry.text, entry.complete, status_number(entry.status),
                 entry.error.as_ref().map(encode_error).transpose()?, dictation.map_or("", |d| d.language.as_str()),
@@ -257,7 +273,7 @@ impl Store {
                 dictation.map_or("", |d| d.engine.as_str()),
                 section_number(entry.content.section()), entry.title.as_ref().map(Title::as_str),
                 transcript_path(&entry.content).map(|path| path.as_os_str().as_bytes()),
-                reply(&entry.content)],
+                reply(&entry.content), conversation],
         )?;
         let id = unsigned(transaction.last_insert_rowid(), 0)?;
         if let Some((copy, _)) = copied {
@@ -376,8 +392,8 @@ impl Store {
         question: &str,
         reply: &str,
         workdir: &Path,
-        created_at_ms: u64,
-        duration_ms: u64,
+        conversation: Option<&str>,
+        (created_at_ms, duration_ms): (u64, u64),
         failure: Option<RpcFailure>,
     ) -> Result<HistoryEntry, HistoryError> {
         let entry = HistoryEntry {
@@ -402,7 +418,34 @@ impl Store {
             warning: None,
             deletion_pending: false,
         };
-        self.insert(entry, None)
+        self.insert_into(entry, None, conversation)
+    }
+
+    /// The chats saved under `conversation`, oldest first: the newest whose
+    /// questions and replies fit in `max_bytes` together.
+    pub fn conversation(
+        &self,
+        conversation: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<HistoryEntry>, HistoryError> {
+        let mut state = self.lock();
+        self.maintain(&mut state)?;
+        let mut statement = state.connection.prepare(&format!(
+            "SELECT {COLUMNS} FROM entries WHERE conversation=?1 AND deleting=0 ORDER BY id DESC"
+        ))?;
+        let mut rows = statement.query([conversation])?;
+        let mut chats = Vec::new();
+        let mut used = 0;
+        while let Some(row) = rows.next()? {
+            let chat = decode(row)?;
+            used += stored_bytes(&chat);
+            if used > max_bytes {
+                break;
+            }
+            chats.push(chat);
+        }
+        chats.reverse();
+        Ok(chats)
     }
 
     /// Saves a prompt's reply under `entry`. An entry keeps its newest
@@ -1648,6 +1691,42 @@ mod tests {
         assert_eq!(version, 1);
         drop(store);
         Store::open(directory.path()).unwrap();
+    }
+
+    #[test]
+    fn a_conversation_recalls_its_newest_chats_that_fit_oldest_first() {
+        let (_directory, store) = opened();
+        let chat = |question: &str, conversation: Option<&str>| {
+            store
+                .save_chat(
+                    question,
+                    "ok",
+                    Path::new("/p"),
+                    conversation,
+                    (now_ms(), 1),
+                    None,
+                )
+                .unwrap();
+        };
+        chat("one", Some("c1"));
+        chat("other", Some("c2"));
+        chat("two", Some("c1"));
+        chat("none", None);
+        chat("three", Some("c1"));
+        let questions = |conversation: &str, max_bytes: usize| {
+            store
+                .conversation(conversation, max_bytes)
+                .unwrap()
+                .into_iter()
+                .map(|chat| chat.text)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(questions("c1", 1024), ["one", "two", "three"]);
+        // "three" and "two" with their replies take 12 bytes; "one" doesn't fit.
+        assert_eq!(questions("c1", 12), ["two", "three"]);
+        assert_eq!(questions("c2", 1024), ["other"]);
+        assert!(questions("c3", 1024).is_empty());
     }
 
     #[test]

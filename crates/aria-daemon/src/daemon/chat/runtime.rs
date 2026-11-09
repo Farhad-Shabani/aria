@@ -413,7 +413,7 @@ impl ChatRuntime {
             Some(block) => format!("{block}\n\n{}", request.text),
             None => request.text.clone(),
         };
-        let text = self.turn(
+        let (text, conversation) = self.turn(
             assistant,
             recorder,
             &request,
@@ -442,6 +442,7 @@ impl ChatRuntime {
                 &request.text,
                 &text,
                 &request.workdir,
+                conversation.as_deref(),
                 elapsed_ms(started),
                 failure,
             );
@@ -571,6 +572,7 @@ impl ChatRuntime {
 
     /// One turn on the request's conversation: continues or restarts it,
     /// prompts the assistant, and records what continues it next time.
+    /// Returns the reply and the conversation it went on.
     fn turn<A: Assistant>(
         &self,
         assistant: &A,
@@ -579,7 +581,7 @@ impl ChatRuntime {
         prompt: &str,
         timeout: Duration,
         cancel: &CancelToken,
-    ) -> Result<String, ChatError> {
+    ) -> Result<(String, Option<String>), ChatError> {
         let key = request.key();
         // Forgetting happens before the chat, so a failed one cannot
         // resurrect the session the user asked to drop.
@@ -604,10 +606,11 @@ impl ChatRuntime {
             self.sessions.forget(&key)?;
         }
         prompted?;
-        if let Some(resume) = session.resume_id() {
+        let conversation = session.resume_id().map(str::to_owned);
+        if let Some(resume) = &conversation {
             self.sessions.record(key, resume)?;
         }
-        Ok(std::mem::take(&mut recorder.text))
+        Ok((std::mem::take(&mut recorder.text), conversation))
     }
 
     /// The memory section when it is on.
@@ -1563,6 +1566,12 @@ pub(super) mod tests {
         assert_eq!(saved.text, "When?", "the memory profile stays out");
         assert_eq!(saved.content, HistoryContent::Chat { reply });
         assert_eq!(saved.project.as_deref(), Some(home.path()));
+        let conversation = runtime
+            .history
+            .conversation("session-1", 1024)
+            .expect("history reads");
+        let ids: Vec<u64> = conversation.iter().map(|chat| chat.id).collect();
+        assert_eq!(ids, [saved.id], "filed under its conversation");
     }
 
     #[test]
@@ -1598,6 +1607,7 @@ pub(super) mod tests {
             "When?",
             reply,
             home,
+            None,
             elapsed_ms((SystemTime::now(), Instant::now())),
             None,
         );
@@ -1727,6 +1737,7 @@ pub(super) mod tests {
             "When?",
             " \n",
             home.path(),
+            None,
             elapsed_ms((SystemTime::now(), Instant::now())),
             None,
         );

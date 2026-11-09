@@ -57,6 +57,16 @@ impl HistoryStore {
         self.storage.clone().ok_or(HistoryError::Unavailable)
     }
 
+    /// The chats saved under `conversation` that fit in `max_bytes`, oldest
+    /// first.
+    pub(super) fn conversation(
+        &self,
+        conversation: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<HistoryEntry>, HistoryError> {
+        self.storage()?.conversation(conversation, max_bytes)
+    }
+
     pub(super) fn list(&self, query: HistoryQuery) -> Result<HistoryPage, HistoryError> {
         let mut page = self.storage()?.list(&query)?;
         // Reporting a saved warning consumes it, so one failure does not pin a
@@ -153,18 +163,12 @@ impl HistoryStore {
         question: &str,
         reply: &str,
         workdir: &Path,
-        (created_at_ms, duration_ms): (u64, u64),
+        conversation: Option<&str>,
+        timing: (u64, u64),
         failure: Option<RpcFailure>,
     ) {
         let saved = self.storage().and_then(|store| {
-            store.save_chat(
-                question,
-                reply,
-                workdir,
-                created_at_ms,
-                duration_ms,
-                failure,
-            )
+            store.save_chat(question, reply, workdir, conversation, timing, failure)
         });
         let warning = match saved {
             Ok(entry) => entry.warning,
