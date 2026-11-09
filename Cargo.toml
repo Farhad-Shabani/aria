@@ -15,6 +15,7 @@ members = [
   "crates/aria-kit",
   "crates/aria-platform",
   "crates/aria-primitives",
+  "crates/aria-provider",
   "crates/aria-stt",
   "crates/aria-tts",
   "crates/aria-wake",
@@ -57,6 +58,7 @@ aria-harness      = { path = "crates/aria-harness", version = "0.8.0" }
 aria-kit          = { path = "crates/aria-kit", version = "0.8.0" }
 aria-platform     = { path = "crates/aria-platform", version = "0.8.0" }
 aria-primitives   = { path = "crates/aria-primitives", version = "0.8.0" }
+aria-provider     = { path = "crates/aria-provider", version = "0.8.0" }
 aria-segmentation = { path = "crates/aria-segmentation", version = "0.8.0" }
 aria-settings     = { path = "crates/aria-settings", version = "0.8.0" }
 aria-speaker      = { path = "crates/aria-speaker", version = "0.8.0" }

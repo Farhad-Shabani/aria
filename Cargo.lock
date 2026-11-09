@@ -155,6 +155,7 @@ dependencies = [
  "aria-kit",
  "aria-platform",
  "aria-primitives",
+ "aria-provider",
  "aria-segmentation",
  "aria-settings",
  "aria-speaker",
@@ -369,6 +370,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aria-provider"
+version = "0.8.0"
+dependencies = [
+ "aria-primitives",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "ureq",
+]
+
+[[package]]
 name = "aria-segmentation"
 version = "0.8.0"
 dependencies = [
@@ -451,6 +463,7 @@ dependencies = [
  "aria-kit",
  "aria-platform",
  "aria-primitives",
+ "aria-provider",
  "aria-segmentation",
  "aria-settings",
  "aria-speaker",
@@ -469,7 +482,6 @@ dependencies = [
  "time",
  "tracing",
  "tracing-subscriber",
- "ureq",
 ]
 
 [[package]]

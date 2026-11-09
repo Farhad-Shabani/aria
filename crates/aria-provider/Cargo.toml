@@ -1,0 +1,19 @@
+[package]
+name                 = "aria-provider"
+version.workspace    = true
+edition.workspace    = true
+description          = "A client for a model server on this machine that speaks the OpenAI chat-completions API"
+license              = "Apache-2.0"
+repository.workspace = true
+readme.workspace     = true
+publish              = false
+
+[lints]
+workspace = true
+
+[dependencies]
+aria-primitives = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+thiserror       = { workspace = true }
+ureq            = { version = "3.4", default-features = false }

@@ -18,6 +18,7 @@ test-support = [ "aria-kit/test-support" ]
 aria-kit          = { workspace = true, features = [ "microphone", "playback" ] }
 aria-platform     = { workspace = true, features = [ "sqlite" ] }
 aria-primitives   = { workspace = true }
+aria-provider     = { workspace = true }
 aria-segmentation = { workspace = true }
 aria-settings     = { workspace = true }
 aria-speaker      = { workspace = true }
@@ -33,7 +34,6 @@ tempfile          = { workspace = true }
 thiserror         = { workspace = true }
 time              = { workspace = true }
 tracing           = { workspace = true }
-ureq              = { version = "3.4", default-features = false }
 
 # The MLX sidecar requires child processes, which iOS forbids.
 [target.'cfg(not(target_os = "ios"))'.dependencies]

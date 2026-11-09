@@ -10,6 +10,7 @@ use aria_kit::transcription::{
     layer::{self, Layer},
 };
 use aria_primitives::cancel::CancelToken;
+use aria_provider::{Client, ProviderError};
 use serde::Deserialize;
 
 use aria_settings::LlmCleanupTarget;
@@ -19,7 +20,6 @@ const MAX_INPUT_BYTES: usize = 4 * 1024;
 const MAX_GUIDANCE_BYTES: usize = 16 * 1024;
 const MAX_RESPONSE_BYTES: usize = 32 * 1024;
 const MAX_OUTPUT_BYTES: usize = 8 * 1024;
-const MAX_MODEL_LIST_BYTES: usize = 256 * 1024;
 // Leaves room for a warm small model to clean a long dictation.
 const REQUEST_BUDGET: Duration = Duration::from_secs(3);
 // Ollama stops loading a model when its client hangs up, so the warm-up
@@ -39,14 +39,8 @@ pub enum LlmCleanupError {
     InputTooLarge,
     #[error("cleanup request timed out")]
     Timeout,
-    #[error("cleanup transport failed")]
-    Transport,
-    #[error("cleanup server returned an unsuccessful HTTP status")]
-    HttpStatus,
-    #[error("cleanup response headers exceed 8 KiB")]
-    HeadersTooLarge,
-    #[error("cleanup response exceeds 32 KiB")]
-    ResponseTooLarge,
+    #[error(transparent)]
+    Server(ProviderError),
     #[error("cleanup response violates the output contract")]
     InvalidResponse,
     #[error("cleanup response adds words or symbols the transcript doesn't have")]
@@ -68,10 +62,7 @@ impl LlmCleanupError {
             Self::PromptTooLarge => "prompt_size",
             Self::InputTooLarge => "input_size",
             Self::Timeout => "timeout",
-            Self::Transport => "transport",
-            Self::HttpStatus => "http_status",
-            Self::HeadersTooLarge => "header_size",
-            Self::ResponseTooLarge => "response_size",
+            Self::Server(error) => error.category(),
             Self::InvalidResponse => "invalid_response",
             Self::Unfaithful => "unfaithful",
             Self::ModelMissing => "model_missing",
@@ -81,9 +72,9 @@ impl LlmCleanupError {
 
 #[derive(Clone)]
 pub struct LlmCleanup {
-    target: LlmCleanupTarget,
+    model: String,
+    client: Client,
     prompt: String,
-    agent: ureq::Agent,
     /// Set while a warm-up runs, so presses never stack them.
     warming: Arc<AtomicBool>,
 }
@@ -91,9 +82,9 @@ pub struct LlmCleanup {
 impl LlmCleanup {
     pub fn new(target: &LlmCleanupTarget, home: &Path) -> Result<Self, LlmCleanupError> {
         Ok(Self {
-            target: target.clone(),
+            model: target.model().to_owned(),
+            client: client(target),
             prompt: build_prompt(home)?,
-            agent: agent(REQUEST_BUDGET),
             warming: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -101,32 +92,10 @@ impl LlmCleanup {
     /// Whether the server answers and lists the model. Spends no tokens.
     pub fn check_ready(target: &LlmCleanupTarget) -> Result<(), LlmCleanupError> {
         let deadline = Instant::now() + REQUEST_BUDGET;
-        let mut response = agent(REQUEST_BUDGET)
-            .get(target.provider().listing())
-            .header("Accept", "application/json")
-            .call()
-            .map_err(transport_error)?;
-        if !response.status().is_success() {
-            return Err(LlmCleanupError::HttpStatus);
-        }
-        let body = read_bounded(
-            response.body_mut().as_reader(),
-            MAX_MODEL_LIST_BYTES,
-            || {
-                if Instant::now() >= deadline {
-                    Err(LlmCleanupError::Timeout)
-                } else {
-                    Ok(())
-                }
-            },
-        )?;
-        let listed: ModelList =
-            serde_json::from_slice(&body).map_err(|_| LlmCleanupError::InvalidResponse)?;
-        // Ollama lists "llama3.2:latest" and serves it as "llama3.2".
-        let model = target.model();
-        let latest = format!("{model}:latest");
-        let serves = |id: &str| id == model || (!model.contains(':') && id == latest);
-        if listed.data.iter().flatten().any(|entry| serves(&entry.id)) {
+        if client(target)
+            .serves(target.model(), deadline)
+            .map_err(LlmCleanupError::Server)?
+        {
             Ok(())
         } else {
             Err(LlmCleanupError::ModelMissing)
@@ -141,8 +110,12 @@ impl LlmCleanup {
     ) -> Result<String, TranscriptionError> {
         let mut request = self.request(text, 2048);
         request["response_format"] = serde_json::json!({ "type": "json_object" });
-        let body = self.post(request.to_string(), cancel, deadline)?;
-        let result = parse_response(&body)
+        check_budget(cancel, deadline)?;
+        let content = self
+            .client
+            .complete(&request, MAX_RESPONSE_BYTES, deadline, cancel)
+            .map_err(server_error)?;
+        let result = parse_rewritten(&content)
             .and_then(|output| {
                 if adds_words(text, &output) || adds_keystrokes(text, &output) {
                     Err(LlmCleanupError::Unfaithful)
@@ -159,7 +132,7 @@ impl LlmCleanup {
     /// the cleanup request then reuses.
     fn request(&self, text: &str, max_tokens: u32) -> serde_json::Value {
         serde_json::json!({
-            "model": self.target.model(),
+            "model": self.model,
             "messages": [
                 { "role": "system", "content": self.prompt },
                 { "role": "user", "content": text }
@@ -167,28 +140,6 @@ impl LlmCleanup {
             "stream": false,
             "temperature": 0,
             "max_tokens": max_tokens
-        })
-    }
-
-    fn post(
-        &self,
-        request: String,
-        cancel: &CancelToken,
-        deadline: Instant,
-    ) -> Result<Vec<u8>, TranscriptionError> {
-        check_budget(cancel, deadline)?;
-        let mut response = self
-            .agent
-            .post(self.target.provider().endpoint())
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .send(request)
-            .map_err(transport_error)?;
-        if !response.status().is_success() {
-            return Err(LlmCleanupError::HttpStatus.into());
-        }
-        read_bounded(response.body_mut().as_reader(), MAX_RESPONSE_BYTES, || {
-            check_budget(cancel, deadline)
         })
     }
 }
@@ -222,22 +173,23 @@ impl Layer for LlmCleanup {
         if self.warming.swap(true, Ordering::AcqRel) {
             return;
         }
-        let mut cleanup = self.clone();
-        cleanup.agent = agent(WARM_BUDGET);
+        let cleanup = self.clone();
         let spawned = std::thread::Builder::new()
             .name("aria-cleanup-warm".to_owned())
             .spawn(move || {
                 let _running = Warming(Arc::clone(&cleanup.warming));
                 let started = Instant::now();
                 let request = cleanup.request(WARM_INPUT, 1);
-                let result = cleanup.post(
-                    request.to_string(),
-                    &CancelToken::never(),
+                let result = cleanup.client.complete(
+                    &request,
+                    MAX_RESPONSE_BYTES,
                     started + WARM_BUDGET,
+                    &CancelToken::never(),
                 );
+                // One token is all the warm-up asks for.
                 let category = match &result {
-                    Ok(_) => "none",
-                    Err(error) => failure_category(error).unwrap_or("other"),
+                    Ok(_) | Err(ProviderError::Truncated) => "none",
+                    Err(error) => error.category(),
                 };
                 tracing::debug!(
                     category,
@@ -273,39 +225,14 @@ pub(super) fn failure_category(error: &TranscriptionError) -> Option<&'static st
     }
 }
 
-fn agent(budget: Duration) -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .proxy(None)
-        .max_redirects(0)
-        .max_idle_connections(0)
-        .http_status_as_error(false)
-        .max_response_header_size(8 * 1024)
-        .timeout_global(Some(budget))
-        .build()
-        .into()
+fn client(target: &LlmCleanupTarget) -> Client {
+    Client::new(target.provider().endpoint(), target.provider().listing())
 }
 
-/// Reads at most `limit` bytes, asking `check` before each chunk whether to
-/// go on.
-fn read_bounded<E: From<LlmCleanupError>>(
-    mut reader: impl Read,
-    limit: usize,
-    mut check: impl FnMut() -> Result<(), E>,
-) -> Result<Vec<u8>, E> {
-    let mut body = Vec::new();
-    let mut buffer = [0; 4096];
-    loop {
-        check()?;
-        let count = reader
-            .read(&mut buffer)
-            .map_err(|error| E::from(transport_error(error.into())))?;
-        if count == 0 {
-            return Ok(body);
-        }
-        if body.len() + count > limit {
-            return Err(LlmCleanupError::ResponseTooLarge.into());
-        }
-        body.extend_from_slice(&buffer[..count]);
+fn server_error(error: ProviderError) -> TranscriptionError {
+    match error {
+        ProviderError::Cancelled => TranscriptionError::Cancelled,
+        error => LlmCleanupError::Server(error).into(),
     }
 }
 
@@ -317,15 +244,6 @@ fn check_budget(cancel: &CancelToken, deadline: Instant) -> Result<(), Transcrip
         return Err(LlmCleanupError::Timeout.into());
     }
     Ok(())
-}
-
-fn transport_error(error: ureq::Error) -> LlmCleanupError {
-    match error {
-        ureq::Error::Timeout(_) => LlmCleanupError::Timeout,
-        ureq::Error::LargeResponseHeader(_, _) => LlmCleanupError::HeadersTooLarge,
-        ureq::Error::TooManyRedirects | ureq::Error::RedirectFailed => LlmCleanupError::HttpStatus,
-        _ => LlmCleanupError::Transport,
-    }
 }
 
 fn build_prompt(home: &Path) -> Result<String, LlmCleanupError> {
@@ -422,59 +340,14 @@ fn is_number(word: &str) -> bool {
 }
 
 #[derive(Deserialize)]
-struct ModelList {
-    /// Ollama sends `null` while it has no models.
-    data: Option<Vec<ListedModel>>,
-}
-
-#[derive(Deserialize)]
-struct ListedModel {
-    id: String,
-}
-
-#[derive(Deserialize)]
-struct Completion {
-    choices: Vec<Choice>,
-}
-
-#[derive(Deserialize)]
-struct Choice {
-    finish_reason: String,
-    message: Message,
-}
-
-#[derive(Deserialize)]
-struct Message {
-    role: String,
-    content: String,
-    tool_calls: Option<serde_json::Value>,
-    function_call: Option<serde_json::Value>,
-    refusal: Option<serde_json::Value>,
-}
-
-#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Rewritten {
     text: String,
 }
 
-fn parse_response(body: &[u8]) -> Result<String, LlmCleanupError> {
-    let completion: Completion =
-        serde_json::from_slice(body).map_err(|_| LlmCleanupError::InvalidResponse)?;
-    let [choice]: [Choice; 1] = completion
-        .choices
-        .try_into()
-        .map_err(|_| LlmCleanupError::InvalidResponse)?;
-    if choice.finish_reason != "stop"
-        || choice.message.role != "assistant"
-        || choice.message.tool_calls.is_some()
-        || choice.message.function_call.is_some()
-        || choice.message.refusal.is_some()
-    {
-        return Err(LlmCleanupError::InvalidResponse);
-    }
-    let output: Rewritten = serde_json::from_str(&choice.message.content)
-        .map_err(|_| LlmCleanupError::InvalidResponse)?;
+fn parse_rewritten(content: &str) -> Result<String, LlmCleanupError> {
+    let output: Rewritten =
+        serde_json::from_str(content).map_err(|_| LlmCleanupError::InvalidResponse)?;
     if output.text.trim().is_empty() || output.text.len() > MAX_OUTPUT_BYTES {
         return Err(LlmCleanupError::InvalidResponse);
     }
