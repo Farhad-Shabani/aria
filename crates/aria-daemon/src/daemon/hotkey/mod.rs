@@ -1,20 +1,18 @@
-//! The Aria key as a trigger, owned by a persistent daemon. A tap toggles
-//! dictation, or cancels a run a client's press started; a hold records
-//! here; a combo is broadcast for a client to run.
+//! The Aria key as a trigger, owned by a persistent daemon. The listener
+//! turns keys into presses and bare Returns; the key router decides what
+//! each one means.
 
-use super::chat::{ChatCallError, ChatHandle};
-use super::dictation::DictationRuntimeError;
-use super::dictation::{AutoStopRule, DictationCallError, DictationHandle, DictationRuntime};
-use super::operation::CallError;
+mod router;
+
+use super::chat::ChatHandle;
+use super::dictation::{DictationHandle, DictationRuntime};
 use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
-use aria_platform::hotkey::{AriaKey, Combo, ListenerEvent, PlatformHotkeyListener, Press};
-use aria_voice::dictation::{
-    DictationError, DictationOutcome, DictationRequest, DictationStage, StopMode,
-};
+use aria_platform::hotkey::{AriaKey, ListenerEvent, PlatformHotkeyListener};
+use router::{Hold, KeyRouter};
 use std::sync::Arc;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
@@ -24,23 +22,10 @@ type Listener = fn(AriaKey, &dyn Fn() -> bool, &dyn Fn(ListenerEvent), &dyn Fn()
 
 pub(super) struct HotkeyTrigger {
     key: watch::Receiver<AriaKey>,
-    dictation: DictationHandle,
-    /// Cancels a run a client's press started, so a tap does not dictate
-    /// over it.
-    chat: ChatHandle,
-    /// Stops a hold's recording by id, the same way a client's stop does.
-    runtime: Arc<DictationRuntime>,
-    /// Where combos go; the Mac app runs their actions.
-    subscriptions: Arc<Subscriptions>,
+    /// Shared with the listener thread, which asks it about each Return.
+    router: Arc<KeyRouter>,
     health: HealthReporter,
     listener: Listener,
-}
-
-/// How a hold ended, sent to the task that owns its dictation.
-#[derive(Debug, Clone, Copy)]
-enum HoldEnd {
-    Released,
-    Cancelled,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -70,10 +55,7 @@ impl HotkeyTrigger {
     ) -> Self {
         Self {
             key,
-            dictation,
-            chat,
-            runtime,
-            subscriptions,
+            router: Arc::new(KeyRouter::new(dictation, chat, runtime, subscriptions)),
             health,
             listener: |key, take_return, events, should_stop| {
                 PlatformHotkeyListener::listen(key, take_return, events, should_stop);
@@ -117,9 +99,9 @@ impl HotkeyTrigger {
         // change made after this listener started.
         let rearm = key.clone();
         let listener = self.listener;
-        let runtime = Arc::clone(&self.runtime);
+        let router = Arc::clone(&self.router);
         let mut listener = tokio::task::spawn_blocking(move || {
-            let take_return = || runtime.take_return();
+            let take_return = || router.take_return();
             let events = |event| {
                 if events.try_send(event).is_err() {
                     tracing::warn!(trigger = "hotkey", ?event, "hotkey event dropped");
@@ -130,8 +112,9 @@ impl HotkeyTrigger {
         });
 
         let mut waiting = false;
-        // Where the end of the hold in progress goes; `None` between holds.
-        let mut hold: Option<oneshot::Sender<HoldEnd>> = None;
+        // Dropped with this listener, which cancels a hold it can no longer
+        // end.
+        let mut hold: Option<Hold> = None;
         loop {
             tokio::select! {
                 // A hold's end queued in the listener's last slice must not
@@ -168,13 +151,7 @@ impl HotkeyTrigger {
                             "the hotkey's key is unavailable; run `aria doctor` for steps"
                         );
                     }
-                    ListenerEvent::Press(Press::Tap) => self.tap(),
-                    ListenerEvent::Press(Press::HoldStarted) => hold = Some(self.hold()),
-                    ListenerEvent::Press(Press::HoldEnded) => end_hold(&mut hold, HoldEnd::Released),
-                    ListenerEvent::Press(Press::HoldCancelled) => {
-                        end_hold(&mut hold, HoldEnd::Cancelled);
-                    }
-                    ListenerEvent::Press(Press::Combo(combo)) => self.combo(combo),
+                    ListenerEvent::Press(press) => self.router.press(press, &mut hold),
                 },
                 result = &mut listener => return self.classify(listener_exit(result), key, shutdown),
                 () = shutdown.cancelled() => return listener_exit(listener.await),
@@ -201,171 +178,6 @@ impl HotkeyTrigger {
                 HotkeyExit::Failed
             }
         }
-    }
-
-    /// One detached task per tap: a starting tap holds its call open for
-    /// the whole dictation, and the next tap must not wait behind it. A tap
-    /// ends what the user is in the middle of: an open manual recording
-    /// first, then a run a press started; with neither, it dictates. Between
-    /// a press's recording stopping and its ticket, transcribing plus one
-    /// round trip, a tap still dictates.
-    fn tap(&self) {
-        tracing::info!(trigger = "hotkey", "tap");
-        let runtime = Arc::clone(&self.runtime);
-        let chat = self.chat.clone();
-        let dictation = self.dictation.clone();
-        tokio::spawn(async move {
-            if runtime.stop_manual_recording() {
-                tracing::info!(
-                    trigger = "hotkey",
-                    status = "stop_accepted",
-                    "hotkey tap stopped the running recording"
-                );
-                return;
-            }
-            match chat.cancel_tapped().await {
-                Ok(true) => tracing::info!(
-                    trigger = "hotkey",
-                    status = "cancelled",
-                    "hotkey tap cancelled the run a press started"
-                ),
-                Ok(false) => log_outcome(
-                    dictation
-                        .start(DictationRequest::new(StopMode::Manual))
-                        .await,
-                ),
-                Err(error) => log_chat_unreached(error),
-            }
-        });
-    }
-
-    /// With no subscriber, the press goes nowhere.
-    fn combo(&self, combo: Combo) {
-        tracing::info!(trigger = "hotkey", ?combo, "combo");
-        self.subscriptions.broadcast(combo);
-    }
-
-    /// One detached task per hold. It owns the hold's call, so the listener
-    /// loop never waits on the actor; the hold's end reaches it through the
-    /// returned sender. A release stops the recording by id, so it can never
-    /// be mistaken for a fresh start, and a cancel drops the call, which
-    /// discards whatever was recorded.
-    fn hold(&self) -> oneshot::Sender<HoldEnd> {
-        tracing::info!(trigger = "hotkey", "hold started");
-        let (end, ended) = oneshot::channel();
-        let dictation = self.dictation.clone();
-        let runtime = Arc::clone(&self.runtime);
-        tokio::spawn(async move {
-            // The id arrives with the Recording stage.
-            let (recording, recorded) = watch::channel(None);
-            let events = runtime.emitter_for_call(move |stage| {
-                if let DictationStage::Recording { id, .. } = stage {
-                    recording.send_replace(Some(id));
-                }
-            });
-            // The release is the stop, so a pause mid-hold must not end it.
-            let pending = match dictation
-                .submit(
-                    DictationRequest::new(StopMode::Manual),
-                    AutoStopRule::Off,
-                    Some(events),
-                )
-                .await
-            {
-                Ok(pending) => pending,
-                Err(error) => return log_outcome(Err(error)),
-            };
-            // A listener that went away mid-hold cannot report its end;
-            // dropping the call cancels the recording.
-            let Ok(end) = ended.await else { return };
-            tracing::info!(trigger = "hotkey", ?end, "hold ended");
-            match end {
-                // Released before capture opened: nothing was heard, and
-                // stopping a recording the instant it opens would only
-                // report no speech. Dropping the call cancels it quietly.
-                HoldEnd::Released if recorded.borrow().is_none() => {
-                    drop(pending);
-                    tracing::info!(
-                        trigger = "hotkey",
-                        status = "cancelled",
-                        "hold released before recording began"
-                    );
-                }
-                HoldEnd::Released => {
-                    let id = recorded.borrow().expect("checked above");
-                    runtime.stop_recording(id);
-                    log_outcome(pending.wait().await);
-                }
-                HoldEnd::Cancelled => {
-                    drop(pending);
-                    tracing::info!(
-                        trigger = "hotkey",
-                        status = "cancelled",
-                        "hold dictation discarded"
-                    );
-                }
-            }
-        });
-        end
-    }
-}
-
-/// A hold task is only gone when the actor is; its end then has nothing
-/// left to steer.
-fn end_hold(hold: &mut Option<oneshot::Sender<HoldEnd>>, end: HoldEnd) {
-    if let Some(hold) = hold.take() {
-        let _ = hold.send(end);
-    }
-}
-
-fn log_outcome(outcome: Result<DictationOutcome, DictationCallError>) {
-    match outcome {
-        Ok(DictationOutcome::Completed(_)) => tracing::info!(
-            trigger = "hotkey",
-            status = "completed",
-            "hotkey dictation finished"
-        ),
-        Ok(DictationOutcome::StopAccepted) => tracing::info!(
-            trigger = "hotkey",
-            status = "stop_accepted",
-            "hotkey press stopped the running dictation"
-        ),
-        Err(DictationCallError::Runtime(DictationRuntimeError::Execution(
-            DictationError::Cancelled,
-        ))) => tracing::info!(
-            trigger = "hotkey",
-            status = "cancelled",
-            "hotkey dictation finished"
-        ),
-        Err(DictationCallError::Unavailable) => tracing::info!(
-            trigger = "hotkey",
-            status = "unavailable",
-            "hotkey dictation did not run; the daemon is stopping"
-        ),
-        Err(error @ (DictationCallError::Runtime(_) | DictationCallError::JobFailed)) => {
-            tracing::warn!(
-                trigger = "hotkey",
-                status = "failed",
-                %error,
-                "hotkey dictation finished"
-            );
-        }
-    }
-}
-
-fn log_chat_unreached(error: ChatCallError) {
-    match error {
-        CallError::Unavailable => tracing::info!(
-            trigger = "hotkey",
-            status = "unavailable",
-            "hotkey tap did nothing; the daemon is stopping"
-        ),
-        error @ (CallError::Runtime(_) | CallError::JobFailed) => tracing::warn!(
-            trigger = "hotkey",
-            status = "failed",
-            %error,
-            "hotkey tap could not ask chat"
-        ),
     }
 }
 
@@ -399,7 +211,7 @@ mod tests {
     use tonic_health::server::HealthService;
 
     use crate::ipc::wire;
-    use aria_platform::hotkey::Combo;
+    use aria_platform::hotkey::{Combo, Press};
     use aria_platform::runtime::RuntimePaths;
     use aria_settings::SettingsStore;
     use aria_voice::dictation::testing::{RecordsUntilStopped, recording_started};
@@ -432,13 +244,15 @@ mod tests {
         let (health, _server) = tonic_health::server::health_reporter();
         HotkeyTrigger {
             key,
-            dictation: DictationHandle::detached(),
-            chat: ChatHandle::detached(),
-            runtime: Arc::new(DictationRuntime::detached(Arc::new(
-                SettingsStore::open(directory.path().join("settings.toml"))
-                    .expect("the settings store should open"),
-            ))),
-            subscriptions,
+            router: Arc::new(KeyRouter::new(
+                DictationHandle::detached(),
+                ChatHandle::detached(),
+                Arc::new(DictationRuntime::detached(Arc::new(
+                    SettingsStore::open(directory.path().join("settings.toml"))
+                        .expect("the settings store should open"),
+                ))),
+                subscriptions,
+            )),
             health,
             listener,
         }
@@ -554,10 +368,7 @@ mod tests {
         let (health, _server) = tonic_health::server::health_reporter();
         let trigger = HotkeyTrigger {
             key: watch,
-            dictation: handle,
-            chat,
-            runtime: dictation,
-            subscriptions,
+            router: Arc::new(KeyRouter::new(handle, chat, dictation, subscriptions)),
             health,
             listener: |_key, _take_return, events, should_stop| {
                 events(ListenerEvent::Press(Press::Tap));

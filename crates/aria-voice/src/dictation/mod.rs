@@ -30,8 +30,8 @@ pub use event::{
 };
 pub use event::{DictationStage, HeardSpeaker};
 pub use execution::{
-    DictationCoordinator, DictationError, DictationExecutor, DictationPolicy, DictationPolicyError,
-    ExecutionControl, Transcribed,
+    ActiveDictation, DictationCoordinator, DictationError, DictationExecutor, DictationPolicy,
+    DictationPolicyError, ExecutionControl, Transcribed,
 };
 use level::Meter;
 pub use level::MicLevel;

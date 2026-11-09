@@ -130,12 +130,12 @@ enum KeyEdge {
 
 /// What the tap does with a Return key event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReturnAction {
-    /// Swallow it if a dictation takes it.
-    Take,
-    /// Swallow it: it belongs to a taken press.
+enum ReturnHandling {
+    /// Ask whether the key is taken, and swallow it if so.
+    Ask,
+    /// Swallow it: it repeats a taken Return.
     Swallow,
-    /// Swallow the taken press's release, which ends it.
+    /// Swallow the taken Return's release, which ends it.
     Release,
     Pass,
 }
@@ -157,15 +157,15 @@ fn is_bare_return(key: AriaKey, key_code: i64, flags: u64) -> bool {
 
 /// Only the person's own Return ends a dictation: the Return delivery posts
 /// must reach the app.
-fn return_action(edge: KeyEdge, bare: bool, synthetic: bool, swallowing: bool) -> ReturnAction {
+fn return_handling(edge: KeyEdge, bare: bool, synthetic: bool, swallowing: bool) -> ReturnHandling {
     if synthetic {
-        return ReturnAction::Pass;
+        return ReturnHandling::Pass;
     }
     match (edge, swallowing) {
-        (KeyEdge::Down, _) if bare => ReturnAction::Take,
-        (KeyEdge::Repeat, true) => ReturnAction::Swallow,
-        (KeyEdge::Up, true) => ReturnAction::Release,
-        _ => ReturnAction::Pass,
+        (KeyEdge::Down, _) if bare => ReturnHandling::Ask,
+        (KeyEdge::Repeat, true) => ReturnHandling::Swallow,
+        (KeyEdge::Up, true) => ReturnHandling::Release,
+        _ => ReturnHandling::Pass,
     }
 }
 
@@ -226,18 +226,18 @@ impl<'a> TapState<'a> {
     }
 
     fn judge_return(&self, edge: KeyEdge, bare: bool, synthetic: bool) -> bool {
-        match return_action(edge, bare, synthetic, self.swallowing_return.get()) {
-            ReturnAction::Take => {
+        match return_handling(edge, bare, synthetic, self.swallowing_return.get()) {
+            ReturnHandling::Ask => {
                 let taken = (self.take_return)();
                 self.swallowing_return.set(taken);
                 taken
             }
-            ReturnAction::Swallow => true,
-            ReturnAction::Release => {
+            ReturnHandling::Swallow => true,
+            ReturnHandling::Release => {
                 self.swallowing_return.set(false);
                 true
             }
-            ReturnAction::Pass => false,
+            ReturnHandling::Pass => false,
         }
     }
 
@@ -817,13 +817,13 @@ mod tests {
     #[test]
     fn only_the_persons_bare_return_is_taken() {
         let cases = [
-            (true, false, ReturnAction::Take),
-            (false, false, ReturnAction::Pass),
-            (true, true, ReturnAction::Pass),
+            (true, false, ReturnHandling::Ask),
+            (false, false, ReturnHandling::Pass),
+            (true, true, ReturnHandling::Pass),
         ];
         for (bare, synthetic, action) in cases {
             assert_eq!(
-                return_action(KeyEdge::Down, bare, synthetic, false),
+                return_handling(KeyEdge::Down, bare, synthetic, false),
                 action,
                 "bare {bare}, synthetic {synthetic}"
             );
@@ -864,24 +864,24 @@ mod tests {
     #[test]
     fn a_taken_return_is_swallowed_until_released() {
         assert_eq!(
-            return_action(KeyEdge::Repeat, true, false, true),
-            ReturnAction::Swallow
+            return_handling(KeyEdge::Repeat, true, false, true),
+            ReturnHandling::Swallow
         );
         assert_eq!(
-            return_action(KeyEdge::Up, true, false, true),
-            ReturnAction::Release
+            return_handling(KeyEdge::Up, true, false, true),
+            ReturnHandling::Release
         );
     }
 
     #[test]
     fn an_untaken_return_repeats_and_releases_untouched() {
         assert_eq!(
-            return_action(KeyEdge::Repeat, true, false, false),
-            ReturnAction::Pass
+            return_handling(KeyEdge::Repeat, true, false, false),
+            ReturnHandling::Pass
         );
         assert_eq!(
-            return_action(KeyEdge::Up, true, false, false),
-            ReturnAction::Pass
+            return_handling(KeyEdge::Up, true, false, false),
+            ReturnHandling::Pass
         );
     }
 

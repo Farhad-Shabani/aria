@@ -398,6 +398,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::dictation::ActiveDictation;
     use aria_platform::delivery::DeliveryOutcome as Posted;
 
     fn cursor() -> (CallLog, Cursor<RecordingDelivery>) {
@@ -936,8 +937,10 @@ mod tests {
             )
             .unwrap();
         cursor.segment(Utterance::anonymous("hello")).unwrap();
+        let active = ActiveDictation::new(Arc::clone(&control));
+        assert_eq!(active.types_into(), Some(TYPED_PROCESS));
 
-        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        assert!(active.take_return());
         cursor.segment(Utterance::anonymous("there")).unwrap();
         cursor
             .completed(Utterance::anonymous("hello there"))
@@ -953,7 +956,7 @@ mod tests {
             ]
         );
         assert!(
-            !control.take_return(|| Some(TYPED_PROCESS)),
+            !control.take_return(),
             "a finished press lets Return through"
         );
     }
@@ -968,14 +971,11 @@ mod tests {
                 &control,
             )
             .unwrap();
-        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        assert!(control.take_return());
         cursor.delivery.fail = true;
         assert!(cursor.segment(Utterance::anonymous("hello")).is_err());
 
-        assert!(
-            !control.take_return(|| Some(TYPED_PROCESS)),
-            "typing ended with the failure"
-        );
+        assert!(!control.take_return(), "typing ended with the failure");
         let _ = cursor.completed(Utterance::anonymous("hello"));
         assert!(!log.entries().iter().any(|entry| entry == "return"));
     }
@@ -991,7 +991,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        assert!(control.take_return());
         cursor.completed(Utterance::anonymous("hello")).unwrap();
 
         assert_eq!(
@@ -1011,7 +1011,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        assert!(control.take_return());
         // No speech: the press ends without completing.
         cursor.dictation_finished();
 
@@ -1022,7 +1022,7 @@ mod tests {
     fn a_return_the_app_refuses_fails_nothing() {
         let (log, mut cursor) = left_after_hello(OutputMode::Insert);
         let control = Arc::clone(&cursor.target.as_ref().unwrap().control);
-        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        assert!(control.take_return());
         cursor.segment(Utterance::anonymous("there")).unwrap();
 
         cursor
@@ -1044,7 +1044,7 @@ mod tests {
                 &control,
             )
             .unwrap();
-        assert!(control.take_return(|| Some(TYPED_PROCESS)));
+        assert!(control.take_return());
 
         cancel.cancel();
         cursor.dictation_finished();
@@ -1063,7 +1063,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(!control.take_return(|| Some(TYPED_PROCESS)));
+        assert!(!control.take_return());
     }
 
     #[test]

@@ -21,9 +21,9 @@ use aria_settings::rpc::{Categorized, RpcErrorCode};
 use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
-    DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter, DictationOutcome,
-    DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode, Transcribed,
-    subscribers::DictationSubscribers,
+    ActiveDictation, DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter,
+    DictationOutcome, DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode,
+    Transcribed, subscribers::DictationSubscribers,
 };
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
@@ -264,16 +264,9 @@ impl DictationRuntime {
         ))
     }
 
-    pub(in crate::daemon) fn stop_manual_recording(&self) -> bool {
-        self.microphone.stop_manual_recording()
-    }
-
-    /// Takes a Return the person pressed for the dictation typing into the
-    /// app in front, which then presses it after its text. Runs inside the
-    /// hotkey tap.
-    pub(in crate::daemon) fn take_return(&self) -> bool {
-        self.microphone
-            .take_return(aria_platform::delivery::frontmost_process)
+    /// The dictation holding the microphone, as a key sees it.
+    pub(in crate::daemon) fn active_dictation(&self) -> Option<ActiveDictation> {
+        self.microphone.active_dictation()
     }
 
     /// Ends the named recording and lets it finish transcribing. Returns false

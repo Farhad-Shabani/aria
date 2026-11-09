@@ -397,3 +397,69 @@ pub fn recording_started(edges: &mpsc::Receiver<Edge>) -> RecordingId {
         other => panic!("expected a recording, got {other:?}"),
     }
 }
+
+/// Builds an active dictation in a chosen state, for code that only reads
+/// one, such as the key router.
+pub struct ActiveDictationBuilder {
+    stop_mode: StopMode,
+    recording: bool,
+    typing_into: Option<u32>,
+    cancelled: bool,
+}
+
+/// Keeps what the built dictation's state rests on alive: dropping it ends
+/// the recording and the typing.
+pub struct BuiltDictation {
+    pub dictation: super::ActiveDictation,
+    _recording: Option<super::execution::RecordingGuard>,
+    _armed: Option<super::execution::ArmedReturn>,
+}
+
+impl ActiveDictationBuilder {
+    pub fn new(stop_mode: StopMode) -> Self {
+        Self {
+            stop_mode,
+            recording: false,
+            typing_into: None,
+            cancelled: false,
+        }
+    }
+
+    pub fn with_recording(mut self) -> Self {
+        self.recording = true;
+        self
+    }
+
+    pub fn with_typing_into(mut self, process: u32) -> Self {
+        self.typing_into = Some(process);
+        self
+    }
+
+    pub fn with_cancellation(mut self) -> Self {
+        self.cancelled = true;
+        self
+    }
+
+    pub fn build(self) -> BuiltDictation {
+        let cancellation = CancelToken::new();
+        let control =
+            ExecutionControl::for_test_with_cancellation(self.stop_mode, cancellation.clone());
+        let recording = self.recording.then(|| {
+            control
+                .start_recording(
+                    DeliveryMode::Streaming,
+                    &DictationEventEmitter::unsubscribed(),
+                )
+                .expect("recording starts")
+        });
+        let armed = self.typing_into.map(|process| control.arm_return(process));
+        if self.cancelled {
+            cancellation.cancel();
+        }
+        BuiltDictation {
+            dictation: super::ActiveDictation::new(control),
+            _recording: recording,
+            _armed: armed,
+        }
+    }
+}

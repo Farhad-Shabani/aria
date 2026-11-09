@@ -530,20 +530,20 @@ impl ExecutionControl {
         }
     }
 
-    /// A Return the person pressed, in the process `front` names. Pressed
-    /// in the app the text goes to, it ends recording, whatever the stop
-    /// mode, and is taken to press after the rest of the text; pressed again
-    /// before the text lands, it belongs to the same press. Anywhere else it
-    /// is that app's, and recording goes on: the person may still come back
-    /// and finish. `front` is only asked once armed, since it costs a call
-    /// to the system on a keystroke.
-    pub(crate) fn take_return(&self, front: impl FnOnce() -> Option<u32>) -> bool {
-        if self.return_state.load(Ordering::Acquire) == ReturnState::Unarmed as u8 {
-            return false;
-        }
+    /// The process the text still goes to, where a Return would cut it
+    /// short. `None` once typing ended, or when it types into no app. Kept
+    /// after the Return is taken, so a second one there joins it.
+    fn return_process(&self) -> Option<u32> {
+        let armed = self.return_state.load(Ordering::Acquire) != ReturnState::Unarmed as u8;
         // Read after the state's Acquire, which the arming Release orders.
-        let process = self.return_process.load(Ordering::Relaxed);
-        if front() != Some(process) {
+        armed.then(|| self.return_process.load(Ordering::Relaxed))
+    }
+
+    /// Takes a Return pressed where the text goes: it ends recording,
+    /// whatever the stop mode, and waits to be pressed after the rest of
+    /// the text. False once typing ended.
+    pub(crate) fn take_return(&self) -> bool {
+        if self.return_state.load(Ordering::Acquire) == ReturnState::Unarmed as u8 {
             return false;
         }
         self.request_recording_stop();
@@ -584,6 +584,55 @@ impl ExecutionControl {
     fn recording_open(&self) -> bool {
         let state = self.recording_state.load(Ordering::Acquire);
         state == RecordingState::Recording as u8 || state == RecordingState::StopRequested as u8
+    }
+}
+
+/// The dictation holding the microphone, as a key sees it. Its commands
+/// act on this dictation only, so a decision made on a stale look fails
+/// instead of landing on the next one.
+#[derive(Clone)]
+pub struct ActiveDictation {
+    control: Arc<ExecutionControl>,
+}
+
+impl ActiveDictation {
+    pub(crate) fn new(control: Arc<ExecutionControl>) -> Self {
+        Self { control }
+    }
+
+    pub fn id(&self) -> RecordingId {
+        self.control.id
+    }
+
+    pub fn stop_mode(&self) -> StopMode {
+        self.control.stop_mode
+    }
+
+    /// Still capturing, with no stop asked for yet.
+    pub fn is_recording(&self) -> bool {
+        self.control.recording_state.load(Ordering::Acquire) == RecordingState::Recording as u8
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.control.is_cancelled()
+    }
+
+    /// The process its text still goes to, where a Return would cut it
+    /// short.
+    pub fn types_into(&self) -> Option<u32> {
+        self.control.return_process()
+    }
+
+    /// Ends recording; the dictation goes on to transcribe. False when it
+    /// was not recording.
+    pub fn stop_recording(&self) -> bool {
+        self.control.request_recording_stop()
+    }
+
+    /// Takes a Return pressed where the text goes, to press after it. Ends
+    /// recording. False once typing ended: the key belongs to the app.
+    pub fn take_return(&self) -> bool {
+        self.control.take_return()
     }
 }
 
