@@ -29,6 +29,10 @@ final class DaemonSettings: ObservableObject {
     /// The daemon's settings with edits it hasn't accepted applied on top. Nil
     /// until the daemon first answers.
     @Published private(set) var snapshot: Aria_Daemon_V1_Settings?
+    /// The settings as the daemon last confirmed them, without edits still
+    /// on their way. It isn't published itself. Views update because
+    /// `snapshot` publishes on every answer.
+    var confirmed: Aria_Daemon_V1_Settings? { answer?.settings }
     /// The last failed sync or push; cleared by the next one that succeeds.
     @Published private(set) var lastError: (any Error)?
     /// The chosen assistant's name, as the daemon last said. Nil until it answers.

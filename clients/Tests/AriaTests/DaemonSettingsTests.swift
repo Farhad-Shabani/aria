@@ -88,6 +88,22 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertEqual(settings.assistantName, "Codex")
     }
 
+    func testConfirmedLeavesOutAnEditUntilTheDaemonAcceptsIt() async {
+        let transport = FakeSettingsTransport()
+        transport.snapshots = [snapshot(revision: 3)]
+        transport.updates = [accepted(snapshot(revision: 4, mute: true))]
+        let settings = DaemonSettings(transport: transport)
+        await settings.sync()
+        transport.duringUpdate = {
+            XCTAssertEqual(settings.snapshot?.muteSound, true)
+            XCTAssertEqual(settings.confirmed?.muteSound, false)
+        }
+
+        await settings.set { $0.muteSound = true }
+
+        XCTAssertEqual(settings.confirmed?.muteSound, true)
+    }
+
     func testSetPushesTheKnownRevisionAndKeepsTheEditVisibleDuringSync() async {
         let transport = FakeSettingsTransport()
         transport.snapshots = [snapshot(revision: 3), snapshot(revision: 3)]
