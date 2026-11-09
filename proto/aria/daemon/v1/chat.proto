@@ -252,6 +252,8 @@ message Assistant {
   // What makes it ready, or why the check failed when UNCHECKED; empty
   // when READY.
   string fix = 4;
+  // It has no model of its own to fall back on, so one must be chosen.
+  bool needs_model = 5;
 }
 
 message AssistantModel {
@@ -277,12 +279,14 @@ enum AssistantStatus {
   ASSISTANT_STATUS_SIGNED_OUT = 3;
   // The check itself failed, so the status is not known.
   ASSISTANT_STATUS_UNCHECKED = 4;
-  // The settings file lacks the provider endpoint or the model.
+  // The settings file lacks the provider endpoint.
   ASSISTANT_STATUS_NOT_CONFIGURED = 5;
   // The local provider's endpoint fails or doesn't answer in time.
   ASSISTANT_STATUS_UNREACHABLE = 6;
   // The local provider answers but doesn't list the model.
   ASSISTANT_STATUS_MODEL_MISSING = 7;
+  // The local provider answers, but no model is chosen.
+  ASSISTANT_STATUS_MODEL_UNSET = 8;
 }
 
 enum ChatStage {

@@ -67,7 +67,7 @@ struct SettingsView: View {
         .task { await assistantCatalog.load() }
         .onChange(of: poller.state) { _, state in
             guard state == .running else { return }
-            Task { await assistantCatalog.loadUnlessReady() }
+            Task { await assistantCatalog.loadUnlessReady(selected: settings.snapshot?.assistantID) }
         }
         // Returning from System Settings or closing the setup window both
         // make this window key, and either may have finished a step.
@@ -76,7 +76,7 @@ struct SettingsView: View {
                 await settings.sync()
                 await setupStatus.refresh()
                 await voices.refresh()
-                await assistantCatalog.loadUnlessReady()
+                await assistantCatalog.loadUnlessReady(selected: settings.snapshot?.assistantID)
             }
         }
     }

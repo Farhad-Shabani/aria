@@ -86,8 +86,13 @@ impl AssistantId {
         match self {
             Self::ClaudeCode => "Claude Code",
             Self::Codex => "Codex",
-            Self::LocalModel => "Local model",
+            Self::LocalModel => "Local Provider",
         }
+    }
+
+    /// The local provider has no model of its own to fall back on.
+    pub const fn needs_model(self) -> bool {
+        matches!(self, Self::LocalModel)
     }
 }
 

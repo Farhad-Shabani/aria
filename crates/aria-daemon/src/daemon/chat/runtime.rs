@@ -755,6 +755,7 @@ fn diagnosed<A: Assistant>(
         AssistantStatus::Ready
         | AssistantStatus::NotInstalled { .. }
         | AssistantStatus::NotConfigured { .. }
+        | AssistantStatus::ModelUnset { .. }
         | AssistantStatus::Unreachable { .. }
         | AssistantStatus::Unchecked(_) => error,
     }
@@ -2376,7 +2377,14 @@ pub(super) mod tests {
 
         let statuses: Vec<_> = listed
             .iter()
-            .map(|assistant| (assistant.id, assistant.status, assistant.fix.as_str()))
+            .map(|assistant| {
+                (
+                    assistant.id,
+                    assistant.status,
+                    assistant.fix.as_str(),
+                    assistant.needs_model,
+                )
+            })
             .collect();
         assert_eq!(
             statuses,
@@ -2384,17 +2392,20 @@ pub(super) mod tests {
                 (
                     wire::AssistantId::ClaudeCode as i32,
                     wire::AssistantStatus::SignedOut as i32,
-                    "sign in"
+                    "sign in",
+                    false
                 ),
                 (
                     wire::AssistantId::Codex as i32,
                     wire::AssistantStatus::Ready as i32,
-                    ""
+                    "",
+                    false
                 ),
                 (
                     wire::AssistantId::LocalModel as i32,
                     wire::AssistantStatus::ModelMissing as i32,
-                    "load qwen into the model server, such as with ollama pull"
+                    "load qwen into the model server, such as with ollama pull",
+                    true
                 ),
             ]
         );

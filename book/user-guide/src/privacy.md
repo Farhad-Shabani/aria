@@ -77,7 +77,7 @@ and Codex may send the request and project content to cloud services. They
 also keep their own conversation records. Aria uses read-only settings to
 limit file changes, but those settings don't prevent network access.
 
-**Local model** sends your request to the server that `provider.endpoint`
+**Local Provider** sends your request to the server that `provider.endpoint`
 names. The server decides where it goes next, as with
 [text cleanup](#text-cleanup-with-a-local-model). With history on, each
 request also carries the conversation so far.
@@ -109,7 +109,7 @@ Aria asks you to confirm first.
 
 With **Memory** on, Aria saves the text of each request you speak in your own
 voice. It sends that text to Claude to find facts about you and words Aria
-mishears. Aria adds those facts to later chats. This includes **Local model**
+mishears. Aria adds those facts to later chats. This includes **Local Provider**
 chats, so their text reaches Claude too. Memory needs your voice profile. Without one, Aria
 saves nothing.
 

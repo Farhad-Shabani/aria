@@ -80,19 +80,24 @@ impl<C: Conversations> Assistant for LocalAssistant<C> {
         let Some(client) = &self.client else {
             return AssistantStatus::NotConfigured { fix: NO_ENDPOINT };
         };
-        let Some(model) = &self.model else {
-            return AssistantStatus::NotConfigured { fix: NO_MODEL };
+        let deadline = Instant::now() + LIST_BUDGET;
+        let unreachable = || AssistantStatus::Unreachable {
+            endpoint: client.endpoint().to_owned(),
         };
-        match client.serves(model, Instant::now() + LIST_BUDGET) {
+        let Some(model) = &self.model else {
+            // A server that isn't running is the problem to fix first. Any
+            // answer, even an error, shows that it runs.
+            return match client.models(deadline) {
+                Err(ProviderError::Transport | ProviderError::Timeout) => unreachable(),
+                _ => AssistantStatus::ModelUnset { fix: NO_MODEL },
+            };
+        };
+        match client.serves(model, deadline) {
             Ok(true) => AssistantStatus::Ready,
             Ok(false) => AssistantStatus::ModelMissing {
                 model: model.clone(),
             },
-            Err(ProviderError::Transport | ProviderError::Timeout) => {
-                AssistantStatus::Unreachable {
-                    endpoint: client.endpoint().to_owned(),
-                }
-            }
+            Err(ProviderError::Transport | ProviderError::Timeout) => unreachable(),
             Err(error) => AssistantStatus::Unchecked(AssistantError::Provider(error)),
         }
     }
@@ -121,7 +126,7 @@ impl<C: Conversations> Assistant for LocalAssistant<C> {
         let model = request
             .model_id
             .or(self.model.as_deref())
-            .ok_or(AssistantError::NotConfigured { fix: NO_MODEL })?;
+            .ok_or(AssistantError::ModelUnset { fix: NO_MODEL })?;
         let prompt = format!(
             "{}\nAnswer with one JSON object that matches this schema: {SCHEMA}",
             request.prompt()
@@ -160,7 +165,7 @@ impl Session for LocalSession {
         let model = self
             .model
             .as_deref()
-            .ok_or(AssistantError::NotConfigured { fix: NO_MODEL })?;
+            .ok_or(AssistantError::ModelUnset { fix: NO_MODEL })?;
         let mut messages = Vec::with_capacity(self.earlier.len() * 2 + 1);
         for ask in &self.earlier {
             messages.push(message("user", &ask.request));
@@ -438,7 +443,7 @@ mod tests {
         ));
         assert!(matches!(
             status(Some(&provider), None),
-            AssistantStatus::NotConfigured { fix: NO_MODEL }
+            AssistantStatus::ModelUnset { fix: NO_MODEL }
         ));
         assert!(matches!(
             status(Some(&provider), Some("qwen")),
@@ -455,6 +460,23 @@ mod tests {
         assert!(matches!(
             status(Some(&dead), Some("qwen")),
             AssistantStatus::Unreachable { .. }
+        ));
+        assert!(matches!(
+            status(Some(&dead), None),
+            AssistantStatus::Unreachable { .. }
+        ));
+    }
+
+    #[test]
+    fn a_server_that_answers_with_an_error_still_needs_a_model() {
+        let (provider, _requests) = serve(|_path, _body| {
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+        });
+        let local = LocalAssistant::new(Some(&provider), None, ScriptedConversations::empty());
+
+        assert!(matches!(
+            local.check_ready(&CancelToken::never()),
+            AssistantStatus::ModelUnset { fix: NO_MODEL }
         ));
     }
 

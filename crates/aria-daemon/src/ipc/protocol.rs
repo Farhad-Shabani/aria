@@ -2320,6 +2320,7 @@ impl From<(AssistantId, AssistantStatus)> for wire::Assistant {
             name: id.display_name().to_owned(),
             status: wire::AssistantStatus::from(&status) as i32,
             fix: status.fix().unwrap_or_default(),
+            needs_model: id.needs_model(),
         }
     }
 }
@@ -2333,6 +2334,7 @@ impl From<&AssistantStatus> for wire::AssistantStatus {
             AssistantStatus::NotConfigured { .. } => Self::NotConfigured,
             AssistantStatus::Unreachable { .. } => Self::Unreachable,
             AssistantStatus::ModelMissing { .. } => Self::ModelMissing,
+            AssistantStatus::ModelUnset { .. } => Self::ModelUnset,
             AssistantStatus::Unchecked(_) => Self::Unchecked,
         }
     }

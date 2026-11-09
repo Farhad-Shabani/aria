@@ -126,7 +126,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
   /// The check itself failed, so the status is not known.
   case unchecked // = 4
 
-  /// The settings file lacks the provider endpoint or the model.
+  /// The settings file lacks the provider endpoint.
   case notConfigured // = 5
 
   /// The local provider's endpoint fails or doesn't answer in time.
@@ -134,6 +134,9 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
 
   /// The local provider answers but doesn't list the model.
   case modelMissing // = 7
+
+  /// The local provider answers, but no model is chosen.
+  case modelUnset // = 8
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -150,6 +153,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
     case 5: self = .notConfigured
     case 6: self = .unreachable
     case 7: self = .modelMissing
+    case 8: self = .modelUnset
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -164,6 +168,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
     case .notConfigured: return 5
     case .unreachable: return 6
     case .modelMissing: return 7
+    case .modelUnset: return 8
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -178,6 +183,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
     .notConfigured,
     .unreachable,
     .modelMissing,
+    .modelUnset,
   ]
 
 }
@@ -803,6 +809,9 @@ public nonisolated struct Aria_Daemon_V1_Assistant: Sendable {
   /// when READY.
   public var fix: String = String()
 
+  /// It has no model of its own to fall back on, so one must be chosen.
+  public var needsModel: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -835,7 +844,7 @@ nonisolated extension Aria_Daemon_V1_AssistantId: SwiftProtobuf._ProtoNameProvid
 }
 
 nonisolated extension Aria_Daemon_V1_AssistantStatus: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_STATUS_UNSPECIFIED\0\u{1}ASSISTANT_STATUS_READY\0\u{1}ASSISTANT_STATUS_NOT_INSTALLED\0\u{1}ASSISTANT_STATUS_SIGNED_OUT\0\u{1}ASSISTANT_STATUS_UNCHECKED\0\u{1}ASSISTANT_STATUS_NOT_CONFIGURED\0\u{1}ASSISTANT_STATUS_UNREACHABLE\0\u{1}ASSISTANT_STATUS_MODEL_MISSING\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_STATUS_UNSPECIFIED\0\u{1}ASSISTANT_STATUS_READY\0\u{1}ASSISTANT_STATUS_NOT_INSTALLED\0\u{1}ASSISTANT_STATUS_SIGNED_OUT\0\u{1}ASSISTANT_STATUS_UNCHECKED\0\u{1}ASSISTANT_STATUS_NOT_CONFIGURED\0\u{1}ASSISTANT_STATUS_UNREACHABLE\0\u{1}ASSISTANT_STATUS_MODEL_MISSING\0\u{1}ASSISTANT_STATUS_MODEL_UNSET\0")
 }
 
 nonisolated extension Aria_Daemon_V1_ChatStage: SwiftProtobuf._ProtoNameProviding {
@@ -1668,7 +1677,7 @@ nonisolated extension Aria_Daemon_V1_ChatEvent: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Aria_Daemon_V1_Assistant: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Assistant"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}status\0\u{1}fix\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}status\0\u{1}fix\0\u{3}needs_model\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1680,6 +1689,7 @@ nonisolated extension Aria_Daemon_V1_Assistant: SwiftProtobuf.Message, SwiftProt
       case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
       case 3: try { try decoder.decodeSingularEnumField(value: &self.status) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.fix) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.needsModel) }()
       default: break
       }
     }
@@ -1698,6 +1708,9 @@ nonisolated extension Aria_Daemon_V1_Assistant: SwiftProtobuf.Message, SwiftProt
     if !self.fix.isEmpty {
       try visitor.visitSingularStringField(value: self.fix, fieldNumber: 4)
     }
+    if self.needsModel != false {
+      try visitor.visitSingularBoolField(value: self.needsModel, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1706,6 +1719,7 @@ nonisolated extension Aria_Daemon_V1_Assistant: SwiftProtobuf.Message, SwiftProt
     if lhs.name != rhs.name {return false}
     if lhs.status != rhs.status {return false}
     if lhs.fix != rhs.fix {return false}
+    if lhs.needsModel != rhs.needsModel {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
