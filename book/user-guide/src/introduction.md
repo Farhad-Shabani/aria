@@ -2,8 +2,8 @@
 
 # Welcome to Aria
 
-Aria lets you type by speaking, hear text read aloud, and ask questions about a
-project. On a Mac or a Linux desktop, you can dictate into other apps with a
+Aria lets you type by speaking, hear text read aloud, and ask an assistant for
+help with a project. On a Mac or a Linux desktop, you can dictate into other apps with a
 hotkey.
 
 ## Start here
@@ -29,7 +29,7 @@ If setup or recording fails, start with [Troubleshooting](./troubleshooting.md).
 Dictation and speech generation run locally by default. You can move
 speech recognition to a [personal server](./settings.md#server-inference).
 Downloading models needs network access. Chat uses an external assistant,
-which may send your question and project content to cloud services.
+which may send your request and project content to cloud services.
 
 History is on by default. Read [Privacy](./privacy.md) before
 recording sensitive material; [history controls](./history.md#saving) explain

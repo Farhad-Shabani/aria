@@ -10,7 +10,7 @@ use crate::error::transport_error;
 const MAX_MODEL_LIST_BYTES: usize = 256 * 1024;
 
 /// One server's chat-completions endpoint and model list. The caller
-/// decides which addresses are allowed, and hands both in checked.
+/// decides which addresses are allowed and checks both first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Client {
     endpoint: String,
@@ -63,8 +63,8 @@ impl Client {
         Ok(self.models(deadline)?.iter().any(|id| serves(id)))
     }
 
-    /// Sends one request with `"stream": false` and returns the text of
-    /// its one assistant message. A reply over `max_bytes` fails.
+    /// Sends `request`, which must set `"stream": false`, and returns the
+    /// text of its one assistant message. A reply over `max_bytes` fails.
     pub fn complete(
         &self,
         request: &serde_json::Value,

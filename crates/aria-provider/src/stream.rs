@@ -9,10 +9,11 @@ use crate::error::transport_error;
 use crate::{Client, ProviderError};
 
 impl Client {
-    /// Sends one request with `"stream": true` and returns the text of its
-    /// one assistant message. Reads the reply as server-sent events, so
-    /// `cancel` takes effect at the next event and hangs up, which stops
-    /// the server generating. A reply over `max_bytes` fails.
+    /// Sends `request`, which must set `"stream": true`, and returns the
+    /// text of its one assistant message. Reads the reply as server-sent
+    /// events.
+    /// Cancelling hangs up at the next event, so the server stops
+    /// generating. A reply over `max_bytes` fails.
     pub fn stream(
         &self,
         request: &serde_json::Value,
@@ -64,7 +65,6 @@ impl Client {
     }
 }
 
-/// A streamed reply as its events arrive.
 #[derive(Default)]
 struct Reply {
     text: String,

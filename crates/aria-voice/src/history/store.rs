@@ -422,7 +422,7 @@ impl Store {
     }
 
     /// The chats saved under `conversation`, oldest first: the newest whose
-    /// questions and replies fit in `max_bytes` together.
+    /// requests and replies fit in `max_bytes` together.
     pub fn conversation(
         &self,
         conversation: &str,

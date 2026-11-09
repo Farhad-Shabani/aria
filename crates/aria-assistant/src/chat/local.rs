@@ -1,5 +1,5 @@
 //! A model on the local provider. It answers from what it knows and the
-//! conversation so far. It has no tools, so it never reads the project.
+//! recent conversation. It has no tools, so it never reads the project.
 
 use std::time::{Duration, Instant};
 
@@ -16,7 +16,7 @@ use super::{
 
 /// How long a readiness check or a model list may take.
 const LIST_BUDGET: Duration = Duration::from_secs(3);
-/// Far more than any reply, counted as the events that carry it.
+/// Far more than any reply. Counts the event stream's bytes, not just the reply.
 const MAX_STREAM_BYTES: usize = 4 * 1024 * 1024;
 const NO_ENDPOINT: &str = "set provider.endpoint in the settings file";
 const NO_MODEL: &str = "add local = \"MODEL_ID\" under [assistant.models] in the settings file";
@@ -28,8 +28,8 @@ pub struct Exchange {
     pub reply: String,
 }
 
-/// `recall` reads a conversation's earlier chats, oldest first, by the id
-/// a session resumes.
+/// `recall` takes a conversation id and returns its earlier chats, oldest
+/// first.
 pub struct LocalAssistant<R> {
     client: Option<Client>,
     model: Option<String>,
@@ -134,7 +134,7 @@ where
 }
 
 /// One conversation with the local model. The model keeps nothing between
-/// requests, so each one carries the conversation so far.
+/// requests, so each one carries the recent conversation.
 pub struct LocalSession {
     client: Option<Client>,
     model: Option<String>,

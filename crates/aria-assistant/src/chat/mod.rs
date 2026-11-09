@@ -324,11 +324,11 @@ pub enum AssistantStatus {
     SignedOut {
         fix: &'static str,
     },
-    /// The settings file doesn't say where or what to run.
+    /// The settings file lacks the provider endpoint or the model.
     NotConfigured {
         fix: &'static str,
     },
-    /// Nothing answers at the local provider's endpoint.
+    /// The local provider's endpoint fails or doesn't answer in time.
     Unreachable {
         endpoint: String,
     },

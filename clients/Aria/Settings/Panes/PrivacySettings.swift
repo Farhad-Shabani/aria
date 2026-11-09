@@ -41,7 +41,7 @@ struct PrivacySettings: View {
         }
     }
 
-    /// Turning Memory on sends text off your Mac, so it waits for `confirm`.
+    /// Turning Memory on sends text off the Mac, so it calls `confirm` instead of writing.
     static func memorySwitch(_ stored: Binding<Bool>, confirm: @escaping () -> Void) -> Binding<Bool> {
         Binding(
             get: { stored.wrappedValue },

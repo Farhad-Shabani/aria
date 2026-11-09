@@ -37,7 +37,7 @@ backtrack = true
 # Cleans up the text with a local model as well, while delivery is complete.
 # The model runs on [provider].
 [dictation.cleanup.llm]
-# Runs the model. false keeps the model below.
+# Runs the model. false stops it but keeps the model setting.
 enabled = true
 # A model the local provider serves. Needs provider.endpoint. Absent
 # leaves cleanup to its rules. (restart)
@@ -66,7 +66,7 @@ keep_audio = false
 transcripts_dir = "~/.aria/transcripts"
 
 [assistant]
-# Who answers `aria ask`: claude-code, codex, or local. `--assistant` overrides it for one question.
+# Who answers `aria ask`: claude-code, codex, or local. `--assistant` overrides it for one request.
 id = "claude-code"
 # Where the assistant works. Absent means the caller's directory.
 # workdir = "~/src"
@@ -199,7 +199,7 @@ profiles_dir = "~/.aria/speakers"
 
 # A model server on this Mac that speaks the OpenAI chat-completions API.
 # Cleanup's local model and the Local model assistant run on it.
-# Ollama serves it at port 11434.
+# Ollama listens on port 11434.
 [provider]
 # Loopback only. (restart)
 # endpoint = "http://127.0.0.1:11434/v1/chat/completions"

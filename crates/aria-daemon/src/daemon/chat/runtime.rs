@@ -607,7 +607,7 @@ impl ChatRuntime {
 
     /// One turn on the request's conversation: continues or restarts it,
     /// prompts the assistant, and records what continues it next time.
-    /// Returns the reply and the conversation it went on.
+    /// Returns the reply and its conversation id.
     fn turn<A: Assistant>(
         &self,
         assistant: &A,
@@ -749,7 +749,6 @@ fn diagnosed<A: Assistant>(
     }
 }
 
-/// A saved chat as the local model reads it back.
 fn exchange(chat: HistoryEntry) -> Option<Exchange> {
     match chat.content {
         HistoryContent::Chat { reply } => Some(Exchange {

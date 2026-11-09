@@ -277,9 +277,9 @@ enum AssistantStatus {
   ASSISTANT_STATUS_SIGNED_OUT = 3;
   // The check itself failed, so the status is not known.
   ASSISTANT_STATUS_UNCHECKED = 4;
-  // The settings file doesn't say where or what to run.
+  // The settings file lacks the provider endpoint or the model.
   ASSISTANT_STATUS_NOT_CONFIGURED = 5;
-  // Nothing answers at the local provider's endpoint.
+  // The local provider's endpoint fails or doesn't answer in time.
   ASSISTANT_STATUS_UNREACHABLE = 6;
   // The local provider answers but doesn't list the model.
   ASSISTANT_STATUS_MODEL_MISSING = 7;

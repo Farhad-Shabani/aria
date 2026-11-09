@@ -23,7 +23,7 @@ these commands:
   Copy output. Run the command again to stop. For copying, use the next command.
 - **Aria Dictate to Clipboard** copies the completed text. It stops on
   silence.
-- **Aria Ask** starts a chat. It opens Terminal, records a question, and
+- **Aria Ask** starts a chat. It opens Terminal, records a request, and
   prints the reply. First, install and sign in to Claude Code or Codex as
   described in [Chat with an assistant](./chat.md#before-you-start).
 

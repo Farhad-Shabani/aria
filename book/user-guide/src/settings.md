@@ -50,7 +50,7 @@ aria settings reset assistant.models.codex          # let the assistant choose
 ```
 
 Add `--assistant codex` or `--assistant claude-code` to list the other
-assistant's models. For a single question, use
+assistant's models. For a single request, use
 [Chat's options](./chat.md#use-a-different-assistant-or-model).
 
 Without a choice, Aria uses Claude Code.
@@ -99,8 +99,8 @@ pair:
 - **From a terminal:** run `aria remote pair`, paste it, and press Ctrl-D.
   Then run `aria setup --server`.
 
-Either way, the next dictation uses the server, with no restart. Dictation, recorded
-questions, phone relay and history retries then use the server. Streaming and
+Either way, the next dictation uses the server, with no restart. Dictation,
+recorded requests, phone relay and history retries then use the server. Streaming and
 previews depend on its engine. If the connection fails, the request stops
 instead of switching to a local engine.
 
@@ -121,7 +121,7 @@ storage error, fix it and revoke again before restarting the server.
 
 ## Apply changes
 
-Most settings apply to the next dictation or question, including the speech
+Most settings apply to the next dictation or request, including the speech
 model. Speech output engines, their model paths, the phone port, and other keys
 marked `restart` apply after a restart. Check the file and see each value:
 

@@ -126,10 +126,10 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
   /// The check itself failed, so the status is not known.
   case unchecked // = 4
 
-  /// The settings file doesn't say where or what to run.
+  /// The settings file lacks the provider endpoint or the model.
   case notConfigured // = 5
 
-  /// Nothing answers at the local provider's endpoint.
+  /// The local provider's endpoint fails or doesn't answer in time.
   case unreachable // = 6
 
   /// The local provider answers but doesn't list the model.

@@ -186,7 +186,7 @@ impl Layer for LlmCleanup {
                     started + WARM_BUDGET,
                     &CancelToken::never(),
                 );
-                // One token is all the warm-up asks for.
+                // The warm-up asks for one token, so a truncated reply succeeds.
                 let category = match &result {
                     Ok(_) | Err(ProviderError::Truncated) => "none",
                     Err(error) => error.category(),

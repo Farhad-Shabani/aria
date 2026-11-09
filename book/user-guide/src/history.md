@@ -5,7 +5,7 @@
 Aria saves completed dictations so you can review their text. These controls
 apply to both Mac and terminal dictation. History also lists each transcript
 that [Transcription](./transcribe-system-audio.md) saves to the default folder,
-and each question you send in a [chat](./chat.md), with its reply. The
+and each request you send in a [chat](./chat.md), with its reply. The
 assistant keeps its own conversation records.
 
 ## Saving

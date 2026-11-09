@@ -44,7 +44,7 @@ Terminal dictation uses the directory you run it from. Hotkey dictation uses
 the folder in `dictation.vocabulary.dir`. A folder includes its descendants.
 Aria doesn't search upward for a project root.
 
-For a spoken question, `aria ask --project "$PWD"` looks up spellings in that
+For a spoken request, `aria ask --project "$PWD"` looks up spellings in that
 folder and gives the assistant the same folder to work in. The assistant may
 send project content to cloud services. Read
 [Chat with an assistant](./chat.md) first.

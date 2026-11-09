@@ -57,8 +57,6 @@ impl HistoryStore {
         self.storage.clone().ok_or(HistoryError::Unavailable)
     }
 
-    /// The chats saved under `conversation` that fit in `max_bytes`, oldest
-    /// first.
     pub(super) fn conversation(
         &self,
         conversation: &str,
