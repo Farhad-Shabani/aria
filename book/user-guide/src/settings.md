@@ -14,9 +14,8 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
   captions, and the speaking rate. Open **Assistant** here to choose the app
   and model for Chat and Prompts. **Aria Setup** reopens setup.
 - **Dictation** sets output, delivery, text cleanup, auto-stop, muting sound
-  while recording, and **Return sends**. With **Return sends** on, pressing
-  Return in the app you're dictating into stops recording. Aria types the rest,
-  then presses Return.
+  while recording, and **Return sends**, which lets
+  [**Return** stop and send](./macos.md#stop-and-send-with-return).
 - **Recognition** sets the language, voice filtering, project vocabulary,
   and where speech recognition runs.
 - **Shortcuts** chooses right Option or Fn for the Aria key. It also sets
