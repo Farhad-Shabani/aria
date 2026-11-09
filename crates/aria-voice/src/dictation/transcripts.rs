@@ -127,6 +127,12 @@ pub trait TranscriptSink {
     /// The dictation ended, as `result` says.
     fn dictation_finished(&mut self, _result: Result<(), &super::DictationError>) {}
 
+    /// The person's Return was held back and never pressed. Asked once the
+    /// dictation finished.
+    fn dropped_return(&self) -> bool {
+        false
+    }
+
     fn recording_finished(
         &mut self,
         _recording: &mut aria_kit::audio::RecordingReader,

@@ -281,12 +281,15 @@ impl DictationRuntime {
         sink: impl Fn(DictationStage) + Send + 'static,
     ) -> DictationEventEmitter {
         DictationEventEmitter::subscribed_by(CALL_EVENT_THREAD, move |event: DictationEvent| {
-            // Some callers reject unknown progress stages. Voice feedback
-            // and queued segments reach the overlay subscription instead.
+            // Some callers reject unknown progress stages, or end on the
+            // terminal one. Voice feedback, queued segments and a dropped
+            // Return reach the overlay subscription instead.
             if let DictationEvent::Stage(stage) = event
                 && !matches!(
                     stage,
-                    DictationStage::SpeakerChanged(_) | DictationStage::SegmentQueued
+                    DictationStage::SpeakerChanged(_)
+                        | DictationStage::SegmentQueued
+                        | DictationStage::ReturnDropped
                 )
             {
                 sink(stage);

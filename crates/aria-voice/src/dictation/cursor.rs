@@ -14,6 +14,9 @@ use std::sync::Arc;
 pub struct Cursor<D: TextDelivery> {
     delivery: D,
     target: Option<Target<D::Prepared>>,
+    /// The person's Return was taken and not pressed, so they hear of it.
+    /// Outlives the target: the press may end without one.
+    dropped_return: bool,
 }
 
 /// Where the dictation under way lands, picked before any text.
@@ -81,6 +84,7 @@ impl<D: TextDelivery> Cursor<D> {
         Self {
             delivery,
             target: None,
+            dropped_return: false,
         }
     }
 
@@ -143,7 +147,7 @@ impl<D: TextDelivery> Cursor<D> {
             Err(error) => {
                 // A Return taken earlier stays unpressed: it would send
                 // text cut short. One pressed from here on reaches the app.
-                target.finish();
+                self.dropped_return |= target.finish();
                 Err(error)
             }
         }
@@ -151,14 +155,17 @@ impl<D: TextDelivery> Cursor<D> {
 
     /// Presses the Return the person pressed while the text was coming. It
     /// is their key, not the transcript, so a refusal fails nothing.
-    fn press_return(delivery: &D, target: &Target<D::Prepared>) {
+    /// True once pressed.
+    fn press_return(delivery: &D, target: &Target<D::Prepared>) -> bool {
         if target.control.should_stop() {
-            return;
+            return false;
         }
-        if let Err(error) = delivery.press_return(&target.prepared, should_cancel(&target.control))
-        {
-            tracing::warn!(%error, "the Return the person pressed was not pressed");
-        }
+        delivery
+            .press_return(&target.prepared, should_cancel(&target.control))
+            .inspect_err(|error| {
+                tracing::warn!(%error, "the Return the person pressed was not pressed");
+            })
+            .is_ok()
     }
 
     /// The press ended with text still queued and its field away.
@@ -239,6 +246,7 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         settings: &DictationSettings,
         control: &Arc<ExecutionControl>,
     ) -> Result<(), DeliveryError> {
+        self.dropped_return = false;
         if !settings.route.delivers() {
             self.target = None;
             return Ok(());
@@ -317,6 +325,8 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         };
         // Disarmed first, so a Return pressed from here on reaches the app.
         let taken = target.finish();
+        // Dropped on every way out below, until pressed.
+        self.dropped_return = taken;
         // Text left behind, in history or on the clipboard, means a Return
         // would send something else.
         if target.delivered.map(|delivered| delivered.outcome) != Some(DeliveryOutcome::Inserted) {
@@ -325,8 +335,11 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         let finished = self
             .delivery
             .finish(&target.prepared, should_cancel(&target.control))?;
-        if taken && finished == Finished::Typed {
-            Self::press_return(&self.delivery, target);
+        if taken {
+            self.dropped_return = match finished {
+                Finished::Submitted => false,
+                Finished::Typed => !Self::press_return(&self.delivery, target),
+            };
         }
         Ok(())
     }
@@ -368,14 +381,20 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         // A press that heard no speech still owes the person their Return.
         // A failure keeps it: the text was cut short. Only a field bound as
         // the press started shows the Return lands where it was pressed.
-        if let Some(mut target) = self.target.take()
-            && target.finish()
-            && matches!(result, Err(DictationError::NoSpeech))
-            && target.delivered.is_none()
-            && matches!(target.absence, Absence::Queues(_))
-        {
-            Self::press_return(&self.delivery, &target);
+        let Some(mut target) = self.target.take() else {
+            return;
+        };
+        if !target.finish() {
+            return;
         }
+        let owed = matches!(result, Err(DictationError::NoSpeech))
+            && target.delivered.is_none()
+            && matches!(target.absence, Absence::Queues(_));
+        self.dropped_return = !(owed && Self::press_return(&self.delivery, &target));
+    }
+
+    fn dropped_return(&self) -> bool {
+        self.dropped_return
     }
 }
 
@@ -968,6 +987,7 @@ mod tests {
             !control.take_return(),
             "a finished press lets Return through"
         );
+        assert!(!cursor.dropped_return());
     }
 
     #[test]
@@ -1007,6 +1027,7 @@ mod tests {
             log.entries(),
             ["prepare:InsertAndSubmit", "deliver:hello", "submit"]
         );
+        assert!(!cursor.dropped_return(), "submission pressed it");
     }
 
     #[test]
@@ -1025,6 +1046,7 @@ mod tests {
         cursor.dictation_finished(Err(&DictationError::NoSpeech));
 
         assert_eq!(log.entries(), ["prepare:Insert", "return"]);
+        assert!(!cursor.dropped_return());
     }
 
     #[test]
@@ -1042,6 +1064,7 @@ mod tests {
             !log.entries().iter().any(|entry| entry == "return"),
             "the focused field holds something else"
         );
+        assert!(cursor.dropped_return(), "the person hears of it");
     }
 
     #[test]
@@ -1074,6 +1097,7 @@ mod tests {
         cursor.dictation_finished(Err(&DictationError::DeliveryInterrupted));
 
         assert_eq!(log.entries(), ["prepare:Insert"]);
+        assert!(cursor.dropped_return());
     }
 
     #[test]

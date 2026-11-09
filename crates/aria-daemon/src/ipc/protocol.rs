@@ -2852,6 +2852,7 @@ impl From<DictationStage> for wire::DictationEvent {
             }
             DictationStage::SegmentDelivered => (wire::DictationStage::SegmentDelivered, 0),
             DictationStage::SegmentQueued => (wire::DictationStage::SegmentQueued, 0),
+            DictationStage::ReturnDropped => (wire::DictationStage::ReturnDropped, 0),
             DictationStage::SpeakerChanged(voice) => {
                 heard = match voice {
                     HeardSpeaker::Undecided => wire::HeardSpeaker::Undecided,
@@ -2895,6 +2896,7 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
             }),
             Ok(wire::DictationStage::SegmentDelivered) => Ok(Self::SegmentDelivered),
             Ok(wire::DictationStage::SegmentQueued) => Ok(Self::SegmentQueued),
+            Ok(wire::DictationStage::ReturnDropped) => Ok(Self::ReturnDropped),
             Ok(wire::DictationStage::SpeakerChanged) => {
                 match wire::HeardSpeaker::try_from(event.heard) {
                     Ok(wire::HeardSpeaker::Undecided) => {
