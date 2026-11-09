@@ -34,7 +34,7 @@ fn forbidden_dependencies(workspace: &Workspace) -> Vec<String> {
     for package in &workspace.packages {
         let allowed: &[&str] = match package.name.as_str() {
             "aria-primitives" => &[],
-            "aria-kit" => &["aria-primitives"],
+            "aria-kit" | "aria-provider" => &["aria-primitives"],
             "aria-stt" | "aria-tts" | "aria-wake" | "aria-speaker" | "aria-segmentation" => {
                 &["aria-kit", "aria-primitives"]
             }

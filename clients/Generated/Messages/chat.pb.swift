@@ -72,6 +72,10 @@ public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.Ca
   case unspecified // = 0
   case claudeCode // = 1
   case codex // = 2
+
+  /// A model on the local provider, set by `provider.endpoint` and
+  /// `[assistant.models] local-model`.
+  case localModel // = 3
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -83,6 +87,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.Ca
     case 0: self = .unspecified
     case 1: self = .claudeCode
     case 2: self = .codex
+    case 3: self = .localModel
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -92,6 +97,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.Ca
     case .unspecified: return 0
     case .claudeCode: return 1
     case .codex: return 2
+    case .localModel: return 3
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -101,6 +107,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.Ca
     .unspecified,
     .claudeCode,
     .codex,
+    .localModel,
   ]
 
 }
@@ -118,6 +125,15 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
 
   /// The check itself failed, so the status is not known.
   case unchecked // = 4
+
+  /// The settings file lacks the provider endpoint or the model.
+  case notConfigured // = 5
+
+  /// The local provider's endpoint fails or doesn't answer in time.
+  case unreachable // = 6
+
+  /// The local provider answers but doesn't list the model.
+  case modelMissing // = 7
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -131,6 +147,9 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
     case 2: self = .notInstalled
     case 3: self = .signedOut
     case 4: self = .unchecked
+    case 5: self = .notConfigured
+    case 6: self = .unreachable
+    case 7: self = .modelMissing
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -142,6 +161,9 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
     case .notInstalled: return 2
     case .signedOut: return 3
     case .unchecked: return 4
+    case .notConfigured: return 5
+    case .unreachable: return 6
+    case .modelMissing: return 7
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -153,6 +175,9 @@ public nonisolated enum Aria_Daemon_V1_AssistantStatus: SwiftProtobuf.Enum, Swif
     .notInstalled,
     .signedOut,
     .unchecked,
+    .notConfigured,
+    .unreachable,
+    .modelMissing,
   ]
 
 }
@@ -806,11 +831,11 @@ nonisolated extension Aria_Daemon_V1_PromptKind: SwiftProtobuf._ProtoNameProvidi
 }
 
 nonisolated extension Aria_Daemon_V1_AssistantId: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_ID_UNSPECIFIED\0\u{1}ASSISTANT_ID_CLAUDE_CODE\0\u{1}ASSISTANT_ID_CODEX\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_ID_UNSPECIFIED\0\u{1}ASSISTANT_ID_CLAUDE_CODE\0\u{1}ASSISTANT_ID_CODEX\0\u{1}ASSISTANT_ID_LOCAL_MODEL\0")
 }
 
 nonisolated extension Aria_Daemon_V1_AssistantStatus: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_STATUS_UNSPECIFIED\0\u{1}ASSISTANT_STATUS_READY\0\u{1}ASSISTANT_STATUS_NOT_INSTALLED\0\u{1}ASSISTANT_STATUS_SIGNED_OUT\0\u{1}ASSISTANT_STATUS_UNCHECKED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_STATUS_UNSPECIFIED\0\u{1}ASSISTANT_STATUS_READY\0\u{1}ASSISTANT_STATUS_NOT_INSTALLED\0\u{1}ASSISTANT_STATUS_SIGNED_OUT\0\u{1}ASSISTANT_STATUS_UNCHECKED\0\u{1}ASSISTANT_STATUS_NOT_CONFIGURED\0\u{1}ASSISTANT_STATUS_UNREACHABLE\0\u{1}ASSISTANT_STATUS_MODEL_MISSING\0")
 }
 
 nonisolated extension Aria_Daemon_V1_ChatStage: SwiftProtobuf._ProtoNameProviding {

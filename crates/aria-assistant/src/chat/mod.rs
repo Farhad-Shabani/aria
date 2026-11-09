@@ -7,6 +7,7 @@
 mod config;
 pub use config::ChatConfig;
 mod assistants;
+mod local;
 mod models;
 pub use models::AssistantModel;
 mod process;
@@ -33,6 +34,7 @@ use aria_settings::rpc::RpcErrorCode;
 
 pub use assistants::{CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant};
 pub(crate) use assistants::{claude_command, parse_claude};
+pub use local::{Ask, Conversations, LocalAssistant, LocalSession};
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
 pub use prompt_run::{
@@ -322,6 +324,18 @@ pub enum AssistantStatus {
     SignedOut {
         fix: &'static str,
     },
+    /// The settings file lacks the provider endpoint or the model.
+    NotConfigured {
+        fix: &'static str,
+    },
+    /// The local provider's endpoint fails or doesn't answer in time.
+    Unreachable {
+        endpoint: String,
+    },
+    /// The local provider answers but doesn't list the model.
+    ModelMissing {
+        model: String,
+    },
     /// The check itself failed, so the status is not known.
     Unchecked(AssistantError),
 }
@@ -334,7 +348,13 @@ impl AssistantStatus {
             Self::NotInstalled { binary } => {
                 Some(format!("install the `{}` command", binary.display()))
             }
-            Self::SignedOut { fix } => Some((*fix).to_owned()),
+            Self::SignedOut { fix } | Self::NotConfigured { fix } => Some((*fix).to_owned()),
+            Self::Unreachable { endpoint } => {
+                Some(format!("start the model server that serves {endpoint}"))
+            }
+            Self::ModelMissing { model } => Some(format!(
+                "load {model} into the model server, such as with ollama pull"
+            )),
             Self::Unchecked(error) => Some(error_chain(error)),
         }
     }
@@ -342,23 +362,22 @@ impl AssistantStatus {
 
 /// One conversation with an assistant, taking one turn at a time.
 pub trait Session: Send {
-    /// Sends one prompt and feeds its output to `sink` until the turn ends.
+    /// Sends one prompt, reports its steps to `steps`, and returns the reply.
     fn prompt(
         &mut self,
         text: &str,
-        sink: &mut dyn TurnSink,
+        steps: &mut dyn StepSink,
         cancel: &CancelToken,
         timeout: Duration,
-    ) -> Result<(), AssistantError>;
+    ) -> Result<String, AssistantError>;
 
     /// What continues this conversation next time; `None` before the
     /// first reply.
     fn resume_id(&self) -> Option<&str>;
 }
 
-/// Where a turn's output goes.
-pub trait TurnSink: Send {
-    fn text(&mut self, chunk: &str);
+/// Where a prompt's steps go while it runs.
+pub trait StepSink: Send {
     /// What the assistant has moved on to. Repeats are the sink's to drop.
     fn step(&mut self, step: Step);
 }
@@ -391,6 +410,15 @@ pub enum AssistantError {
 
     #[error("the assistant's output could not be understood: {0}")]
     Malformed(String),
+
+    #[error("the local assistant isn't set up; {fix}")]
+    NotConfigured { fix: &'static str },
+
+    #[error("the model server doesn't list {model}; load it, such as with ollama pull")]
+    ModelMissing { model: String },
+
+    #[error("the local provider failed")]
+    Provider(#[source] aria_provider::ProviderError),
 
     #[error("the assistant exceeded its deadline of {0:?}")]
     Timeout(Duration),

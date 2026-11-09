@@ -10,7 +10,7 @@
 - [Terminal dictation](./terminal-dictation.md)
 - [History](./history.md)
 - [Read text aloud](./tts.md)
-- [Chat with Claude Code or Codex](./chat.md)
+- [Chat with an assistant](./chat.md)
 - [Prompts (Mac)](./prompts.md)
 - [Project vocabulary](./project-spellings.md)
 - [Wake word](./wake-word.md)

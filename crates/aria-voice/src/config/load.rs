@@ -373,13 +373,18 @@ mod tests {
                 .cleanup_llm
                 .is_none()
         );
-        let llm = "[dictation.cleanup.llm]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\nmodel = \"local-model\"\n";
+        let llm = "[dictation.cleanup.llm]\nmodel = \"local-model\"\n\
+                   [provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n";
         let config = DictationConfig::load(&file(llm), &home_dir, None);
         assert_eq!(
             config.cleanup_llm,
             Some(
-                LlmCleanupTarget::new("http://127.0.0.1:8080/v1/chat/completions", "local-model")
-                    .unwrap()
+                LlmCleanupTarget::new(
+                    aria_settings::LocalProvider::new("http://127.0.0.1:8080/v1/chat/completions")
+                        .unwrap(),
+                    "local-model"
+                )
+                .unwrap()
             )
         );
     }

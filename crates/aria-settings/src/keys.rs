@@ -161,11 +161,9 @@ keys! {
     DictationCleanupBacktrack: "dictation.cleanup.backtrack", Live, Mac, [], Kind::Bool, Some("true"),
         "Applies a spoken self-correction while delivery is complete. English only.";
     DictationCleanupLlmEnabled: "dictation.cleanup.llm.enabled", Live, Mac, [], Kind::Bool, Some("true"),
-        "Runs the local model. Off keeps its endpoint and model.";
-    DictationCleanupLlmEndpoint: "dictation.cleanup.llm.endpoint", Restart, Mac, [], Kind::Text, None,
-        "A loopback chat-completions endpoint that also cleans the text while delivery is complete.";
+        "Runs the local model. Off keeps its model.";
     DictationCleanupLlmModel: "dictation.cleanup.llm.model", Restart, Mac, [], Kind::Text, None,
-        "The model that endpoint serves.";
+        "The local provider's model that also cleans the text while delivery is complete.";
     DictationVocabularyEnabled: "dictation.vocabulary.enabled", Live, Phone, [], Kind::Bool, Some("false"),
         "Adds terms from the project you're working in.";
     DictationVocabularyDir: "dictation.vocabulary.dir", Live, Phone, [], Kind::Path, None,
@@ -182,8 +180,8 @@ keys! {
         "cpu or gpu. parakeet only.";
     SystemTranscriptionTranscriptsDir: "transcription.transcripts_dir", Live, Mac, [], Kind::Path, Some("\"~/.aria/transcripts\""),
         "Where Transcription saves transcripts.";
-    AssistantId: "assistant.id", Live, Mac, [], Kind::Choice(&["claude-code", "codex"]), Some("claude-code"),
-        "Who answers `aria ask`: claude-code or codex.";
+    AssistantId: "assistant.id", Live, Mac, [], Kind::Choice(&["claude-code", "codex", "local-model"]), Some("claude-code"),
+        "Who answers `aria ask`: claude-code, codex, or local-model.";
     AssistantModels: "assistant.models", Live, Mac, [], Kind::Models, None,
         "The model each assistant uses. A missing assistant uses its own default.";
     AssistantWorkdir: "assistant.workdir", Live, Mac, [], Kind::Path, None,
@@ -262,6 +260,8 @@ keys! {
         "Estimates who speaks in each audio frame, for Transcription.";
     SpeakerProfilesDir: "speaker.profiles_dir", Restart, Mac, [], Kind::Path, Some("\"~/.aria/speakers\""),
         "Enrolled voice profiles.";
+    ProviderEndpoint: "provider.endpoint", Restart, Mac, [], Kind::Text, None,
+        "A loopback chat-completions endpoint on this Mac, such as Ollama's. Cleanup's model and the local assistant run on it.";
     CaptureBackend: "capture.backend", Restart, Mac, [], Kind::Choice(&["microphone", "wav_file"]), Some("microphone"),
         "Testing only. microphone or wav_file.";
     CapturePath: "capture.path", Restart, Mac, [], Kind::Path, None,

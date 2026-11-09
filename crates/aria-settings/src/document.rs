@@ -16,7 +16,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
-use super::LlmCleanupTarget;
 use super::PromptKind;
 use super::checked::{
     CaptureChoice, CheckedSettings, Choices, DictationTimeouts, LocalStt, SttChoice, TtsEngine,
@@ -27,6 +26,7 @@ use super::limits::MAX_CHAT_TIMEOUT;
 use super::{ApplicationOverrides, Chord, Modifiers, Prompts, Settings, Shortcut};
 use super::{DeliveryMode, MAX_DICTATION_TIMEOUT};
 use super::{InvalidValue, Key, MAX_SETTINGS_BYTES, ParseError, SettingsError};
+use super::{LlmCleanupTarget, LocalProvider};
 use crate::config::{
     DEFAULT_ASSISTANT_TIMEOUT, DEFAULT_DELIVERY_TIMEOUT, DEFAULT_OVERALL_TIMEOUT,
     DEFAULT_RECORDING_TIMEOUT, backend, tts_backend, wake_backend,
@@ -404,6 +404,8 @@ pub struct SettingsFile {
     #[serde(skip_serializing_if = "is_default")]
     pub speaker: Speaker,
     #[serde(skip_serializing_if = "is_default")]
+    pub(crate) provider: ProviderTable,
+    #[serde(skip_serializing_if = "is_default")]
     pub capture: Capture,
 }
 
@@ -438,7 +440,6 @@ pub(crate) struct Cleanup {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct CleanupLlm {
     pub(crate) enabled: Option<bool>,
-    pub(crate) endpoint: Option<String>,
     pub(crate) model: Option<String>,
 }
 
@@ -656,6 +657,12 @@ pub struct Speaker {
     pub model: Option<PathBuf>,
     pub segmentation_model: Option<PathBuf>,
     pub profiles_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct ProviderTable {
+    pub(crate) endpoint: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -996,6 +1003,7 @@ impl SettingsFile {
             stt,
             tts,
             speaker,
+            provider: _,
             capture,
         } = self;
         let expand = |key: Key, path: &mut PathBuf| -> Result<(), SettingsError> {
@@ -1053,7 +1061,8 @@ impl SettingsFile {
 
     pub(crate) fn check(&self) -> Result<Choices, SettingsError> {
         let settings = Settings::from_file(self)?;
-        let cleanup = self.validate_dictation()?;
+        let provider = self.validate_provider()?;
+        let cleanup = self.validate_dictation(provider.clone())?;
         let timeouts = self.validate_timeouts()?;
         let system_transcription = self.validate_system_transcription()?;
         let assistant_timeout = self.validate_assistant()?;
@@ -1072,6 +1081,7 @@ impl SettingsFile {
             voices,
             rate: settings.tts_rate,
             timeouts,
+            provider,
             cleanup,
             capture,
             wake,
@@ -1079,27 +1089,38 @@ impl SettingsFile {
         })
     }
 
-    fn validate_dictation(&self) -> Result<Option<LlmCleanupTarget>, SettingsError> {
-        let llm = &self.dictation.cleanup.llm;
-        match (&llm.endpoint, &llm.model) {
-            (None, None) => Ok(None),
-            (Some(endpoint), Some(model)) => LlmCleanupTarget::new(endpoint, model)
-                .map(Some)
-                .map_err(|source| {
-                    invalid(
-                        Key::DictationCleanupLlmEndpoint,
-                        InvalidValue::LlmCleanup(source),
-                    )
-                }),
-            (Some(_), None) => Err(invalid(
-                Key::DictationCleanupLlmEndpoint,
-                InvalidValue::NeedsKey(Key::DictationCleanupLlmModel),
-            )),
-            (None, Some(_)) => Err(invalid(
+    fn validate_provider(&self) -> Result<Option<LocalProvider>, SettingsError> {
+        self.provider
+            .endpoint
+            .as_deref()
+            .map(LocalProvider::new)
+            .transpose()
+            .map_err(|source| invalid(Key::ProviderEndpoint, InvalidValue::Provider(source)))
+    }
+
+    fn validate_dictation(
+        &self,
+        provider: Option<LocalProvider>,
+    ) -> Result<Option<LlmCleanupTarget>, SettingsError> {
+        let Some(model) = &self.dictation.cleanup.llm.model else {
+            return Ok(None);
+        };
+        let Some(provider) = provider else {
+            return Err(invalid(
                 Key::DictationCleanupLlmModel,
-                InvalidValue::NeedsKey(Key::DictationCleanupLlmEndpoint),
-            )),
-        }
+                InvalidValue::NeedsKey(Key::ProviderEndpoint),
+            ));
+        };
+        LlmCleanupTarget::new(provider, model)
+            .map(Some)
+            .map_err(|_| {
+                let value = if model.is_empty() {
+                    InvalidValue::Empty
+                } else {
+                    InvalidValue::ModelId
+                };
+                invalid(Key::DictationCleanupLlmModel, value)
+            })
     }
 
     fn validate_timeouts(&self) -> Result<DictationTimeouts, SettingsError> {
@@ -1827,6 +1848,7 @@ pub(super) mod tests {
             stt,
             tts,
             speaker,
+            provider,
             capture,
         } = SettingsFile::default();
         let as_json = |section: serde_json::Result<serde_json::Value>| section.expect("serializes");
@@ -1861,6 +1883,7 @@ pub(super) mod tests {
             ("tts.kokoro", as_json(serde_json::to_value(&tts.kokoro))),
             ("tts.qwen", as_json(serde_json::to_value(&tts.qwen))),
             ("speaker", as_json(serde_json::to_value(speaker))),
+            ("provider", as_json(serde_json::to_value(provider))),
             ("capture", as_json(serde_json::to_value(capture))),
         ];
         let mut fields: std::collections::BTreeSet<String> =
@@ -2124,25 +2147,24 @@ pub(super) mod tests {
         );
         refused("[capture]\nbackend = \"wav_file\"\n", Key::CapturePath);
         refused("[capture]\npace = \"realtime\"\n", Key::CapturePace);
-        for (endpoint, model) in [
-            ("https://example.com/v1/chat/completions", "local-model"),
-            ("http://127.0.0.1:8080/v1/chat/completions", ""),
-        ] {
+        refused(
+            "[provider]\nendpoint = \"https://example.com/v1/chat/completions\"\n",
+            Key::ProviderEndpoint,
+        );
+        for model in ["", "-m"] {
             refused(
                 &format!(
-                    "[dictation.cleanup.llm]\nendpoint = \"{endpoint}\"\nmodel = \"{model}\"\n"
+                    "[provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n\
+                     [dictation.cleanup.llm]\nmodel = \"{model}\"\n"
                 ),
-                Key::DictationCleanupLlmEndpoint,
+                Key::DictationCleanupLlmModel,
             );
         }
-        refused(
-            "[dictation.cleanup.llm]\nendpoint = \"http://127.0.0.1:1/v1/chat/completions\"\n",
-            Key::DictationCleanupLlmEndpoint,
-        );
         refused(
             "[dictation.cleanup.llm]\nmodel = \"m\"\n",
             Key::DictationCleanupLlmModel,
         );
+        load("[provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n");
         load("[dictation.cleanup.llm]\nenabled = false\n");
         refused(
             "[dictation]\nauto_stop_ms = 2999\n",

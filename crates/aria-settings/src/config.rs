@@ -66,16 +66,19 @@ pub mod backend {
 pub enum AssistantId {
     ClaudeCode,
     Codex,
+    /// A model on the local provider.
+    LocalModel,
 }
 
 impl AssistantId {
-    pub const ALL: &'static [Self] = &[Self::ClaudeCode, Self::Codex];
+    pub const ALL: &'static [Self] = &[Self::ClaudeCode, Self::Codex, Self::LocalModel];
     pub const DEFAULT: Self = Self::ClaudeCode;
 
     pub const fn name(self) -> &'static str {
         match self {
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
+            Self::LocalModel => "local-model",
         }
     }
 
@@ -83,6 +86,7 @@ impl AssistantId {
         match self {
             Self::ClaudeCode => "Claude Code",
             Self::Codex => "Codex",
+            Self::LocalModel => "Local model",
         }
     }
 }

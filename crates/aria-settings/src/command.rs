@@ -671,7 +671,8 @@ mod tests {
 
     #[test]
     fn cleanup_turns_off_with_its_model_table_in_place() {
-        let table = "[dictation.cleanup.llm]\nendpoint = \"http://127.0.0.1:1/v1/chat/completions\"\nmodel = \"m\"\n";
+        let table = "[dictation.cleanup.llm]\nmodel = \"m\"\n\n\
+                     [provider]\nendpoint = \"http://127.0.0.1:1/v1/chat/completions\"\n";
         let home = home_with(&format!("[dictation.cleanup]\nenabled = true\n\n{table}"));
 
         let outcome = set(home.path(), "dictation.cleanup.enabled", "off");

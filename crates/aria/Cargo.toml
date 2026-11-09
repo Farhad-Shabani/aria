@@ -17,6 +17,7 @@ aria-settings     = { workspace = true }
 aria-assistant    = { workspace = true }
 aria-daemon       = { workspace = true }
 aria-kit          = { workspace = true, features = [ "microphone", "playback" ] }
+aria-provider     = { workspace = true }
 aria-platform     = { workspace = true }
 aria-primitives   = { workspace = true }
 aria-stt          = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "whisper", "whisper-candle" ] }

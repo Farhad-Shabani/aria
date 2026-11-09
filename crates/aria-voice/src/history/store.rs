@@ -66,6 +66,13 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
         "reply TEXT CHECK(reply IS NULL OR length(CAST(reply AS BLOB))<=131072)
          CHECK((section=2)=(reply IS NOT NULL))",
     ),
+    // Which conversation a chat continued, so the next chat on it can
+    // recall it. Clients never see it.
+    (
+        "conversation",
+        "conversation TEXT CHECK(conversation IS NULL
+         OR (section=2 AND length(CAST(conversation AS BLOB)) BETWEEN 1 AND 128))",
+    ),
 ];
 /// Prompt results live beside the entries, so an older daemon, which never
 /// names this table, reads and writes `entries` as before. An older daemon
@@ -141,6 +148,20 @@ impl Drop for RetryLease {
     }
 }
 
+/// A chat that replied, as history saves it.
+pub struct NewChat<'a> {
+    /// The request as asked, before any memory was added to it.
+    pub request: &'a str,
+    pub reply: &'a str,
+    pub workdir: &'a Path,
+    /// The conversation it continued, so the next chat on it can recall it.
+    pub conversation: Option<&'a str>,
+    pub created_at_ms: u64,
+    pub duration_ms: u64,
+    /// Why the reply couldn't be typed.
+    pub failure: Option<RpcFailure>,
+}
+
 impl Store {
     pub fn open(directory: &Path) -> Result<Arc<Self>, HistoryError> {
         let connection = Database::open(
@@ -195,8 +216,17 @@ impl Store {
 
     pub fn insert(
         &self,
+        entry: HistoryEntry,
+        audio: Option<&Path>,
+    ) -> Result<HistoryEntry, HistoryError> {
+        self.insert_into(entry, audio, None)
+    }
+
+    fn insert_into(
+        &self,
         mut entry: HistoryEntry,
         audio: Option<&Path>,
+        conversation: Option<&str>,
     ) -> Result<HistoryEntry, HistoryError> {
         validate_entry(&entry)?;
         let mut state = self.lock();
@@ -247,8 +277,8 @@ impl Store {
             .and_then(|app| app.bundle_id.as_deref());
         let dictation = entry.dictation();
         transaction.execute(
-            "INSERT INTO entries(created,source,app_name,bundle_id,duration,text,complete,status,error,language,own_voice,project,engine,section,title,transcript,reply)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+            "INSERT INTO entries(created,source,app_name,bundle_id,duration,text,complete,status,error,language,own_voice,project,engine,section,title,transcript,reply,conversation)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
             params![sql_integer(entry.created_at_ms)?, source_number(entry.source), app_name, bundle_id,
                 entry.duration_ms.map(sql_integer).transpose()?, entry.text, entry.complete, status_number(entry.status),
                 entry.error.as_ref().map(encode_error).transpose()?, dictation.map_or("", |d| d.language.as_str()),
@@ -257,7 +287,7 @@ impl Store {
                 dictation.map_or("", |d| d.engine.as_str()),
                 section_number(entry.content.section()), entry.title.as_ref().map(Title::as_str),
                 transcript_path(&entry.content).map(|path| path.as_os_str().as_bytes()),
-                reply(&entry.content)],
+                reply(&entry.content), conversation],
         )?;
         let id = unsigned(transaction.last_insert_rowid(), 0)?;
         if let Some((copy, _)) = copied {
@@ -369,17 +399,16 @@ impl Store {
         self.insert(entry, None).map(Some)
     }
 
-    /// Saves a chat that replied: the question as asked, the folder it worked
-    /// in, and the reply. `failure` is why the reply couldn't be typed.
-    pub fn save_chat(
-        &self,
-        question: &str,
-        reply: &str,
-        workdir: &Path,
-        created_at_ms: u64,
-        duration_ms: u64,
-        failure: Option<RpcFailure>,
-    ) -> Result<HistoryEntry, HistoryError> {
+    pub fn save_chat(&self, chat: NewChat<'_>) -> Result<HistoryEntry, HistoryError> {
+        let NewChat {
+            request,
+            reply,
+            workdir,
+            conversation,
+            created_at_ms,
+            duration_ms,
+            failure,
+        } = chat;
         let entry = HistoryEntry {
             id: 0,
             title: None,
@@ -391,7 +420,7 @@ impl Store {
             source: HistorySource::Local,
             application: None,
             project: Some(workdir.to_path_buf()),
-            text: question.to_owned(),
+            text: request.to_owned(),
             complete: true,
             result_count: 0,
             status: match failure {
@@ -402,7 +431,39 @@ impl Store {
             warning: None,
             deletion_pending: false,
         };
-        self.insert(entry, None)
+        self.insert_into(entry, None, conversation)
+    }
+
+    /// The chats saved under `conversation`, oldest first: the newest whose
+    /// requests and replies fit in `max_bytes` together. A chat too big to
+    /// fit on its own is left out, so it doesn't cost the ones before it.
+    pub fn conversation(
+        &self,
+        conversation: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<HistoryEntry>, HistoryError> {
+        let mut state = self.lock();
+        self.maintain(&mut state)?;
+        let mut statement = state.connection.prepare(&format!(
+            "SELECT {COLUMNS} FROM entries WHERE conversation=?1 AND deleting=0 ORDER BY id DESC"
+        ))?;
+        let mut rows = statement.query([conversation])?;
+        let mut chats = Vec::new();
+        let mut used = 0;
+        while let Some(row) = rows.next()? {
+            let chat = decode(row)?;
+            let bytes = stored_bytes(&chat);
+            if bytes > max_bytes {
+                continue;
+            }
+            used += bytes;
+            if used > max_bytes {
+                break;
+            }
+            chats.push(chat);
+        }
+        chats.reverse();
+        Ok(chats)
     }
 
     /// Saves a prompt's reply under `entry`. An entry keeps its newest
@@ -1648,6 +1709,46 @@ mod tests {
         assert_eq!(version, 1);
         drop(store);
         Store::open(directory.path()).unwrap();
+    }
+
+    #[test]
+    fn a_conversation_recalls_its_newest_chats_that_fit_oldest_first() {
+        let (_directory, store) = opened();
+        let chat = |request: &str, conversation: Option<&str>| {
+            store
+                .save_chat(NewChat {
+                    request,
+                    reply: "ok",
+                    workdir: Path::new("/p"),
+                    conversation,
+                    created_at_ms: now_ms(),
+                    duration_ms: 1,
+                    failure: None,
+                })
+                .unwrap();
+        };
+        chat("one", Some("c1"));
+        chat("other", Some("c2"));
+        chat("two", Some("c1"));
+        chat("none", None);
+        chat("three", Some("c1"));
+        let questions = |conversation: &str, max_bytes: usize| {
+            store
+                .conversation(conversation, max_bytes)
+                .unwrap()
+                .into_iter()
+                .map(|chat| chat.text)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(questions("c1", 1024), ["one", "two", "three"]);
+        // "three" and "two" with their replies take 12 bytes; "one" doesn't fit.
+        assert_eq!(questions("c1", 12), ["two", "three"]);
+        assert_eq!(questions("c2", 1024), ["other"]);
+        // A chat bigger than the whole budget doesn't hide the ones before it.
+        chat("a request far longer than the budget", Some("c1"));
+        assert_eq!(questions("c1", 12), ["two", "three"]);
+        assert!(questions("c3", 1024).is_empty());
     }
 
     #[test]

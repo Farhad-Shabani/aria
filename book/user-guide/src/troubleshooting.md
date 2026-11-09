@@ -80,7 +80,7 @@ not signed in, and shows how to fix it. After you sign in, switch back to
 Settings and it checks again.
 A chat that fails for either reason says so in the status pill.
 
-Try [a typed question](./chat.md#try-a-typed-question) before a spoken one.
+Try [a typed request](./chat.md#type-a-request) before a spoken one.
 If typing works but speech doesn't, check the microphone and speech model.
 
 ## Transcription fails

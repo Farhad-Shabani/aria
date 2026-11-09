@@ -15,6 +15,7 @@ use aria_kit::segmentation::Engine as SegmentationEngine;
 use aria_kit::speaker::Engine as SpeakerEngine;
 use aria_platform::hotkey::PlatformHotkeyListener;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
+use aria_provider::ProviderError;
 use aria_segmentation::pyannote::Pyannote;
 use aria_settings::WakeEngine;
 use aria_settings::config::ConfigError;
@@ -492,7 +493,7 @@ fn cleanup_check(
             format!("{model} is set, but text cleanup or its model is off, so it never runs"),
         );
     }
-    let endpoint = target.endpoint();
+    let endpoint = target.provider().endpoint();
     match ready() {
         Ok(()) => Check::ok(
             CLEANUP_MODEL,
@@ -502,7 +503,9 @@ fn cleanup_check(
             CLEANUP_MODEL,
             format!("{endpoint} doesn't list {model}; dictation types the rule-cleaned text"),
         ),
-        Err(error @ (LlmCleanupError::Timeout | LlmCleanupError::Transport)) => Check::warning(
+        Err(
+            error @ (LlmCleanupError::Timeout | LlmCleanupError::Server(ProviderError::Transport)),
+        ) => Check::warning(
             CLEANUP_MODEL,
             format!("{endpoint} doesn't answer ({error}); dictation types the rule-cleaned text"),
         ),
@@ -550,9 +553,12 @@ mod tests {
 
     #[test]
     fn the_cleanup_model_warns_when_it_would_never_run_or_cannot_be_reached() {
-        let target =
-            LlmCleanupTarget::new("http://127.0.0.1:11434/v1/chat/completions", "qwen2.5:3b")
-                .unwrap();
+        let target = LlmCleanupTarget::new(
+            aria_settings::LocalProvider::new("http://127.0.0.1:11434/v1/chat/completions")
+                .unwrap(),
+            "qwen2.5:3b",
+        )
+        .unwrap();
         let cases = [
             (false, None, Status::Warning, "its model is off"),
             (
@@ -563,13 +569,19 @@ mod tests {
             ),
             (
                 true,
-                Some(LlmCleanupError::Transport),
+                Some(LlmCleanupError::Server(ProviderError::Transport)),
                 Status::Warning,
                 "doesn't answer",
             ),
             (
                 true,
-                Some(LlmCleanupError::HttpStatus),
+                Some(LlmCleanupError::from(ProviderError::Timeout)),
+                Status::Warning,
+                "doesn't answer",
+            ),
+            (
+                true,
+                Some(LlmCleanupError::Server(ProviderError::HttpStatus)),
                 Status::Warning,
                 "answered, but",
             ),

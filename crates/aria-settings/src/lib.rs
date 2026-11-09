@@ -53,7 +53,8 @@ pub use document::{
 pub use keys::Scope;
 pub use keys::{Apply, Key};
 pub use limits::{
-    LlmCleanupConfigError, LlmCleanupTarget, MAX_DICTATION_TIMEOUT, is_valid_model_id,
+    InvalidModelId, LlmCleanupTarget, LocalProvider, LocalProviderError, MAX_DICTATION_TIMEOUT,
+    is_valid_model_id,
 };
 pub use overrides::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, DictationOverrides, OverrideError,
@@ -357,7 +358,7 @@ pub enum InvalidValue {
     SharedBinding,
 
     #[error("is not usable: {0}")]
-    LlmCleanup(#[source] LlmCleanupConfigError),
+    Provider(#[source] LocalProviderError),
 
     #[error("is not usable: {0}")]
     SpeakingRate(#[source] SpeakingRateError),

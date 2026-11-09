@@ -8,7 +8,7 @@ use std::time::Duration;
 use aria_kit::synthesis::{SpeakingRate, Voice};
 
 use crate::config::{backend, tts_backend, wake_backend};
-use crate::{LlmCleanupTarget, RunsOn, SettingsError, SettingsFile};
+use crate::{LlmCleanupTarget, LocalProvider, RunsOn, SettingsError, SettingsFile};
 
 /// A settings file that passed every check, with the engine choices the
 /// check built.
@@ -48,6 +48,7 @@ pub struct Choices {
     pub voices: Voices,
     pub rate: SpeakingRate,
     pub timeouts: DictationTimeouts,
+    pub provider: Option<LocalProvider>,
     pub cleanup: Option<LlmCleanupTarget>,
     pub capture: CaptureChoice,
     pub wake: WakeEngine,

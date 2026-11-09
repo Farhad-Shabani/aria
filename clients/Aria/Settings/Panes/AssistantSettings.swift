@@ -24,7 +24,7 @@ struct AssistantSettings: View {
                         let problem = selected.problem
                     {
                         AssistantStatusRow(problem: problem, fix: selected.fixSentence) {
-                            if selected.status == .unchecked {
+                            if selected.status == .unchecked || selected.status == .unreachable {
                                 Button("Try Again") { Task { await catalog.load() } }
                                     .disabled(catalog.isLoading)
                             }
@@ -42,7 +42,7 @@ struct AssistantSettings: View {
                             .disabled(catalog.isLoading)
                     }
                 } footer: {
-                    Text("Requires its command-line app.")
+                    Text("Claude Code and Codex need their command-line apps.")
                 }
                 // Both lists come from the daemon, so one failure covers both.
                 if catalog.failure == nil, let modelID = AssistantEdits.modelID(in: editor.snapshot) {
@@ -102,6 +102,9 @@ extension Assistant {
         switch status {
         case .notInstalled: return "\(name) isn’t installed"
         case .signedOut: return "\(name) isn’t signed in"
+        case .notConfigured: return "\(name) isn’t set up"
+        case .unreachable: return "\(name) isn’t answering"
+        case .modelMissing: return "\(name) isn’t available on the server"
         case .unchecked: return "Aria couldn’t check \(name)"
         case .ready: return nil
         }
