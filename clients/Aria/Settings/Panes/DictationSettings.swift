@@ -23,8 +23,6 @@ struct DictationSettings: View {
                 }
             } header: {
                 Text("Text")
-            } footer: {
-                Text("With **Deliver** set to After recording stops, also applies corrections like “no, Tuesday”.")
             }
             Section("Recording") {
                 Toggle(isOn: editor.binding(\.muteSound, \.muteSound)) {
