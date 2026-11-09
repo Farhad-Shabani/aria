@@ -170,7 +170,7 @@ impl LiveHarness {
             | Key::SttDevice
             | Key::SttInterpreter
             | Key::SttRunsOn => self.next_engine(),
-            Key::LocalProviderEndpoint
+            Key::ProviderEndpoint
             | Key::DictationCleanupLlmModel
             | Key::MemoryDir
             | Key::PhoneEnabled
@@ -270,7 +270,7 @@ fn change(key: Key) -> Patch {
         Key::DictationCleanupFillers
         | Key::DictationCleanupBacktrack
         | Key::DictationCleanupLlmEnabled => set(key, false),
-        Key::LocalProviderEndpoint
+        Key::ProviderEndpoint
         | Key::DictationCleanupLlmModel
         | Key::MemoryDir
         | Key::PhoneEnabled

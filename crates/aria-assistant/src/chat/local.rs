@@ -18,7 +18,7 @@ use super::{
 const LIST_BUDGET: Duration = Duration::from_secs(3);
 /// Far more than any reply, counted as the events that carry it.
 const MAX_STREAM_BYTES: usize = 4 * 1024 * 1024;
-const NO_ENDPOINT: &str = "set local_provider.endpoint in the settings file";
+const NO_ENDPOINT: &str = "set provider.endpoint in the settings file";
 const NO_MODEL: &str = "add local = \"MODEL_ID\" under [assistant.models] in the settings file";
 
 /// One earlier chat in a conversation: what was asked and what came back.

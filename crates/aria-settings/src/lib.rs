@@ -358,7 +358,7 @@ pub enum InvalidValue {
     SharedBinding,
 
     #[error("is not usable: {0}")]
-    LocalProvider(#[source] LocalProviderError),
+    Provider(#[source] LocalProviderError),
 
     #[error("is not usable: {0}")]
     SpeakingRate(#[source] SpeakingRateError),

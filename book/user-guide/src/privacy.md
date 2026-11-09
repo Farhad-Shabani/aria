@@ -78,7 +78,7 @@ also keep their own conversation records. Aria uses read-only settings to
 limit file changes, but those settings don't prevent network access.
 
 **Local model** sends your question to the model server that
-`local_provider.endpoint` names, never your project's files. Aria connects
+`provider.endpoint` names, never your project's files. Aria connects
 only to an address on your own Mac. The server decides where the text goes
 next, as with [text cleanup](#text-cleanup-with-a-local-model). With history
 on, each question also carries the conversation's earlier questions and

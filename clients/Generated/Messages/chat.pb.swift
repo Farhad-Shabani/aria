@@ -73,7 +73,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.Ca
   case claudeCode // = 1
   case codex // = 2
 
-  /// A model on the local provider, set by `local_provider.endpoint` and
+  /// A model on the local provider, set by `provider.endpoint` and
   /// `[assistant.models] local`.
   case local // = 3
   case UNRECOGNIZED(Int)

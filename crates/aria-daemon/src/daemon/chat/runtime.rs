@@ -154,7 +154,7 @@ impl ChatRuntime {
                 }
             }
         };
-        LocalAssistant::new(effective.choices().local_provider.as_ref(), model, recall)
+        LocalAssistant::new(effective.choices().provider.as_ref(), model, recall)
     }
 
     pub(in crate::daemon) fn assistants(
@@ -1574,7 +1574,7 @@ pub(super) mod tests {
         std::fs::write(
             home.path().join(".aria/settings.toml"),
             format!(
-                "[memory]\nenabled = true\n[local_provider]\nendpoint = \"{endpoint}\"\n\
+                "[memory]\nenabled = true\n[provider]\nendpoint = \"{endpoint}\"\n\
                  [assistant.models]\nlocal = \"m\"\n"
             ),
         )

@@ -48,7 +48,7 @@ pub struct Choices {
     pub voices: Voices,
     pub rate: SpeakingRate,
     pub timeouts: DictationTimeouts,
-    pub local_provider: Option<LocalProvider>,
+    pub provider: Option<LocalProvider>,
     pub cleanup: Option<LlmCleanupTarget>,
     pub capture: CaptureChoice,
     pub wake: WakeEngine,

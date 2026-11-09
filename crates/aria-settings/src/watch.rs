@@ -745,7 +745,7 @@ mod tests {
     #[test]
     fn turning_cleanup_off_leaves_the_frozen_llm_unused_and_loadable() {
         let llm = "[dictation.cleanup.llm]\nmodel = \"m\"\n\
-                   [local_provider]\nendpoint = \"http://127.0.0.1:1/v1/chat/completions\"\n";
+                   [provider]\nendpoint = \"http://127.0.0.1:1/v1/chat/completions\"\n";
         let dir = tempfile::tempdir().unwrap();
         let store = store(
             dir.path(),

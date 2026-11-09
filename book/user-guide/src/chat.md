@@ -110,7 +110,7 @@ your Mac.
 2. Add these lines to your settings file:
 
    ```toml
-   [local_provider]
+   [provider]
    endpoint = "http://127.0.0.1:11434/v1/chat/completions"
 
    [assistant.models]
@@ -127,7 +127,7 @@ should appear in your terminal.
 The local model continues a conversation only while history is on. With
 history off, each question starts fresh. Cleanup's model in
 [Dictate in the terminal](./terminal-dictation.md) uses the same
-`[local_provider]` server.
+`[provider]` server.
 
 If a chat can't start its assistant, check
 [Troubleshooting](./troubleshooting.md#chat-cant-start).

@@ -374,7 +374,7 @@ mod tests {
                 .is_none()
         );
         let llm = "[dictation.cleanup.llm]\nmodel = \"local-model\"\n\
-                   [local_provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n";
+                   [provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n";
         let config = DictationConfig::load(&file(llm), &home_dir, None);
         assert_eq!(
             config.cleanup_llm,

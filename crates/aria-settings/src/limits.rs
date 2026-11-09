@@ -17,7 +17,7 @@ pub fn is_valid_model_id(model_id: &str) -> bool {
             .any(|character| character.is_whitespace() || character.is_control())
 }
 
-/// Why `local_provider.endpoint` cannot be used.
+/// Why `provider.endpoint` cannot be used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error(
     "local provider endpoint must be HTTP with a literal loopback address, explicit nonzero port, and /v1/chat/completions path"

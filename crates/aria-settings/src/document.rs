@@ -404,7 +404,7 @@ pub struct SettingsFile {
     #[serde(skip_serializing_if = "is_default")]
     pub speaker: Speaker,
     #[serde(skip_serializing_if = "is_default")]
-    pub(crate) local_provider: LocalProviderTable,
+    pub(crate) provider: ProviderTable,
     #[serde(skip_serializing_if = "is_default")]
     pub capture: Capture,
 }
@@ -661,7 +661,7 @@ pub struct Speaker {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct LocalProviderTable {
+pub(crate) struct ProviderTable {
     pub(crate) endpoint: Option<String>,
 }
 
@@ -1003,7 +1003,7 @@ impl SettingsFile {
             stt,
             tts,
             speaker,
-            local_provider: _,
+            provider: _,
             capture,
         } = self;
         let expand = |key: Key, path: &mut PathBuf| -> Result<(), SettingsError> {
@@ -1061,8 +1061,8 @@ impl SettingsFile {
 
     pub(crate) fn check(&self) -> Result<Choices, SettingsError> {
         let settings = Settings::from_file(self)?;
-        let local_provider = self.validate_local_provider()?;
-        let cleanup = self.validate_dictation(local_provider.clone())?;
+        let provider = self.validate_provider()?;
+        let cleanup = self.validate_dictation(provider.clone())?;
         let timeouts = self.validate_timeouts()?;
         let system_transcription = self.validate_system_transcription()?;
         let assistant_timeout = self.validate_assistant()?;
@@ -1081,7 +1081,7 @@ impl SettingsFile {
             voices,
             rate: settings.tts_rate,
             timeouts,
-            local_provider,
+            provider,
             cleanup,
             capture,
             wake,
@@ -1089,18 +1089,13 @@ impl SettingsFile {
         })
     }
 
-    fn validate_local_provider(&self) -> Result<Option<LocalProvider>, SettingsError> {
-        self.local_provider
+    fn validate_provider(&self) -> Result<Option<LocalProvider>, SettingsError> {
+        self.provider
             .endpoint
             .as_deref()
             .map(LocalProvider::new)
             .transpose()
-            .map_err(|source| {
-                invalid(
-                    Key::LocalProviderEndpoint,
-                    InvalidValue::LocalProvider(source),
-                )
-            })
+            .map_err(|source| invalid(Key::ProviderEndpoint, InvalidValue::Provider(source)))
     }
 
     fn validate_dictation(
@@ -1113,7 +1108,7 @@ impl SettingsFile {
         let Some(provider) = provider else {
             return Err(invalid(
                 Key::DictationCleanupLlmModel,
-                InvalidValue::NeedsKey(Key::LocalProviderEndpoint),
+                InvalidValue::NeedsKey(Key::ProviderEndpoint),
             ));
         };
         LlmCleanupTarget::new(provider, model)
@@ -1853,7 +1848,7 @@ pub(super) mod tests {
             stt,
             tts,
             speaker,
-            local_provider,
+            provider,
             capture,
         } = SettingsFile::default();
         let as_json = |section: serde_json::Result<serde_json::Value>| section.expect("serializes");
@@ -1888,10 +1883,7 @@ pub(super) mod tests {
             ("tts.kokoro", as_json(serde_json::to_value(&tts.kokoro))),
             ("tts.qwen", as_json(serde_json::to_value(&tts.qwen))),
             ("speaker", as_json(serde_json::to_value(speaker))),
-            (
-                "local_provider",
-                as_json(serde_json::to_value(local_provider)),
-            ),
+            ("provider", as_json(serde_json::to_value(provider))),
             ("capture", as_json(serde_json::to_value(capture))),
         ];
         let mut fields: std::collections::BTreeSet<String> =
@@ -2156,13 +2148,13 @@ pub(super) mod tests {
         refused("[capture]\nbackend = \"wav_file\"\n", Key::CapturePath);
         refused("[capture]\npace = \"realtime\"\n", Key::CapturePace);
         refused(
-            "[local_provider]\nendpoint = \"https://example.com/v1/chat/completions\"\n",
-            Key::LocalProviderEndpoint,
+            "[provider]\nendpoint = \"https://example.com/v1/chat/completions\"\n",
+            Key::ProviderEndpoint,
         );
         for model in ["", "-m"] {
             refused(
                 &format!(
-                    "[local_provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n\
+                    "[provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n\
                      [dictation.cleanup.llm]\nmodel = \"{model}\"\n"
                 ),
                 Key::DictationCleanupLlmModel,
@@ -2172,7 +2164,7 @@ pub(super) mod tests {
             "[dictation.cleanup.llm]\nmodel = \"m\"\n",
             Key::DictationCleanupLlmModel,
         );
-        load("[local_provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n");
+        load("[provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n");
         load("[dictation.cleanup.llm]\nenabled = false\n");
         refused(
             "[dictation]\nauto_stop_ms = 2999\n",
