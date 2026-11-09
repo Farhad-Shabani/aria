@@ -506,7 +506,10 @@ mod tests {
             "a second Return there joins the first"
         );
 
-        assert!(armed.finish(), "the dictation learns of the Return");
+        assert!(
+            armed.finish().is_some(),
+            "the dictation learns of the Return"
+        );
         assert_eq!(active.target_process(), None);
         assert!(!active.take_return(), "the key belongs to the app again");
     }

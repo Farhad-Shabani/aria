@@ -300,6 +300,11 @@ enum ReturnState {
     Armed,
     /// The person pressed Return; it goes to the app after the text.
     Taken,
+    /// Typing ended and the taken Return reached the app.
+    Pressed,
+    /// Typing ended without pressing the taken Return, so the person
+    /// hears of it.
+    Dropped,
 }
 
 /// How long a terminal stage waits for capture to let go before it goes out
@@ -534,9 +539,16 @@ impl ExecutionControl {
     /// short. `None` once typing ended, or when it types into no app. Kept
     /// after the Return is taken, so a second one there joins it.
     fn target_process(&self) -> Option<u32> {
-        let armed = self.return_state.load(Ordering::Acquire) != ReturnState::Unarmed as u8;
+        let state = self.return_state.load(Ordering::Acquire);
+        let armed = state == ReturnState::Armed as u8 || state == ReturnState::Taken as u8;
         // Read after the state's Acquire, which the arming Release orders.
         armed.then(|| self.target_process.load(Ordering::Relaxed))
+    }
+
+    /// The person's Return was taken and never pressed. Final once the
+    /// sinks heard the dictation finish.
+    pub(crate) fn return_dropped(&self) -> bool {
+        self.return_state.load(Ordering::Acquire) == ReturnState::Dropped as u8
     }
 
     /// Takes a Return pressed where the text goes: it ends recording,
@@ -642,20 +654,46 @@ pub(crate) struct ArmedReturn {
 }
 
 impl ArmedReturn {
-    /// Lets Return through again. True when the person pressed it meanwhile.
-    pub(crate) fn finish(self) -> bool {
-        self.control
-            .return_state
-            .swap(ReturnState::Unarmed as u8, Ordering::AcqRel)
-            == ReturnState::Taken as u8
+    /// Lets Return through again. A Return the person pressed meanwhile
+    /// counts as dropped until its token says it was pressed.
+    pub(crate) fn finish(self) -> Option<TakenReturn> {
+        self.release().then(|| TakenReturn {
+            control: Arc::clone(&self.control),
+        })
+    }
+
+    /// True when the Return was taken. A second call changes nothing.
+    fn release(&self) -> bool {
+        let released =
+            self.control
+                .return_state
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| match state {
+                    s if s == ReturnState::Armed as u8 => Some(ReturnState::Unarmed as u8),
+                    s if s == ReturnState::Taken as u8 => Some(ReturnState::Dropped as u8),
+                    _ => None,
+                });
+        released == Ok(ReturnState::Taken as u8)
     }
 }
 
 impl Drop for ArmedReturn {
     fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// A Return the person pressed while the text was coming, not yet pressed
+/// in the app. Gone unpressed, it stays dropped.
+#[derive(Debug)]
+pub(crate) struct TakenReturn {
+    control: Arc<ExecutionControl>,
+}
+
+impl TakenReturn {
+    pub(crate) fn pressed(self) {
         self.control
             .return_state
-            .store(ReturnState::Unarmed as u8, Ordering::Release);
+            .store(ReturnState::Pressed as u8, Ordering::Release);
     }
 }
 
@@ -1510,5 +1548,17 @@ mod tests {
                 delivery: DeliveryMode::Complete
             }]
         );
+    }
+
+    #[test]
+    fn a_taken_return_dropped_before_its_press_stays_dropped() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let armed = control.arm_return(1);
+        assert!(control.take_return());
+
+        drop(armed);
+
+        assert!(control.return_dropped());
+        assert!(!control.take_return(), "typing ended");
     }
 }

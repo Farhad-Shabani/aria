@@ -452,7 +452,7 @@ where
             events.emit(DictationStage::ended_by(error.into()));
         }
         // After the terminal stage, so the overlay shows it last.
-        if sinks.dropped_return() {
+        if control.return_dropped() {
             events.emit(DictationStage::ReturnDropped);
         }
         result
@@ -484,7 +484,7 @@ where
         if let Err(error) = &result {
             events.emit(DictationStage::ended_by(error.into()));
         }
-        if sinks.dropped_return() {
+        if control.return_dropped() {
             events.emit(DictationStage::ReturnDropped);
         }
         result
@@ -1416,10 +1416,6 @@ where
     fn dictation_finished(&mut self, result: Result<(), &DictationError>) {
         self.0.dictation_finished(result);
         self.1.dictation_finished(result);
-    }
-
-    fn dropped_return(&self) -> bool {
-        self.0.dropped_return() || self.1.dropped_return()
     }
 
     fn recording_finished(
@@ -5279,8 +5275,14 @@ mod tests {
                 Ok(())
             }
 
-            fn dropped_return(&self) -> bool {
-                true
+            fn dictation_started(
+                &mut self,
+                _settings: &DictationSettings,
+                control: &Arc<ExecutionControl>,
+            ) -> Result<(), DictationError> {
+                let _armed = control.arm_return(1);
+                assert!(control.take_return());
+                Ok(())
             }
         }
 
