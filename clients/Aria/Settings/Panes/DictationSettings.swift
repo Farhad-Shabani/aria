@@ -31,7 +31,7 @@ struct DictationSettings: View {
                 }
                 Toggle(isOn: editor.binding(\.returnSends, \.returnSends)) {
                     Text("Return sends")
-                    Text("Return in the app you’re dictating into stops recording, types the rest, then sends.")
+                    Text("Pressing Return stops recording, then sends what you said.")
                 }
                 autoStop(editor)
             }
