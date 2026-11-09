@@ -31,11 +31,11 @@ final class AssistantCatalogTests: XCTestCase {
         XCTAssertFalse(catalog.isLoading)
     }
 
-    func testLoadUnlessReadyRechecksOnlyTheChosenAssistantUntilNothingOutsideAriaIsLeft() async {
+    func testLoadUnlessReadyRechecksOnlyTheChosenAssistantUntilItIsReady() async {
         struct Failure: Error {}
         @MainActor final class ResponseState {
             var shouldFail = true
-            var local = Assistant.Status.unreachable
+            var local = Assistant.Status.modelUnset
             var calls = 0
         }
         let state = ResponseState()
@@ -52,7 +52,7 @@ final class AssistantCatalogTests: XCTestCase {
         state.shouldFail = false
         await catalog.loadUnlessReady(selected: .localModel)
         XCTAssertNil(catalog.failure)
-        state.local = .modelUnset
+        state.local = .ready
         await catalog.loadUnlessReady(selected: .localModel)
         await catalog.loadUnlessReady(selected: .localModel)
         XCTAssertEqual(state.calls, 3)

@@ -65,6 +65,12 @@ struct SettingsView: View {
         }
         .task { await settings.sync() }
         .task { await assistantCatalog.load() }
+        // Readiness depends on the model, which the CLI, the phone, or the
+        // settings file can change too.
+        .onChange(of: settings.confirmed.flatMap(AssistantEdits.modelID)) { old, _ in
+            guard old != nil else { return }
+            Task { await assistantCatalog.load() }
+        }
         .onChange(of: poller.state) { _, state in
             guard state == .running else { return }
             Task { await assistantCatalog.loadUnlessReady(selected: settings.snapshot?.assistantID) }

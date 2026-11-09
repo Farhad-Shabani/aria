@@ -16,11 +16,8 @@ final class AssistantCatalog: ObservableObject {
         self.list = list
     }
 
-    /// Skips the check while the chosen assistant is ready or only needs a
-    /// model. Choosing a model checks again.
     func loadUnlessReady(selected: Aria_Daemon_V1_AssistantId?) async {
-        let status = choices.first { $0.id == selected }?.status
-        guard status != .ready, status != .modelUnset else { return }
+        guard choices.first(where: { $0.id == selected })?.status != .ready else { return }
         await load()
     }
 

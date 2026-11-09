@@ -22,7 +22,7 @@ struct AssistantSettings: View {
                     .disabled(catalog.choices.isEmpty)
                     if catalog.failure == nil, let selected, let problem = selected.problem {
                         AssistantStatusRow(problem: problem, fix: selected.fixSentence) {
-                            if selected.status == .unchecked || selected.status == .unreachable {
+                            if selected.status.canTryAgain {
                                 if catalog.isLoading {
                                     ProgressView().controlSize(.small)
                                 } else {
@@ -51,18 +51,9 @@ struct AssistantSettings: View {
                 if catalog.failure == nil, let selected, let modelID = AssistantEdits.modelID(in: editor.snapshot) {
                     AssistantModelSection(
                         assistant: selected,
-                        modelID: Binding(
-                            get: { modelID },
-                            set: { value in
-                                Task {
-                                    await settings.set {
-                                        AssistantEdits.setModelID(value, for: selected.id, in: &$0)
-                                    }
-                                    // Readiness depends on the model, so check again.
-                                    await catalog.load()
-                                }
-                            }
-                        )
+                        modelID: editor.binding(modelID) { value, patch in
+                            AssistantEdits.setModelID(value, for: selected.id, in: &patch)
+                        }
                     )
                     .id(selected.id)
                 }
@@ -113,7 +104,7 @@ extension Assistant {
     fileprivate var requirement: String? {
         switch id {
         case .claudeCode, .codex: return "\(name) needs its command-line app."
-        case .localModel: return "\(name) uses a model server on your Mac, such as Ollama."
+        case .localModel: return "\(name) sends your requests to a model server on your Mac, such as Ollama."
         case .unspecified, .UNRECOGNIZED: return nil
         }
     }
@@ -124,7 +115,7 @@ extension Assistant {
         case .signedOut: return "\(name) isn’t signed in"
         case .notConfigured: return "\(name) isn’t set up"
         case .unreachable: return "\(name) isn’t answering"
-        case .modelMissing: return "\(name) isn’t available on the server"
+        case .modelMissing: return "The chosen model isn’t available"
         // The Model row is where the user fixes this.
         case .modelUnset: return nil
         case .unchecked: return "Aria couldn’t check \(name)"
@@ -141,4 +132,6 @@ extension Assistant.Status {
         case .notInstalled, .signedOut, .notConfigured, .unreachable, .unchecked: return false
         }
     }
+
+    var canTryAgain: Bool { self == .unchecked || self == .unreachable }
 }

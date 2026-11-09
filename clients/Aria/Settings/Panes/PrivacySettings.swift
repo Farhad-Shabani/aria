@@ -32,7 +32,7 @@ struct PrivacySettings: View {
                     Button("Turn On") { editor.set(\.memoryEnabled, to: true) }
                 } message: {
                     Text(
-                        "Aria sends the requests you speak to Claude to find facts about you. This includes chats with a local model."
+                        "Aria sends the requests you speak to Claude to find facts about you. This includes Local Provider chats."
                     )
                 }
             } footer: {
