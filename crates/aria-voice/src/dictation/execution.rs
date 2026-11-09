@@ -690,7 +690,7 @@ pub(crate) struct TakenReturn {
 }
 
 impl TakenReturn {
-    pub(crate) fn pressed(self) {
+    pub(crate) fn mark_pressed(self) {
         self.control
             .return_state
             .store(ReturnState::Pressed as u8, Ordering::Release);

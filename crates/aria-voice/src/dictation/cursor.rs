@@ -335,7 +335,7 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
                 Finished::Typed => Self::press_return(&self.delivery, target),
             };
             if pressed {
-                taken.pressed();
+                taken.mark_pressed();
             }
         }
         Ok(())
@@ -388,7 +388,7 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
             && target.delivered.is_none()
             && matches!(target.absence, Absence::Queues(_));
         if owed && Self::press_return(&self.delivery, &target) {
-            taken.pressed();
+            taken.mark_pressed();
         }
     }
 }
