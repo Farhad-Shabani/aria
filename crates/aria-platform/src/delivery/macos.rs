@@ -11,8 +11,8 @@ use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventTapLocation};
 use objc2_foundation::NSString;
 
 use super::{
-    Caret, DeliveryError, DeliveryOutcome, OutputMode, Placement, TextDelivery, validate_text,
-    validate_timeout,
+    Caret, DeliveryError, DeliveryOutcome, Finished, OutputMode, Placement, TextDelivery,
+    validate_text, validate_timeout,
 };
 use crate::accessibility::Trust;
 
@@ -134,14 +134,14 @@ impl TextDelivery for MacOsTextDelivery {
         &self,
         prepared: &Self::Prepared,
         should_cancel: impl Fn() -> bool,
-    ) -> Result<(), DeliveryError> {
+    ) -> Result<Finished, DeliveryError> {
         let MacOsDeliveryTarget::ApplicationAndSubmit {
             process,
             confirmation,
             finished,
         } = prepared
         else {
-            return Ok(());
+            return Ok(Finished::Typed);
         };
         if finished.replace(true) {
             return Err(DeliveryError::SubmissionUnconfirmed);
@@ -151,21 +151,32 @@ impl TextDelivery for MacOsTextDelivery {
                 .borrow()
                 .confirm(|| guard(*process, &should_cancel, observe()))?;
             guard(*process, &should_cancel, observe())?;
-            post_return()
+            post_return().map(|()| Finished::Submitted)
         })
     }
 
-    /// No field check, unlike submission: the user chose to press Return,
-    /// so it only has to reach the app the text went to.
+    /// Checks the field the text went to, with the caret after it, where
+    /// the field can be read: another field in the same app may hold a
+    /// command the person never meant to send.
     fn press_return(
         &self,
         prepared: &Self::Prepared,
         should_cancel: impl Fn() -> bool,
     ) -> Result<(), DeliveryError> {
-        let process = self
-            .process(prepared)
-            .ok_or(DeliveryError::TargetUnavailable)?;
         autoreleasepool(|_| {
+            let process = match prepared {
+                MacOsDeliveryTarget::Application { process, anchoring } => {
+                    anchoring.borrow_mut().before_return()?;
+                    *process
+                }
+                // Submission presses its own Return, once it confirms the
+                // text; never one without that check.
+                MacOsDeliveryTarget::ApplicationAndSubmit { .. } => {
+                    return Err(DeliveryError::SubmissionUnconfirmed);
+                }
+                MacOsDeliveryTarget::ApplicationOrClipboard(process) => *process,
+                MacOsDeliveryTarget::Clipboard => return Err(DeliveryError::TargetUnavailable),
+            };
             guard(process, &should_cancel, observe())?;
             post_return()
         })
@@ -225,7 +236,7 @@ impl TextDelivery for MacOsTextDelivery {
         })
     }
 
-    fn process(&self, prepared: &Self::Prepared) -> Option<u32> {
+    fn target_process(&self, prepared: &Self::Prepared) -> Option<u32> {
         match prepared {
             MacOsDeliveryTarget::Application { process, .. }
             | MacOsDeliveryTarget::ApplicationAndSubmit { process, .. }

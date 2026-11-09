@@ -12,7 +12,8 @@ use std::time::Duration;
 
 use self::desktop::{AfterFailure, Budget, Desktop, JobError, KeyboardState, Refusal};
 use super::{
-    DeliveryError, DeliveryOutcome, OutputMode, TextDelivery, validate_text, validate_timeout,
+    DeliveryError, DeliveryOutcome, Finished, OutputMode, TextDelivery, validate_text,
+    validate_timeout,
 };
 
 /// The portal uses this ID to find the desktop entry installed by `aria service install`.
@@ -207,8 +208,16 @@ impl TextDelivery for LinuxTextDelivery {
         &self,
         _prepared: &Self::Prepared,
         _should_cancel: impl Fn() -> bool,
+    ) -> Result<Finished, DeliveryError> {
+        Ok(Finished::Typed)
+    }
+
+    fn press_return(
+        &self,
+        _prepared: &Self::Prepared,
+        _should_cancel: impl Fn() -> bool,
     ) -> Result<(), DeliveryError> {
-        Ok(())
+        Err(DeliveryError::SubmissionUnsupported)
     }
 
     fn deliver(

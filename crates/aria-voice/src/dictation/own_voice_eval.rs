@@ -24,7 +24,7 @@ use aria_kit::transcription::{
     Hypothesis, Language, RecognitionAudio, Recognizer, StreamingEngine as _, TranscriptionError,
 };
 use aria_kit::voice_activity::SileroVad;
-use aria_platform::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
+use aria_platform::delivery::{DeliveryError, DeliveryOutcome, Finished, OutputMode, TextDelivery};
 use aria_segmentation::pyannote::Pyannote;
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_stt::parakeet::{Device, Parakeet};
@@ -113,8 +113,17 @@ impl TextDelivery for TimedDelivery {
         &self,
         _prepared: &(),
         _should_cancel: impl Fn() -> bool,
+    ) -> Result<Finished, DeliveryError> {
+        Ok(Finished::Typed)
+    }
+
+    fn press_return(
+        &self,
+        _prepared: &Self::Prepared,
+        _should_cancel: impl Fn() -> bool,
     ) -> Result<(), DeliveryError> {
-        Ok(())
+        // Names no target process, so it never takes a Return.
+        Err(DeliveryError::TargetUnavailable)
     }
 
     fn deliver(

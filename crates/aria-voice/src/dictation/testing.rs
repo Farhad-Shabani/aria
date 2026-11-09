@@ -14,7 +14,7 @@ use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{OperationSource, TimedWord};
 use aria_kit::voice_activity::{VoiceActivityDetector, VoiceActivityError};
 use aria_platform::delivery::{
-    DeliveryError, DeliveryOutcome, OutputMode, Placement, Rect, TextDelivery,
+    DeliveryError, DeliveryOutcome, Finished, OutputMode, Placement, Rect, TextDelivery,
 };
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -110,7 +110,7 @@ impl TextDelivery for RecordingDelivery {
         &self,
         prepared: &Self::Prepared,
         should_cancel: impl Fn() -> bool,
-    ) -> Result<(), DeliveryError> {
+    ) -> Result<Finished, DeliveryError> {
         if *prepared == OutputMode::InsertAndSubmit {
             if should_cancel() {
                 return Err(DeliveryError::Cancelled);
@@ -119,11 +119,12 @@ impl TextDelivery for RecordingDelivery {
             if self.fail {
                 return Err(DeliveryError::TargetUnavailable);
             }
+            return Ok(Finished::Submitted);
         }
-        Ok(())
+        Ok(Finished::Typed)
     }
 
-    fn process(&self, prepared: &Self::Prepared) -> Option<u32> {
+    fn target_process(&self, prepared: &Self::Prepared) -> Option<u32> {
         (*prepared != OutputMode::Copy).then_some(TYPED_PROCESS)
     }
 
@@ -185,8 +186,17 @@ impl TextDelivery for PlacedDelivery {
         &self,
         _prepared: &(),
         _should_cancel: impl Fn() -> bool,
+    ) -> Result<Finished, DeliveryError> {
+        Ok(Finished::Typed)
+    }
+
+    fn press_return(
+        &self,
+        _prepared: &Self::Prepared,
+        _should_cancel: impl Fn() -> bool,
     ) -> Result<(), DeliveryError> {
-        Ok(())
+        // Names no target process, so it never takes a Return.
+        Err(DeliveryError::TargetUnavailable)
     }
 
     fn deliver(
@@ -403,8 +413,9 @@ pub fn recording_started(edges: &mpsc::Receiver<Edge>) -> RecordingId {
 pub struct ActiveDictationBuilder {
     stop_mode: StopMode,
     recording: bool,
-    typing_into: Option<u32>,
+    target_process: Option<u32>,
     cancelled: bool,
+    out_of_time: bool,
 }
 
 /// Keeps what the built dictation's state rests on alive: dropping it ends
@@ -420,8 +431,9 @@ impl ActiveDictationBuilder {
         Self {
             stop_mode,
             recording: false,
-            typing_into: None,
+            target_process: None,
             cancelled: false,
+            out_of_time: false,
         }
     }
 
@@ -430,8 +442,8 @@ impl ActiveDictationBuilder {
         self
     }
 
-    pub fn with_typing_into(mut self, process: u32) -> Self {
-        self.typing_into = Some(process);
+    pub fn with_target_process(mut self, process: u32) -> Self {
+        self.target_process = Some(process);
         self
     }
 
@@ -440,10 +452,20 @@ impl ActiveDictationBuilder {
         self
     }
 
+    pub fn with_deadline_passed(mut self) -> Self {
+        self.out_of_time = true;
+        self
+    }
+
     pub fn build(self) -> BuiltDictation {
         let cancellation = CancelToken::new();
+        let overall = if self.out_of_time {
+            Duration::from_millis(1)
+        } else {
+            Duration::from_secs(5)
+        };
         let control =
-            ExecutionControl::for_test_with_cancellation(self.stop_mode, cancellation.clone());
+            ExecutionControl::for_test_lasting(self.stop_mode, cancellation.clone(), overall);
         let recording = self.recording.then(|| {
             control
                 .start_recording(
@@ -452,9 +474,14 @@ impl ActiveDictationBuilder {
                 )
                 .expect("recording starts")
         });
-        let armed = self.typing_into.map(|process| control.arm_return(process));
+        let armed = self
+            .target_process
+            .map(|process| control.arm_return(process));
         if self.cancelled {
             cancellation.cancel();
+        }
+        if self.out_of_time {
+            std::thread::sleep(Duration::from_millis(2));
         }
         BuiltDictation {
             dictation: super::ActiveDictation::new(control),

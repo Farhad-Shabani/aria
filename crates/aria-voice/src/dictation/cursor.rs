@@ -1,9 +1,11 @@
 use super::execution::ArmedReturn;
 use super::{
-    Delivered, DeliveryMode, DeliveryOutcome, DictationSettings, ExecutionControl, TranscriptSink,
-    Utterance,
+    Delivered, DeliveryMode, DeliveryOutcome, DictationError, DictationSettings, ExecutionControl,
+    TranscriptSink, Utterance,
 };
-use aria_platform::delivery::{Caret, DeliveryError, OutputMode, Placement, TextDelivery};
+use aria_platform::delivery::{
+    Caret, DeliveryError, Finished, OutputMode, Placement, TextDelivery,
+};
 use std::sync::Arc;
 
 /// The frontmost app as a transcript sink. Streaming types each segment as
@@ -20,7 +22,6 @@ struct Target<P> {
     /// The app in front as the press started, when the platform can tell.
     start: Option<aria_platform::delivery::Application>,
     mode: DeliveryMode,
-    output: OutputMode,
     absence: Absence,
     control: Arc<ExecutionControl>,
     prepared: P,
@@ -71,7 +72,7 @@ impl<P> Target<P> {
     /// Ends typing for good. True when the person pressed Return meanwhile.
     fn finish(&mut self) -> bool {
         self.finished = true;
-        self.armed.take().is_some_and(ArmedReturn::disarm)
+        self.armed.take().is_some_and(ArmedReturn::finish)
     }
 }
 
@@ -272,13 +273,12 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         }
         let armed = self
             .delivery
-            .process(&prepared)
+            .target_process(&prepared)
             .map(|process| control.arm_return(process));
         self.target = Some(Target {
             policy: settings.target.clone(),
             start: self.delivery.frontmost(),
             mode: settings.delivery_mode,
-            output,
             absence,
             control: Arc::clone(control),
             prepared,
@@ -316,15 +316,15 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         };
         // Disarmed first, so a Return pressed from here on reaches the app.
         let taken = target.finish();
-        let inserted =
-            target.delivered.map(|delivered| delivered.outcome) == Some(DeliveryOutcome::Inserted);
-        if inserted {
-            self.delivery
-                .finish(&target.prepared, should_cancel(&target.control))?;
+        // Text left behind, in history or on the clipboard, means a Return
+        // would send something else.
+        if target.delivered.map(|delivered| delivered.outcome) != Some(DeliveryOutcome::Inserted) {
+            return Ok(());
         }
-        // Submission already pressed Return.
-        let submitted = inserted && target.output == OutputMode::InsertAndSubmit;
-        if taken && !submitted {
+        let finished = self
+            .delivery
+            .finish(&target.prepared, should_cancel(&target.control))?;
+        if taken && finished == Finished::Typed {
             Self::press_return(&self.delivery, target);
         }
         Ok(())
@@ -363,11 +363,15 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         self.delivery.placement(&target.prepared)
     }
 
-    fn dictation_finished(&mut self) {
-        // A press that never completed, such as one that heard no speech,
-        // still owes the person their Return.
+    fn dictation_finished(&mut self, result: Result<(), &DictationError>) {
+        // A press that heard no speech still owes the person their Return.
+        // A failure keeps it: the text was cut short. Only a field bound as
+        // the press started shows the Return lands where it was pressed.
         if let Some(mut target) = self.target.take()
             && target.finish()
+            && matches!(result, Err(DictationError::NoSpeech))
+            && target.delivered.is_none()
+            && matches!(target.absence, Absence::Queues(_))
         {
             Self::press_return(&self.delivery, &target);
         }
@@ -412,6 +416,9 @@ mod tests {
     struct Wandering {
         delivery: RecordingDelivery,
         refusal: std::sync::Mutex<Option<fn() -> DeliveryError>>,
+        /// Refuses the person's Return. The field leaving alone doesn't:
+        /// only the app is checked, as with an unreadable field.
+        return_refusal: std::sync::Mutex<Option<fn() -> DeliveryError>>,
         front: std::sync::Mutex<Option<aria_platform::delivery::Application>>,
         caret: std::sync::Mutex<Caret>,
         caret_reads: std::sync::atomic::AtomicUsize,
@@ -448,7 +455,7 @@ mod tests {
             &self,
             prepared: &OutputMode,
             should_cancel: impl Fn() -> bool,
-        ) -> Result<(), DeliveryError> {
+        ) -> Result<Finished, DeliveryError> {
             self.delivery.finish(prepared, should_cancel)
         }
 
@@ -468,8 +475,8 @@ mod tests {
             self.delivery.deliver(prepared, text, should_cancel)
         }
 
-        fn process(&self, prepared: &OutputMode) -> Option<u32> {
-            self.delivery.process(prepared)
+        fn target_process(&self, prepared: &OutputMode) -> Option<u32> {
+            self.delivery.target_process(prepared)
         }
 
         fn press_return(
@@ -477,7 +484,7 @@ mod tests {
             prepared: &OutputMode,
             should_cancel: impl Fn() -> bool,
         ) -> Result<(), DeliveryError> {
-            if let Some(refusal) = *self.refusal.lock().unwrap() {
+            if let Some(refusal) = *self.return_refusal.lock().unwrap() {
                 return Err(refusal());
             }
             self.delivery.press_return(prepared, should_cancel)
@@ -497,6 +504,7 @@ mod tests {
                 fail: false,
             },
             refusal: std::sync::Mutex::new(None),
+            return_refusal: std::sync::Mutex::new(None),
             front: std::sync::Mutex::new(None),
             caret: std::sync::Mutex::new(Caret::default()),
             caret_reads: std::sync::atomic::AtomicUsize::new(0),
@@ -938,7 +946,7 @@ mod tests {
             .unwrap();
         cursor.segment(Utterance::anonymous("hello")).unwrap();
         let active = ActiveDictation::new(Arc::clone(&control));
-        assert_eq!(active.types_into(), Some(TYPED_PROCESS));
+        assert_eq!(active.target_process(), Some(TYPED_PROCESS));
 
         assert!(active.take_return());
         cursor.segment(Utterance::anonymous("there")).unwrap();
@@ -1013,13 +1021,13 @@ mod tests {
 
         assert!(control.take_return());
         // No speech: the press ends without completing.
-        cursor.dictation_finished();
+        cursor.dictation_finished(Err(&DictationError::NoSpeech));
 
         assert_eq!(log.entries(), ["prepare:Insert", "return"]);
     }
 
     #[test]
-    fn a_return_the_app_refuses_fails_nothing() {
+    fn a_return_is_dropped_when_text_was_left_behind() {
         let (log, mut cursor) = left_after_hello(OutputMode::Insert);
         let control = Arc::clone(&cursor.target.as_ref().unwrap().control);
         assert!(control.take_return());
@@ -1029,7 +1037,60 @@ mod tests {
             .completed(Utterance::anonymous("hello there"))
             .unwrap();
 
+        assert!(
+            !log.entries().iter().any(|entry| entry == "return"),
+            "the focused field holds something else"
+        );
+    }
+
+    #[test]
+    fn a_return_the_app_refuses_fails_nothing() {
+        let (log, mut cursor) = left_after_hello(OutputMode::Insert);
+        cursor.delivery.come_back();
+        let control = Arc::clone(&cursor.target.as_ref().unwrap().control);
+        assert!(control.take_return());
+        *cursor.delivery.return_refusal.lock().unwrap() = Some(|| DeliveryError::TargetChanged);
+
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+
         assert!(!log.entries().iter().any(|entry| entry == "return"));
+    }
+
+    #[test]
+    fn a_failed_transcription_drops_its_return() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Streaming, OutputMode::Insert),
+                &control,
+            )
+            .unwrap();
+        assert!(control.take_return());
+
+        // The field holds the person's own text, which the Return would send
+        // without the words they meant to add.
+        cursor.dictation_finished(Err(&DictationError::DeliveryInterrupted));
+
+        assert_eq!(log.entries(), ["prepare:Insert"]);
+    }
+
+    #[test]
+    fn a_complete_press_that_typed_nothing_drops_its_return() {
+        let (log, mut cursor) = cursor();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Complete, OutputMode::Insert),
+                &control,
+            )
+            .unwrap();
+        assert!(control.take_return());
+
+        // No speech, and no field bound to show where the Return went.
+        cursor.dictation_finished(Err(&DictationError::NoSpeech));
+
+        assert_eq!(log.entries(), ["prepare:Insert"]);
     }
 
     #[test]
@@ -1047,7 +1108,7 @@ mod tests {
         assert!(control.take_return());
 
         cancel.cancel();
-        cursor.dictation_finished();
+        cursor.dictation_finished(Err(&DictationError::Cancelled));
 
         assert!(!log.entries().iter().any(|entry| entry == "return"));
     }
@@ -1088,6 +1149,15 @@ mod tests {
                 Ok(())
             }
 
+            fn press_return(
+                &self,
+                _prepared: &Self::Prepared,
+                _should_cancel: impl Fn() -> bool,
+            ) -> Result<(), DeliveryError> {
+                // Names no target process, so it never takes a Return.
+                Err(DeliveryError::TargetUnavailable)
+            }
+
             fn deliver(
                 &self,
                 _prepared: &(),
@@ -1101,7 +1171,7 @@ mod tests {
                 &self,
                 _prepared: &(),
                 _cancel: impl Fn() -> bool,
-            ) -> Result<(), DeliveryError> {
+            ) -> Result<Finished, DeliveryError> {
                 panic!("clipboard fallback must not run submission");
             }
         }
@@ -1169,7 +1239,7 @@ mod tests {
         cursor.segment(Utterance::anonymous("hello")).unwrap();
         cursor.completed(Utterance::anonymous("hello")).unwrap();
         assert_eq!(cursor.delivered(), None);
-        cursor.dictation_finished();
+        cursor.dictation_finished(Ok(()));
 
         assert!(log.entries().is_empty());
     }
@@ -1248,7 +1318,7 @@ mod tests {
 
         cursor.dictation_started(&streaming, &control).unwrap();
         cursor.segment(Utterance::anonymous("one")).unwrap();
-        cursor.dictation_finished();
+        cursor.dictation_finished(Ok(()));
         cursor.dictation_started(&streaming, &control).unwrap();
         cursor.segment(Utterance::anonymous("two")).unwrap();
 
@@ -1292,8 +1362,17 @@ mod tests {
             &self,
             prepared: &OutputMode,
             should_cancel: impl Fn() -> bool,
-        ) -> Result<(), DeliveryError> {
+        ) -> Result<Finished, DeliveryError> {
             self.delivery.finish(prepared, should_cancel)
+        }
+
+        fn press_return(
+            &self,
+            _prepared: &Self::Prepared,
+            _should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            // Names no target process, so it never takes a Return.
+            Err(DeliveryError::TargetUnavailable)
         }
 
         fn deliver(

@@ -77,6 +77,15 @@ pub struct Application {
     pub bundle_id: Option<String>,
 }
 
+/// What `finish` left behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finished {
+    /// The text, as typed.
+    Typed,
+    /// The text, then Return, as submission presses it.
+    Submitted,
+}
+
 /// Where a delivery ended up. A request may allow either; a delivery did one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryOutcome {
@@ -108,18 +117,16 @@ pub trait TextDelivery: Send + Sync + 'static {
         &self,
         prepared: &Self::Prepared,
         should_cancel: impl Fn() -> bool,
-    ) -> Result<(), DeliveryError>;
+    ) -> Result<Finished, DeliveryError>;
 
-    /// Presses the Return the user pressed while dictating, after the last
-    /// of the text, into the app `process` names. Only asked when `process`
-    /// names one.
+    /// Presses the Return the person pressed while dictating, after the
+    /// last of the text. No default: a delivery that names a target process
+    /// takes the person's Return there, so it must say how it presses it.
     fn press_return(
         &self,
-        _prepared: &Self::Prepared,
-        _should_cancel: impl Fn() -> bool,
-    ) -> Result<(), DeliveryError> {
-        Err(DeliveryError::InsertionUnsupported)
-    }
+        prepared: &Self::Prepared,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError>;
 
     /// Under plain insertion, `TargetChanged` means nothing of `text` was
     /// typed, so the caller may offer the same text again.
@@ -138,7 +145,7 @@ pub trait TextDelivery: Send + Sync + 'static {
     /// can be told from one pressed in another app. `None` when it types
     /// into no app, or the platform cannot tell. Naming one takes the
     /// person's Return there, so `press_return` must press it.
-    fn process(&self, _prepared: &Self::Prepared) -> Option<u32> {
+    fn target_process(&self, _prepared: &Self::Prepared) -> Option<u32> {
         None
     }
 

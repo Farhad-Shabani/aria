@@ -1,6 +1,7 @@
-//! The macOS hotkey listener: a listen-only CGEventTap, plus an active one
-//! that keeps Fn's macOS action from running while Fn is the Aria key, and
-//! swallows a Return a dictation takes.
+//! The macOS hotkey listener: a listen-only CGEventTap for modifiers and
+//! clicks, plus an active one that sees every key. The active one keeps
+//! Fn's macOS action from running while Fn is the Aria key, swallows a
+//! Return a dictation takes, and reports the typing that voids a hold.
 //!
 //! Everything runs on the caller's thread. The tap callbacks only ever
 //! execute inside [`CFRunLoop::run_in_mode`] on that same thread, so the
@@ -19,7 +20,7 @@ use objc2::runtime::AnyObject;
 use objc2_core_foundation::{CFMachPort, CFRetained, CFRunLoop, CFString};
 use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventTapCallBack, CGEventTapLocation, CGEventTapOptions,
-    CGEventTapPlacement, CGEventTapProxy, CGEventTimestamp, CGEventType,
+    CGEventTapPlacement, CGEventTapProxy, CGEventType,
 };
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults};
 
@@ -122,7 +123,7 @@ fn translate(key: AriaKey, key_code: i64, flags: u64, synthetic: bool) -> Option
 
 /// One Return key event, as the tap sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum KeyEdge {
+enum KeyPhase {
     Down,
     Repeat,
     Up,
@@ -136,7 +137,7 @@ enum ReturnHandling {
     /// Swallow it: it repeats a taken Return.
     Swallow,
     /// Swallow the taken Return's release, which ends it.
-    Release,
+    End,
     Pass,
 }
 
@@ -157,14 +158,19 @@ fn is_bare_return(key: AriaKey, key_code: i64, flags: u64) -> bool {
 
 /// Only the person's own Return ends a dictation: the Return delivery posts
 /// must reach the app.
-fn return_handling(edge: KeyEdge, bare: bool, synthetic: bool, swallowing: bool) -> ReturnHandling {
+fn return_handling(
+    phase: KeyPhase,
+    bare: bool,
+    synthetic: bool,
+    swallowing: bool,
+) -> ReturnHandling {
     if synthetic {
         return ReturnHandling::Pass;
     }
-    match (edge, swallowing) {
-        (KeyEdge::Down, _) if bare => ReturnHandling::Ask,
-        (KeyEdge::Repeat, true) => ReturnHandling::Swallow,
-        (KeyEdge::Up, true) => ReturnHandling::Release,
+    match (phase, swallowing) {
+        (KeyPhase::Down, _) if bare => ReturnHandling::Ask,
+        (KeyPhase::Repeat, true) => ReturnHandling::Swallow,
+        (KeyPhase::Up, true) => ReturnHandling::End,
         _ => ReturnHandling::Pass,
     }
 }
@@ -176,12 +182,9 @@ pub struct MacOsHotkeyListener;
 struct TapState<'a> {
     key: AriaKey,
     take_return: &'a dyn Fn() -> bool,
-    /// A taken Return is still down: its repeats and release are swallowed too.
-    swallowing_return: Cell<bool>,
-    /// The last Return key event judged, by timestamp, and whether it was
-    /// swallowed. Both taps see each event, in an order Apple doesn't
-    /// document, and must agree on it.
-    judged_return: Cell<Option<(CGEventTimestamp, bool)>>,
+    /// The key of a taken Return still down: its repeats and release are
+    /// swallowed too, and no other key's.
+    taken_key: Cell<Option<i64>>,
     detector: RefCell<PressDetector>,
     /// The live taps, so a callback can re-enable them on a disable event.
     taps: RefCell<Vec<CFRetained<CFMachPort>>>,
@@ -194,8 +197,7 @@ impl<'a> TapState<'a> {
         Self {
             key,
             take_return,
-            swallowing_return: Cell::new(false),
-            judged_return: Cell::new(None),
+            taken_key: Cell::new(None),
             detector: RefCell::new(PressDetector::new()),
             taps: RefCell::new(Vec::new()),
             presses: RefCell::new(Vec::new()),
@@ -203,38 +205,25 @@ impl<'a> TapState<'a> {
     }
 
     /// True when a Return or keypad Enter key event must not reach the app.
-    /// Judged once, by whichever tap sees the event first.
     fn swallows_return(&self, event_type: CGEventType, event: &CGEvent) -> bool {
-        let timestamp = CGEvent::timestamp(Some(event));
-        if let Some((judged, swallowed)) = self.judged_return.get()
-            && judged == timestamp
-        {
-            return swallowed;
-        }
         let key_code =
             CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventKeycode);
         let flags = CGEvent::flags(Some(event)).0;
         let synthetic =
             CGEvent::integer_value_field(Some(event), CGEventField::EventSourceUnixProcessID) != 0;
-        let swallowed = self.judge_return(
-            key_edge(event_type, event),
-            is_bare_return(self.key, key_code, flags),
-            synthetic,
-        );
-        self.judged_return.set(Some((timestamp, swallowed)));
-        swallowed
-    }
-
-    fn judge_return(&self, edge: KeyEdge, bare: bool, synthetic: bool) -> bool {
-        match return_handling(edge, bare, synthetic, self.swallowing_return.get()) {
+        let bare = is_bare_return(self.key, key_code, flags);
+        let swallowing = self.taken_key.get() == Some(key_code);
+        match return_handling(key_phase(event_type, event), bare, synthetic, swallowing) {
             ReturnHandling::Ask => {
                 let taken = (self.take_return)();
-                self.swallowing_return.set(taken);
+                if taken {
+                    self.taken_key.set(Some(key_code));
+                }
                 taken
             }
             ReturnHandling::Swallow => true,
-            ReturnHandling::Release => {
-                self.swallowing_return.set(false);
+            ReturnHandling::End => {
+                self.taken_key.set(None);
                 true
             }
             ReturnHandling::Pass => false,
@@ -253,7 +242,7 @@ impl<'a> TapState<'a> {
 
     fn reset(&self) {
         // The taken Return's release may be among the lost events.
-        self.swallowing_return.set(false);
+        self.taken_key.set(None);
         let press = self.detector.borrow_mut().reset();
         self.presses.borrow_mut().extend(press);
     }
@@ -458,7 +447,11 @@ fn watch(
         }
         // Dropped on unwind too: the scope waits for the checker to end.
         let _stop = CheckerStop(&grant.done);
-        drive(state, events, should_stop, &grant)
+        let stopped = drive(state, events, should_stop, &grant);
+        // Before the scope waits on the checker: with nothing driving the
+        // run loop, the active tap would hold every keystroke meanwhile.
+        state.disarm();
+        stopped
     })
 }
 
@@ -547,8 +540,7 @@ fn wait(total: Duration, should_stop: &impl Fn() -> bool) -> bool {
     should_stop()
 }
 
-const LISTENER_EVENTS: u64 = (1 << CGEventType::KeyDown.0 as u64)
-    | (1 << CGEventType::FlagsChanged.0 as u64)
+const LISTENER_EVENTS: u64 = (1 << CGEventType::FlagsChanged.0 as u64)
     | (1 << CGEventType::LeftMouseDown.0 as u64)
     | (1 << CGEventType::RightMouseDown.0 as u64)
     | (1 << CGEventType::OtherMouseDown.0 as u64);
@@ -623,24 +615,6 @@ unsafe extern "C-unwind" fn listener_callback(
             state.reset();
             state.enable_taps();
         }
-        CGEventType::KeyDown => {
-            // Streaming delivery types transcript segments while recording;
-            // those synthetic keystrokes must not read as a chord and void
-            // the stop tap. Hardware events carry source PID 0.
-            let source_pid =
-                CGEvent::integer_value_field(Some(event), CGEventField::EventSourceUnixProcessID);
-            // Fn's own key down is never typing and must not read as a chord
-            // either.
-            let key_code =
-                CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventKeycode);
-            // A swallowed Return is the stop, not a chord that cancels a
-            // hold.
-            let swallowed = matches!(key_code, RETURN_KEY_CODE | KEYPAD_ENTER_KEY_CODE)
-                && state.swallows_return(event_type, event);
-            if source_pid == 0 && key_code != GLOBE_KEY_CODE && !swallowed {
-                state.feed(KeyEvent::KeyDown);
-            }
-        }
         CGEventType::FlagsChanged => {
             let key_code =
                 CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventKeycode);
@@ -677,8 +651,9 @@ unsafe extern "C-unwind" fn blocker_callback(
     match event_type {
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
             tracing::warn!(trigger = "hotkey", "key blocker disabled; re-enabling");
-            // The taken Return's release may be among the lost events.
-            state.swallowing_return.set(false);
+            // Key downs, and a taken Return's release, may be among the
+            // lost events.
+            state.reset();
             state.enable_taps();
         }
         CGEventType::KeyDown | CGEventType::KeyUp => {
@@ -689,6 +664,18 @@ unsafe extern "C-unwind" fn blocker_callback(
                 RETURN_KEY_CODE | KEYPAD_ENTER_KEY_CODE => state.swallows_return(event_type, event),
                 _ => false,
             };
+            // Typing during a hold voids it. Not the keystrokes streaming
+            // delivery posts, which carry its process id; not Fn's own key;
+            // not a swallowed Return, which is the stop.
+            let source_pid =
+                CGEvent::integer_value_field(Some(event), CGEventField::EventSourceUnixProcessID);
+            if event_type == CGEventType::KeyDown
+                && source_pid == 0
+                && key_code != GLOBE_KEY_CODE
+                && !held
+            {
+                state.feed(KeyEvent::KeyDown);
+            }
             if held {
                 return std::ptr::null_mut();
             }
@@ -698,14 +685,14 @@ unsafe extern "C-unwind" fn blocker_callback(
     std::ptr::from_ref(event).cast_mut()
 }
 
-fn key_edge(event_type: CGEventType, event: &CGEvent) -> KeyEdge {
+fn key_phase(event_type: CGEventType, event: &CGEvent) -> KeyPhase {
     if event_type == CGEventType::KeyUp {
-        KeyEdge::Up
+        KeyPhase::Up
     } else if CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventAutorepeat) != 0
     {
-        KeyEdge::Repeat
+        KeyPhase::Repeat
     } else {
-        KeyEdge::Down
+        KeyPhase::Down
     }
 }
 
@@ -823,7 +810,7 @@ mod tests {
         ];
         for (bare, synthetic, action) in cases {
             assert_eq!(
-                return_handling(KeyEdge::Down, bare, synthetic, false),
+                return_handling(KeyPhase::Down, bare, synthetic, false),
                 action,
                 "bare {bare}, synthetic {synthetic}"
             );
@@ -844,43 +831,52 @@ mod tests {
     }
 
     #[test]
-    fn both_taps_agree_on_a_return_judged_once() {
-        let asked = Cell::new(0);
-        let take_return = || {
-            asked.set(asked.get() + 1);
-            true
+    fn only_the_taken_keys_release_is_swallowed() {
+        let take_return = || true;
+        let state = TapState::new(AriaKey::RightOption, &take_return);
+        let key = |key_code: u16, down: bool| {
+            let event = CGEvent::new_keyboard_event(None, key_code, down).expect("keyboard event");
+            CGEvent::set_flags(Some(&event), objc2_core_graphics::CGEventFlags(0));
+            CGEvent::set_integer_value_field(
+                Some(&event),
+                CGEventField::EventSourceUnixProcessID,
+                0,
+            );
+            let event_type = if down {
+                CGEventType::KeyDown
+            } else {
+                CGEventType::KeyUp
+            };
+            state.swallows_return(event_type, &event)
         };
-        let state = TapState::new(AriaKey::Fn, &take_return);
-        let event =
-            CGEvent::new_keyboard_event(None, RETURN_VIRTUAL_KEY, true).expect("keyboard event");
-        CGEvent::set_flags(Some(&event), objc2_core_graphics::CGEventFlags(0));
-        CGEvent::set_integer_value_field(Some(&event), CGEventField::EventSourceUnixProcessID, 0);
+        let enter = KEYPAD_ENTER_KEY_CODE as u16;
 
-        assert!(state.swallows_return(CGEventType::KeyDown, &event));
-        assert!(state.swallows_return(CGEventType::KeyDown, &event));
-        assert_eq!(asked.get(), 1, "the second tap reuses the first's judgment");
+        assert!(key(RETURN_VIRTUAL_KEY, true), "a bare Return is taken");
+        assert!(!key(enter, true), "keypad Enter is not bare");
+        assert!(!key(enter, false), "its release is its own");
+        assert!(key(RETURN_VIRTUAL_KEY, false), "the taken release");
     }
 
     #[test]
     fn a_taken_return_is_swallowed_until_released() {
         assert_eq!(
-            return_handling(KeyEdge::Repeat, true, false, true),
+            return_handling(KeyPhase::Repeat, true, false, true),
             ReturnHandling::Swallow
         );
         assert_eq!(
-            return_handling(KeyEdge::Up, true, false, true),
-            ReturnHandling::Release
+            return_handling(KeyPhase::Up, true, false, true),
+            ReturnHandling::End
         );
     }
 
     #[test]
     fn an_untaken_return_repeats_and_releases_untouched() {
         assert_eq!(
-            return_handling(KeyEdge::Repeat, true, false, false),
+            return_handling(KeyPhase::Repeat, true, false, false),
             ReturnHandling::Pass
         );
         assert_eq!(
-            return_handling(KeyEdge::Up, true, false, false),
+            return_handling(KeyPhase::Up, true, false, false),
             ReturnHandling::Pass
         );
     }

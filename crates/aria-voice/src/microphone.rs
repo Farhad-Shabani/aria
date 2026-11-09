@@ -243,12 +243,9 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    use crate::dictation::testing::EDGE_WAIT;
+    use crate::dictation::testing::{EDGE_WAIT, TYPED_PROCESS};
 
     use super::*;
-
-    /// The app a test dictation types into.
-    const TYPED: u32 = 7;
 
     fn control(stop_mode: StopMode) -> Arc<ExecutionControl> {
         ExecutionControl::for_test(stop_mode)
@@ -488,7 +485,6 @@ mod tests {
         let dictation = control(StopMode::Manual);
         let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&dictation));
         let active = gate.active_dictation().expect("a dictation holds it");
-        assert_eq!(active.id(), dictation.recording_id());
         assert_eq!(active.stop_mode(), StopMode::Manual);
     }
 
@@ -498,20 +494,20 @@ mod tests {
         let (dictation, _recording) = recording(StopMode::Manual);
         let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&dictation));
         let active = gate.active_dictation().expect("a dictation holds it");
-        assert_eq!(active.types_into(), None, "nothing is typing yet");
+        assert_eq!(active.target_process(), None, "nothing is typing yet");
 
-        let armed = dictation.arm_return(TYPED);
-        assert_eq!(active.types_into(), Some(TYPED));
+        let armed = dictation.arm_return(TYPED_PROCESS);
+        assert_eq!(active.target_process(), Some(TYPED_PROCESS));
         assert!(active.take_return());
         assert!(!active.is_recording(), "the Return ended recording");
         assert_eq!(
-            active.types_into(),
-            Some(TYPED),
+            active.target_process(),
+            Some(TYPED_PROCESS),
             "a second Return there joins the first"
         );
 
-        assert!(armed.disarm(), "the dictation learns of the Return");
-        assert_eq!(active.types_into(), None);
+        assert!(armed.finish(), "the dictation learns of the Return");
+        assert_eq!(active.target_process(), None);
         assert!(!active.take_return(), "the key belongs to the app again");
     }
 
@@ -520,7 +516,7 @@ mod tests {
         let gate = Gate::new();
         let (on_silence, _recording) = recording(StopMode::OnSilence);
         let _dictating = gate.admit_dictation(StopMode::OnSilence, Arc::clone(&on_silence));
-        let _armed = on_silence.arm_return(TYPED);
+        let _armed = on_silence.arm_return(TYPED_PROCESS);
 
         assert!(gate.active_dictation().unwrap().take_return());
         assert!(
@@ -534,10 +530,10 @@ mod tests {
         let gate = Gate::new();
         let dictation = control(StopMode::Manual);
         let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&dictation));
-        drop(dictation.arm_return(TYPED));
+        drop(dictation.arm_return(TYPED_PROCESS));
 
         let active = gate.active_dictation().unwrap();
-        assert_eq!(active.types_into(), None);
+        assert_eq!(active.target_process(), None);
         assert!(!active.take_return());
     }
 

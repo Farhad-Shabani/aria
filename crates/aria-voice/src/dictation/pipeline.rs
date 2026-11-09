@@ -440,7 +440,7 @@ where
         }
         let mut sinks = self.sinks();
         let result = self.execute_stages(settings, control, events, &mut *sinks, vocabulary);
-        sinks.dictation_finished();
+        sinks.dictation_finished(result.as_ref().map(|_| ()));
         if captions {
             events.emit(CaptionSnapshot::empty(control.recording_id(), true));
         }
@@ -476,7 +476,7 @@ where
             &mut *sinks,
             vocabulary,
         );
-        sinks.dictation_finished();
+        sinks.dictation_finished(result.as_ref().map(|_| ()));
         if let Err(error) = &result {
             events.emit(DictationStage::ended_by(error.into()));
         }
@@ -1406,9 +1406,9 @@ where
         self.0.placement().or_else(|| self.1.placement())
     }
 
-    fn dictation_finished(&mut self) {
-        self.0.dictation_finished();
-        self.1.dictation_finished();
+    fn dictation_finished(&mut self, result: Result<(), &DictationError>) {
+        self.0.dictation_finished(result);
+        self.1.dictation_finished(result);
     }
 
     fn recording_finished(
@@ -4502,8 +4502,17 @@ mod tests {
             &self,
             _prepared: &(),
             _should_cancel: impl Fn() -> bool,
+        ) -> Result<aria_platform::delivery::Finished, DeliveryError> {
+            Ok(aria_platform::delivery::Finished::Typed)
+        }
+
+        fn press_return(
+            &self,
+            _prepared: &Self::Prepared,
+            _should_cancel: impl Fn() -> bool,
         ) -> Result<(), DeliveryError> {
-            Ok(())
+            // Names no target process, so it never takes a Return.
+            Err(DeliveryError::TargetUnavailable)
         }
 
         fn deliver(
@@ -4594,8 +4603,17 @@ mod tests {
             &self,
             _prepared: &(),
             _should_cancel: impl Fn() -> bool,
+        ) -> Result<aria_platform::delivery::Finished, DeliveryError> {
+            Ok(aria_platform::delivery::Finished::Typed)
+        }
+
+        fn press_return(
+            &self,
+            _prepared: &Self::Prepared,
+            _should_cancel: impl Fn() -> bool,
         ) -> Result<(), DeliveryError> {
-            Ok(())
+            // Names no target process, so it never takes a Return.
+            Err(DeliveryError::TargetUnavailable)
         }
 
         fn deliver(
@@ -4726,8 +4744,17 @@ mod tests {
             &self,
             _prepared: &(),
             _should_cancel: impl Fn() -> bool,
+        ) -> Result<aria_platform::delivery::Finished, DeliveryError> {
+            Ok(aria_platform::delivery::Finished::Typed)
+        }
+
+        fn press_return(
+            &self,
+            _prepared: &Self::Prepared,
+            _should_cancel: impl Fn() -> bool,
         ) -> Result<(), DeliveryError> {
-            Ok(())
+            // Names no target process, so it never takes a Return.
+            Err(DeliveryError::TargetUnavailable)
         }
 
         fn deliver(

@@ -319,7 +319,7 @@ pub struct ExecutionControl {
     return_state: AtomicU8,
     /// The process the armed text types into: only a Return pressed there
     /// would cut it short.
-    return_process: AtomicU32,
+    target_process: AtomicU32,
     /// Set by the first poll of the stop signal, which only a live capture
     /// makes. A scope that was never polled never captured anything.
     capture_polled: AtomicBool,
@@ -349,7 +349,7 @@ impl ExecutionControl {
             deadline,
             recording_state: AtomicU8::new(RecordingState::NotStarted as u8),
             return_state: AtomicU8::new(ReturnState::Unarmed as u8),
-            return_process: AtomicU32::new(0),
+            target_process: AtomicU32::new(0),
             capture_polled: AtomicBool::new(false),
             capture_abandoned: AtomicBool::new(false),
             #[cfg(target_os = "macos")]
@@ -522,7 +522,7 @@ impl ExecutionControl {
     /// Holds Return back until the returned value disarms or drops, so
     /// every way a dictation ends lets Return through again.
     pub(crate) fn arm_return(self: &Arc<Self>, process: u32) -> ArmedReturn {
-        self.return_process.store(process, Ordering::Relaxed);
+        self.target_process.store(process, Ordering::Relaxed);
         self.return_state
             .store(ReturnState::Armed as u8, Ordering::Release);
         ArmedReturn {
@@ -533,21 +533,19 @@ impl ExecutionControl {
     /// The process the text still goes to, where a Return would cut it
     /// short. `None` once typing ended, or when it types into no app. Kept
     /// after the Return is taken, so a second one there joins it.
-    fn return_process(&self) -> Option<u32> {
+    fn target_process(&self) -> Option<u32> {
         let armed = self.return_state.load(Ordering::Acquire) != ReturnState::Unarmed as u8;
         // Read after the state's Acquire, which the arming Release orders.
-        armed.then(|| self.return_process.load(Ordering::Relaxed))
+        armed.then(|| self.target_process.load(Ordering::Relaxed))
     }
 
     /// Takes a Return pressed where the text goes: it ends recording,
     /// whatever the stop mode, and waits to be pressed after the rest of
     /// the text. False once typing ended.
     pub(crate) fn take_return(&self) -> bool {
-        if self.return_state.load(Ordering::Acquire) == ReturnState::Unarmed as u8 {
-            return false;
-        }
-        self.request_recording_stop();
-        match self.return_state.compare_exchange(
+        // Taken before recording stops: typing that ends in between keeps
+        // the recording and lets the key through.
+        let taken = match self.return_state.compare_exchange(
             ReturnState::Armed as u8,
             ReturnState::Taken as u8,
             Ordering::AcqRel,
@@ -555,7 +553,11 @@ impl ExecutionControl {
         ) {
             Ok(_) => true,
             Err(state) => state == ReturnState::Taken as u8,
+        };
+        if taken {
+            self.request_recording_stop();
         }
+        taken
     }
 
     /// Asks capture to stop and waits for it to let go of its scope, up to
@@ -600,10 +602,6 @@ impl ActiveDictation {
         Self { control }
     }
 
-    pub fn id(&self) -> RecordingId {
-        self.control.id
-    }
-
     pub fn stop_mode(&self) -> StopMode {
         self.control.stop_mode
     }
@@ -613,14 +611,15 @@ impl ActiveDictation {
         self.control.recording_state.load(Ordering::Acquire) == RecordingState::Recording as u8
     }
 
-    pub fn is_cancelled(&self) -> bool {
-        self.control.is_cancelled()
+    /// Cancelled, or out of time: it ends without its Return or a stop.
+    pub fn is_ending(&self) -> bool {
+        self.control.should_stop()
     }
 
     /// The process its text still goes to, where a Return would cut it
     /// short.
-    pub fn types_into(&self) -> Option<u32> {
-        self.control.return_process()
+    pub fn target_process(&self) -> Option<u32> {
+        self.control.target_process()
     }
 
     /// Ends recording; the dictation goes on to transcribe. False when it
@@ -644,7 +643,7 @@ pub(crate) struct ArmedReturn {
 
 impl ArmedReturn {
     /// Lets Return through again. True when the person pressed it meanwhile.
-    pub(crate) fn disarm(self) -> bool {
+    pub(crate) fn finish(self) -> bool {
         self.control
             .return_state
             .swap(ReturnState::Unarmed as u8, Ordering::AcqRel)

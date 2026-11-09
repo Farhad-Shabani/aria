@@ -64,6 +64,16 @@ impl Anchoring {
         }
     }
 
+    /// Before pressing the person's Return: only where the text went, with
+    /// the caret after it. A field never bound refuses it.
+    pub(super) fn before_return(&mut self) -> Result<(), DeliveryError> {
+        match self {
+            Self::Anchored(anchor) => anchor.check(),
+            Self::Pending => Err(DeliveryError::TargetUnverified),
+            Self::Unavailable => Ok(()),
+        }
+    }
+
     /// The field and its caret offset, while the caret rests where the next
     /// segment types.
     pub(super) fn resting_caret(

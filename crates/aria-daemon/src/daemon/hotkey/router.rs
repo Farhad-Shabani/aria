@@ -47,7 +47,7 @@ fn press_action(press: Press, dictation: Option<ActiveDictation>) -> PressAction
             Some(dictation)
                 if dictation.stop_mode() == StopMode::Manual
                     && dictation.is_recording()
-                    && !dictation.is_cancelled() =>
+                    && !dictation.is_ending() =>
             {
                 PressAction::StopRecording(dictation)
             }
@@ -67,10 +67,10 @@ fn return_action(
     dictation: Option<ActiveDictation>,
     front: impl FnOnce() -> Option<u32>,
 ) -> ReturnAction {
-    let Some(dictation) = dictation.filter(|dictation| !dictation.is_cancelled()) else {
+    let Some(dictation) = dictation.filter(|dictation| !dictation.is_ending()) else {
         return ReturnAction::Pass;
     };
-    match dictation.types_into() {
+    match dictation.target_process() {
         Some(process) if front() == Some(process) => ReturnAction::Take(dictation),
         Some(_) | None => ReturnAction::Pass,
     }
@@ -304,11 +304,9 @@ fn log_chat_unreached(error: ChatCallError) {
 mod tests {
     use std::cell::Cell;
 
-    use aria_voice::dictation::testing::ActiveDictationBuilder;
+    use aria_voice::dictation::testing::{ActiveDictationBuilder, TYPED_PROCESS};
 
     use super::*;
-
-    const TYPED: u32 = 7;
 
     fn manual() -> ActiveDictationBuilder {
         ActiveDictationBuilder::new(StopMode::Manual)
@@ -374,15 +372,18 @@ mod tests {
 
     #[test]
     fn only_a_return_where_the_text_goes_is_taken() {
-        let typing = manual().with_recording().with_typing_into(TYPED).build();
+        let typing = manual()
+            .with_recording()
+            .with_target_process(TYPED_PROCESS)
+            .build();
         let takes = |front: u32| {
             matches!(
                 return_action(Some(typing.dictation.clone()), || Some(front)),
                 ReturnAction::Take(_)
             )
         };
-        assert!(takes(TYPED));
-        assert!(!takes(TYPED + 1), "another app's Return is its own");
+        assert!(takes(TYPED_PROCESS));
+        assert!(!takes(TYPED_PROCESS + 1), "another app's Return is its own");
     }
 
     #[test]
@@ -390,15 +391,25 @@ mod tests {
         let asked = Cell::new(false);
         let front = || {
             asked.set(true);
-            Some(TYPED)
+            Some(TYPED_PROCESS)
         };
         let not_typing = manual().with_recording().build();
         let cancelled = manual()
             .with_recording()
-            .with_typing_into(TYPED)
+            .with_target_process(TYPED_PROCESS)
             .with_cancellation()
             .build();
-        for dictation in [None, Some(not_typing.dictation), Some(cancelled.dictation)] {
+        let out_of_time = manual()
+            .with_recording()
+            .with_target_process(TYPED_PROCESS)
+            .with_deadline_passed()
+            .build();
+        for dictation in [
+            None,
+            Some(not_typing.dictation),
+            Some(cancelled.dictation),
+            Some(out_of_time.dictation),
+        ] {
             assert!(matches!(
                 return_action(dictation, front),
                 ReturnAction::Pass
