@@ -120,8 +120,10 @@ ollama pull qwen2.5:3b
 Then add these lines to your settings file, and restart Aria:
 
 ```toml
-[dictation.cleanup.llm]
+[local_provider]
 endpoint = "http://127.0.0.1:11434/v1/chat/completions"
+
+[dictation.cleanup.llm]
 model = "qwen2.5:3b"
 ```
 

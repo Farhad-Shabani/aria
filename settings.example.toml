@@ -35,12 +35,12 @@ fillers = true
 backtrack = true
 
 # Cleans up the text with a local model as well, while delivery is complete.
-# Ollama serves it at port 11434.
+# The model runs on [local_provider].
 [dictation.cleanup.llm]
-# Runs the model. false keeps the endpoint and model below.
+# Runs the model. false keeps the model below.
 enabled = true
-# Both set, or neither. Neither leaves cleanup to its rules. (restart)
-# endpoint = "http://127.0.0.1:11434/v1/chat/completions"   # loopback only
+# A model the local provider serves. Needs local_provider.endpoint. Absent
+# leaves cleanup to its rules. (restart)
 # model = "MODEL_ID"
 
 [dictation.vocabulary]
@@ -194,6 +194,12 @@ model = "~/.aria/models/wespeaker/en/model.onnx"
 segmentation_model = "~/.aria/models/pyannote/segmentation-3.0.onnx"
 # Enrolled voice profiles. (restart)
 profiles_dir = "~/.aria/speakers"
+
+# A model server on this Mac that speaks the OpenAI chat-completions API.
+# Cleanup's local model runs on it. Ollama serves it at port 11434.
+[local_provider]
+# Loopback only. (restart)
+# endpoint = "http://127.0.0.1:11434/v1/chat/completions"
 
 # ---- Testing
 

@@ -492,7 +492,7 @@ fn cleanup_check(
             format!("{model} is set, but text cleanup or its model is off, so it never runs"),
         );
     }
-    let endpoint = target.endpoint();
+    let endpoint = target.provider().endpoint();
     match ready() {
         Ok(()) => Check::ok(
             CLEANUP_MODEL,
@@ -550,9 +550,12 @@ mod tests {
 
     #[test]
     fn the_cleanup_model_warns_when_it_would_never_run_or_cannot_be_reached() {
-        let target =
-            LlmCleanupTarget::new("http://127.0.0.1:11434/v1/chat/completions", "qwen2.5:3b")
-                .unwrap();
+        let target = LlmCleanupTarget::new(
+            aria_settings::LocalProvider::new("http://127.0.0.1:11434/v1/chat/completions")
+                .unwrap(),
+            "qwen2.5:3b",
+        )
+        .unwrap();
         let cases = [
             (false, None, Status::Warning, "its model is off"),
             (

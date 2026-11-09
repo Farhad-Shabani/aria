@@ -744,7 +744,8 @@ mod tests {
     /// The live switch decides, and the frozen table goes unused.
     #[test]
     fn turning_cleanup_off_leaves_the_frozen_llm_unused_and_loadable() {
-        let llm = "[dictation.cleanup.llm]\nendpoint = \"http://127.0.0.1:1/v1/chat/completions\"\nmodel = \"m\"\n";
+        let llm = "[dictation.cleanup.llm]\nmodel = \"m\"\n\
+                   [local_provider]\nendpoint = \"http://127.0.0.1:1/v1/chat/completions\"\n";
         let dir = tempfile::tempdir().unwrap();
         let store = store(
             dir.path(),
@@ -760,7 +761,10 @@ mod tests {
             .cleanup
             .as_ref()
             .expect("the table stays");
-        assert_eq!(frozen.endpoint(), "http://127.0.0.1:1/v1/chat/completions");
+        assert_eq!(
+            frozen.provider().endpoint(),
+            "http://127.0.0.1:1/v1/chat/completions"
+        );
     }
 
     /// The app learns of a hand edit from this: it reads the values again

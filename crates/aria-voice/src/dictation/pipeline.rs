@@ -3189,7 +3189,8 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let cleanup = super::super::LlmCleanup::new(
             &aria_settings::LlmCleanupTarget::new(
-                "http://127.0.0.1:1/v1/chat/completions",
+                aria_settings::LocalProvider::new("http://127.0.0.1:1/v1/chat/completions")
+                    .unwrap(),
                 "local",
             )
             .unwrap(),

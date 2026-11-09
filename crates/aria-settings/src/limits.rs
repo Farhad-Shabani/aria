@@ -17,47 +17,33 @@ pub fn is_valid_model_id(model_id: &str) -> bool {
             .any(|character| character.is_whitespace() || character.is_control())
 }
 
-/// Why a `dictation.cleanup.llm` table cannot be used.
+/// Why `local_provider.endpoint` cannot be used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum LlmCleanupConfigError {
-    #[error(
-        "cleanup endpoint must be HTTP with a literal loopback address, explicit nonzero port, and /v1/chat/completions path"
-    )]
-    Endpoint,
-    #[error("cleanup model must contain 1–256 bytes without whitespace or control characters")]
-    Model,
-}
+#[error(
+    "local provider endpoint must be HTTP with a literal loopback address, explicit nonzero port, and /v1/chat/completions path"
+)]
+pub struct LocalProviderError;
 
-/// A `dictation.cleanup.llm` table that can be used: a loopback chat endpoint
-/// and a model name.
+/// A model server on this machine that speaks the OpenAI chat-completions
+/// API, shared by every feature that runs a local model.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LlmCleanupTarget {
+pub struct LocalProvider {
     endpoint: String,
     /// The address of the same server's model list.
     listing: String,
-    model: String,
 }
 
-impl LlmCleanupTarget {
-    pub fn new(endpoint: &str, model: &str) -> Result<Self, LlmCleanupConfigError> {
-        let Some(address) = endpoint
+impl LocalProvider {
+    pub fn new(endpoint: &str) -> Result<Self, LocalProviderError> {
+        let address = endpoint
             .strip_prefix("http://")
             .and_then(|rest| rest.strip_suffix("/v1/chat/completions"))
             .and_then(|authority| authority.parse::<SocketAddr>().ok())
             .filter(|address| address.ip().is_loopback() && address.port() != 0)
-        else {
-            return Err(LlmCleanupConfigError::Endpoint);
-        };
-        if model.is_empty()
-            || model.len() > 256
-            || model.chars().any(|c| c.is_whitespace() || c.is_control())
-        {
-            return Err(LlmCleanupConfigError::Model);
-        }
+            .ok_or(LocalProviderError)?;
         Ok(Self {
             endpoint: endpoint.to_owned(),
             listing: format!("http://{address}/v1/models"),
-            model: model.to_owned(),
         })
     }
 
@@ -68,11 +54,42 @@ impl LlmCleanupTarget {
     pub fn listing(&self) -> &str {
         &self.listing
     }
+}
+
+/// What cleanup's local model runs on: the local provider and the model
+/// `dictation.cleanup.llm.model` names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmCleanupTarget {
+    provider: LocalProvider,
+    model: String,
+}
+
+impl LlmCleanupTarget {
+    pub fn new(provider: LocalProvider, model: &str) -> Result<Self, InvalidModelId> {
+        if model.is_empty() || !is_valid_model_id(model) {
+            return Err(InvalidModelId);
+        }
+        Ok(Self {
+            provider,
+            model: model.to_owned(),
+        })
+    }
+
+    pub fn provider(&self) -> &LocalProvider {
+        &self.provider
+    }
 
     pub fn model(&self) -> &str {
         &self.model
     }
 }
+
+/// A model ID that is empty or fails [`is_valid_model_id`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "model IDs must be 1 to 200 bytes, contain no whitespace or control characters, and not start with a dash"
+)]
+pub struct InvalidModelId;
 
 #[cfg(test)]
 mod tests {
@@ -90,20 +107,17 @@ mod tests {
                 "http://[::1]:8080/v1/models",
             ),
         ] {
-            assert_eq!(
-                LlmCleanupTarget::new(endpoint, "m").unwrap().listing(),
-                listing
-            );
+            assert_eq!(LocalProvider::new(endpoint).unwrap().listing(), listing);
         }
     }
 
     #[test]
-    fn configuration_accepts_only_explicit_loopback_chat_endpoints() {
+    fn the_local_provider_accepts_only_explicit_loopback_chat_endpoints() {
         for endpoint in [
             "http://127.0.0.1:8080/v1/chat/completions",
             "http://[::1]:8080/v1/chat/completions",
         ] {
-            LlmCleanupTarget::new(endpoint, "local/model:1").unwrap();
+            LocalProvider::new(endpoint).unwrap();
         }
         for endpoint in [
             "http://localhost:8080/v1/chat/completions",
@@ -117,19 +131,24 @@ mod tests {
             "http://127.0.0.1:80/other",
             "http://[::ffff:127.0.0.1]:80/v1/chat/completions",
         ] {
-            assert!(
-                matches!(
-                    LlmCleanupTarget::new(endpoint, "local"),
-                    Err(LlmCleanupConfigError::Endpoint)
-                ),
+            assert_eq!(
+                LocalProvider::new(endpoint),
+                Err(LocalProviderError),
                 "{endpoint}"
             );
         }
-        for model in ["", " ", "model\nsecret", &"a".repeat(257)] {
-            assert!(matches!(
-                LlmCleanupTarget::new("http://127.0.0.1:80/v1/chat/completions", model),
-                Err(LlmCleanupConfigError::Model)
-            ));
+    }
+
+    #[test]
+    fn a_cleanup_model_must_be_a_nonempty_model_id() {
+        let provider = LocalProvider::new("http://127.0.0.1:80/v1/chat/completions").unwrap();
+        LlmCleanupTarget::new(provider.clone(), "local/model:1").unwrap();
+        for model in ["", " ", "model\nsecret", "-flag", &"a".repeat(201)] {
+            assert_eq!(
+                LlmCleanupTarget::new(provider.clone(), model),
+                Err(InvalidModelId),
+                "{model:?}"
+            );
         }
     }
 }

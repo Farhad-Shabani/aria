@@ -928,7 +928,8 @@ mod tests {
         let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
         config.cleanup_llm = Some(
             aria_settings::LlmCleanupTarget::new(
-                "http://127.0.0.1:8080/v1/chat/completions",
+                aria_settings::LocalProvider::new("http://127.0.0.1:8080/v1/chat/completions")
+                    .unwrap(),
                 "test",
             )
             .unwrap(),

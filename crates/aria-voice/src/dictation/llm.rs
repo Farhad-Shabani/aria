@@ -102,7 +102,7 @@ impl LlmCleanup {
     pub fn check_ready(target: &LlmCleanupTarget) -> Result<(), LlmCleanupError> {
         let deadline = Instant::now() + REQUEST_BUDGET;
         let mut response = agent(REQUEST_BUDGET)
-            .get(target.listing())
+            .get(target.provider().listing())
             .header("Accept", "application/json")
             .call()
             .map_err(transport_error)?;
@@ -179,7 +179,7 @@ impl LlmCleanup {
         check_budget(cancel, deadline)?;
         let mut response = self
             .agent
-            .post(self.target.endpoint())
+            .post(self.target.provider().endpoint())
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .send(request)
