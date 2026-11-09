@@ -74,8 +74,8 @@ public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.Ca
   case codex // = 2
 
   /// A model on the local provider, set by `provider.endpoint` and
-  /// `[assistant.models] local`.
-  case local // = 3
+  /// `[assistant.models] local-model`.
+  case localModel // = 3
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -87,7 +87,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.Ca
     case 0: self = .unspecified
     case 1: self = .claudeCode
     case 2: self = .codex
-    case 3: self = .local
+    case 3: self = .localModel
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -97,7 +97,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.Ca
     case .unspecified: return 0
     case .claudeCode: return 1
     case .codex: return 2
-    case .local: return 3
+    case .localModel: return 3
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -107,7 +107,7 @@ public nonisolated enum Aria_Daemon_V1_AssistantId: SwiftProtobuf.Enum, Swift.Ca
     .unspecified,
     .claudeCode,
     .codex,
-    .local,
+    .localModel,
   ]
 
 }
@@ -831,7 +831,7 @@ nonisolated extension Aria_Daemon_V1_PromptKind: SwiftProtobuf._ProtoNameProvidi
 }
 
 nonisolated extension Aria_Daemon_V1_AssistantId: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_ID_UNSPECIFIED\0\u{1}ASSISTANT_ID_CLAUDE_CODE\0\u{1}ASSISTANT_ID_CODEX\0\u{1}ASSISTANT_ID_LOCAL\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ASSISTANT_ID_UNSPECIFIED\0\u{1}ASSISTANT_ID_CLAUDE_CODE\0\u{1}ASSISTANT_ID_CODEX\0\u{1}ASSISTANT_ID_LOCAL_MODEL\0")
 }
 
 nonisolated extension Aria_Daemon_V1_AssistantStatus: SwiftProtobuf._ProtoNameProviding {

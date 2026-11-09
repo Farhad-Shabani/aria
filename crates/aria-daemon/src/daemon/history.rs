@@ -12,7 +12,7 @@ use aria_voice::dictation::{
 use aria_voice::history::{
     AudioAvailability, ClearHistoryResult, DictationContent, HistoryContent, HistoryEntry,
     HistoryError, HistoryPage, HistoryQuery, HistorySection, HistoryStatus, MAX_ENTRY_BYTES,
-    PromptResult, Store, Title,
+    NewChat, PromptResult, Store, Title,
 };
 
 pub(super) struct HistoryStore {
@@ -155,19 +155,8 @@ impl HistoryStore {
         }
     }
 
-    /// Saves a chat that replied. `failure` is why its reply couldn't be typed.
-    pub(super) fn save_chat(
-        &self,
-        question: &str,
-        reply: &str,
-        workdir: &Path,
-        conversation: Option<&str>,
-        timing: (u64, u64),
-        failure: Option<RpcFailure>,
-    ) {
-        let saved = self.storage().and_then(|store| {
-            store.save_chat(question, reply, workdir, conversation, timing, failure)
-        });
+    pub(super) fn save_chat(&self, chat: NewChat<'_>) {
+        let saved = self.storage().and_then(|store| store.save_chat(chat));
         let warning = match saved {
             Ok(entry) => entry.warning,
             Err(error) => {

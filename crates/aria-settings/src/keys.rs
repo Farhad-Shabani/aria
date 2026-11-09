@@ -180,8 +180,8 @@ keys! {
         "cpu or gpu. parakeet only.";
     SystemTranscriptionTranscriptsDir: "transcription.transcripts_dir", Live, Mac, [], Kind::Path, Some("\"~/.aria/transcripts\""),
         "Where Transcription saves transcripts.";
-    AssistantId: "assistant.id", Live, Mac, [], Kind::Choice(&["claude-code", "codex", "local"]), Some("claude-code"),
-        "Who answers `aria ask`: claude-code, codex, or local.";
+    AssistantId: "assistant.id", Live, Mac, [], Kind::Choice(&["claude-code", "codex", "local-model"]), Some("claude-code"),
+        "Who answers `aria ask`: claude-code, codex, or local-model.";
     AssistantModels: "assistant.models", Live, Mac, [], Kind::Models, None,
         "The model each assistant uses. A missing assistant uses its own default.";
     AssistantWorkdir: "assistant.workdir", Live, Mac, [], Kind::Path, None,

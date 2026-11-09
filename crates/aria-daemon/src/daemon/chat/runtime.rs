@@ -9,11 +9,11 @@ use super::super::subscriptions::Subscriptions;
 use super::error::{ChatError, ResolveError};
 use aria_assistant::chat::ChatConfig;
 use aria_assistant::chat::{
-    Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY, CODEX_BINARY,
+    Ask, Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY, CODEX_BINARY,
     ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind, ChatSubscribers,
-    ChatTarget, ClaudeCodeAssistant, CodexAssistant, DeliverCall, Exchange, LocalAssistant,
+    ChatTarget, ClaudeCodeAssistant, CodexAssistant, Conversations, DeliverCall, LocalAssistant,
     Projects, PromptCall, PromptChoice, PromptInput, PromptInstructions, PromptRequest, PromptRun,
-    Session, SessionSpec, SessionStore, Step, Ticket, TurnSink, read_instructions,
+    Session, SessionSpec, SessionStore, Step, StepSink, Ticket, read_instructions,
 };
 use aria_assistant::memory::MemoryConfig;
 use aria_assistant::memory::{DB_FILE, Store, load_profile_block};
@@ -28,7 +28,7 @@ use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{ApplicationId, Prompt, PromptId, PromptKind, SettingsCache, SettingsStore};
 use aria_voice::config::SpeakerConfig;
-use aria_voice::history::{HistoryContent, HistoryEntry};
+use aria_voice::history::{HistoryContent, HistoryEntry, NewChat};
 use aria_voice::speaker::{ProfileStore, Role};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -123,38 +123,37 @@ impl ChatRuntime {
             AssistantId::Codex => {
                 CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone()).models(cancel)
             }
-            AssistantId::Local => self.local().models(cancel),
+            AssistantId::LocalModel => self.local(None).models(cancel),
         }
     }
 
     /// The local assistant on the provider frozen at startup, with the model
-    /// the settings name now. It recalls a conversation only while history
-    /// is on, so turning history off starts every chat fresh.
-    fn local(&self) -> LocalAssistant<impl Fn(&str) -> Vec<Exchange> + Send + Sync + '_> {
-        let effective = self.cache.effective();
+    /// the settings name now. It recalls a conversation only from `history`.
+    fn local<'a>(
+        &self,
+        history: Option<&'a HistoryStore>,
+    ) -> LocalAssistant<SavedConversations<'a>> {
         let model = self.settings.snapshot().ok().and_then(|snapshot| {
             snapshot
                 .settings
-                .model_id(AssistantId::Local)
+                .model_id(AssistantId::LocalModel)
                 .map(str::to_owned)
         });
-        let recall = move |conversation: &str| {
-            let history_on = self
-                .settings
-                .snapshot()
-                .is_ok_and(|snapshot| snapshot.settings.history_enabled);
-            if !history_on {
-                return Vec::new();
-            }
-            match self.history.conversation(conversation, RECALL_BYTES) {
-                Ok(chats) => chats.into_iter().filter_map(exchange).collect(),
-                Err(error) => {
-                    tracing::warn!(error = %error_chain(&error), "the conversation could not be recalled");
-                    Vec::new()
-                }
-            }
-        };
-        LocalAssistant::new(effective.choices().provider.as_ref(), model, recall)
+        LocalAssistant::new(
+            self.cache.effective().choices().provider.as_ref(),
+            model,
+            SavedConversations { history },
+        )
+    }
+
+    /// The history store while history is on. Read once as a run starts, so
+    /// what a chat recalls and whether it is saved agree.
+    fn enabled_history(&self) -> Result<Option<&HistoryStore>, ChatError> {
+        let snapshot = self.settings.snapshot().map_err(ChatError::Settings)?;
+        Ok(snapshot
+            .settings
+            .history_enabled
+            .then_some(self.history.as_ref()))
     }
 
     pub(in crate::daemon) fn assistants(
@@ -178,7 +177,7 @@ impl ChatRuntime {
             }
             AssistantId::Codex => CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone())
                 .check_ready(cancel),
-            AssistantId::Local => self.local().check_ready(cancel),
+            AssistantId::LocalModel => self.local(None).check_ready(cancel),
         }
     }
 
@@ -216,20 +215,30 @@ impl ChatRuntime {
             (overrides.execute)(self, ticket, job, cancellation);
             return;
         }
+        // Read as the run starts rather than at admission, so turning history
+        // off while the job waited keeps it out of history.
+        let history = match self.enabled_history() {
+            Ok(history) => history,
+            Err(error) => return self.report(ticket, job.assistant_id(), Err(error)),
+        };
         match job.assistant_id() {
             AssistantId::ClaudeCode => self.execute_with(
                 &ClaudeCodeAssistant::new(CLAUDE_BINARY.into()),
                 ticket,
                 job,
+                history,
                 cancellation,
             ),
             AssistantId::Codex => self.execute_with(
                 &CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone()),
                 ticket,
                 job,
+                history,
                 cancellation,
             ),
-            AssistantId::Local => self.execute_with(&self.local(), ticket, job, cancellation),
+            AssistantId::LocalModel => {
+                self.execute_with(&self.local(history), ticket, job, history, cancellation);
+            }
         }
     }
 
@@ -238,6 +247,7 @@ impl ChatRuntime {
         assistant: &A,
         ticket: Ticket,
         job: ChatJob,
+        history: Option<&HistoryStore>,
         cancellation: CancelToken,
     ) {
         let assistant_id = job.assistant_id();
@@ -245,12 +255,24 @@ impl ChatRuntime {
             self.cancel_unstarted(ticket, assistant_id);
             return;
         }
-        let mut recorder = TurnRecorder::new(&self.emitter, ticket, assistant_id);
-        recorder.step(Step::Thinking);
+        let mut steps = StepRelay::new(&self.emitter, ticket, assistant_id);
+        steps.step(Step::Thinking);
         let outcome = match job {
-            ChatJob::Ask(request) => self.ask(assistant, &mut recorder, request, &cancellation),
-            ChatJob::Prompt(request) => self.run_prompt(assistant, request, &cancellation),
+            ChatJob::Ask(request) => {
+                self.ask(assistant, &mut steps, request, history, &cancellation)
+            }
+            ChatJob::Prompt(request) => self.run_prompt(assistant, request, history, &cancellation),
         };
+        self.report(ticket, assistant_id, outcome);
+    }
+
+    /// Emits how a job ended.
+    fn report(
+        &self,
+        ticket: Ticket,
+        assistant_id: AssistantId,
+        outcome: Result<ChatStageKind, ChatError>,
+    ) {
         let kind = match outcome {
             Ok(kind) => kind,
             Err(error) => failed(&error),
@@ -399,19 +421,12 @@ impl ChatRuntime {
     fn ask<A: Assistant>(
         &self,
         assistant: &A,
-        recorder: &mut TurnRecorder<'_>,
+        steps: &mut StepRelay<'_>,
         request: ChatRequest,
+        history: Option<&HistoryStore>,
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
         let config = self.chat_config();
-        // Read as the run starts rather than at admission, so turning history
-        // off while the chat waited keeps its reply out of history.
-        let saves_history = self
-            .settings
-            .snapshot()
-            .map_err(ChatError::Settings)?
-            .settings
-            .history_enabled;
         let started = (SystemTime::now(), Instant::now());
         if !request.workdir.is_dir() {
             return Err(ChatError::Assistant(AssistantError::NoWorkdir(
@@ -448,14 +463,8 @@ impl ChatRuntime {
             Some(block) => format!("{block}\n\n{}", request.text),
             None => request.text.clone(),
         };
-        let (text, conversation) = self.turn(
-            assistant,
-            recorder,
-            &request,
-            &prompt,
-            config.timeout,
-            cancel,
-        )?;
+        let Reply { text, conversation } =
+            self.turn(assistant, steps, &request, &prompt, config.timeout, cancel)?;
         if let Some(memory) = &memory
             && request.own_voice
         {
@@ -468,19 +477,20 @@ impl ChatRuntime {
             (None, None) => None,
         };
         // Saved before the reply goes out, so whoever hears it finds it saved.
-        if saves_history {
+        if let Some(history) = history {
             let failure = delivered
                 .and_then(Result::err)
                 .map(|code| RpcFailure::new(code, "the reply couldn't be typed"));
-            // The question as asked, before any memory was added to it.
-            self.history.save_chat(
-                &request.text,
-                &text,
-                &request.workdir,
-                conversation.as_deref(),
-                elapsed_ms(started),
+            let (created_at_ms, duration_ms) = elapsed_ms(started);
+            history.save_chat(NewChat {
+                request: &request.text,
+                reply: &text,
+                workdir: &request.workdir,
+                conversation: conversation.as_deref(),
+                created_at_ms,
+                duration_ms,
                 failure,
-            );
+            });
         }
         Ok(replied(text, delivered))
     }
@@ -493,17 +503,10 @@ impl ChatRuntime {
         &self,
         assistant: &A,
         request: PromptRequest,
+        history: Option<&HistoryStore>,
         cancel: &CancelToken,
     ) -> Result<ChatStageKind, ChatError> {
         let config = self.chat_config();
-        // Read as the run starts, as a chat's is.
-        let saves_result = request.entry.is_some()
-            && self
-                .settings
-                .snapshot()
-                .map_err(ChatError::Settings)?
-                .settings
-                .history_enabled;
         let started = (SystemTime::now(), Instant::now());
         // Prepared before the run, so a front app that refuses typing fails
         // it before the assistant spends any time.
@@ -525,13 +528,11 @@ impl ChatRuntime {
         }
         let delivered = delivery.map(|delivery| delivery.deliver(&text, &self.typing, cancel));
         // Saved before the reply goes out, so whoever shows it finds it saved.
-        if let Some(entry) = request
-            .entry
-            .filter(|_| saves_result && !text.trim().is_empty())
+        if let (Some(history), Some(entry)) = (history, request.entry)
+            && !text.trim().is_empty()
         {
             let (created_at_ms, _) = elapsed_ms(started);
-            self.history
-                .save_result(entry, &request.name, &text, created_at_ms);
+            history.save_result(entry, &request.name, &text, created_at_ms);
         }
         Ok(replied(text, delivered))
     }
@@ -607,16 +608,15 @@ impl ChatRuntime {
 
     /// One turn on the request's conversation: continues or restarts it,
     /// prompts the assistant, and records what continues it next time.
-    /// Returns the reply and its conversation id.
     fn turn<A: Assistant>(
         &self,
         assistant: &A,
-        recorder: &mut TurnRecorder<'_>,
+        steps: &mut StepRelay<'_>,
         request: &ChatRequest,
         prompt: &str,
         timeout: Duration,
         cancel: &CancelToken,
-    ) -> Result<(String, Option<String>), ChatError> {
+    ) -> Result<Reply, ChatError> {
         let key = request.key();
         // Forgetting happens before the chat, so a failed one cannot
         // resurrect the session the user asked to drop.
@@ -633,19 +633,19 @@ impl ChatRuntime {
             resume: resume.as_deref(),
         });
         let prompted = session
-            .prompt(prompt, recorder, cancel, timeout)
+            .prompt(prompt, steps, cancel, timeout)
             .map_err(|error| diagnosed(assistant, request.assistant_id, error, cancel));
         // The assistant may have deleted the session it was asked to resume.
         // Kept, its id would fail every later chat on this key.
         if resume.is_some() && matches!(prompted, Err(AssistantError::Failed(_))) {
             self.sessions.forget(&key)?;
         }
-        prompted?;
+        let text = prompted?;
         let conversation = session.resume_id().map(str::to_owned);
         if let Some(resume) = &conversation {
             self.sessions.record(key, resume)?;
         }
-        Ok((std::mem::take(&mut recorder.text), conversation))
+        Ok(Reply { text, conversation })
     }
 
     /// The memory section when it is on.
@@ -685,19 +685,23 @@ impl ChatRuntime {
     }
 }
 
-/// Collects the reply and relays each change of step as a `Working` stage.
-struct TurnRecorder<'a> {
+/// What one prompt to an assistant answered, and the conversation it went on.
+struct Reply {
     text: String,
+    conversation: Option<String>,
+}
+
+/// Relays each change of step as a `Working` stage.
+struct StepRelay<'a> {
     last: Option<Step>,
     emitter: &'a ChatEventEmitter,
     ticket: Ticket,
     assistant_id: AssistantId,
 }
 
-impl<'a> TurnRecorder<'a> {
+impl<'a> StepRelay<'a> {
     fn new(emitter: &'a ChatEventEmitter, ticket: Ticket, assistant_id: AssistantId) -> Self {
         Self {
-            text: String::new(),
             last: None,
             emitter,
             ticket,
@@ -706,11 +710,7 @@ impl<'a> TurnRecorder<'a> {
     }
 }
 
-impl TurnSink for TurnRecorder<'_> {
-    fn text(&mut self, chunk: &str) {
-        self.text.push_str(chunk);
-    }
-
+impl StepSink for StepRelay<'_> {
     fn step(&mut self, step: Step) {
         if self.last.as_ref() == Some(&step) {
             return;
@@ -749,10 +749,30 @@ fn diagnosed<A: Assistant>(
     }
 }
 
-fn exchange(chat: HistoryEntry) -> Option<Exchange> {
-    match chat.content {
-        HistoryContent::Chat { reply } => Some(Exchange {
-            question: chat.text,
+/// Recalls a conversation from the history store, or nothing while history is off.
+struct SavedConversations<'a> {
+    history: Option<&'a HistoryStore>,
+}
+
+impl Conversations for SavedConversations<'_> {
+    fn recall(&self, conversation: &str) -> Vec<Ask> {
+        let Some(history) = self.history else {
+            return Vec::new();
+        };
+        match history.conversation(conversation, RECALL_BYTES) {
+            Ok(entries) => entries.into_iter().filter_map(ask).collect(),
+            Err(error) => {
+                tracing::warn!(error = %error_chain(&error), "the conversation could not be recalled");
+                Vec::new()
+            }
+        }
+    }
+}
+
+fn ask(entry: HistoryEntry) -> Option<Ask> {
+    match entry.content {
+        HistoryContent::Chat { reply } => Some(Ask {
+            request: entry.text,
             reply,
         }),
         HistoryContent::Dictation(_) | HistoryContent::SystemTranscription { .. } => None,
@@ -1016,21 +1036,20 @@ pub(super) mod tests {
         fn prompt(
             &mut self,
             text: &str,
-            sink: &mut dyn TurnSink,
+            steps: &mut dyn StepSink,
             _cancel: &CancelToken,
             _timeout: Duration,
-        ) -> Result<(), AssistantError> {
+        ) -> Result<String, AssistantError> {
             let mut log = self.log.lock().expect("the log is not poisoned");
             log.sessions.push(self.resume.clone());
             log.prompts.push(text.to_owned());
             let turn = log.sessions.len();
             self.resume = Some(format!("session-{turn}"));
-            sink.step(Step::Thinking);
-            sink.step(Step::Reading);
-            sink.step(Step::Reading);
-            sink.step(Step::Searching);
-            sink.text(&format!("reply {turn}"));
-            Ok(())
+            steps.step(Step::Thinking);
+            steps.step(Step::Reading);
+            steps.step(Step::Reading);
+            steps.step(Step::Searching);
+            Ok(format!("reply {turn}"))
         }
 
         fn resume_id(&self) -> Option<&str> {
@@ -1085,7 +1104,14 @@ pub(super) mod tests {
             }),
             assistant_overrides: Some(AssistantOverrides {
                 execute: Box::new(move |runtime, ticket, job, cancel| {
-                    runtime.execute_with(&for_execution(job.assistant_id()), ticket, job, cancel);
+                    let history = runtime.enabled_history().expect("settings");
+                    runtime.execute_with(
+                        &for_execution(job.assistant_id()),
+                        ticket,
+                        job,
+                        history,
+                        cancel,
+                    );
                 }),
                 models: Box::new(move |assistant_id, cancel| {
                     for_models(assistant_id).models(cancel)
@@ -1358,6 +1384,7 @@ pub(super) mod tests {
             .run_prompt(
                 &FakeAssistant(Arc::clone(&log)),
                 request,
+                runtime.enabled_history().expect("settings"),
                 &CancelToken::never(),
             )
             .expect_err("the app the chord was pressed in is not in front");
@@ -1436,6 +1463,7 @@ pub(super) mod tests {
             .run_prompt(
                 &FakeAssistant(Arc::clone(&log)),
                 request,
+                runtime.enabled_history().expect("settings"),
                 &CancelToken::never(),
             )
             .expect("a run that types nothing needs no app in front");
@@ -1574,7 +1602,7 @@ pub(super) mod tests {
             home.path().join(".aria/settings.toml"),
             format!(
                 "[memory]\nenabled = true\n[provider]\nendpoint = \"{endpoint}\"\n\
-                 [assistant.models]\nlocal = \"m\"\n"
+                 [assistant.models]\nlocal-model = \"m\"\n"
             ),
         )
         .expect("the settings file");
@@ -1582,7 +1610,7 @@ pub(super) mod tests {
         let (runtime, events, mut woken) = runtime_waking(home.path(), logging_assistants(&log));
         let heard = ChatRequest {
             own_voice: true,
-            assistant_id: AssistantId::Local,
+            assistant_id: AssistantId::LocalModel,
             ..request("hello", home.path(), false)
         };
 
@@ -1716,15 +1744,20 @@ pub(super) mod tests {
         file
     }
 
+    fn now_ms() -> u64 {
+        elapsed_ms((SystemTime::now(), Instant::now())).0
+    }
+
     fn saved_entry(runtime: &ChatRuntime, home: &Path, reply: &str) -> u64 {
-        runtime.history.save_chat(
-            "When?",
+        runtime.history.save_chat(NewChat {
+            request: "When?",
             reply,
-            home,
-            None,
-            elapsed_ms((SystemTime::now(), Instant::now())),
-            None,
-        );
+            workdir: home,
+            conversation: None,
+            created_at_ms: now_ms(),
+            duration_ms: 0,
+            failure: None,
+        });
         chats(runtime)[0].id
     }
 
@@ -1769,7 +1802,12 @@ pub(super) mod tests {
         file: PathBuf,
     ) -> Result<ChatStageKind, ChatError> {
         let request = entry_request(runtime, entry, "Polish", file)?;
-        runtime.run_prompt(assistant, request, &CancelToken::never())
+        runtime.run_prompt(
+            assistant,
+            request,
+            runtime.enabled_history().expect("settings"),
+            &CancelToken::never(),
+        )
     }
 
     #[test]
@@ -1789,6 +1827,7 @@ pub(super) mod tests {
             .run_prompt(
                 &FakeAssistant(Arc::clone(&log)),
                 request,
+                runtime.enabled_history().expect("settings"),
                 &CancelToken::never(),
             )
             .expect("the run replies");
@@ -1832,6 +1871,7 @@ pub(super) mod tests {
             .run_prompt(
                 &FakeAssistant(Arc::clone(&log)),
                 request,
+                runtime.enabled_history().expect("settings"),
                 &CancelToken::never(),
             )
             .expect("the run replies");
@@ -1847,14 +1887,15 @@ pub(super) mod tests {
     fn a_prompt_cannot_run_on_a_blank_entry() {
         let home = tempfile::tempdir().expect("a temp home");
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
-        runtime.history.save_chat(
-            "When?",
-            " \n",
-            home.path(),
-            None,
-            elapsed_ms((SystemTime::now(), Instant::now())),
-            None,
-        );
+        runtime.history.save_chat(NewChat {
+            request: "When?",
+            reply: " \n",
+            workdir: home.path(),
+            conversation: None,
+            created_at_ms: now_ms(),
+            duration_ms: 0,
+            failure: None,
+        });
         let entry = chats(&runtime)[0].id;
 
         let error = entry_request(&runtime, entry, "Polish", home.path().join("polish.md"))
@@ -2013,10 +2054,10 @@ pub(super) mod tests {
         fn prompt(
             &mut self,
             _text: &str,
-            _sink: &mut dyn TurnSink,
+            _steps: &mut dyn StepSink,
             _cancel: &CancelToken,
             _timeout: Duration,
-        ) -> Result<(), AssistantError> {
+        ) -> Result<String, AssistantError> {
             Err(AssistantError::Failed("down".to_owned()))
         }
 
@@ -2259,7 +2300,7 @@ pub(super) mod tests {
             Box::new(|assistant_id, _cancel| match assistant_id {
                 AssistantId::ClaudeCode => AssistantStatus::SignedOut { fix: "sign in" },
                 AssistantId::Codex => AssistantStatus::Ready,
-                AssistantId::Local => AssistantStatus::ModelMissing {
+                AssistantId::LocalModel => AssistantStatus::ModelMissing {
                     model: "qwen".to_owned(),
                 },
             });
@@ -2297,7 +2338,7 @@ pub(super) mod tests {
                     ""
                 ),
                 (
-                    wire::AssistantId::Local as i32,
+                    wire::AssistantId::LocalModel as i32,
                     wire::AssistantStatus::ModelMissing as i32,
                     "load qwen into the model server, such as with ollama pull"
                 ),
@@ -2523,18 +2564,17 @@ pub(super) mod tests {
         fn prompt(
             &mut self,
             text: &str,
-            sink: &mut dyn TurnSink,
+            _steps: &mut dyn StepSink,
             cancel: &CancelToken,
             _timeout: Duration,
-        ) -> Result<(), AssistantError> {
+        ) -> Result<String, AssistantError> {
             let turn: u64 = text.parse().expect("prompts are turn numbers");
             let _ = self.started.send(turn);
             if !park(&self.release, cancel) {
                 return Err(AssistantError::Cancelled);
             }
             self.resume = Some(format!("session-{turn}"));
-            sink.text(&format!("reply {turn}"));
-            Ok(())
+            Ok(format!("reply {turn}"))
         }
 
         fn resume_id(&self) -> Option<&str> {

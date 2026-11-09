@@ -30,8 +30,9 @@ final class ChatClientTests: XCTestCase {
             (.notConfigured, .notConfigured), (.unreachable, .unreachable), (.modelMissing, .modelMissing),
         ]
         for (wire, status) in statuses {
-            let assistants = try ChatClient.assistants(from: [assistant(.local, name: "Local model", status: wire)])
-            XCTAssertEqual(assistants, [Assistant(id: .local, name: "Local model", status: status)])
+            let assistants = try ChatClient.assistants(from: [assistant(.localModel, name: "Local model", status: wire)]
+            )
+            XCTAssertEqual(assistants, [Assistant(id: .localModel, name: "Local model", status: status)])
         }
     }
 

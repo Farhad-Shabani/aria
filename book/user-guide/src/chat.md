@@ -83,7 +83,7 @@ Use `--session` with a name if you want separate conversations in one folder.
 
 ## Use a different assistant or model
 
-Add `--assistant codex`, `--assistant claude-code`, or `--assistant local` to
+Add `--assistant codex`, `--assistant claude-code`, or `--assistant local-model` to
 use a different assistant for one request. Add `--model "MODEL_ID"` to choose
 a model for that request. Neither option changes your saved settings.
 
@@ -111,12 +111,12 @@ your Mac.
    endpoint = "http://127.0.0.1:11434/v1/chat/completions"
 
    [assistant.models]
-   local = "qwen2.5:3b"
+   local-model = "qwen2.5:3b"
    ```
 
 3. Follow the [service restart steps](./settings.md#apply-changes).
 4. Choose **Local model** in **Settings → General → Assistant**, or run
-   `aria settings set assistant.id local`.
+   `aria settings set assistant.id local-model`.
 
 Send a request as in [Type a request](#type-a-request). The reply should
 appear in your terminal.

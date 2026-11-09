@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::prompt_run::{SCHEMA, answer_text};
 use super::{
     Assistant, AssistantError, AssistantModel, AssistantStatus, PromptRun, Session, SessionSpec,
-    TurnSink,
+    StepSink,
 };
 
 /// How long a readiness check or a model list may take.
@@ -19,33 +19,35 @@ const LIST_BUDGET: Duration = Duration::from_secs(3);
 /// Far more than any reply. Counts the event stream's bytes, not just the reply.
 const MAX_STREAM_BYTES: usize = 4 * 1024 * 1024;
 const NO_ENDPOINT: &str = "set provider.endpoint in the settings file";
-const NO_MODEL: &str = "add local = \"MODEL_ID\" under [assistant.models] in the settings file";
+const NO_MODEL: &str =
+    "add local-model = \"MODEL_ID\" under [assistant.models] in the settings file";
 
-/// One earlier chat in a conversation: what was asked and what came back.
+/// An earlier ask in a conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Exchange {
-    pub question: String,
+pub struct Ask {
+    pub request: String,
     pub reply: String,
 }
 
-/// `recall` takes a conversation id and returns its earlier chats, oldest
-/// first.
-pub struct LocalAssistant<R> {
-    client: Option<Client>,
-    model: Option<String>,
-    recall: R,
+/// Where a conversation's earlier asks come from.
+pub trait Conversations: Send + Sync {
+    /// The conversation's earlier asks, oldest first.
+    fn recall(&self, conversation: &str) -> Vec<Ask>;
 }
 
-impl<R> LocalAssistant<R>
-where
-    R: Fn(&str) -> Vec<Exchange> + Send + Sync,
-{
-    /// `model` is the one `[assistant.models] local` names.
-    pub fn new(provider: Option<&LocalProvider>, model: Option<String>, recall: R) -> Self {
+pub struct LocalAssistant<C> {
+    client: Option<Client>,
+    model: Option<String>,
+    conversations: C,
+}
+
+impl<C: Conversations> LocalAssistant<C> {
+    /// `model` is the one `[assistant.models] local-model` names.
+    pub fn new(provider: Option<&LocalProvider>, model: Option<String>, conversations: C) -> Self {
         Self {
             client: provider.map(|provider| Client::new(provider.endpoint(), provider.listing())),
             model,
-            recall,
+            conversations,
         }
     }
 
@@ -56,10 +58,7 @@ where
     }
 }
 
-impl<R> Assistant for LocalAssistant<R>
-where
-    R: Fn(&str) -> Vec<Exchange> + Send + Sync,
-{
+impl<C: Conversations> Assistant for LocalAssistant<C> {
     type Session = LocalSession;
 
     fn models(&self, _cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
@@ -105,7 +104,10 @@ where
                 .model_id
                 .map(str::to_owned)
                 .or_else(|| self.model.clone()),
-            earlier: spec.resume.map(&self.recall).unwrap_or_default(),
+            earlier: spec
+                .resume
+                .map(|conversation| self.conversations.recall(conversation))
+                .unwrap_or_default(),
             conversation: spec.resume.map(str::to_owned),
         }
     }
@@ -138,7 +140,7 @@ where
 pub struct LocalSession {
     client: Option<Client>,
     model: Option<String>,
-    earlier: Vec<Exchange>,
+    earlier: Vec<Ask>,
     /// `None` until the first reply of a new conversation.
     conversation: Option<String>,
 }
@@ -147,10 +149,10 @@ impl Session for LocalSession {
     fn prompt(
         &mut self,
         text: &str,
-        sink: &mut dyn TurnSink,
+        _steps: &mut dyn StepSink,
         cancel: &CancelToken,
         timeout: Duration,
-    ) -> Result<(), AssistantError> {
+    ) -> Result<String, AssistantError> {
         let client = self
             .client
             .as_ref()
@@ -160,9 +162,9 @@ impl Session for LocalSession {
             .as_deref()
             .ok_or(AssistantError::NotConfigured { fix: NO_MODEL })?;
         let mut messages = Vec::with_capacity(self.earlier.len() * 2 + 1);
-        for exchange in &self.earlier {
-            messages.push(message("user", &exchange.question));
-            messages.push(message("assistant", &exchange.reply));
+        for ask in &self.earlier {
+            messages.push(message("user", &ask.request));
+            messages.push(message("assistant", &ask.reply));
         }
         messages.push(message("user", text));
         let reply = stream(client, &completion(model, messages), cancel, timeout)?;
@@ -172,12 +174,11 @@ impl Session for LocalSession {
         if self.conversation.is_none() {
             self.conversation = Some(new_conversation()?);
         }
-        sink.text(&reply);
-        self.earlier.push(Exchange {
-            question: text.to_owned(),
-            reply,
+        self.earlier.push(Ask {
+            request: text.to_owned(),
+            reply: reply.clone(),
         });
-        Ok(())
+        Ok(reply)
     }
 
     fn resume_id(&self) -> Option<&str> {
@@ -295,32 +296,44 @@ mod tests {
         json_reply(&json!({ "object": "list", "data": data }))
     }
 
-    #[derive(Default)]
-    struct Recorder {
-        text: String,
-    }
+    struct IgnoredSteps;
 
-    impl TurnSink for Recorder {
-        fn text(&mut self, chunk: &str) {
-            self.text.push_str(chunk);
-        }
-
+    impl StepSink for IgnoredSteps {
         fn step(&mut self, _step: Step) {}
     }
 
-    fn no_history(_conversation: &str) -> Vec<Exchange> {
-        Vec::new()
+    /// Recalls `asks` for `conversation` and nothing for any other.
+    struct ScriptedConversations {
+        conversation: &'static str,
+        asks: Vec<Ask>,
+    }
+
+    impl ScriptedConversations {
+        fn empty() -> Self {
+            Self {
+                conversation: "",
+                asks: Vec::new(),
+            }
+        }
+    }
+
+    impl Conversations for ScriptedConversations {
+        fn recall(&self, conversation: &str) -> Vec<Ask> {
+            if conversation == self.conversation {
+                self.asks.clone()
+            } else {
+                Vec::new()
+            }
+        }
     }
 
     fn ask(session: &mut LocalSession, text: &str) -> Result<String, AssistantError> {
-        let mut recorder = Recorder::default();
         session.prompt(
             text,
-            &mut recorder,
+            &mut IgnoredSteps,
             &CancelToken::never(),
             Duration::from_secs(5),
-        )?;
-        Ok(recorder.text)
+        )
     }
 
     fn spec<'a>(resume: Option<&'a str>) -> SessionSpec<'a> {
@@ -332,16 +345,16 @@ mod tests {
     }
 
     #[test]
-    fn a_resumed_conversation_sends_its_earlier_chats_before_the_question() {
+    fn a_resumed_conversation_sends_its_earlier_asks_before_the_request() {
         let (provider, requests) = serve(|_path, _body| streamed("Tuesday."));
-        let recall = |conversation: &str| {
-            assert_eq!(conversation, "c1");
-            vec![Exchange {
-                question: "When is the review?".to_owned(),
+        let conversations = ScriptedConversations {
+            conversation: "c1",
+            asks: vec![Ask {
+                request: "When is the review?".to_owned(),
                 reply: "Monday.".to_owned(),
-            }]
+            }],
         };
-        let local = LocalAssistant::new(Some(&provider), Some("qwen".to_owned()), recall);
+        let local = LocalAssistant::new(Some(&provider), Some("qwen".to_owned()), conversations);
 
         let mut session = local.open(spec(Some("c1")));
         assert_eq!(ask(&mut session, "And the launch?").unwrap(), "Tuesday.");
@@ -364,7 +377,11 @@ mod tests {
     #[test]
     fn a_new_conversation_gets_an_id_only_once_it_replies() {
         let (provider, _requests) = serve(|_path, _body| streamed("Hi."));
-        let local = LocalAssistant::new(Some(&provider), Some("qwen".to_owned()), no_history);
+        let local = LocalAssistant::new(
+            Some(&provider),
+            Some("qwen".to_owned()),
+            ScriptedConversations::empty(),
+        );
 
         let mut session = local.open(spec(None));
         assert_eq!(session.resume_id(), None);
@@ -378,7 +395,11 @@ mod tests {
     #[test]
     fn a_prompt_run_asks_for_json_and_returns_its_text() {
         let (provider, requests) = serve(|_path, _body| streamed(r#"{"text":"Polished."}"#));
-        let local = LocalAssistant::new(Some(&provider), Some("qwen".to_owned()), no_history);
+        let local = LocalAssistant::new(
+            Some(&provider),
+            Some("qwen".to_owned()),
+            ScriptedConversations::empty(),
+        );
         let run = PromptRun {
             model_id: None,
             kind: PromptKind::Rewrite,
@@ -403,8 +424,12 @@ mod tests {
             listing(&["qwen:latest"])
         });
         let status = |provider: Option<&LocalProvider>, model: Option<&str>| {
-            LocalAssistant::new(provider, model.map(str::to_owned), no_history)
-                .check_ready(&CancelToken::never())
+            LocalAssistant::new(
+                provider,
+                model.map(str::to_owned),
+                ScriptedConversations::empty(),
+            )
+            .check_ready(&CancelToken::never())
         };
 
         assert!(matches!(
@@ -439,7 +464,11 @@ mod tests {
         let address = closed.local_addr().unwrap();
         drop(closed);
         let dead = LocalProvider::new(&format!("http://{address}/v1/chat/completions")).unwrap();
-        let local = LocalAssistant::new(Some(&dead), Some("qwen".to_owned()), no_history);
+        let local = LocalAssistant::new(
+            Some(&dead),
+            Some("qwen".to_owned()),
+            ScriptedConversations::empty(),
+        );
 
         let error = ask(&mut local.open(spec(None)), "Hello").unwrap_err();
 

@@ -670,7 +670,7 @@ impl From<AssistantId> for wire::AssistantId {
         match assistant_id {
             AssistantId::ClaudeCode => Self::ClaudeCode,
             AssistantId::Codex => Self::Codex,
-            AssistantId::Local => Self::Local,
+            AssistantId::LocalModel => Self::LocalModel,
         }
     }
 }
@@ -714,7 +714,7 @@ impl WireEnum for wire::AssistantId {
         match self {
             Self::ClaudeCode => Some(AssistantId::ClaudeCode),
             Self::Codex => Some(AssistantId::Codex),
-            Self::Local => Some(AssistantId::Local),
+            Self::LocalModel => Some(AssistantId::LocalModel),
             Self::Unspecified => None,
         }
     }

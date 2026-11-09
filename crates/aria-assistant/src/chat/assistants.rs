@@ -18,7 +18,7 @@ use super::process::{Output, run_cli};
 use super::prompt_run::{self, PromptRun};
 use super::{
     Assistant, AssistantError, AssistantModel, AssistantStatus, Session, SessionSpec, Step,
-    TurnSink,
+    StepSink,
 };
 
 pub const CLAUDE_BINARY: &str = "claude";
@@ -374,17 +374,17 @@ impl Session for CliSession {
     fn prompt(
         &mut self,
         text: &str,
-        sink: &mut dyn TurnSink,
+        steps: &mut dyn StepSink,
         cancel: &CancelToken,
         timeout: Duration,
-    ) -> Result<(), AssistantError> {
+    ) -> Result<String, AssistantError> {
         let cli = self.cli;
         let mut warned = false;
         let output = run_cli(
             &mut self.command(),
             text,
             |line: &str| match step(cli, line) {
-                Ok(Some(step)) => sink.step(step),
+                Ok(Some(step)) => steps.step(step),
                 // One format drift is worth one line in the log, not one
                 // per line of output, and never a failed chat.
                 Err(Unparsed { column }) if !warned => {
@@ -402,8 +402,7 @@ impl Session for CliSession {
         };
         let reply = output.reply(parsed)?;
         self.resume = Some(reply.session_id);
-        sink.text(&reply.text);
-        Ok(())
+        Ok(reply.text)
     }
 
     fn resume_id(&self) -> Option<&str> {

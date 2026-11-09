@@ -148,6 +148,20 @@ impl Drop for RetryLease {
     }
 }
 
+/// A chat that replied, as history saves it.
+pub struct NewChat<'a> {
+    /// The request as asked, before any memory was added to it.
+    pub request: &'a str,
+    pub reply: &'a str,
+    pub workdir: &'a Path,
+    /// The conversation it continued, so the next chat on it can recall it.
+    pub conversation: Option<&'a str>,
+    pub created_at_ms: u64,
+    pub duration_ms: u64,
+    /// Why the reply couldn't be typed.
+    pub failure: Option<RpcFailure>,
+}
+
 impl Store {
     pub fn open(directory: &Path) -> Result<Arc<Self>, HistoryError> {
         let connection = Database::open(
@@ -385,17 +399,16 @@ impl Store {
         self.insert(entry, None).map(Some)
     }
 
-    /// Saves a chat that replied: the question as asked, the folder it worked
-    /// in, and the reply. `failure` is why the reply couldn't be typed.
-    pub fn save_chat(
-        &self,
-        question: &str,
-        reply: &str,
-        workdir: &Path,
-        conversation: Option<&str>,
-        (created_at_ms, duration_ms): (u64, u64),
-        failure: Option<RpcFailure>,
-    ) -> Result<HistoryEntry, HistoryError> {
+    pub fn save_chat(&self, chat: NewChat<'_>) -> Result<HistoryEntry, HistoryError> {
+        let NewChat {
+            request,
+            reply,
+            workdir,
+            conversation,
+            created_at_ms,
+            duration_ms,
+            failure,
+        } = chat;
         let entry = HistoryEntry {
             id: 0,
             title: None,
@@ -407,7 +420,7 @@ impl Store {
             source: HistorySource::Local,
             application: None,
             project: Some(workdir.to_path_buf()),
-            text: question.to_owned(),
+            text: request.to_owned(),
             complete: true,
             result_count: 0,
             status: match failure {
@@ -1696,16 +1709,17 @@ mod tests {
     #[test]
     fn a_conversation_recalls_its_newest_chats_that_fit_oldest_first() {
         let (_directory, store) = opened();
-        let chat = |question: &str, conversation: Option<&str>| {
+        let chat = |request: &str, conversation: Option<&str>| {
             store
-                .save_chat(
-                    question,
-                    "ok",
-                    Path::new("/p"),
+                .save_chat(NewChat {
+                    request,
+                    reply: "ok",
+                    workdir: Path::new("/p"),
                     conversation,
-                    (now_ms(), 1),
-                    None,
-                )
+                    created_at_ms: now_ms(),
+                    duration_ms: 1,
+                    failure: None,
+                })
                 .unwrap();
         };
         chat("one", Some("c1"));

@@ -34,7 +34,7 @@ use aria_settings::rpc::RpcErrorCode;
 
 pub use assistants::{CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant};
 pub(crate) use assistants::{claude_command, parse_claude};
-pub use local::{Exchange, LocalAssistant, LocalSession};
+pub use local::{Ask, Conversations, LocalAssistant, LocalSession};
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
 pub use prompt_run::{
@@ -362,23 +362,22 @@ impl AssistantStatus {
 
 /// One conversation with an assistant, taking one turn at a time.
 pub trait Session: Send {
-    /// Sends one prompt and feeds its output to `sink` until the turn ends.
+    /// Sends one prompt, reports its steps to `steps`, and returns the reply.
     fn prompt(
         &mut self,
         text: &str,
-        sink: &mut dyn TurnSink,
+        steps: &mut dyn StepSink,
         cancel: &CancelToken,
         timeout: Duration,
-    ) -> Result<(), AssistantError>;
+    ) -> Result<String, AssistantError>;
 
     /// What continues this conversation next time; `None` before the
     /// first reply.
     fn resume_id(&self) -> Option<&str>;
 }
 
-/// Where a turn's output goes.
-pub trait TurnSink: Send {
-    fn text(&mut self, chunk: &str);
+/// Where a prompt's steps go while it runs.
+pub trait StepSink: Send {
     /// What the assistant has moved on to. Repeats are the sink's to drop.
     fn step(&mut self, step: Step);
 }

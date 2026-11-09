@@ -264,8 +264,8 @@ enum AssistantId {
   ASSISTANT_ID_CLAUDE_CODE = 1;
   ASSISTANT_ID_CODEX = 2;
   // A model on the local provider, set by `provider.endpoint` and
-  // `[assistant.models] local`.
-  ASSISTANT_ID_LOCAL = 3;
+  // `[assistant.models] local-model`.
+  ASSISTANT_ID_LOCAL_MODEL = 3;
 }
 
 enum AssistantStatus {

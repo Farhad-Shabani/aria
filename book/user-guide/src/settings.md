@@ -43,7 +43,7 @@ switch to another model.
 
 ```sh
 aria settings show assistant.id                     # show the assistant
-aria settings set assistant.id codex                # choose claude-code, codex, or local
+aria settings set assistant.id codex                # choose claude-code, codex, or local-model
 aria assistant models                               # list model IDs
 aria settings set assistant.models.codex "MODEL_ID"  # choose a model from the list
 aria settings reset assistant.models.codex          # let the assistant choose
