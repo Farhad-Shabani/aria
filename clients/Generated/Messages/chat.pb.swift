@@ -341,14 +341,32 @@ public nonisolated struct Aria_Daemon_V1_AskRequest: Sendable {
   /// A CLI model ID; empty uses the saved setting, then the assistant's default.
   public var modelID: String = String()
 
-  /// The directory the assistant works in.
-  public var workdir: String = String()
+  /// Required: which chat the ask goes to.
+  public var chat: Aria_Daemon_V1_AskRequest.OneOf_Chat? = nil
 
-  /// Names the conversation to continue; empty means the directory's.
-  public var sessionName: String = String()
+  public var folder: Aria_Daemon_V1_FolderChat {
+    get {
+      if case .folder(let v)? = chat {return v}
+      return Aria_Daemon_V1_FolderChat()
+    }
+    set {chat = .folder(newValue)}
+  }
 
-  /// Forget the running conversation and start another.
-  public var newConversation: Bool = false
+  public var named: Aria_Daemon_V1_NamedChat {
+    get {
+      if case .named(let v)? = chat {return v}
+      return Aria_Daemon_V1_NamedChat()
+    }
+    set {chat = .named(newValue)}
+  }
+
+  public var start: Aria_Daemon_V1_StartChat {
+    get {
+      if case .start(let v)? = chat {return v}
+      return Aria_Daemon_V1_StartChat()
+    }
+    set {chat = .start(newValue)}
+  }
 
   public var text: String = String()
 
@@ -368,15 +386,86 @@ public nonisolated struct Aria_Daemon_V1_AskRequest: Sendable {
 
   /// A tap of the Aria key cancels this run while it is in flight. The Mac
   /// app sets it on a run a key press started, so one key drives the run.
-  /// Absent means no: a terminal's chat, or an older client's, is never ended
+  /// Absent means no: a terminal's ask, or an older client's, is never ended
   /// by a tap.
   public var tapCancels: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
+  /// Required: which chat the ask goes to.
+  public nonisolated enum OneOf_Chat: Equatable, Sendable {
+    case folder(Aria_Daemon_V1_FolderChat)
+    case named(Aria_Daemon_V1_NamedChat)
+    case start(Aria_Daemon_V1_StartChat)
+
+  }
+
   public init() {}
 
   fileprivate var _outputMode: Aria_Daemon_V1_OutputMode? = nil
+}
+
+/// A folder's own chat, one per assistant and folder.
+public nonisolated struct Aria_Daemon_V1_FolderChat: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Required: the absolute path of the directory the assistant works in. A
+  /// relative one is INVALID_REQUEST.
+  public var workdir: String = String()
+
+  /// Start a new assistant session instead of resuming the last one.
+  public var newSession: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// A chat the client names. A known chat always runs in its
+/// own folder.
+public nonisolated struct Aria_Daemon_V1_NamedChat: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Trimmed, it must be 1 to 128 UTF-8 bytes with no control characters,
+  /// and must not start with `/`, which names a folder's own chat;
+  /// anything else is INVALID_REQUEST.
+  public var name: String = String()
+
+  /// The folder a chat with no folder yet starts in, as an absolute
+  /// path; a known one ignores it. A relative one is INVALID_REQUEST. The
+  /// daemon reads the chat's folder only once the ask's turn comes,
+  /// after any delete taken before it. Empty then, or a missing folder, ends
+  /// the ask as a FAILED event with INVALID_REQUEST.
+  public var workdir: String = String()
+
+  /// Start a new assistant session instead of resuming the last one. The
+  /// chat keeps its name and folder, and history shows its earlier
+  /// asks with the new ones as one chat.
+  public var newSession: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// A chat the daemon names, in `workdir`. The reply's `chat`
+/// names it, and later asks continue it by that name.
+public nonisolated struct Aria_Daemon_V1_StartChat: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Required: the absolute path of the directory the assistant works in. A
+  /// relative one is INVALID_REQUEST.
+  public var workdir: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 public nonisolated struct Aria_Daemon_V1_AskResponse: Sendable {
@@ -385,6 +474,39 @@ public nonisolated struct Aria_Daemon_V1_AskResponse: Sendable {
   // methods supported on all messages.
 
   public var ticket: UInt64 = 0
+
+  /// The named chat the ask continues: the one `start` started, or
+  /// the one `named` names. Absent for a folder's own chat and for a
+  /// prompt run.
+  public var chat: Aria_Daemon_V1_ChatKey {
+    get {_chat ?? Aria_Daemon_V1_ChatKey()}
+    set {_chat = newValue}
+  }
+  /// Returns true if `chat` has been explicitly set.
+  public var hasChat: Bool {self._chat != nil}
+  /// Clears the value of `chat`. Subsequent reads from it will return its default value.
+  public mutating func clearChat() {self._chat = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _chat: Aria_Daemon_V1_ChatKey? = nil
+}
+
+/// Names a chat: the asks sent under one name. A new assistant session
+/// keeps the chat and its name.
+public nonisolated struct Aria_Daemon_V1_ChatKey: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// UNSPECIFIED is invalid.
+  public var assistantID: Aria_Daemon_V1_AssistantId = .unspecified
+
+  /// As on NamedChat: 1 to 128 UTF-8 bytes, trimmed, with no control
+  /// characters, and not starting with `/`.
+  public var name: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -732,6 +854,178 @@ public nonisolated struct Aria_Daemon_V1_CancelAskResponse: Sendable {
   public init() {}
 }
 
+public nonisolated struct Aria_Daemon_V1_ListPendingAsksRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Required.
+  public var chat: Aria_Daemon_V1_ChatKey {
+    get {_chat ?? Aria_Daemon_V1_ChatKey()}
+    set {_chat = newValue}
+  }
+  /// Returns true if `chat` has been explicitly set.
+  public var hasChat: Bool {self._chat != nil}
+  /// Clears the value of `chat`. Subsequent reads from it will return its default value.
+  public mutating func clearChat() {self._chat = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _chat: Aria_Daemon_V1_ChatKey? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_ListPendingAsksResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The running ask first, then those waiting, in the order they run. Empty
+  /// when the chat has none.
+  public var asks: [Aria_Daemon_V1_PendingAsk] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_PendingAsk: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var ticket: UInt64 = 0
+
+  /// The question as asked.
+  public var text: String = String()
+
+  /// True for the ask running now, false for one waiting its turn.
+  public var running: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_CancelChatRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Required.
+  public var chat: Aria_Daemon_V1_ChatKey {
+    get {_chat ?? Aria_Daemon_V1_ChatKey()}
+    set {_chat = newValue}
+  }
+  /// Returns true if `chat` has been explicitly set.
+  public var hasChat: Bool {self._chat != nil}
+  /// Clears the value of `chat`. Subsequent reads from it will return its default value.
+  public mutating func clearChat() {self._chat = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _chat: Aria_Daemon_V1_ChatKey? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_CancelChatResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// How many asks this call stopped. An ask already stopping isn't counted.
+  public var cancelledCount: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_DeleteChatRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Required.
+  public var chat: Aria_Daemon_V1_ChatKey {
+    get {_chat ?? Aria_Daemon_V1_ChatKey()}
+    set {_chat = newValue}
+  }
+  /// Returns true if `chat` has been explicitly set.
+  public var hasChat: Bool {self._chat != nil}
+  /// Clears the value of `chat`. Subsequent reads from it will return its default value.
+  public mutating func clearChat() {self._chat = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _chat: Aria_Daemon_V1_ChatKey? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_DeleteChatResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// False when the daemon knew no chat by that name: no folder for it, and
+  /// no saved asks.
+  public var deleted: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_RenameChatRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Required.
+  public var chat: Aria_Daemon_V1_ChatKey {
+    get {_chat ?? Aria_Daemon_V1_ChatKey()}
+    set {_chat = newValue}
+  }
+  /// Returns true if `chat` has been explicitly set.
+  public var hasChat: Bool {self._chat != nil}
+  /// Clears the value of `chat`. Subsequent reads from it will return its default value.
+  public mutating func clearChat() {self._chat = nil}
+
+  /// The new name, under ChatKey.name's rules.
+  public var name: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _chat: Aria_Daemon_V1_ChatKey? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_RenameChatResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The chat under its new name, as kept: trimmed.
+  public var chat: Aria_Daemon_V1_ChatKey {
+    get {_chat ?? Aria_Daemon_V1_ChatKey()}
+    set {_chat = newValue}
+  }
+  /// Returns true if `chat` has been explicitly set.
+  public var hasChat: Bool {self._chat != nil}
+  /// Clears the value of `chat`. Subsequent reads from it will return its default value.
+  public mutating func clearChat() {self._chat = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _chat: Aria_Daemon_V1_ChatKey? = nil
+}
+
 public nonisolated struct Aria_Daemon_V1_ResolveChatTargetRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -789,9 +1083,22 @@ public nonisolated struct Aria_Daemon_V1_ChatEvent: Sendable {
   /// The failure, in words; only on FAILED.
   public var errorMessage: String = String()
 
+  /// On REPLIED: the history entry the ask was saved as. Absent when history
+  /// is off, the save failed, or the run was a prompt run.
+  public var historyEntryID: UInt64 {
+    get {_historyEntryID ?? 0}
+    set {_historyEntryID = newValue}
+  }
+  /// Returns true if `historyEntryID` has been explicitly set.
+  public var hasHistoryEntryID: Bool {self._historyEntryID != nil}
+  /// Clears the value of `historyEntryID`. Subsequent reads from it will return its default value.
+  public mutating func clearHistoryEntryID() {self._historyEntryID = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _historyEntryID: UInt64? = nil
 }
 
 public nonisolated struct Aria_Daemon_V1_Assistant: Sendable {
@@ -966,7 +1273,7 @@ nonisolated extension Aria_Daemon_V1_ListAssistantModelsResponse: SwiftProtobuf.
 
 nonisolated extension Aria_Daemon_V1_AskRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AskRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}assistant_id\0\u{3}model_id\0\u{1}workdir\0\u{3}session_name\0\u{3}new_conversation\0\u{1}text\0\u{3}own_voice\0\u{3}output_mode\0\u{3}tap_cancels\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}assistant_id\0\u{3}model_id\0\u{2}\u{4}text\0\u{3}own_voice\0\u{3}output_mode\0\u{3}tap_cancels\0\u{2}\u{2}folder\0\u{1}named\0\u{1}start\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -976,13 +1283,49 @@ nonisolated extension Aria_Daemon_V1_AskRequest: SwiftProtobuf.Message, SwiftPro
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.assistantID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.workdir) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.sessionName) }()
-      case 5: try { try decoder.decodeSingularBoolField(value: &self.newConversation) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.text) }()
       case 7: try { try decoder.decodeSingularBoolField(value: &self.ownVoice) }()
       case 8: try { try decoder.decodeSingularEnumField(value: &self._outputMode) }()
       case 9: try { try decoder.decodeSingularBoolField(value: &self.tapCancels) }()
+      case 11: try {
+        var v: Aria_Daemon_V1_FolderChat?
+        var hadOneofValue = false
+        if let current = self.chat {
+          hadOneofValue = true
+          if case .folder(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.chat = .folder(v)
+        }
+      }()
+      case 12: try {
+        var v: Aria_Daemon_V1_NamedChat?
+        var hadOneofValue = false
+        if let current = self.chat {
+          hadOneofValue = true
+          if case .named(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.chat = .named(v)
+        }
+      }()
+      case 13: try {
+        var v: Aria_Daemon_V1_StartChat?
+        var hadOneofValue = false
+        if let current = self.chat {
+          hadOneofValue = true
+          if case .start(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.chat = .start(v)
+        }
+      }()
       default: break
       }
     }
@@ -999,15 +1342,6 @@ nonisolated extension Aria_Daemon_V1_AskRequest: SwiftProtobuf.Message, SwiftPro
     if !self.modelID.isEmpty {
       try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 2)
     }
-    if !self.workdir.isEmpty {
-      try visitor.visitSingularStringField(value: self.workdir, fieldNumber: 3)
-    }
-    if !self.sessionName.isEmpty {
-      try visitor.visitSingularStringField(value: self.sessionName, fieldNumber: 4)
-    }
-    if self.newConversation != false {
-      try visitor.visitSingularBoolField(value: self.newConversation, fieldNumber: 5)
-    }
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 6)
     }
@@ -1020,15 +1354,28 @@ nonisolated extension Aria_Daemon_V1_AskRequest: SwiftProtobuf.Message, SwiftPro
     if self.tapCancels != false {
       try visitor.visitSingularBoolField(value: self.tapCancels, fieldNumber: 9)
     }
+    switch self.chat {
+    case .folder?: try {
+      guard case .folder(let v)? = self.chat else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    }()
+    case .named?: try {
+      guard case .named(let v)? = self.chat else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+    }()
+    case .start?: try {
+      guard case .start(let v)? = self.chat else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
+    }()
+    case nil: break
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_AskRequest, rhs: Aria_Daemon_V1_AskRequest) -> Bool {
     if lhs.assistantID != rhs.assistantID {return false}
     if lhs.modelID != rhs.modelID {return false}
-    if lhs.workdir != rhs.workdir {return false}
-    if lhs.sessionName != rhs.sessionName {return false}
-    if lhs.newConversation != rhs.newConversation {return false}
+    if lhs.chat != rhs.chat {return false}
     if lhs.text != rhs.text {return false}
     if lhs.ownVoice != rhs.ownVoice {return false}
     if lhs._outputMode != rhs._outputMode {return false}
@@ -1038,9 +1385,114 @@ nonisolated extension Aria_Daemon_V1_AskRequest: SwiftProtobuf.Message, SwiftPro
   }
 }
 
+nonisolated extension Aria_Daemon_V1_FolderChat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".FolderChat"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workdir\0\u{3}new_session\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.workdir) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.newSession) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.workdir.isEmpty {
+      try visitor.visitSingularStringField(value: self.workdir, fieldNumber: 1)
+    }
+    if self.newSession != false {
+      try visitor.visitSingularBoolField(value: self.newSession, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_FolderChat, rhs: Aria_Daemon_V1_FolderChat) -> Bool {
+    if lhs.workdir != rhs.workdir {return false}
+    if lhs.newSession != rhs.newSession {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_NamedChat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".NamedChat"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}workdir\0\u{3}new_session\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.workdir) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.newSession) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.workdir.isEmpty {
+      try visitor.visitSingularStringField(value: self.workdir, fieldNumber: 2)
+    }
+    if self.newSession != false {
+      try visitor.visitSingularBoolField(value: self.newSession, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_NamedChat, rhs: Aria_Daemon_V1_NamedChat) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.workdir != rhs.workdir {return false}
+    if lhs.newSession != rhs.newSession {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_StartChat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".StartChat"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workdir\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.workdir) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.workdir.isEmpty {
+      try visitor.visitSingularStringField(value: self.workdir, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_StartChat, rhs: Aria_Daemon_V1_StartChat) -> Bool {
+    if lhs.workdir != rhs.workdir {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Aria_Daemon_V1_AskResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AskResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ticket\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ticket\0\u{1}chat\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1049,20 +1501,64 @@ nonisolated extension Aria_Daemon_V1_AskResponse: SwiftProtobuf.Message, SwiftPr
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularUInt64Field(value: &self.ticket) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._chat) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if self.ticket != 0 {
       try visitor.visitSingularUInt64Field(value: self.ticket, fieldNumber: 1)
     }
+    try { if let v = self._chat {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_AskResponse, rhs: Aria_Daemon_V1_AskResponse) -> Bool {
     if lhs.ticket != rhs.ticket {return false}
+    if lhs._chat != rhs._chat {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_ChatKey: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ChatKey"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}assistant_id\0\u{1}name\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.assistantID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.assistantID != .unspecified {
+      try visitor.visitSingularEnumField(value: self.assistantID, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_ChatKey, rhs: Aria_Daemon_V1_ChatKey) -> Bool {
+    if lhs.assistantID != rhs.assistantID {return false}
+    if lhs.name != rhs.name {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1551,6 +2047,311 @@ nonisolated extension Aria_Daemon_V1_CancelAskResponse: SwiftProtobuf.Message, S
   }
 }
 
+nonisolated extension Aria_Daemon_V1_ListPendingAsksRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListPendingAsksRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}chat\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._chat) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._chat {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_ListPendingAsksRequest, rhs: Aria_Daemon_V1_ListPendingAsksRequest) -> Bool {
+    if lhs._chat != rhs._chat {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_ListPendingAsksResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListPendingAsksResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}asks\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.asks) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.asks.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.asks, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_ListPendingAsksResponse, rhs: Aria_Daemon_V1_ListPendingAsksResponse) -> Bool {
+    if lhs.asks != rhs.asks {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_PendingAsk: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".PendingAsk"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ticket\0\u{1}text\0\u{1}running\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.ticket) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.running) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.ticket != 0 {
+      try visitor.visitSingularUInt64Field(value: self.ticket, fieldNumber: 1)
+    }
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 2)
+    }
+    if self.running != false {
+      try visitor.visitSingularBoolField(value: self.running, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_PendingAsk, rhs: Aria_Daemon_V1_PendingAsk) -> Bool {
+    if lhs.ticket != rhs.ticket {return false}
+    if lhs.text != rhs.text {return false}
+    if lhs.running != rhs.running {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_CancelChatRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CancelChatRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}chat\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._chat) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._chat {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_CancelChatRequest, rhs: Aria_Daemon_V1_CancelChatRequest) -> Bool {
+    if lhs._chat != rhs._chat {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_CancelChatResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CancelChatResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}cancelled_count\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.cancelledCount) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.cancelledCount != 0 {
+      try visitor.visitSingularUInt32Field(value: self.cancelledCount, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_CancelChatResponse, rhs: Aria_Daemon_V1_CancelChatResponse) -> Bool {
+    if lhs.cancelledCount != rhs.cancelledCount {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_DeleteChatRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeleteChatRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}chat\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._chat) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._chat {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_DeleteChatRequest, rhs: Aria_Daemon_V1_DeleteChatRequest) -> Bool {
+    if lhs._chat != rhs._chat {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_DeleteChatResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeleteChatResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}deleted\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.deleted) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.deleted != false {
+      try visitor.visitSingularBoolField(value: self.deleted, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_DeleteChatResponse, rhs: Aria_Daemon_V1_DeleteChatResponse) -> Bool {
+    if lhs.deleted != rhs.deleted {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_RenameChatRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RenameChatRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}chat\0\u{2}\u{2}name\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._chat) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._chat {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RenameChatRequest, rhs: Aria_Daemon_V1_RenameChatRequest) -> Bool {
+    if lhs._chat != rhs._chat {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_RenameChatResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RenameChatResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}chat\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._chat) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._chat {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RenameChatResponse, rhs: Aria_Daemon_V1_RenameChatResponse) -> Bool {
+    if lhs._chat != rhs._chat {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Aria_Daemon_V1_ResolveChatTargetRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResolveChatTargetRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
@@ -1607,7 +2408,7 @@ nonisolated extension Aria_Daemon_V1_ResolveChatTargetResponse: SwiftProtobuf.Me
 
 nonisolated extension Aria_Daemon_V1_ChatEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ChatEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ticket\0\u{3}assistant_id\0\u{1}stage\0\u{1}step\0\u{1}skill\0\u{1}text\0\u{1}copied\0\u{3}error_code\0\u{3}error_message\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ticket\0\u{3}assistant_id\0\u{1}stage\0\u{1}step\0\u{1}skill\0\u{1}text\0\u{1}copied\0\u{3}error_code\0\u{3}error_message\0\u{3}history_entry_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1624,12 +2425,17 @@ nonisolated extension Aria_Daemon_V1_ChatEvent: SwiftProtobuf.Message, SwiftProt
       case 7: try { try decoder.decodeSingularBoolField(value: &self.copied) }()
       case 8: try { try decoder.decodeSingularEnumField(value: &self.errorCode) }()
       case 9: try { try decoder.decodeSingularStringField(value: &self.errorMessage) }()
+      case 10: try { try decoder.decodeSingularUInt64Field(value: &self._historyEntryID) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if self.ticket != 0 {
       try visitor.visitSingularUInt64Field(value: self.ticket, fieldNumber: 1)
     }
@@ -1657,6 +2463,9 @@ nonisolated extension Aria_Daemon_V1_ChatEvent: SwiftProtobuf.Message, SwiftProt
     if !self.errorMessage.isEmpty {
       try visitor.visitSingularStringField(value: self.errorMessage, fieldNumber: 9)
     }
+    try { if let v = self._historyEntryID {
+      try visitor.visitSingularUInt64Field(value: v, fieldNumber: 10)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1670,6 +2479,7 @@ nonisolated extension Aria_Daemon_V1_ChatEvent: SwiftProtobuf.Message, SwiftProt
     if lhs.copied != rhs.copied {return false}
     if lhs.errorCode != rhs.errorCode {return false}
     if lhs.errorMessage != rhs.errorMessage {return false}
+    if lhs._historyEntryID != rhs._historyEntryID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

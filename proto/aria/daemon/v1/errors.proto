@@ -75,6 +75,8 @@ enum ErrorCode {
   ERROR_CODE_PROMPTS_FULL = 306;
   // A prompt's file, or the folder for a new one, can't be written.
   ERROR_CODE_PROMPT_WRITE_FAILED = 307;
+  // Another chat of the same assistant already has the name.
+  ERROR_CODE_CHAT_NAME_TAKEN = 308;
   // No voice-embedding model is installed.
   ERROR_CODE_SPEAKER_MODEL_MISSING = 500;
   ERROR_CODE_SPEAKER_ALREADY_ENROLLED = 501;

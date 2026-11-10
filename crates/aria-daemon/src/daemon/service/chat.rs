@@ -9,11 +9,11 @@ use tonic::{Request, Response, Status};
 
 use super::super::chat::ChatError;
 use crate::ipc::wire;
-use aria_assistant::chat::{ChatRequest, DeliverCall, PromptCall, Ticket};
+use aria_assistant::chat::{AskCall, DeliverCall, PromptCall, Ticket};
 use aria_assistant::prompts::{PromptDraft, PromptSource};
-use aria_settings::PromptId;
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::{ChatKey, ChatName, PromptId};
 
 use super::super::chat::{ChatHandle, ChatRuntime};
 use super::super::host::DaemonLifetime;
@@ -84,17 +84,17 @@ impl wire::chat_service_server::ChatService for ChatRpc {
     ) -> Result<Response<wire::AskResponse>, Status> {
         const METHOD: &str = "ChatService/Ask";
         self.require_persistent(METHOD)?;
-        let request = ChatRequest::try_from(request.into_inner())
+        let call = AskCall::try_from(request.into_inner())
             .map_err(|error| invalid_request(METHOD, &error))?;
 
         let runtime = Arc::clone(&self.runtime);
-        let request = super::blocking(METHOD, move || runtime.prepare_ask(request))
+        let request = super::blocking(METHOD, move || runtime.prepare_ask(call))
             .await?
             .map_err(|error| super::failed(METHOD, &error))?;
         match self.chat.ask(request).await {
-            Ok(ticket) => {
+            Ok((ticket, chat)) => {
                 tracing::info!(method = METHOD, status = "ok", %ticket, "request served");
-                Ok(Response::new(ticket.into()))
+                Ok(Response::new((ticket, chat).into()))
             }
             Err(error) => Err(super::failed(METHOD, &error)),
         }
@@ -115,6 +115,81 @@ impl wire::chat_service_server::ChatService for ChatRpc {
             }
             Err(error) => Err(super::failed(METHOD, &error)),
         }
+    }
+
+    async fn list_pending_asks(
+        &self,
+        request: Request<wire::ListPendingAsksRequest>,
+    ) -> Result<Response<wire::ListPendingAsksResponse>, Status> {
+        const METHOD: &str = "ChatService/ListPendingAsks";
+        self.require_persistent(METHOD)?;
+        let chat = ChatKey::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        let asks = self
+            .chat
+            .pending(&chat)
+            .await
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new(asks.into()))
+    }
+
+    async fn cancel_chat(
+        &self,
+        request: Request<wire::CancelChatRequest>,
+    ) -> Result<Response<wire::CancelChatResponse>, Status> {
+        const METHOD: &str = "ChatService/CancelChat";
+        self.require_persistent(METHOD)?;
+        let chat = ChatKey::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        let cancelled_count = self
+            .chat
+            .cancel_chat(&chat)
+            .await
+            .map_err(|error| super::failed(METHOD, &error))?;
+        tracing::info!(
+            method = METHOD,
+            status = "ok",
+            cancelled_count,
+            "request served"
+        );
+        Ok(Response::new(wire::CancelChatResponse { cancelled_count }))
+    }
+
+    /// Runs through the chat actor, which refuses it while the chat
+    /// still replies.
+    async fn delete_chat(
+        &self,
+        request: Request<wire::DeleteChatRequest>,
+    ) -> Result<Response<wire::DeleteChatResponse>, Status> {
+        const METHOD: &str = "ChatService/DeleteChat";
+        let chat = ChatKey::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        let deleted = self
+            .chat
+            .delete_chat(chat)
+            .await
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new(wire::DeleteChatResponse { deleted }))
+    }
+
+    /// Runs through the chat actor, which refuses it while either name has
+    /// an ask.
+    async fn rename_chat(
+        &self,
+        request: Request<wire::RenameChatRequest>,
+    ) -> Result<Response<wire::RenameChatResponse>, Status> {
+        const METHOD: &str = "ChatService/RenameChat";
+        let (chat, name) = <(ChatKey, ChatName)>::try_from(request.into_inner())
+            .map_err(|error| invalid_request(METHOD, &error))?;
+        let renamed = self
+            .chat
+            .rename_chat(chat, name)
+            .await
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new(renamed.into()))
     }
 
     async fn run_prompt(
@@ -261,6 +336,26 @@ mod tests {
         (runtime, rpc)
     }
 
+    /// A chat service whose actor runs until `shutdown` is cancelled.
+    struct Harness {
+        rpc: ChatRpc,
+        shutdown: tokio_util::sync::CancellationToken,
+        actor: tokio::task::JoinHandle<()>,
+    }
+
+    fn harness(runtime: ChatRuntime, lifetime: DaemonLifetime) -> Harness {
+        let runtime = Arc::new(runtime);
+        let (handle, actor) = crate::daemon::chat::channel(Arc::clone(&runtime));
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let actor = tokio::spawn(actor.run(shutdown.clone()));
+        let rpc = ChatRpc::new(handle, runtime, lifetime, shutdown.clone());
+        Harness {
+            rpc,
+            shutdown,
+            actor,
+        }
+    }
+
     fn save_request(id: Option<&str>, instructions: &str) -> wire::SavePromptRequest {
         wire::SavePromptRequest {
             id: id.map(str::to_owned),
@@ -315,18 +410,10 @@ mod tests {
             runtime_with(directory.path(), logging_assistants(&Arc::default()));
         runtime.assistant_overrides.as_mut().unwrap().deliver =
             Some(Box::new(|_call, _cancel| Ok(DeliveryOutcome::Copied)));
-        let runtime = Arc::new(runtime);
-        let (handle, actor) = crate::daemon::chat::channel(Arc::clone(&runtime));
-        let shutdown = tokio_util::sync::CancellationToken::new();
-        let actor = tokio::spawn(actor.run(shutdown.clone()));
-        let rpc = ChatRpc::new(
-            handle,
-            Arc::clone(&runtime),
-            DaemonLifetime::OnDemand,
-            shutdown.clone(),
-        );
+        let harness = harness(runtime, DaemonLifetime::OnDemand);
 
-        let delivered = rpc
+        let delivered = harness
+            .rpc
             .deliver(tonic::Request::new(wire::DeliverRequest {
                 text: "Polished.".to_owned(),
                 application_id: String::new(),
@@ -337,8 +424,116 @@ mod tests {
             .into_inner();
 
         assert_eq!(delivered.outcome(), wire::DeliveryOutcome::Copied);
-        shutdown.cancel();
-        actor.await.expect("the actor drains");
+        harness.shutdown.cancel();
+        harness.actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test]
+    async fn an_ask_answers_with_the_chat_it_started_or_named() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let (runtime, _events) =
+            runtime_with(directory.path(), logging_assistants(&Arc::default()));
+        let harness = harness(runtime, DaemonLifetime::Persistent);
+        let workdir = directory.path().to_string_lossy().into_owned();
+        let ask = |chat: wire::ask_request::Chat| {
+            let request = wire::AskRequest {
+                text: "hi".to_owned(),
+                assistant_id: wire::AssistantId::Codex.into(),
+                chat: Some(chat),
+                ..Default::default()
+            };
+            let asked = harness.rpc.ask(tonic::Request::new(request));
+            async { asked.await.expect("the ask is taken").into_inner().chat }
+        };
+        let started = || {
+            wire::ask_request::Chat::Start(wire::StartChat {
+                workdir: workdir.clone(),
+            })
+        };
+
+        let first = ask(started()).await.expect("a started ask names its chat");
+        let second = ask(started()).await.expect("a started ask names its chat");
+        let named = ask(wire::ask_request::Chat::Named(wire::NamedChat {
+            name: first.name.clone(),
+            ..Default::default()
+        }))
+        .await;
+        let folder = ask(wire::ask_request::Chat::Folder(wire::FolderChat {
+            workdir: workdir.clone(),
+            new_session: false,
+        }))
+        .await;
+
+        assert_eq!(first.assistant_id, wire::AssistantId::Codex as i32);
+        assert_eq!(first.name, "hi", "named from its first question");
+        assert_eq!(second.name, "hi 2", "a taken name takes a number");
+        assert_eq!(named, Some(first));
+        assert_eq!(folder, None, "a folder's own chat has no key");
+        harness.shutdown.cancel();
+        harness.actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test]
+    async fn the_chat_service_deletes_a_chat_and_refuses_one_it_cannot_name() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let (runtime, _events) =
+            runtime_with(directory.path(), logging_assistants(&Arc::default()));
+        let harness = harness(runtime, DaemonLifetime::OnDemand);
+        let delete = |chat| {
+            harness
+                .rpc
+                .delete_chat(tonic::Request::new(wire::DeleteChatRequest { chat }))
+        };
+
+        let missing = delete(Some(wire::ChatKey {
+            assistant_id: wire::AssistantId::Codex.into(),
+            name: "plans".to_owned(),
+        }))
+        .await;
+        let unnamed = delete(None).await.expect_err("names no chat");
+
+        missing.expect("a missing chat deletes");
+        assert_eq!(
+            crate::ipc::protocol::rpc_failure(&unnamed)
+                .expect("a verdict")
+                .code,
+            RpcErrorCode::InvalidRequest
+        );
+        harness.shutdown.cancel();
+        harness.actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test]
+    async fn an_on_demand_daemon_neither_lists_nor_cancels_a_chats_asks() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let (_runtime, rpc) = rpc(directory.path());
+        let chat = || {
+            Some(wire::ChatKey {
+                assistant_id: wire::AssistantId::Codex.into(),
+                name: "plans".to_owned(),
+            })
+        };
+        let code = |refused: tonic::Status| {
+            crate::ipc::protocol::rpc_failure(&refused)
+                .expect("a verdict")
+                .code
+        };
+
+        let listed = rpc
+            .list_pending_asks(tonic::Request::new(wire::ListPendingAsksRequest {
+                chat: chat(),
+            }))
+            .await
+            .expect_err("an on-demand daemon keeps no asks");
+        let cancelled = rpc
+            .cancel_chat(tonic::Request::new(wire::CancelChatRequest {
+                chat: chat(),
+            }))
+            .await
+            .expect_err("an on-demand daemon keeps no asks");
+
+        assert_eq!(code(listed), RpcErrorCode::Unsupported);
+        assert_eq!(code(cancelled), RpcErrorCode::Unsupported);
     }
 
     #[tokio::test]

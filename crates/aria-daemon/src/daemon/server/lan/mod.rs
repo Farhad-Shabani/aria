@@ -753,6 +753,7 @@ mod tests {
                 query: String::new(),
                 before_id: None,
                 limit: 10,
+                collapse_chats: false,
             })
             .await
             .expect_err("history must not be reachable over TCP");

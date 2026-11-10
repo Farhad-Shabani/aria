@@ -74,6 +74,58 @@ public enum Aria_Daemon_V1_ChatService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "ListPendingAsks" metadata.
+        public enum ListPendingAsks: Sendable {
+            /// Request type for "ListPendingAsks".
+            public typealias Input = Aria_Daemon_V1_ListPendingAsksRequest
+            /// Response type for "ListPendingAsks".
+            public typealias Output = Aria_Daemon_V1_ListPendingAsksResponse
+            /// Descriptor for "ListPendingAsks".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "ListPendingAsks",
+                type: .unary
+            )
+        }
+        /// Namespace for "CancelChat" metadata.
+        public enum CancelChat: Sendable {
+            /// Request type for "CancelChat".
+            public typealias Input = Aria_Daemon_V1_CancelChatRequest
+            /// Response type for "CancelChat".
+            public typealias Output = Aria_Daemon_V1_CancelChatResponse
+            /// Descriptor for "CancelChat".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "CancelChat",
+                type: .unary
+            )
+        }
+        /// Namespace for "DeleteChat" metadata.
+        public enum DeleteChat: Sendable {
+            /// Request type for "DeleteChat".
+            public typealias Input = Aria_Daemon_V1_DeleteChatRequest
+            /// Response type for "DeleteChat".
+            public typealias Output = Aria_Daemon_V1_DeleteChatResponse
+            /// Descriptor for "DeleteChat".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "DeleteChat",
+                type: .unary
+            )
+        }
+        /// Namespace for "RenameChat" metadata.
+        public enum RenameChat: Sendable {
+            /// Request type for "RenameChat".
+            public typealias Input = Aria_Daemon_V1_RenameChatRequest
+            /// Response type for "RenameChat".
+            public typealias Output = Aria_Daemon_V1_RenameChatResponse
+            /// Descriptor for "RenameChat".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.ChatService"),
+                method: "RenameChat",
+                type: .unary
+            )
+        }
         /// Namespace for "Resolve" metadata.
         public enum Resolve: Sendable {
             /// Request type for "Resolve".
@@ -158,6 +210,10 @@ public enum Aria_Daemon_V1_ChatService: Sendable {
             ListModels.descriptor,
             Ask.descriptor,
             Cancel.descriptor,
+            ListPendingAsks.descriptor,
+            CancelChat.descriptor,
+            DeleteChat.descriptor,
+            RenameChat.descriptor,
             Resolve.descriptor,
             RunPrompt.descriptor,
             SavePrompt.descriptor,
@@ -225,9 +281,9 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Send one question to an assistant. Answers with a ticket as soon as the chat
-        /// > is taken; the reply follows as a `ChatEvent` under that ticket. Chats
-        /// > run side by side, except that chats on one conversation (assistant and
+        /// > Send one question to an assistant. Answers with a ticket as soon as the ask
+        /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
+        /// > run side by side, except that asks on one chat (assistant and
         /// > session) take turns. Served only by a persistent daemon; an on-demand
         /// > daemon refuses with UNSUPPORTED.
         ///
@@ -252,9 +308,9 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Stop a chat that is running or still waiting its turn. Its assistant is
-        /// > killed and the chat ends as a FAILED event with CANCELLED; the
-        /// > conversation stays resumable.
+        /// > Stop an ask that is running or still waiting its turn. Its assistant is
+        /// > killed and the ask ends as a FAILED event with CANCELLED; the
+        /// > chat stays resumable.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_CancelAskRequest` message.
@@ -273,11 +329,115 @@ extension Aria_Daemon_V1_ChatService {
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelAskResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
+        /// Call the "ListPendingAsks" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > A chat's asks still running or waiting their turn, in the order
+        /// > they run. Served only by a persistent daemon, on the unix socket.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListPendingAsksRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListPendingAsksRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListPendingAsksResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func listPendingAsks<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListPendingAsksRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListPendingAsksRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListPendingAsksResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListPendingAsksResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "CancelChat" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Stop a chat's running ask and every ask waiting behind it. Each
+        /// > ends as a FAILED event with CANCELLED, as `Cancel` ends one, and the
+        /// > chat stays resumable. Served only by a persistent daemon, on the
+        /// > unix socket.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_CancelChatRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_CancelChatRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_CancelChatResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func cancelChat<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_CancelChatRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_CancelChatRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_CancelChatResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelChatResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "DeleteChat" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete a chat's asks and their prompt results from history, and
+        /// > forget what continues the chat and its folder, so its next ask
+        /// > starts a new one. A missing chat succeeds. An ask on it still
+        /// > running or waiting refuses the delete with BUSY. The assistant keeps its
+        /// > own records.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_DeleteChatRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_DeleteChatRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_DeleteChatResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func deleteChat<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_DeleteChatRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_DeleteChatRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_DeleteChatResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DeleteChatResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "RenameChat" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Give a chat a new name. Its asks, folder, and assistant session follow
+        /// > it. A name another chat of the same assistant has refuses with
+        /// > CHAT_NAME_TAKEN, and a chat the daemon doesn't know is INVALID_REQUEST.
+        /// > An ask on either name running or waiting refuses with BUSY. Served only
+        /// > on the unix socket.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RenameChatRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RenameChatRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_RenameChatResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func renameChat<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RenameChatRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RenameChatRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_RenameChatResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RenameChatResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
         /// Call the "Resolve" method.
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Where a chat goes, for a client with no working directory of its own.
+        /// > Where an ask goes, for a client with no working directory of its own.
         /// > Answers with the focused project, else the configured one.
         ///
         /// - Parameters:
@@ -303,7 +463,7 @@ extension Aria_Daemon_V1_ChatService {
         /// >
         /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
         /// > into the app the request names, else the one in front. One fresh
-        /// > assistant run with no conversation, memory, or tools. Progress and the
+        /// > assistant run with no chat, memory, or tools. Progress and the
         /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
         /// > `Cancel` stops it.
         ///
@@ -407,7 +567,7 @@ extension Aria_Daemon_V1_ChatService {
         /// >
         /// > Type text the caller already has, such as a prompt result it showed
         /// > first, into the app the request names, else the one in front. Waits for
-        /// > a chat, prompt run, or other Deliver still typing, but never for an
+        /// > an ask, prompt run, or other Deliver still typing, but never for an
         /// > assistant's run. It answers once its own typing ends. A caller that
         /// > goes away first cancels it.
         ///
@@ -509,9 +669,9 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Send one question to an assistant. Answers with a ticket as soon as the chat
-        /// > is taken; the reply follows as a `ChatEvent` under that ticket. Chats
-        /// > run side by side, except that chats on one conversation (assistant and
+        /// > Send one question to an assistant. Answers with a ticket as soon as the ask
+        /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
+        /// > run side by side, except that asks on one chat (assistant and
         /// > session) take turns. Served only by a persistent daemon; an on-demand
         /// > daemon refuses with UNSUPPORTED.
         ///
@@ -547,9 +707,9 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Stop a chat that is running or still waiting its turn. Its assistant is
-        /// > killed and the chat ends as a FAILED event with CANCELLED; the
-        /// > conversation stays resumable.
+        /// > Stop an ask that is running or still waiting its turn. Its assistant is
+        /// > killed and the ask ends as a FAILED event with CANCELLED; the
+        /// > chat stays resumable.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_CancelAskRequest` message.
@@ -579,11 +739,159 @@ extension Aria_Daemon_V1_ChatService {
             )
         }
 
+        /// Call the "ListPendingAsks" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > A chat's asks still running or waiting their turn, in the order
+        /// > they run. Served only by a persistent daemon, on the unix socket.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListPendingAsksRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListPendingAsksRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListPendingAsksResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func listPendingAsks<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListPendingAsksRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListPendingAsksRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListPendingAsksResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListPendingAsksResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.ListPendingAsks.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "CancelChat" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Stop a chat's running ask and every ask waiting behind it. Each
+        /// > ends as a FAILED event with CANCELLED, as `Cancel` ends one, and the
+        /// > chat stays resumable. Served only by a persistent daemon, on the
+        /// > unix socket.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_CancelChatRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_CancelChatRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_CancelChatResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func cancelChat<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_CancelChatRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_CancelChatRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_CancelChatResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelChatResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.CancelChat.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "DeleteChat" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete a chat's asks and their prompt results from history, and
+        /// > forget what continues the chat and its folder, so its next ask
+        /// > starts a new one. A missing chat succeeds. An ask on it still
+        /// > running or waiting refuses the delete with BUSY. The assistant keeps its
+        /// > own records.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_DeleteChatRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_DeleteChatRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_DeleteChatResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func deleteChat<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_DeleteChatRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_DeleteChatRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_DeleteChatResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DeleteChatResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.DeleteChat.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "RenameChat" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Give a chat a new name. Its asks, folder, and assistant session follow
+        /// > it. A name another chat of the same assistant has refuses with
+        /// > CHAT_NAME_TAKEN, and a chat the daemon doesn't know is INVALID_REQUEST.
+        /// > An ask on either name running or waiting refuses with BUSY. Served only
+        /// > on the unix socket.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RenameChatRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RenameChatRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_RenameChatResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func renameChat<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RenameChatRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RenameChatRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_RenameChatResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RenameChatResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_ChatService.Method.RenameChat.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
         /// Call the "Resolve" method.
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Where a chat goes, for a client with no working directory of its own.
+        /// > Where an ask goes, for a client with no working directory of its own.
         /// > Answers with the focused project, else the configured one.
         ///
         /// - Parameters:
@@ -620,7 +928,7 @@ extension Aria_Daemon_V1_ChatService {
         /// >
         /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
         /// > into the app the request names, else the one in front. One fresh
-        /// > assistant run with no conversation, memory, or tools. Progress and the
+        /// > assistant run with no chat, memory, or tools. Progress and the
         /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
         /// > `Cancel` stops it.
         ///
@@ -768,7 +1076,7 @@ extension Aria_Daemon_V1_ChatService {
         /// >
         /// > Type text the caller already has, such as a prompt result it showed
         /// > first, into the app the request names, else the one in front. Waits for
-        /// > a chat, prompt run, or other Deliver still typing, but never for an
+        /// > an ask, prompt run, or other Deliver still typing, but never for an
         /// > assistant's run. It answers once its own typing ends. A caller that
         /// > goes away first cancels it.
         ///
@@ -859,9 +1167,9 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Send one question to an assistant. Answers with a ticket as soon as the chat
-    /// > is taken; the reply follows as a `ChatEvent` under that ticket. Chats
-    /// > run side by side, except that chats on one conversation (assistant and
+    /// > Send one question to an assistant. Answers with a ticket as soon as the ask
+    /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
+    /// > run side by side, except that asks on one chat (assistant and
     /// > session) take turns. Served only by a persistent daemon; an on-demand
     /// > daemon refuses with UNSUPPORTED.
     ///
@@ -892,9 +1200,9 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Stop a chat that is running or still waiting its turn. Its assistant is
-    /// > killed and the chat ends as a FAILED event with CANCELLED; the
-    /// > conversation stays resumable.
+    /// > Stop an ask that is running or still waiting its turn. Its assistant is
+    /// > killed and the ask ends as a FAILED event with CANCELLED; the
+    /// > chat stays resumable.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_CancelAskRequest` message.
@@ -919,11 +1227,139 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
         )
     }
 
+    /// Call the "ListPendingAsks" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > A chat's asks still running or waiting their turn, in the order
+    /// > they run. Served only by a persistent daemon, on the unix socket.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_ListPendingAsksRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listPendingAsks<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListPendingAsksRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListPendingAsksResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.listPendingAsks(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ListPendingAsksRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ListPendingAsksResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "CancelChat" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Stop a chat's running ask and every ask waiting behind it. Each
+    /// > ends as a FAILED event with CANCELLED, as `Cancel` ends one, and the
+    /// > chat stays resumable. Served only by a persistent daemon, on the
+    /// > unix socket.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_CancelChatRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func cancelChat<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_CancelChatRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelChatResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.cancelChat(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_CancelChatRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_CancelChatResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "DeleteChat" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Delete a chat's asks and their prompt results from history, and
+    /// > forget what continues the chat and its folder, so its next ask
+    /// > starts a new one. A missing chat succeeds. An ask on it still
+    /// > running or waiting refuses the delete with BUSY. The assistant keeps its
+    /// > own records.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_DeleteChatRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func deleteChat<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_DeleteChatRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DeleteChatResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.deleteChat(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_DeleteChatRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_DeleteChatResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RenameChat" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Give a chat a new name. Its asks, folder, and assistant session follow
+    /// > it. A name another chat of the same assistant has refuses with
+    /// > CHAT_NAME_TAKEN, and a chat the daemon doesn't know is INVALID_REQUEST.
+    /// > An ask on either name running or waiting refuses with BUSY. Served only
+    /// > on the unix socket.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_RenameChatRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func renameChat<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_RenameChatRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RenameChatResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.renameChat(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RenameChatRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_RenameChatResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Resolve" method.
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Where a chat goes, for a client with no working directory of its own.
+    /// > Where an ask goes, for a client with no working directory of its own.
     /// > Answers with the focused project, else the configured one.
     ///
     /// - Parameters:
@@ -955,7 +1391,7 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     /// >
     /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
     /// > into the app the request names, else the one in front. One fresh
-    /// > assistant run with no conversation, memory, or tools. Progress and the
+    /// > assistant run with no chat, memory, or tools. Progress and the
     /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
     /// > `Cancel` stops it.
     ///
@@ -1083,7 +1519,7 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     /// >
     /// > Type text the caller already has, such as a prompt result it showed
     /// > first, into the app the request names, else the one in front. Waits for
-    /// > a chat, prompt run, or other Deliver still typing, but never for an
+    /// > an ask, prompt run, or other Deliver still typing, but never for an
     /// > assistant's run. It answers once its own typing ends. A caller that
     /// > goes away first cancels it.
     ///
@@ -1176,9 +1612,9 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Send one question to an assistant. Answers with a ticket as soon as the chat
-    /// > is taken; the reply follows as a `ChatEvent` under that ticket. Chats
-    /// > run side by side, except that chats on one conversation (assistant and
+    /// > Send one question to an assistant. Answers with a ticket as soon as the ask
+    /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
+    /// > run side by side, except that asks on one chat (assistant and
     /// > session) take turns. Served only by a persistent daemon; an on-demand
     /// > daemon refuses with UNSUPPORTED.
     ///
@@ -1213,9 +1649,9 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Stop a chat that is running or still waiting its turn. Its assistant is
-    /// > killed and the chat ends as a FAILED event with CANCELLED; the
-    /// > conversation stays resumable.
+    /// > Stop an ask that is running or still waiting its turn. Its assistant is
+    /// > killed and the ask ends as a FAILED event with CANCELLED; the
+    /// > chat stays resumable.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -1244,11 +1680,155 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
         )
     }
 
+    /// Call the "ListPendingAsks" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > A chat's asks still running or waiting their turn, in the order
+    /// > they run. Served only by a persistent daemon, on the unix socket.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listPendingAsks<Result>(
+        _ message: Aria_Daemon_V1_ListPendingAsksRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListPendingAsksResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_ListPendingAsksRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.listPendingAsks(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "CancelChat" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Stop a chat's running ask and every ask waiting behind it. Each
+    /// > ends as a FAILED event with CANCELLED, as `Cancel` ends one, and the
+    /// > chat stays resumable. Served only by a persistent daemon, on the
+    /// > unix socket.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func cancelChat<Result>(
+        _ message: Aria_Daemon_V1_CancelChatRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelChatResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_CancelChatRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.cancelChat(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "DeleteChat" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Delete a chat's asks and their prompt results from history, and
+    /// > forget what continues the chat and its folder, so its next ask
+    /// > starts a new one. A missing chat succeeds. An ask on it still
+    /// > running or waiting refuses the delete with BUSY. The assistant keeps its
+    /// > own records.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func deleteChat<Result>(
+        _ message: Aria_Daemon_V1_DeleteChatRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DeleteChatResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_DeleteChatRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.deleteChat(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RenameChat" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Give a chat a new name. Its asks, folder, and assistant session follow
+    /// > it. A name another chat of the same assistant has refuses with
+    /// > CHAT_NAME_TAKEN, and a chat the daemon doesn't know is INVALID_REQUEST.
+    /// > An ask on either name running or waiting refuses with BUSY. Served only
+    /// > on the unix socket.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func renameChat<Result>(
+        _ message: Aria_Daemon_V1_RenameChatRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RenameChatResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_RenameChatRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.renameChat(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Resolve" method.
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Where a chat goes, for a client with no working directory of its own.
+    /// > Where an ask goes, for a client with no working directory of its own.
     /// > Answers with the focused project, else the configured one.
     ///
     /// - Parameters:
@@ -1284,7 +1864,7 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     /// >
     /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
     /// > into the app the request names, else the one in front. One fresh
-    /// > assistant run with no conversation, memory, or tools. Progress and the
+    /// > assistant run with no chat, memory, or tools. Progress and the
     /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
     /// > `Cancel` stops it.
     ///
@@ -1428,7 +2008,7 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     /// >
     /// > Type text the caller already has, such as a prompt result it showed
     /// > first, into the app the request names, else the one in front. Waits for
-    /// > a chat, prompt run, or other Deliver still typing, but never for an
+    /// > an ask, prompt run, or other Deliver still typing, but never for an
     /// > assistant's run. It answers once its own typing ends. A caller that
     /// > goes away first cancels it.
     ///

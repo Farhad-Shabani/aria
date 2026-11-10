@@ -1,5 +1,5 @@
 //! Assistants backed by one non-interactive CLI run per turn. The CLI keeps
-//! the conversation on disk; the session keeps only the id that continues it.
+//! the chat on disk; the session keeps only the id that continues it.
 //!
 //! Both run read-only, and Claude ignores the checkout's own settings,
 //! hooks, and MCP servers: a turn may land in a repo nobody has vetted.
@@ -313,7 +313,7 @@ impl Cli {
     }
 }
 
-/// A conversation carried by one CLI run per turn; `resume` is all that
+/// A chat carried by one CLI run per turn; `resume` is all that
 /// connects them.
 pub struct CliSession {
     cli: Cli,

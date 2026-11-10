@@ -1,11 +1,12 @@
 mod store;
 
-pub use store::{MAX_ENTRY_BYTES, NewChat, RetryLease, Store};
+pub use store::{MAX_ENTRY_BYTES, NewAsk, RetryLease, Store};
 
 use aria_primitives::Cause;
 use std::path::PathBuf;
 
 use aria_platform::delivery::Application;
+use aria_settings::ChatKey;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
 #[derive(Clone)]
@@ -32,14 +33,14 @@ impl HistoryEntry {
     pub fn dictation(&self) -> Option<&DictationContent> {
         match &self.content {
             HistoryContent::Dictation(dictation) => Some(dictation),
-            HistoryContent::SystemTranscription { .. } | HistoryContent::Chat { .. } => None,
+            HistoryContent::SystemTranscription { .. } | HistoryContent::Ask { .. } => None,
         }
     }
 
     pub fn dictation_mut(&mut self) -> Option<&mut DictationContent> {
         match &mut self.content {
             HistoryContent::Dictation(dictation) => Some(dictation),
-            HistoryContent::SystemTranscription { .. } | HistoryContent::Chat { .. } => None,
+            HistoryContent::SystemTranscription { .. } | HistoryContent::Ask { .. } => None,
         }
     }
 
@@ -54,7 +55,7 @@ impl HistoryEntry {
     /// transcript is refused, since the result is saved as covering the entry.
     pub fn prompt_text(self) -> Result<String, HistoryError> {
         let text = match self.content {
-            HistoryContent::Chat { reply } => reply,
+            HistoryContent::Ask { reply, .. } => reply,
             HistoryContent::SystemTranscription {
                 read: Some(TranscriptRead::Whole),
                 ..
@@ -96,8 +97,10 @@ pub enum HistoryContent {
         read: Option<TranscriptRead>,
     },
     /// A question to the assistant, in the entry's text, and its reply.
-    Chat {
+    Ask {
         reply: String,
+        /// `None` for an ask in its folder's own chat.
+        chat: Option<ChatKey>,
     },
 }
 
@@ -106,7 +109,14 @@ impl HistoryContent {
         match self {
             Self::Dictation(_) => HistorySection::Dictation,
             Self::SystemTranscription { .. } => HistorySection::SystemTranscription,
-            Self::Chat { .. } => HistorySection::Chat,
+            Self::Ask { .. } => HistorySection::Chat,
+        }
+    }
+
+    pub fn chat(&self) -> Option<&ChatKey> {
+        match self {
+            Self::Ask { chat, .. } => chat.as_ref(),
+            Self::Dictation(_) | Self::SystemTranscription { .. } => None,
         }
     }
 }
@@ -152,8 +162,8 @@ impl HistorySection {
     }
 }
 
-/// A name someone gave an entry: trimmed, not empty, at most `MAX_BYTES`, with no control
-/// characters.
+/// A name someone gave an entry or a chat: trimmed, not empty, at
+/// most `MAX_BYTES`, with no control characters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Title(String);
 
@@ -228,10 +238,31 @@ pub struct HistoryQuery {
     pub query: String,
     pub before_id: Option<u64>,
     pub limit: usize,
+    /// Shows each chat once, at its newest ask that matches.
+    pub collapse_chats: bool,
 }
 
 impl HistoryQuery {
     pub const MAX_QUERY_BYTES: usize = 256;
+}
+
+/// One page of a chat's asks: the newest before the cursor.
+pub struct ChatQuery {
+    pub chat: ChatKey,
+    pub before_id: Option<u64>,
+    pub limit: usize,
+}
+
+impl ChatQuery {
+    /// Ten asks at their largest fit a client's 4 MiB message limit.
+    pub const MAX_LIMIT: usize = 10;
+}
+
+pub struct ChatPage {
+    /// Oldest first, with their full text.
+    pub entries: Vec<HistoryEntry>,
+    /// Where the next, older page starts. `None` when no older ask is left.
+    pub next_before_id: Option<u64>,
 }
 
 pub struct HistoryPage {
@@ -282,6 +313,8 @@ pub enum HistoryError {
     TooLarge,
     #[error("history storage failed")]
     Storage(#[source] Cause),
+    #[error("another chat of that assistant already has the name")]
+    ChatNameTaken,
 }
 
 impl HistoryError {
@@ -315,6 +348,7 @@ impl From<&HistoryError> for RpcErrorCode {
             HistoryError::Cancelled => Self::Cancelled,
             HistoryError::Timeout => Self::OverallTimeout,
             HistoryError::Transcription { code, .. } => *code,
+            HistoryError::ChatNameTaken => Self::ChatNameTaken,
         }
     }
 }

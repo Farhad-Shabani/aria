@@ -1,6 +1,8 @@
 //! How a chat or a prompt run fails, settings included.
 
-use aria_assistant::chat::{AssistantError, InstructionsError, ProjectsError, SessionStoreError};
+use aria_assistant::chat::{
+    AssistantError, InstructionsError, ProjectsError, RecordError, StartError,
+};
 use aria_platform::delivery::DeliveryError;
 use aria_provider::ProviderError;
 use aria_settings::rpc::RpcErrorCode;
@@ -41,7 +43,10 @@ pub enum ChatError {
     Delivery(#[source] DeliveryError),
 
     #[error(transparent)]
-    Session(#[from] SessionStoreError),
+    Record(#[from] RecordError),
+
+    #[error(transparent)]
+    Start(#[from] StartError),
 
     #[error("failed to read shared settings")]
     Settings(#[source] aria_settings::StoreError),
@@ -55,6 +60,21 @@ pub enum ChatError {
     #[error("failed to read the history entry")]
     History(#[source] aria_voice::history::HistoryError),
 
+    #[error("the chat is still replying; try again once it's done")]
+    Replying,
+
+    #[error("no chat has that name yet; ask with a folder to start it")]
+    UnknownChat,
+
+    #[error("failed to delete the chat from history")]
+    DeleteChat(#[source] aria_voice::history::HistoryError),
+
+    #[error("another chat of that assistant already has the name")]
+    NameTaken,
+
+    #[error("failed to rename the chat in history")]
+    RenameChat(#[source] aria_voice::history::HistoryError),
+
     #[error(transparent)]
     Instructions(#[from] InstructionsError),
 }
@@ -62,7 +82,10 @@ pub enum ChatError {
 impl From<&ChatError> for RpcErrorCode {
     fn from(error: &ChatError) -> Self {
         match error {
-            ChatError::Session(_) | ChatError::Settings(_) => Self::Internal,
+            ChatError::Record(_)
+            | ChatError::Start(StartError::Record(_))
+            | ChatError::Settings(_) => Self::Internal,
+            ChatError::NameTaken | ChatError::Start(StartError::NoFreeName) => Self::ChatNameTaken,
             ChatError::Assistant(
                 AssistantError::Missing { .. }
                 | AssistantError::NotConfigured { .. }
@@ -79,11 +102,14 @@ impl From<&ChatError> for RpcErrorCode {
                 | ProviderError::InvalidResponse
                 | ProviderError::Truncated,
             )) => Self::AssistantFailed,
-            ChatError::Assistant(AssistantError::NoWorkdir(_)) | ChatError::PromptOff => {
-                Self::InvalidRequest
-            }
+            ChatError::Assistant(AssistantError::NoWorkdir(_))
+            | ChatError::PromptOff
+            | ChatError::UnknownChat => Self::InvalidRequest,
             ChatError::UnknownPrompt => Self::PromptMissing,
-            ChatError::History(error) => Self::from(error),
+            ChatError::History(error)
+            | ChatError::DeleteChat(error)
+            | ChatError::RenameChat(error) => Self::from(error),
+            ChatError::Replying => Self::Busy,
             ChatError::Instructions(_) => Self::PromptUnreadable,
             ChatError::Assistant(AssistantError::Timeout(_)) => Self::AssistantTimeout,
             ChatError::Assistant(AssistantError::SignedOut { .. }) => Self::AssistantSignedOut,

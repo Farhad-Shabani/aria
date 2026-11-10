@@ -3,8 +3,9 @@
 use super::wire;
 use crate::daemon::relay::{Invite, RelayStage};
 use aria_assistant::chat::{
-    AssistantModel, AssistantStatus, ChatReply, ChatRequest, ChatStage, ChatStageKind, ChatTarget,
-    DeliverCall, Instructions, PromptCall, PromptChoice, PromptInput, Step, Ticket,
+    AskCall, AssistantModel, AssistantStatus, ChatChoice, ChatReply, ChatStage, ChatStageKind,
+    ChatTarget, DeliverCall, Instructions, PendingAsk, PromptCall, PromptChoice, PromptInput, Step,
+    Ticket,
 };
 use aria_assistant::prompts::{NewSource, PromptContents, PromptDraft, PromptSource};
 use aria_kit::audio::{AutoStop, AutoStopError, SilenceDuration, SilenceDurationError};
@@ -16,10 +17,11 @@ use aria_platform::hotkey::{AriaKey, Combo};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{
-    ApplicationId, ApplicationOverride, ApplicationOverrides, Chord, ChordError, DeliveryMode,
-    DictationOverrides, Modifiers, OverrideError, Position, Prompt, PromptError, PromptId,
-    PromptKind, Prompts, Settings, SettingsFault, SettingsPatch, SettingsSnapshot, SettingsStatus,
-    Shortcut, StreamingSupport, StreamingUnavailable, StreamingUnavailableOutput, UpdateResult,
+    ApplicationId, ApplicationOverride, ApplicationOverrides, ChatKey, ChatName, ChatNameError,
+    Chord, ChordError, DeliveryMode, DictationOverrides, Modifiers, OverrideError, Position,
+    Prompt, PromptError, PromptId, PromptKind, Prompts, Settings, SettingsFault, SettingsPatch,
+    SettingsSnapshot, SettingsStatus, Shortcut, StreamingSupport, StreamingUnavailable,
+    StreamingUnavailableOutput, UpdateResult,
 };
 use aria_voice::dictation::{
     CaptionSnapshot, DeliveryOutcome, DictationEvent, DictationOutcome, DictationRequest,
@@ -29,7 +31,7 @@ use aria_voice::dictation::{
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
 };
-use aria_voice::history::{ClearHistoryResult, PromptResult};
+use aria_voice::history::{ChatPage, ChatQuery, ClearHistoryResult, PromptResult};
 use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use aria_voice::stt::LanguageCodeError;
@@ -170,7 +172,9 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::PromptsFull
         | RpcErrorCode::ApplicationExcluded
         | RpcErrorCode::SettingsInvalid => tonic::Code::FailedPrecondition,
-        RpcErrorCode::SpeakerAlreadyEnrolled => tonic::Code::AlreadyExists,
+        RpcErrorCode::SpeakerAlreadyEnrolled | RpcErrorCode::ChatNameTaken => {
+            tonic::Code::AlreadyExists
+        }
         RpcErrorCode::HistoryMissing
         | RpcErrorCode::PromptMissing
         | RpcErrorCode::SpeakerNotEnrolled
@@ -598,12 +602,14 @@ impl From<ChatStage> for wire::ChatEvent {
                     step: step_to_wire(step),
                     skill,
                     copied: false,
+                    history_entry_id: None,
                 }
             }
             ChatStageKind::Replied(ChatReply {
                 text,
                 delivery_error,
                 copied,
+                history_entry_id,
             }) => Self {
                 stage: wire::ChatStage::Replied as i32,
                 error_code: delivery_error.map_or(0, error_code_to_wire),
@@ -614,6 +620,7 @@ impl From<ChatStage> for wire::ChatEvent {
                 step: 0,
                 skill: String::new(),
                 copied,
+                history_entry_id,
             },
             ChatStageKind::Failed { code, message } => Self {
                 stage: wire::ChatStage::Failed as i32,
@@ -625,6 +632,7 @@ impl From<ChatStage> for wire::ChatEvent {
                 step: 0,
                 skill: String::new(),
                 copied: false,
+                history_entry_id: None,
             },
         }
     }
@@ -645,6 +653,7 @@ impl TryFrom<&wire::ChatEvent> for ChatStage {
                     code => Some(error_code_from_wire(code)?),
                 },
                 copied: event.copied,
+                history_entry_id: event.history_entry_id.map(history_id).transpose()?,
             }),
             Ok(wire::ChatStage::Failed) => ChatStageKind::Failed {
                 code: error_code_from_wire(event.error_code)?,
@@ -720,33 +729,51 @@ impl WireEnum for wire::AssistantId {
     }
 }
 
-impl From<ChatRequest> for wire::AskRequest {
-    fn from(request: ChatRequest) -> Self {
+impl From<AskCall> for wire::AskRequest {
+    fn from(call: AskCall) -> Self {
+        use wire::ask_request::Chat;
+        let path = |workdir: std::path::PathBuf| workdir.to_string_lossy().into_owned();
+        let chat = match call.chat {
+            ChatChoice::Folder {
+                workdir,
+                new_session,
+            } => Chat::Folder(wire::FolderChat {
+                workdir: path(workdir),
+                new_session,
+            }),
+            ChatChoice::Named {
+                name,
+                workdir,
+                new_session,
+            } => Chat::Named(wire::NamedChat {
+                name: name.as_str().to_owned(),
+                workdir: workdir.map(path).unwrap_or_default(),
+                new_session,
+            }),
+            ChatChoice::Start { workdir } => Chat::Start(wire::StartChat {
+                workdir: path(workdir),
+            }),
+        };
         Self {
-            text: request.text,
-            workdir: request.workdir.to_string_lossy().into_owned(),
-            new_conversation: request.new,
-            output_mode: request
+            assistant_id: wire::AssistantId::from(call.assistant_id) as i32,
+            model_id: call.model_id.unwrap_or_default(),
+            chat: Some(chat),
+            text: call.text,
+            own_voice: call.own_voice,
+            output_mode: call
                 .output_mode
                 .map(|mode| wire::OutputMode::from(mode) as i32),
-            assistant_id: wire::AssistantId::from(request.assistant_id) as i32,
-            model_id: request.model_id.unwrap_or_default(),
-            session_name: request.session.unwrap_or_default(),
-            own_voice: request.own_voice,
-            tap_cancels: request.tap_cancels,
+            tap_cancels: call.tap_cancels,
         }
     }
 }
 
-impl TryFrom<wire::AskRequest> for ChatRequest {
+impl TryFrom<wire::AskRequest> for AskCall {
     type Error = ProtocolError;
 
     fn try_from(request: wire::AskRequest) -> Result<Self, Self::Error> {
         if request.text.trim().is_empty() {
             return Err(ProtocolError::EmptyPrompt);
-        }
-        if request.workdir.is_empty() {
-            return Err(ProtocolError::MissingBody("assistant working directory"));
         }
         let output_mode = request
             .output_mode
@@ -756,18 +783,53 @@ impl TryFrom<wire::AskRequest> for ChatRequest {
         if !aria_settings::is_valid_model_id(&request.model_id) {
             return Err(ProtocolError::InvalidModelId);
         }
+        let chat = chat_choice(request.chat.ok_or(ProtocolError::MissingBody("chat"))?)?;
         Ok(Self {
             text: request.text,
-            workdir: request.workdir.into(),
+            chat,
             assistant_id,
             model_id: Some(request.model_id).filter(|model_id| !model_id.is_empty()),
-            session: Some(request.session_name).filter(|session| !session.is_empty()),
-            new: request.new_conversation,
             output_mode,
             own_voice: request.own_voice,
             tap_cancels: request.tap_cancels,
         })
     }
+}
+
+/// Empty is proto3's absent. A relative path would name a folder beside the
+/// daemon, not the caller, and a folder's own chat goes by its path,
+/// which only an absolute one keeps apart from chat names.
+fn ask_workdir(workdir: String) -> Result<Option<std::path::PathBuf>, ProtocolError> {
+    if workdir.is_empty() {
+        return Ok(None);
+    }
+    let workdir = std::path::PathBuf::from(workdir);
+    if !workdir.is_absolute() {
+        return Err(ProtocolError::RelativeWorkdir);
+    }
+    Ok(Some(workdir))
+}
+
+fn required_ask_workdir(workdir: String) -> Result<std::path::PathBuf, ProtocolError> {
+    ask_workdir(workdir)?.ok_or(ProtocolError::MissingBody("assistant working directory"))
+}
+
+fn chat_choice(chat: wire::ask_request::Chat) -> Result<ChatChoice, ProtocolError> {
+    use wire::ask_request::Chat;
+    Ok(match chat {
+        Chat::Folder(folder) => ChatChoice::Folder {
+            workdir: required_ask_workdir(folder.workdir)?,
+            new_session: folder.new_session,
+        },
+        Chat::Named(named) => ChatChoice::Named {
+            name: ChatName::new(&named.name)?,
+            workdir: ask_workdir(named.workdir)?,
+            new_session: named.new_session,
+        },
+        Chat::Start(start) => ChatChoice::Start {
+            workdir: required_ask_workdir(start.workdir)?,
+        },
+    })
 }
 
 impl From<PromptCall> for wire::RunPromptRequest {
@@ -985,13 +1047,62 @@ impl From<aria_platform::delivery::DeliveryOutcome> for wire::DeliverResponse {
 
 impl From<Ticket> for wire::AskResponse {
     fn from(ticket: Ticket) -> Self {
-        Self { ticket: ticket.0 }
+        (ticket, None).into()
+    }
+}
+
+impl From<(Ticket, Option<ChatKey>)> for wire::AskResponse {
+    fn from((ticket, chat): (Ticket, Option<ChatKey>)) -> Self {
+        Self {
+            ticket: ticket.0,
+            chat: chat.map(Into::into),
+        }
+    }
+}
+
+impl TryFrom<wire::AskResponse> for (Ticket, Option<ChatKey>) {
+    type Error = ProtocolError;
+
+    fn try_from(response: wire::AskResponse) -> Result<Self, Self::Error> {
+        let chat = response.chat.map(TryInto::try_into).transpose()?;
+        Ok((Ticket(response.ticket), chat))
     }
 }
 
 impl From<wire::AskResponse> for Ticket {
     fn from(response: wire::AskResponse) -> Self {
         Self(response.ticket)
+    }
+}
+
+impl TryFrom<wire::ListPendingAsksRequest> for ChatKey {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::ListPendingAsksRequest) -> Result<Self, Self::Error> {
+        required_chat(request.chat)
+    }
+}
+
+impl TryFrom<wire::CancelChatRequest> for ChatKey {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::CancelChatRequest) -> Result<Self, Self::Error> {
+        required_chat(request.chat)
+    }
+}
+
+impl From<Vec<PendingAsk>> for wire::ListPendingAsksResponse {
+    fn from(asks: Vec<PendingAsk>) -> Self {
+        Self {
+            asks: asks
+                .into_iter()
+                .map(|ask| wire::PendingAsk {
+                    ticket: ask.ticket.0,
+                    text: ask.text,
+                    running: ask.running,
+                })
+                .collect(),
+        }
     }
 }
 
@@ -1614,7 +1725,74 @@ impl TryFrom<wire::ListHistoryRequest> for aria_voice::history::HistoryQuery {
             query: request.query,
             before_id: request.before_id,
             limit: request.limit as usize,
+            collapse_chats: request.collapse_chats,
         })
+    }
+}
+
+impl TryFrom<wire::GetChatRequest> for ChatQuery {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::GetChatRequest) -> Result<Self, Self::Error> {
+        let limit = request.limit as usize;
+        if !(1..=Self::MAX_LIMIT).contains(&limit) {
+            return Err(ProtocolError::InvalidHistory("limit"));
+        }
+        Ok(Self {
+            chat: required_chat(request.chat)?,
+            before_id: request.before_id.map(history_id).transpose()?,
+            limit,
+        })
+    }
+}
+
+impl From<ChatPage> for wire::GetChatResponse {
+    fn from(page: ChatPage) -> Self {
+        Self {
+            entries: page.entries.into_iter().map(Into::into).collect(),
+            next_before_id: page.next_before_id,
+        }
+    }
+}
+
+impl From<ChatQuery> for wire::GetChatRequest {
+    fn from(query: ChatQuery) -> Self {
+        Self {
+            chat: Some(query.chat.into()),
+            before_id: query.before_id,
+            limit: u32::try_from(query.limit).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+impl TryFrom<wire::GetChatResponse> for ChatPage {
+    type Error = ProtocolError;
+
+    fn try_from(page: wire::GetChatResponse) -> Result<Self, Self::Error> {
+        Ok(Self {
+            entries: page
+                .entries
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<_, _>>()?,
+            next_before_id: history_cursor(page.next_before_id)?,
+        })
+    }
+}
+
+impl From<ChatKey> for wire::DeleteChatRequest {
+    fn from(chat: ChatKey) -> Self {
+        Self {
+            chat: Some(chat.into()),
+        }
+    }
+}
+
+impl TryFrom<wire::DeleteChatRequest> for ChatKey {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::DeleteChatRequest) -> Result<Self, Self::Error> {
+        required_chat(request.chat)
     }
 }
 
@@ -1657,30 +1835,95 @@ impl TryFrom<wire::RenameHistoryRequest> for (u64, Option<aria_voice::history::T
     type Error = ProtocolError;
 
     fn try_from(request: wire::RenameHistoryRequest) -> Result<Self, Self::Error> {
-        let title = request
-            .title
-            .as_deref()
-            .map(aria_voice::history::Title::new)
-            .transpose()
-            .map_err(|_| ProtocolError::InvalidHistory("title"))?;
+        let title = history_title(request.title.as_deref(), "title")?;
         Ok((history_id(request.id)?, title))
+    }
+}
+
+impl From<(ChatKey, &ChatName)> for wire::RenameChatRequest {
+    fn from((chat, name): (ChatKey, &ChatName)) -> Self {
+        Self {
+            chat: Some(chat.into()),
+            name: name.as_str().to_owned(),
+        }
+    }
+}
+
+impl TryFrom<wire::RenameChatRequest> for (ChatKey, ChatName) {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::RenameChatRequest) -> Result<Self, Self::Error> {
+        Ok((required_chat(request.chat)?, ChatName::new(&request.name)?))
+    }
+}
+
+impl From<ChatKey> for wire::RenameChatResponse {
+    fn from(chat: ChatKey) -> Self {
+        Self {
+            chat: Some(chat.into()),
+        }
+    }
+}
+
+impl TryFrom<wire::RenameChatResponse> for ChatKey {
+    type Error = ProtocolError;
+
+    fn try_from(response: wire::RenameChatResponse) -> Result<Self, Self::Error> {
+        required_chat(response.chat)
+    }
+}
+
+fn history_title(
+    title: Option<&str>,
+    field: &'static str,
+) -> Result<Option<aria_voice::history::Title>, ProtocolError> {
+    title
+        .map(aria_voice::history::Title::new)
+        .transpose()
+        .map_err(|_| ProtocolError::InvalidHistory(field))
+}
+
+impl From<ChatKey> for wire::ChatKey {
+    fn from(chat: ChatKey) -> Self {
+        Self {
+            assistant_id: wire::AssistantId::from(chat.assistant_id) as i32,
+            name: chat.name.as_str().to_owned(),
+        }
+    }
+}
+
+/// A request or response whose chat is required.
+fn required_chat(chat: Option<wire::ChatKey>) -> Result<ChatKey, ProtocolError> {
+    chat.ok_or(ProtocolError::MissingBody("chat"))?.try_into()
+}
+
+impl TryFrom<wire::ChatKey> for ChatKey {
+    type Error = ProtocolError;
+
+    fn try_from(chat: wire::ChatKey) -> Result<Self, Self::Error> {
+        Ok(Self {
+            assistant_id: decode_enum::<wire::AssistantId>(chat.assistant_id, "assistant_id")?,
+            name: ChatName::new(&chat.name)?,
+        })
     }
 }
 
 fn history_content(
     section: i32,
     details: Option<wire::history_entry::Details>,
+    chat: Option<wire::ChatKey>,
     dictation: aria_voice::history::DictationContent,
 ) -> Result<aria_voice::history::HistoryContent, ProtocolError> {
     use aria_voice::history::{HistoryContent, HistorySection, TranscriptRead};
     use wire::history_entry::Details;
+    let chat = chat.map(ChatKey::try_from).transpose()?;
     // A daemon from before sections sends none, and it kept only dictations.
-    if section == wire::HistorySection::Unspecified as i32 && details.is_none() {
+    if section == wire::HistorySection::Unspecified as i32 && details.is_none() && chat.is_none() {
         return Ok(HistoryContent::Dictation(dictation));
     }
-    match (history_section(section)?, details) {
-        (HistorySection::Dictation, None) => Ok(HistoryContent::Dictation(dictation)),
-        (HistorySection::SystemTranscription, Some(Details::Transcript(transcript))) => {
+    match (history_section(section)?, details, chat) {
+        (HistorySection::Dictation, None, None) => Ok(HistoryContent::Dictation(dictation)),
+        (HistorySection::SystemTranscription, Some(Details::Transcript(transcript)), None) => {
             let read = match transcript.read.map(wire::HistoryTranscriptRead::try_from) {
                 None => None,
                 Some(Ok(wire::HistoryTranscriptRead::Whole)) => Some(TranscriptRead::Whole),
@@ -1697,7 +1940,9 @@ fn history_content(
                 read,
             })
         }
-        (HistorySection::Chat, Some(Details::Reply(reply))) => Ok(HistoryContent::Chat { reply }),
+        (HistorySection::Chat, Some(Details::Reply(reply)), chat) => {
+            Ok(HistoryContent::Ask { reply, chat })
+        }
         _ => Err(ProtocolError::InvalidHistory("details")),
     }
 }
@@ -1708,7 +1953,7 @@ fn history_details(
     use aria_voice::history::{HistoryContent, TranscriptRead};
     match content {
         HistoryContent::Dictation(_) => None,
-        HistoryContent::Chat { reply } => Some(wire::history_entry::Details::Reply(reply)),
+        HistoryContent::Ask { reply, .. } => Some(wire::history_entry::Details::Reply(reply)),
         HistoryContent::SystemTranscription { transcript, read } => Some(
             wire::history_entry::Details::Transcript(wire::HistoryTranscript {
                 path: transcript.to_string_lossy().into_owned(),
@@ -1802,13 +2047,8 @@ impl TryFrom<wire::HistoryEntry> for aria_voice::history::HistoryEntry {
         };
         Ok(Self {
             id: entry.id,
-            title: entry
-                .title
-                .as_deref()
-                .map(aria_voice::history::Title::new)
-                .transpose()
-                .map_err(|_| ProtocolError::InvalidHistory("title"))?,
-            content: history_content(entry.section, entry.details, dictation)?,
+            title: history_title(entry.title.as_deref(), "title")?,
+            content: history_content(entry.section, entry.details, entry.chat, dictation)?,
             created_at_ms: millis(
                 since_epoch(entry.create_time, "create_time")?,
                 "create_time",
@@ -1857,22 +2097,23 @@ impl TryFrom<wire::ListHistoryResponse> for aria_voice::history::HistoryPage {
     type Error = ProtocolError;
 
     fn try_from(page: wire::ListHistoryResponse) -> Result<Self, Self::Error> {
-        if page
-            .next_before_id
-            .is_some_and(|id| id == 0 || id > i64::MAX as u64)
-        {
-            return Err(ProtocolError::InvalidHistory("cursor"));
-        }
         Ok(Self {
             entries: page
                 .entries
                 .into_iter()
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
-            next_before_id: page.next_before_id,
+            next_before_id: history_cursor(page.next_before_id)?,
             warning: page.warning,
         })
     }
+}
+
+fn history_cursor(id: Option<u64>) -> Result<Option<u64>, ProtocolError> {
+    if id.is_some_and(|id| id == 0 || id > i64::MAX as u64) {
+        return Err(ProtocolError::InvalidHistory("cursor"));
+    }
+    Ok(id)
 }
 
 impl From<aria_voice::history::HistoryEntry> for wire::HistoryEntry {
@@ -1889,6 +2130,7 @@ impl From<aria_voice::history::HistoryEntry> for wire::HistoryEntry {
             ),
         };
         let section = wire::HistorySection::from(entry.content.section()) as i32;
+        let chat = entry.content.chat().cloned().map(wire::ChatKey::from);
         let (details, dictation) = match entry.content {
             HistoryContent::Dictation(dictation) => (None, Some(dictation)),
             content => (history_details(content), None),
@@ -1939,6 +2181,7 @@ impl From<aria_voice::history::HistoryEntry> for wire::HistoryEntry {
             can_regenerate: audio == wire::HistoryAudioAvailability::Available
                 && !regenerating
                 && !entry.deletion_pending,
+            chat,
         }
     }
 }
@@ -2972,6 +3215,7 @@ pub(crate) fn error_code_to_wire(code: RpcErrorCode) -> i32 {
         RpcErrorCode::PromptMissing => wire::ErrorCode::PromptMissing,
         RpcErrorCode::PromptsFull => wire::ErrorCode::PromptsFull,
         RpcErrorCode::PromptWriteFailed => wire::ErrorCode::PromptWriteFailed,
+        RpcErrorCode::ChatNameTaken => wire::ErrorCode::ChatNameTaken,
         RpcErrorCode::SpeakerModelMissing => wire::ErrorCode::SpeakerModelMissing,
         RpcErrorCode::SpeakerAlreadyEnrolled => wire::ErrorCode::SpeakerAlreadyEnrolled,
         RpcErrorCode::SpeakerNotEnrolled => wire::ErrorCode::SpeakerNotEnrolled,
@@ -3033,6 +3277,7 @@ pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolEr
         Ok(wire::ErrorCode::PromptMissing) => RpcErrorCode::PromptMissing,
         Ok(wire::ErrorCode::PromptsFull) => RpcErrorCode::PromptsFull,
         Ok(wire::ErrorCode::PromptWriteFailed) => RpcErrorCode::PromptWriteFailed,
+        Ok(wire::ErrorCode::ChatNameTaken) => RpcErrorCode::ChatNameTaken,
         Ok(wire::ErrorCode::SpeakerModelMissing) => RpcErrorCode::SpeakerModelMissing,
         Ok(wire::ErrorCode::SpeakerAlreadyEnrolled) => RpcErrorCode::SpeakerAlreadyEnrolled,
         Ok(wire::ErrorCode::SpeakerNotEnrolled) => RpcErrorCode::SpeakerNotEnrolled,
@@ -3086,6 +3331,8 @@ pub enum ProtocolError {
 
     #[error("the transcript path must be absolute and contain no NUL bytes")]
     InvalidTranscriptPath,
+    #[error("the assistant working directory must be an absolute path")]
+    RelativeWorkdir,
 
     #[error("missing {0}")]
     MissingBody(&'static str),
@@ -3140,6 +3387,9 @@ pub enum ProtocolError {
 
     #[error(transparent)]
     InvalidPrompt(#[from] PromptError),
+
+    #[error(transparent)]
+    InvalidChatName(#[from] ChatNameError),
 }
 
 #[cfg(test)]
@@ -3671,11 +3921,13 @@ mod tests {
                 text: "hi".to_owned(),
                 delivery_error: None,
                 copied: true,
+                history_entry_id: Some(12),
             }),
             ChatStageKind::Replied(ChatReply {
                 text: "hi".to_owned(),
                 delivery_error: Some(RpcErrorCode::DeliveryTargetChanged),
                 copied: false,
+                history_entry_id: None,
             }),
             ChatStageKind::Failed {
                 code: RpcErrorCode::AssistantUnavailable,
@@ -3723,40 +3975,150 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn an_ask_request_round_trips_and_a_bad_one_is_refused() {
-        let request = ChatRequest {
+    fn ask_call(chat: ChatChoice) -> AskCall {
+        AskCall {
             text: "say hi".to_owned(),
-            workdir: "/tmp".into(),
+            chat,
             assistant_id: AssistantId::Codex,
             model_id: Some("mini".to_owned()),
-            session: Some("planning".to_owned()),
-            new: true,
             output_mode: Some(OutputMode::Copy),
             own_voice: true,
             tap_cancels: true,
+        }
+    }
+
+    /// An ask that starts a chat in `/tmp`, as the wire carries it.
+    fn started_ask() -> wire::AskRequest {
+        wire::AskRequest::from(ask_call(ChatChoice::Start {
+            workdir: "/tmp".into(),
+        }))
+    }
+
+    fn planning() -> ChatName {
+        ChatName::new("planning").expect("a valid name")
+    }
+
+    #[test]
+    fn each_chat_choice_round_trips() {
+        for chat in [
+            ChatChoice::Folder {
+                workdir: "/tmp".into(),
+                new_session: true,
+            },
+            ChatChoice::Named {
+                name: planning(),
+                workdir: Some("/tmp".into()),
+                new_session: true,
+            },
+            ChatChoice::Named {
+                name: planning(),
+                workdir: None,
+                new_session: false,
+            },
+            ChatChoice::Start {
+                workdir: "/tmp".into(),
+            },
+        ] {
+            let call = ask_call(chat);
+
+            let sent = wire::AskRequest::from(call.clone());
+
+            assert_eq!(AskCall::try_from(sent).expect("decodes"), call);
+        }
+    }
+
+    #[test]
+    fn an_ask_without_a_chat_is_refused() {
+        assert!(matches!(
+            AskCall::try_from(wire::AskRequest {
+                chat: None,
+                ..started_ask()
+            }),
+            Err(ProtocolError::MissingBody("chat"))
+        ));
+    }
+
+    #[test]
+    fn an_ask_without_the_folder_its_choice_needs_is_refused() {
+        use wire::ask_request::Chat;
+        let ask = |chat| wire::AskRequest {
+            chat: Some(chat),
+            ..started_ask()
         };
 
-        let sent = wire::AskRequest::from(request.clone());
-        assert_eq!(
-            ChatRequest::try_from(sent).expect("the request should decode"),
-            request
-        );
+        for folderless in [
+            Chat::Folder(wire::FolderChat::default()),
+            Chat::Start(wire::StartChat::default()),
+        ] {
+            assert!(matches!(
+                AskCall::try_from(ask(folderless)),
+                Err(ProtocolError::MissingBody("assistant working directory"))
+            ));
+        }
+    }
 
-        let bare = wire::AskRequest::from(ChatRequest {
-            model_id: None,
-            session: None,
-            ..request
-        });
-        assert_eq!(
-            ChatRequest::try_from(bare.clone())
-                .expect("decodes")
-                .model_id,
-            None
-        );
+    #[test]
+    fn a_chat_key_named_like_a_folder_is_refused() {
+        let key = |name: &str| wire::ChatKey {
+            assistant_id: wire::AssistantId::Codex as i32,
+            name: name.to_owned(),
+        };
+
+        assert!(ChatKey::try_from(key("proj")).is_ok());
+        for request in [
+            ChatKey::try_from(wire::ListPendingAsksRequest {
+                chat: Some(key("/Users/me/proj")),
+            }),
+            ChatKey::try_from(wire::CancelChatRequest {
+                chat: Some(key("/Users/me/proj")),
+            }),
+            ChatKey::try_from(wire::DeleteChatRequest {
+                chat: Some(key("/Users/me/proj")),
+            }),
+        ] {
+            assert!(
+                matches!(request, Err(ProtocolError::InvalidChatName(_))),
+                "{request:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ask_with_a_relative_folder_is_refused() {
+        use wire::ask_request::Chat;
+        let ask = |chat| wire::AskRequest {
+            chat: Some(chat),
+            ..started_ask()
+        };
+
+        for relative in [
+            ask(Chat::Folder(wire::FolderChat {
+                workdir: "proj".to_owned(),
+                new_session: false,
+            })),
+            ask(Chat::Named(wire::NamedChat {
+                name: "planning".to_owned(),
+                workdir: "proj".to_owned(),
+                new_session: false,
+            })),
+            ask(Chat::Start(wire::StartChat {
+                workdir: "proj".to_owned(),
+            })),
+        ] {
+            let decoded = AskCall::try_from(relative);
+            assert!(
+                matches!(decoded, Err(ProtocolError::RelativeWorkdir)),
+                "{decoded:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bad_ask_is_refused() {
+        let bare = started_ask();
         for model_id in ["bad\0id", "two words", "--option", &"x".repeat(201)] {
             assert!(matches!(
-                ChatRequest::try_from(wire::AskRequest {
+                AskCall::try_from(wire::AskRequest {
                     model_id: model_id.to_owned(),
                     ..bare.clone()
                 }),
@@ -3764,22 +4126,73 @@ mod tests {
             ));
         }
         assert!(matches!(
-            ChatRequest::try_from(wire::AskRequest {
+            AskCall::try_from(wire::AskRequest {
                 text: "  ".to_owned(),
                 ..bare.clone()
             }),
             Err(ProtocolError::EmptyPrompt)
         ));
         assert!(matches!(
-            ChatRequest::try_from(wire::AskRequest {
+            AskCall::try_from(wire::AskRequest {
                 assistant_id: 0,
-                ..bare
+                ..bare.clone()
             }),
             Err(ProtocolError::InvalidEnum {
                 field: "assistant_id",
                 ..
             })
         ));
+        assert_eq!(
+            AskCall::try_from(wire::AskRequest {
+                model_id: String::new(),
+                ..bare
+            })
+            .expect("decodes")
+            .model_id,
+            None
+        );
+    }
+
+    #[test]
+    fn an_ask_with_a_blank_overlong_or_multiline_chat_name_is_refused() {
+        let named = |name: &str| wire::AskRequest {
+            chat: Some(wire::ask_request::Chat::Named(wire::NamedChat {
+                name: name.to_owned(),
+                ..Default::default()
+            })),
+            ..started_ask()
+        };
+
+        assert!(matches!(
+            AskCall::try_from(named(" planning "))
+                .expect("a padded name decodes")
+                .chat,
+            ChatChoice::Named { name, .. } if name.as_str() == "planning"
+        ));
+        for name in ["  ", "two\nlines", &"x".repeat(129), "/Users/me/proj"] {
+            assert!(
+                matches!(
+                    AskCall::try_from(named(name)),
+                    Err(ProtocolError::InvalidChatName(_))
+                ),
+                "{name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ask_response_round_trips_its_chat() {
+        let chat = ChatKey {
+            assistant_id: AssistantId::Codex,
+            name: planning(),
+        };
+        for sent in [(Ticket(42), Some(chat)), (Ticket(43), None)] {
+            let response = wire::AskResponse::from(sent.clone());
+            assert_eq!(
+                <(Ticket, Option<ChatKey>)>::try_from(response).expect("decodes"),
+                sent
+            );
+        }
     }
 
     #[test]
@@ -4268,6 +4681,7 @@ mod tests {
             (RpcErrorCode::PromptMissing, 305),
             (RpcErrorCode::PromptsFull, 306),
             (RpcErrorCode::PromptWriteFailed, 307),
+            (RpcErrorCode::ChatNameTaken, 308),
         ] {
             assert_eq!(error_code_to_wire(code), number);
             assert_eq!(error_code_from_wire(number).expect("known"), code);
@@ -4779,7 +5193,8 @@ mod history_tests {
                     section: None,
                     query,
                     before_id,
-                    limit
+                    limit,
+                    collapse_chats: false,
                 })
                 .is_err()
             );
@@ -4789,7 +5204,8 @@ mod history_tests {
                 section: None,
                 query: "a_%".to_owned(),
                 before_id: Some(2),
-                limit: 100
+                limit: 100,
+                collapse_chats: false,
             })
             .is_ok()
         );
@@ -4840,8 +5256,9 @@ mod history_tests {
     #[test]
     fn list_cuts_a_chat_reply_as_it_cuts_the_question() {
         let mut entry = entry();
-        entry.content = aria_voice::history::HistoryContent::Chat {
+        entry.content = aria_voice::history::HistoryContent::Ask {
             reply: "é".repeat(300),
+            chat: None,
         };
         let page = aria_voice::history::HistoryPage {
             entries: vec![entry],
@@ -4855,6 +5272,132 @@ mod history_tests {
             panic!("a chat lists its reply");
         };
         assert_eq!(reply.len(), 512);
+    }
+
+    #[test]
+    fn an_ask_entry_keeps_its_chat_across_the_wire_and_a_bad_one_is_refused() {
+        use aria_voice::history::HistoryContent;
+        let mut ask = entry();
+        ask.content = HistoryContent::Ask {
+            reply: "Friday.".to_owned(),
+            chat: Some(ChatKey {
+                assistant_id: AssistantId::Codex,
+                name: ChatName::new("first").expect("a valid name"),
+            }),
+        };
+
+        let wire = wire::HistoryEntry::from(ask.clone());
+        assert_eq!(
+            HistoryEntry::try_from(wire.clone()).unwrap().content,
+            ask.content
+        );
+        let sent = wire.chat.clone().expect("an ask sends its chat");
+        for bad in [
+            wire::ChatKey {
+                assistant_id: wire::AssistantId::Unspecified as i32,
+                ..sent.clone()
+            },
+            wire::ChatKey {
+                name: " ".to_owned(),
+                ..sent
+            },
+        ] {
+            assert!(
+                HistoryEntry::try_from(wire::HistoryEntry {
+                    chat: Some(bad),
+                    ..wire.clone()
+                })
+                .is_err()
+            );
+        }
+        let dictation = wire::HistoryEntry {
+            chat: Some(sent),
+            ..wire::HistoryEntry::from(entry())
+        };
+        assert!(HistoryEntry::try_from(dictation).is_err());
+    }
+
+    #[test]
+    fn a_chat_read_needs_its_key_and_one_to_ten_asks() {
+        let chat = wire::ChatKey {
+            assistant_id: wire::AssistantId::ClaudeCode as i32,
+            name: "first".to_owned(),
+        };
+        let read = |limit, before_id| wire::GetChatRequest {
+            chat: Some(chat.clone()),
+            before_id,
+            limit,
+        };
+
+        let query = ChatQuery::try_from(read(10, Some(7))).unwrap();
+        assert_eq!((query.limit, query.before_id), (10, Some(7)));
+        assert_eq!(query.chat.name.as_str(), "first");
+        for bad in [
+            read(0, None),
+            read(11, None),
+            read(1, Some(0)),
+            wire::GetChatRequest {
+                chat: None,
+                ..read(1, None)
+            },
+        ] {
+            assert!(ChatQuery::try_from(bad).is_err());
+        }
+    }
+
+    #[test]
+    fn a_clients_chat_requests_round_trip_and_a_bad_cursor_is_refused() {
+        let chat = || ChatKey {
+            assistant_id: AssistantId::Codex,
+            name: ChatName::new("first").expect("a valid name"),
+        };
+
+        let query = ChatQuery::try_from(wire::GetChatRequest::from(ChatQuery {
+            chat: chat(),
+            before_id: Some(7),
+            limit: 10,
+        }))
+        .unwrap();
+        assert_eq!(
+            (query.chat, query.before_id, query.limit),
+            (chat(), Some(7), 10)
+        );
+        let trip = ChatName::new("Trip").expect("a valid name");
+        let (renamed, name) =
+            <(ChatKey, ChatName)>::try_from(wire::RenameChatRequest::from((chat(), &trip)))
+                .unwrap();
+        assert_eq!((renamed, name), (chat(), trip));
+        assert_eq!(
+            ChatKey::try_from(wire::RenameChatResponse::from(chat())).unwrap(),
+            chat()
+        );
+        assert_eq!(
+            ChatKey::try_from(wire::DeleteChatRequest::from(chat())).unwrap(),
+            chat()
+        );
+
+        let page = |next_before_id| wire::GetChatResponse {
+            entries: vec![entry().into()],
+            next_before_id,
+        };
+        let read = ChatPage::try_from(page(Some(5))).unwrap();
+        assert_eq!((read.entries.len(), read.next_before_id), (1, Some(5)));
+        for cursor in [0, i64::MAX as u64 + 1] {
+            assert!(ChatPage::try_from(page(Some(cursor))).is_err());
+        }
+    }
+
+    #[test]
+    fn a_history_list_keeps_its_choice_to_collapse_chats() {
+        assert!(
+            HistoryQuery::try_from(wire::ListHistoryRequest {
+                limit: 10,
+                collapse_chats: true,
+                ..Default::default()
+            })
+            .unwrap()
+            .collapse_chats
+        );
     }
 
     #[test]
@@ -4908,6 +5451,42 @@ mod history_tests {
         assert_eq!(rename(7, None).unwrap(), (7, None));
         let (_, title) = rename(7, Some(" Plan ")).unwrap();
         assert_eq!(title.unwrap().as_str(), "Plan");
+    }
+
+    #[test]
+    fn a_chat_rename_needs_its_key_and_a_valid_name() {
+        let first = wire::ChatKey {
+            assistant_id: wire::AssistantId::ClaudeCode as i32,
+            name: "first".to_owned(),
+        };
+        let rename = |chat: Option<wire::ChatKey>, name: &str| {
+            <(ChatKey, ChatName)>::try_from(wire::RenameChatRequest {
+                chat,
+                name: name.to_owned(),
+            })
+        };
+
+        let (chat, name) = rename(Some(first.clone()), " Trip ").unwrap();
+        assert_eq!(chat.name.as_str(), "first");
+        assert_eq!(name.as_str(), "Trip");
+        let unspecified = wire::ChatKey {
+            assistant_id: wire::AssistantId::Unspecified as i32,
+            ..first.clone()
+        };
+        assert!(matches!(
+            rename(None, "Trip"),
+            Err(ProtocolError::MissingBody("chat"))
+        ));
+        assert!(rename(Some(unspecified), "Trip").is_err());
+        for name in ["", "  ", "two\nlines", "/Users/me/proj"] {
+            assert!(
+                matches!(
+                    rename(Some(first.clone()), name),
+                    Err(ProtocolError::InvalidChatName(_))
+                ),
+                "{name:?}"
+            );
+        }
     }
 
     #[test]

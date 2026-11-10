@@ -15,15 +15,15 @@ use rusqlite::{OptionalExtension, params};
 use rustix::fs::{Mode, OFlags};
 
 use super::{
-    AudioAvailability, ClearHistoryResult, DictationContent, HistoryContent, HistoryEntry,
-    HistoryError, HistoryPage, HistoryQuery, HistorySection, HistorySource, HistoryStatus,
-    PromptResult, Title, TranscriptRead,
+    AudioAvailability, ChatPage, ChatQuery, ClearHistoryResult, DictationContent, HistoryContent,
+    HistoryEntry, HistoryError, HistoryPage, HistoryQuery, HistorySection, HistorySource,
+    HistoryStatus, PromptResult, Title, TranscriptRead,
 };
 use aria_kit::audio::RecordingReader;
 use aria_platform::delivery::Application;
 use aria_primitives::error_chain;
-use aria_settings::MAX_PROMPT_NAME_BYTES;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::{ChatKey, ChatName, MAX_PROMPT_NAME_BYTES};
 
 const MAX_ERROR_MESSAGE_BYTES: usize = 256;
 const MAX_STORED_ERROR_BYTES: usize = 2 * 1024;
@@ -43,41 +43,34 @@ const AUDIO_TTL_MS: u64 = 24 * 60 * 60 * 1_000;
 const CLEANUP_WARNING: &str = "Some history files could not be removed. Cleanup will be retried.";
 const AUDIO_WARNING: &str = "The recording could not be saved. Audio recovery is unavailable.";
 const UNREADABLE_WARNING: &str = "Some unreadable history entries were removed.";
-const COLUMNS: &str = "id,created,source,app_name,bundle_id,duration,text,complete,status,error,expires,audio_present,deleting,language,own_voice,project,engine,section,title,transcript,reply";
-/// Columns added after the table first shipped, in the order `COLUMNS` reads
-/// them. The version stays 1: an older daemon names its own columns, so it
-/// still reads the table, and its inserts take these defaults.
-const ADDED_COLUMNS: &[(&str, &str)] = &[
-    (
-        "section",
-        "section INTEGER NOT NULL DEFAULT 0 CHECK(section IN (0,1,2))",
-    ),
-    (
-        "title",
-        "title TEXT CHECK(title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 256)",
-    ),
-    (
-        "transcript",
-        "transcript BLOB CHECK(transcript IS NULL OR length(transcript)<=4096)
-         CHECK((section=1)=(transcript IS NOT NULL))",
-    ),
-    (
-        "reply",
-        "reply TEXT CHECK(reply IS NULL OR length(CAST(reply AS BLOB))<=131072)
-         CHECK((section=2)=(reply IS NOT NULL))",
-    ),
-    // Which conversation a chat continued, so the next chat on it can
-    // recall it. Clients never see it.
-    (
-        "conversation",
-        "conversation TEXT CHECK(conversation IS NULL
-         OR (section=2 AND length(CAST(conversation AS BLOB)) BETWEEN 1 AND 128))",
-    ),
+/// The version this daemon writes. It refuses a newer database.
+const SCHEMA_VERSION: u32 = 2;
+const COLUMNS: &str = "id,created,source,app_name,bundle_id,duration,text,complete,status,error,expires,audio_present,deleting,language,own_voice,project,engine,section,title,transcript,reply,assistant,chat_name";
+/// What a chat's asks share. Its asks reference it, so deleting it
+/// deletes them, and their results with them, and renaming it renames
+/// theirs.
+const CHATS_SCHEMA: &str = "CREATE TABLE chats (
+        assistant TEXT NOT NULL CHECK(length(CAST(assistant AS BLOB)) BETWEEN 1 AND 64),
+        name TEXT NOT NULL CHECK(length(CAST(name AS BLOB)) BETWEEN 1 AND 128),
+        PRIMARY KEY(assistant, name)) WITHOUT ROWID";
+/// Finds a chat's asks, for reads and for its delete's cascade.
+const CHAT_INDEX: &str = "CREATE INDEX entries_by_chat
+     ON entries(assistant, chat_name) WHERE chat_name IS NOT NULL";
+/// A version 1 table may lack these: the names each one had there, newest
+/// first, its name now, and the value a table with none of them gets, so its
+/// rows keep their meaning. A row from before sections is a dictation, and
+/// `conversation` held what `resume` holds.
+const VERSION_ONE_LATER_COLUMNS: &[(&[&str], &str, &str)] = &[
+    (&["section"], "section", "0"),
+    (&["title"], "title", "NULL"),
+    (&["transcript"], "transcript", "NULL"),
+    (&["reply"], "reply", "NULL"),
+    (&["resume", "conversation"], "resume", "NULL"),
+    (&["assistant"], "assistant", "NULL"),
+    (&["session_name"], "chat_name", "NULL"),
 ];
-/// Prompt results live beside the entries, so an older daemon, which never
-/// names this table, reads and writes `entries` as before. An older daemon
-/// leaves foreign keys off, so its deletes skip the cascade and the orphan
-/// sweep takes what they leave.
+/// The columns every version 1 table has.
+const VERSION_ONE_COLUMNS: &str = "id,created,source,app_name,bundle_id,duration,text,complete,status,error,expires,audio_present,deleting,language,own_voice,project,engine";
 const RESULTS_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entry INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
@@ -148,14 +141,15 @@ impl Drop for RetryLease {
     }
 }
 
-/// A chat that replied, as history saves it.
-pub struct NewChat<'a> {
+/// An ask that replied, as history saves it.
+pub struct NewAsk<'a> {
     /// The request as asked, before any memory was added to it.
     pub request: &'a str,
     pub reply: &'a str,
     pub workdir: &'a Path,
-    /// The conversation it continued, so the next chat on it can recall it.
-    pub conversation: Option<&'a str>,
+    /// The assistant session it continued, so the next chat on it can recall it.
+    pub resume: Option<&'a str>,
+    pub chat: Option<ChatKey>,
     pub created_at_ms: u64,
     pub duration_ms: u64,
     /// Why the reply couldn't be typed.
@@ -171,7 +165,7 @@ impl Store {
         )?;
         let directory = directory.canonicalize().map_err(HistoryError::storage)?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 1 {
+        if version > SCHEMA_VERSION {
             return Err(HistoryError::Unavailable);
         }
         connection.execute_batch(
@@ -180,24 +174,12 @@ impl Store {
              PRAGMA journal_size_limit=0;
              PRAGMA secure_delete=ON;",
         )?;
+        match version {
+            0 => create_schema(&connection)?,
+            1 => migrate_from_version_one(&connection)?,
+            _ => {}
+        }
         connection.pragma_update(None, "foreign_keys", true)?;
-        connection.execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS entries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created INTEGER NOT NULL CHECK(created>=0),
-                source INTEGER NOT NULL CHECK(source IN (0,1)),
-                app_name TEXT, bundle_id TEXT, duration INTEGER,
-                text TEXT NOT NULL CHECK(length(CAST(text AS BLOB))<={MAX_ENTRY_BYTES}),
-                complete INTEGER NOT NULL CHECK(complete IN (0,1)),
-                status INTEGER NOT NULL CHECK(status IN (0,1,2,3)), error TEXT,
-                expires INTEGER, audio_present INTEGER NOT NULL DEFAULT 0,
-                deleting INTEGER NOT NULL DEFAULT 0,
-                language TEXT NOT NULL, own_voice INTEGER NOT NULL,
-                project BLOB, engine TEXT NOT NULL);
-             PRAGMA user_version=1;"
-        ))?;
-        add_missing_columns(&connection)?;
-        connection.execute_batch(RESULTS_SCHEMA)?;
         private_fs::prepare_directory(&directory.join("audio")).map_err(HistoryError::storage)?;
         let audio_directory =
             sqlite::open_directory(&directory.join("audio")).map_err(HistoryError::storage)?;
@@ -226,7 +208,7 @@ impl Store {
         &self,
         mut entry: HistoryEntry,
         audio: Option<&Path>,
-        conversation: Option<&str>,
+        resume: Option<&str>,
     ) -> Result<HistoryEntry, HistoryError> {
         validate_entry(&entry)?;
         let mut state = self.lock();
@@ -276,9 +258,16 @@ impl Store {
             .as_ref()
             .and_then(|app| app.bundle_id.as_deref());
         let dictation = entry.dictation();
+        let chat = entry.content.chat();
+        if let Some(chat) = chat {
+            transaction.execute(
+                "INSERT OR IGNORE INTO chats(assistant,name) VALUES(?1,?2)",
+                params![chat.assistant_id.name(), chat.name.as_str()],
+            )?;
+        }
         transaction.execute(
-            "INSERT INTO entries(created,source,app_name,bundle_id,duration,text,complete,status,error,language,own_voice,project,engine,section,title,transcript,reply,conversation)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+            "INSERT INTO entries(created,source,app_name,bundle_id,duration,text,complete,status,error,language,own_voice,project,engine,section,title,transcript,reply,resume,assistant,chat_name)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
             params![sql_integer(entry.created_at_ms)?, source_number(entry.source), app_name, bundle_id,
                 entry.duration_ms.map(sql_integer).transpose()?, entry.text, entry.complete, status_number(entry.status),
                 entry.error.as_ref().map(encode_error).transpose()?, dictation.map_or("", |d| d.language.as_str()),
@@ -287,7 +276,9 @@ impl Store {
                 dictation.map_or("", |d| d.engine.as_str()),
                 section_number(entry.content.section()), entry.title.as_ref().map(Title::as_str),
                 transcript_path(&entry.content).map(|path| path.as_os_str().as_bytes()),
-                reply(&entry.content), conversation],
+                reply(&entry.content), resume,
+                chat.map(|chat| chat.assistant_id.name()),
+                chat.map(|chat| chat.name.as_str())],
         )?;
         let id = unsigned(transaction.last_insert_rowid(), 0)?;
         if let Some((copy, _)) = copied {
@@ -323,6 +314,7 @@ impl Store {
         self.maintain(&mut state)?;
         let needle = query.query.to_lowercase();
         let (entries, _) = all(&state)?;
+        let mut shown = HashSet::new();
         let mut entries = entries
             .into_iter()
             .filter(|entry| {
@@ -330,7 +322,6 @@ impl Store {
                     .section
                     .is_none_or(|section| entry.content.section() == section)
             })
-            .filter(|entry| query.before_id.is_none_or(|id| entry.id < id))
             .filter(|entry| {
                 entry.text.to_lowercase().contains(&needle)
                     || reply(&entry.content)
@@ -340,10 +331,24 @@ impl Store {
                         .as_ref()
                         .is_some_and(|title| title.as_str().to_lowercase().contains(&needle))
                     || entry
+                        .content
+                        .chat()
+                        .is_some_and(|chat| chat.name.as_str().to_lowercase().contains(&needle))
+                    || entry
                         .application
                         .as_ref()
                         .is_some_and(|app| app.name.to_lowercase().contains(&needle))
             })
+            // Before the cursor, so a chat shown on one page has no
+            // older ask on the next.
+            .filter(|entry| {
+                !query.collapse_chats
+                    || entry
+                        .content
+                        .chat()
+                        .is_none_or(|chat| shown.insert(chat.clone()))
+            })
+            .filter(|entry| query.before_id.is_none_or(|id| entry.id < id))
             .take(query.limit + 1)
             .collect::<Vec<_>>();
         let next_before_id = (entries.len() > query.limit).then(|| entries[query.limit - 1].id);
@@ -399,21 +404,23 @@ impl Store {
         self.insert(entry, None).map(Some)
     }
 
-    pub fn save_chat(&self, chat: NewChat<'_>) -> Result<HistoryEntry, HistoryError> {
-        let NewChat {
+    pub fn save_ask(&self, ask: NewAsk<'_>) -> Result<HistoryEntry, HistoryError> {
+        let NewAsk {
             request,
             reply,
             workdir,
-            conversation,
+            resume,
+            chat,
             created_at_ms,
             duration_ms,
             failure,
-        } = chat;
+        } = ask;
         let entry = HistoryEntry {
             id: 0,
             title: None,
-            content: HistoryContent::Chat {
+            content: HistoryContent::Ask {
                 reply: reply.to_owned(),
+                chat,
             },
             created_at_ms,
             duration_ms: Some(duration_ms),
@@ -431,28 +438,29 @@ impl Store {
             warning: None,
             deletion_pending: false,
         };
-        self.insert_into(entry, None, conversation)
+        self.insert_into(entry, None, resume)
     }
 
-    /// The chats saved under `conversation`, oldest first: the newest whose
-    /// requests and replies fit in `max_bytes` together. A chat too big to
-    /// fit on its own is left out, so it doesn't cost the ones before it.
-    pub fn conversation(
+    /// The chats saved under the assistant session `resume`, oldest first:
+    /// the newest whose requests and replies fit in `max_bytes` together. A
+    /// chat too big to fit on its own is left out, so it doesn't cost the
+    /// ones before it.
+    pub fn recall(
         &self,
-        conversation: &str,
+        resume: &str,
         max_bytes: usize,
     ) -> Result<Vec<HistoryEntry>, HistoryError> {
         let mut state = self.lock();
         self.maintain(&mut state)?;
         let mut statement = state.connection.prepare(&format!(
-            "SELECT {COLUMNS} FROM entries WHERE conversation=?1 AND deleting=0 ORDER BY id DESC"
+            "SELECT {COLUMNS} FROM entries WHERE resume=?1 AND deleting=0 ORDER BY id DESC"
         ))?;
-        let mut rows = statement.query([conversation])?;
-        let mut chats = Vec::new();
+        let mut rows = statement.query([resume])?;
+        let mut asks = Vec::new();
         let mut used = 0;
         while let Some(row) = rows.next()? {
-            let chat = decode(row)?;
-            let bytes = stored_bytes(&chat);
+            let ask = decode(row)?;
+            let bytes = stored_bytes(&ask);
             if bytes > max_bytes {
                 continue;
             }
@@ -460,10 +468,10 @@ impl Store {
             if used > max_bytes {
                 break;
             }
-            chats.push(chat);
+            asks.push(ask);
         }
-        chats.reverse();
-        Ok(chats)
+        asks.reverse();
+        Ok(asks)
     }
 
     /// Saves a prompt's reply under `entry`. An entry keeps its newest
@@ -595,6 +603,80 @@ impl Store {
         self.mark_delete(&mut state, id)?;
         self.remove_entry(&mut state, id)?;
         Ok(true)
+    }
+
+    /// A chat's newest asks before the cursor, returned oldest first.
+    /// A chat with no saved asks is missing.
+    pub fn chat(&self, query: &ChatQuery) -> Result<ChatPage, HistoryError> {
+        if !(1..=ChatQuery::MAX_LIMIT).contains(&query.limit) {
+            return Err(HistoryError::InvalidRequest);
+        }
+        if let Some(id) = query.before_id {
+            validate_id(id)?;
+        }
+        let mut state = self.lock();
+        self.maintain(&mut state)?;
+        let asks = chat_ids(&state, &query.chat)?;
+        if asks.is_empty() {
+            return Err(HistoryError::Missing);
+        }
+        let mut page = asks
+            .into_iter()
+            .filter(|id| query.before_id.is_none_or(|before| *id < before))
+            .take(query.limit + 1)
+            .collect::<Vec<_>>();
+        let next_before_id = (page.len() > query.limit).then(|| page[query.limit - 1]);
+        page.truncate(query.limit);
+        let entries = page
+            .into_iter()
+            .rev()
+            .map(|id| load(&state, id))
+            .collect::<Result<_, _>>()?;
+        Ok(ChatPage {
+            entries,
+            next_before_id,
+        })
+    }
+
+    /// Gives a chat a new name, which its asks follow. A chat with no saved
+    /// asks has nothing to rename.
+    pub fn rename_chat(&self, chat: &ChatKey, name: &ChatName) -> Result<(), HistoryError> {
+        let mut state = self.lock();
+        self.maintain(&mut state)?;
+        let renamed = state.connection.execute(
+            "UPDATE chats SET name=?3 WHERE assistant=?1 AND name=?2",
+            params![chat.assistant_id.name(), chat.name.as_str(), name.as_str()],
+        );
+        match renamed {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY =>
+            {
+                Err(HistoryError::ChatNameTaken)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Deletes a chat, its name, its asks, and their results, and answers
+    /// whether history had it. A missing chat is already deleted.
+    pub fn delete_chat(&self, chat: &ChatKey) -> Result<bool, HistoryError> {
+        let mut state = self.lock();
+        let asks = chat_ids(&state, chat)?;
+        if asks.iter().any(|id| state.pinned.contains(id)) {
+            return Err(HistoryError::Busy);
+        }
+        // One statement, whose cascade takes the asks and their results, so a
+        // failure leaves the whole chat. Any audio goes after it, as
+        // `clear` sweeps it.
+        let deleted = state.connection.execute(
+            "DELETE FROM chats WHERE assistant=?1 AND name=?2",
+            params![chat.assistant_id.name(), chat.name.as_str()],
+        )?;
+        if self.remove_orphans(&mut state).is_err() {
+            state.warning = Some(CLEANUP_WARNING.to_owned());
+        }
+        Ok(deleted > 0)
     }
 
     /// `None` clears every section.
@@ -782,13 +864,13 @@ impl Store {
                 self.invalidate_audio(state, entry.id)?;
             }
         }
-        self.remove_orphans(state)?;
         for section in HistorySection::ALL {
             if self.make_room(state, section, 0, 0, false).is_err() {
                 state.warning = Some(CLEANUP_WARNING.to_owned());
             }
         }
-        Ok(())
+        // After every eviction, so no call starts on a chat without asks.
+        self.remove_orphans(state)
     }
 
     fn mark_delete(&self, state: &mut State, id: u64) -> Result<(), HistoryError> {
@@ -888,11 +970,12 @@ impl Store {
         Ok(())
     }
 
-    /// Removes orphaned audio, and the results an older daemon left behind when it deleted their
-    /// entry.
+    /// Removes orphaned audio, and the chats whose last ask went.
     fn remove_orphans(&self, state: &mut State) -> Result<(), HistoryError> {
         state.connection.execute(
-            "DELETE FROM results WHERE entry NOT IN (SELECT id FROM entries)",
+            "DELETE FROM chats WHERE NOT EXISTS (SELECT 1 FROM entries
+             WHERE entries.assistant=chats.assistant
+             AND entries.chat_name=chats.name)",
             [],
         )?;
         let mut statement = state
@@ -1139,13 +1222,13 @@ fn check_size(file: &File, limit: u64) -> Result<(), HistoryError> {
 fn transcript_path(content: &HistoryContent) -> Option<&Path> {
     match content {
         HistoryContent::SystemTranscription { transcript, .. } => Some(transcript),
-        HistoryContent::Dictation(_) | HistoryContent::Chat { .. } => None,
+        HistoryContent::Dictation(_) | HistoryContent::Ask { .. } => None,
     }
 }
 
 fn reply(content: &HistoryContent) -> Option<&str> {
     match content {
-        HistoryContent::Chat { reply } => Some(reply),
+        HistoryContent::Ask { reply, .. } => Some(reply),
         HistoryContent::Dictation(_) | HistoryContent::SystemTranscription { .. } => None,
     }
 }
@@ -1212,20 +1295,132 @@ fn leading_text(mut bytes: Vec<u8>) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-fn add_missing_columns(connection: &Database) -> Result<(), HistoryError> {
+/// Every column inline. `table` is `entries`, or the table a migration
+/// copies into before it takes the name.
+fn entries_schema(table: &str) -> String {
+    format!(
+        "CREATE TABLE {table} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created INTEGER NOT NULL CHECK(created>=0),
+            source INTEGER NOT NULL CHECK(source IN (0,1)),
+            app_name TEXT, bundle_id TEXT, duration INTEGER,
+            text TEXT NOT NULL CHECK(length(CAST(text AS BLOB))<={MAX_ENTRY_BYTES}),
+            complete INTEGER NOT NULL CHECK(complete IN (0,1)),
+            status INTEGER NOT NULL CHECK(status IN (0,1,2,3)), error TEXT,
+            expires INTEGER, audio_present INTEGER NOT NULL DEFAULT 0,
+            deleting INTEGER NOT NULL DEFAULT 0,
+            language TEXT NOT NULL, own_voice INTEGER NOT NULL,
+            project BLOB, engine TEXT NOT NULL,
+            section INTEGER NOT NULL CHECK(section IN (0,1,2)),
+            title TEXT CHECK(title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 256),
+            transcript BLOB CHECK(transcript IS NULL OR length(transcript)<=4096)
+                CHECK((section=1)=(transcript IS NOT NULL)),
+            reply TEXT CHECK(reply IS NULL OR length(CAST(reply AS BLOB))<={MAX_ENTRY_BYTES})
+                CHECK((section=2)=(reply IS NOT NULL)),
+            -- Which assistant session a chat continued, so the next chat on it
+            -- can recall it. Clients never see it.
+            resume TEXT CHECK(resume IS NULL
+                OR (section=2 AND length(CAST(resume AS BLOB)) BETWEEN 1 AND 128)),
+            assistant TEXT,
+            chat_name TEXT,
+            CHECK((chat_name IS NULL)=(assistant IS NULL)),
+            CHECK(chat_name IS NULL OR section=2),
+            FOREIGN KEY(assistant, chat_name) REFERENCES chats(assistant, name)
+                ON DELETE CASCADE ON UPDATE CASCADE)"
+    )
+}
+
+fn create_schema(connection: &Database) -> Result<(), HistoryError> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute_batch(CHATS_SCHEMA)?;
+    transaction.execute_batch(&entries_schema("entries"))?;
+    transaction.execute_batch(CHAT_INDEX)?;
+    transaction.execute_batch(RESULTS_SCHEMA)?;
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Rebuilds a version 1 database in the steps SQLite gives for changing a
+/// table's schema: its entries gained columns over time, and referenced no
+/// chats table.
+fn migrate_from_version_one(connection: &Database) -> Result<(), HistoryError> {
+    // Outside the transaction, where the pragma has no effect. Left on,
+    // dropping the old table would delete every result through its cascade.
+    connection.pragma_update(None, "foreign_keys", false)?;
     let transaction = connection.unchecked_transaction()?;
     let present = transaction
         .prepare("SELECT name FROM pragma_table_info('entries')")?
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<HashSet<_>>>()?;
-    for (name, definition) in ADDED_COLUMNS {
-        if !present.contains(*name) {
-            transaction.execute_batch(&format!("ALTER TABLE entries ADD COLUMN {definition}"))?;
-        }
+    let (names, values): (Vec<&str>, Vec<String>) = VERSION_ONE_LATER_COLUMNS
+        .iter()
+        .map(|&(before, now, missing)| {
+            let kept: Vec<&str> = before
+                .iter()
+                .copied()
+                .filter(|name| present.contains(*name))
+                .collect();
+            let value = match kept.as_slice() {
+                [] => missing.to_owned(),
+                [name] => (*name).to_owned(),
+                names => format!("COALESCE({})", names.join(",")),
+            };
+            (now, value)
+        })
+        .unzip();
+    let sequence: Option<i64> = transaction
+        .query_row(
+            "SELECT seq FROM sqlite_sequence WHERE name='entries'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    transaction.execute_batch(CHATS_SCHEMA)?;
+    transaction.execute_batch(&entries_schema("new_entries"))?;
+    transaction.execute_batch(&format!(
+        "INSERT INTO new_entries({VERSION_ONE_COLUMNS},{})
+         SELECT {VERSION_ONE_COLUMNS},{} FROM entries;
+         INSERT INTO chats(assistant,name)
+         SELECT DISTINCT assistant,chat_name FROM new_entries WHERE chat_name IS NOT NULL;
+         DROP TABLE entries;
+         ALTER TABLE new_entries RENAME TO entries;",
+        names.join(","),
+        values.join(","),
+    ))?;
+    // The rebuilt table counts only the IDs it copied. The old count keeps a
+    // deleted entry's ID from coming back.
+    if let Some(sequence) = sequence {
+        transaction.execute("DELETE FROM sqlite_sequence WHERE name='entries'", [])?;
+        transaction.execute(
+            "INSERT INTO sqlite_sequence(name,seq) VALUES('entries',?1)",
+            [sequence],
+        )?;
     }
+    transaction.execute_batch(CHAT_INDEX)?;
+    transaction.execute_batch(RESULTS_SCHEMA)?;
+    // Results whose entry a daemon deleted without them, with foreign keys
+    // off. The check below would refuse them.
+    transaction.execute(
+        "DELETE FROM results WHERE entry NOT IN (SELECT id FROM entries)",
+        [],
+    )?;
+    if transaction
+        .prepare("PRAGMA foreign_key_check")?
+        .query([])?
+        .next()?
+        .is_some()
+    {
+        return Err(HistoryError::storage(Dangling));
+    }
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("a history row references one that is missing")]
+struct Dangling;
 
 fn section_number(section: HistorySection) -> u8 {
     match section {
@@ -1295,6 +1490,7 @@ fn stored_code(code: RpcErrorCode) -> i32 {
         RpcErrorCode::PromptMissing => 305,
         RpcErrorCode::PromptsFull => 306,
         RpcErrorCode::PromptWriteFailed => 307,
+        RpcErrorCode::ChatNameTaken => 308,
         RpcErrorCode::SpeakerModelMissing => 500,
         RpcErrorCode::SpeakerAlreadyEnrolled => 501,
         RpcErrorCode::SpeakerNotEnrolled => 502,
@@ -1350,6 +1546,7 @@ fn code_from_stored(number: i32) -> Option<RpcErrorCode> {
         305 => RpcErrorCode::PromptMissing,
         306 => RpcErrorCode::PromptsFull,
         307 => RpcErrorCode::PromptWriteFailed,
+        308 => RpcErrorCode::ChatNameTaken,
         500 => RpcErrorCode::SpeakerModelMissing,
         501 => RpcErrorCode::SpeakerAlreadyEnrolled,
         502 => RpcErrorCode::SpeakerNotEnrolled,
@@ -1430,23 +1627,52 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
     let transcript = row
         .get::<_, Option<Vec<u8>>>(19)?
         .map(|bytes| PathBuf::from(OsString::from_vec(bytes)));
+    // A newer daemon can name an assistant or a chat name this one rejects.
+    // Its ask stays readable here without the chat, and the row
+    // keeps both columns for the daemon that wrote them.
+    let chat = match (
+        row.get::<_, Option<String>>(21)?,
+        row.get::<_, Option<String>>(22)?,
+    ) {
+        (None, None) => None,
+        (Some(assistant), Some(name)) => Some(
+            assistant
+                .parse()
+                .ok()
+                .zip(ChatName::new(&name).ok())
+                .map(|(assistant_id, name)| ChatKey { assistant_id, name }),
+        ),
+        (Some(_), None) | (None, Some(_)) => return Err(rusqlite::Error::InvalidQuery),
+    };
     let content = match (
         row.get::<_, u8>(17)?,
         transcript,
         row.get::<_, Option<String>>(20)?,
+        chat,
     ) {
-        (0, None, None) => HistoryContent::Dictation(DictationContent {
+        (0, None, None, None) => HistoryContent::Dictation(DictationContent {
             language: row.get(13)?,
             engine: row.get(16)?,
             own_voice_only: row.get(14)?,
             audio,
             retrying: false,
         }),
-        (1, Some(transcript), None) => HistoryContent::SystemTranscription {
+        (1, Some(transcript), None, None) => HistoryContent::SystemTranscription {
             transcript,
             read: None,
         },
-        (2, None, Some(reply)) => HistoryContent::Chat { reply },
+        (2, None, Some(reply), chat) => {
+            if chat.as_ref().is_some_and(Option::is_none) {
+                tracing::warn!(
+                    id = row.get::<_, i64>(0)?,
+                    "a history ask's chat is unreadable; reading it without one"
+                );
+            }
+            HistoryContent::Ask {
+                reply,
+                chat: chat.flatten(),
+            }
+        }
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     Ok(HistoryEntry {
@@ -1489,6 +1715,20 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
         warning: None,
         deletion_pending: row.get(12)?,
     })
+}
+
+/// A chat's asks, newest first.
+fn chat_ids(state: &State, chat: &ChatKey) -> Result<Vec<u64>, HistoryError> {
+    let mut statement = state
+        .connection
+        .prepare("SELECT id FROM entries WHERE assistant=?1 AND chat_name=?2 ORDER BY id DESC")?;
+    let ids = statement
+        .query_map(
+            params![chat.assistant_id.name(), chat.name.as_str()],
+            |row| unsigned(row.get(0)?, 0),
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(ids)
 }
 
 fn result_counts(state: &State) -> Result<HashMap<u64, u32>, HistoryError> {
@@ -1608,7 +1848,19 @@ mod tests {
             query: text.into(),
             before_id,
             limit,
+            collapse_chats: false,
         }
+    }
+
+    fn collapsed(text: &str, before_id: Option<u64>, limit: usize) -> HistoryQuery {
+        HistoryQuery {
+            collapse_chats: true,
+            ..query(text, before_id, limit)
+        }
+    }
+
+    fn questions(entries: &[HistoryEntry]) -> Vec<&str> {
+        entries.iter().map(|entry| entry.text.as_str()).collect()
     }
 
     fn save(
@@ -1645,7 +1897,53 @@ mod tests {
         project BLOB, engine TEXT NOT NULL)";
     const INSERT_BEFORE_SECTIONS: &str = "INSERT INTO entries(created,source,app_name,bundle_id,duration,text,complete,status,error,language,own_voice,project,engine)
         VALUES(?1,0,NULL,NULL,NULL,?2,1,0,NULL,'en',0,NULL,'test')";
-    const SELECT_BEFORE_SECTIONS: &str = "SELECT id,created,source,app_name,bundle_id,duration,text,complete,status,error,expires,audio_present,deleting,language,own_voice,project,engine FROM entries";
+    /// The columns a version 1 table gained after sections, up to
+    /// `conversation`, which held what `resume` holds now.
+    const ADDED_BEFORE_RESUME: &str = "
+        ALTER TABLE entries ADD COLUMN section INTEGER NOT NULL DEFAULT 0 CHECK(section IN (0,1,2));
+        ALTER TABLE entries ADD COLUMN title TEXT
+            CHECK(title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 256);
+        ALTER TABLE entries ADD COLUMN transcript BLOB
+            CHECK(transcript IS NULL OR length(transcript)<=4096)
+            CHECK((section=1)=(transcript IS NOT NULL));
+        ALTER TABLE entries ADD COLUMN reply TEXT
+            CHECK(reply IS NULL OR length(CAST(reply AS BLOB))<=131072)
+            CHECK((section=2)=(reply IS NOT NULL));
+        ALTER TABLE entries ADD COLUMN conversation TEXT CHECK(conversation IS NULL
+            OR (section=2 AND length(CAST(conversation AS BLOB)) BETWEEN 1 AND 128));";
+    /// The columns it gained after that, in the order a database that saw
+    /// every daemon added them.
+    const ADDED_AFTER_CONVERSATION: &str = "
+        ALTER TABLE entries ADD COLUMN resume TEXT CHECK(resume IS NULL
+            OR (section=2 AND length(CAST(resume AS BLOB)) BETWEEN 1 AND 128));
+        ALTER TABLE entries ADD COLUMN assistant TEXT CHECK(assistant IS NULL
+            OR length(CAST(assistant AS BLOB)) BETWEEN 1 AND 64);
+        ALTER TABLE entries ADD COLUMN session_name TEXT CHECK(session_name IS NULL
+            OR length(CAST(session_name AS BLOB)) BETWEEN 1 AND 128)
+            CHECK((session_name IS NULL)=(assistant IS NULL))
+            CHECK(session_name IS NULL OR section=2);
+        CREATE INDEX entries_by_conversation
+            ON entries(assistant, session_name) WHERE session_name IS NOT NULL;";
+
+    /// Replaces the store's database with a version 1 one built by `build`.
+    fn version_one(directory: &Path, build: &str) {
+        drop(Store::open(directory).unwrap());
+        let database = Connection::open(directory.join("history.db")).unwrap();
+        database
+            .execute_batch(&format!(
+                "DROP TABLE results; DROP TABLE entries; DROP TABLE chats;
+                 {build}; PRAGMA user_version=1;"
+            ))
+            .unwrap();
+    }
+
+    fn user_version(store: &Store) -> u32 {
+        store
+            .lock()
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap()
+    }
 
     /// A transcript entry as the store keeps one, without reading the file.
     fn system_transcription(text: &str, transcript: &Path) -> HistoryEntry {
@@ -1657,6 +1955,29 @@ mod tests {
             ..entry(text, HistoryStatus::Success)
         }
     }
+    fn chat(session: &str) -> ChatKey {
+        ChatKey {
+            assistant_id: aria_settings::config::AssistantId::ClaudeCode,
+            name: ChatName::new(session).unwrap(),
+        }
+    }
+
+    /// Saves an ask that replied, continuing `chat`.
+    fn ask(store: &Store, question: &str, chat: Option<ChatKey>) -> HistoryEntry {
+        store
+            .save_ask(NewAsk {
+                request: question,
+                reply: "reply",
+                workdir: Path::new("/project"),
+                resume: None,
+                chat,
+                created_at_ms: now_ms(),
+                duration_ms: 1,
+                failure: None,
+            })
+            .unwrap()
+    }
+
     /// A store in a fresh folder, which lives as long as the guard.
     fn opened() -> (tempfile::TempDir, Arc<Store>) {
         let directory = tempfile::tempdir().unwrap();
@@ -1683,13 +2004,10 @@ mod tests {
     }
 
     #[test]
-    fn a_database_from_before_sections_keeps_its_rows_as_dictations_at_version_one() {
+    fn a_database_from_before_sections_keeps_its_rows_as_dictations_at_version_two() {
         let directory = tempfile::tempdir().unwrap();
-        drop(Store::open(directory.path()).unwrap());
+        version_one(directory.path(), SCHEMA_BEFORE_SECTIONS);
         let database = Connection::open(directory.path().join("history.db")).unwrap();
-        database
-            .execute_batch(&format!("DROP TABLE entries; {SCHEMA_BEFORE_SECTIONS};"))
-            .unwrap();
         database
             .execute(INSERT_BEFORE_SECTIONS, params![now_ms() as i64, "old row"])
             .unwrap();
@@ -1701,43 +2019,182 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].text, "old row");
         assert!(matches!(entries[0].content, HistoryContent::Dictation(_)));
-        let version: u32 = store
-            .lock()
-            .connection
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(user_version(&store), 2);
         drop(store);
         Store::open(directory.path()).unwrap();
     }
 
     #[test]
-    fn a_conversation_recalls_its_newest_chats_that_fit_oldest_first() {
-        let (_directory, store) = opened();
-        let chat = |request: &str, conversation: Option<&str>| {
+    fn a_version_one_database_from_before_resume_keeps_its_assistant_sessions() {
+        let directory = tempfile::tempdir().unwrap();
+        version_one(
+            directory.path(),
+            &format!("{SCHEMA_BEFORE_SECTIONS}; {ADDED_BEFORE_RESUME}; {RESULTS_SCHEMA}"),
+        );
+        let database = Connection::open(directory.path().join("history.db")).unwrap();
+        database
+            .execute(
+                "INSERT INTO entries(created,source,text,complete,status,language,own_voice,engine,section,reply,conversation)
+                 VALUES(?1,0,'When?',1,0,'',0,'',2,'reply','s1')",
+                params![now_ms() as i64],
+            )
+            .unwrap();
+        drop(database);
+
+        let store = Store::open(directory.path()).unwrap();
+
+        assert_eq!(
+            questions(&store.recall("s1", 1024).unwrap()),
+            ["When?"],
+            "the session its ask continued"
+        );
+    }
+
+    #[test]
+    fn a_version_one_database_migrates_with_its_chats_results_and_ids() {
+        let directory = tempfile::tempdir().unwrap();
+        version_one(
+            directory.path(),
+            &format!(
+                "{SCHEMA_BEFORE_SECTIONS}; {ADDED_BEFORE_RESUME}; {ADDED_AFTER_CONVERSATION}; \
+                 {RESULTS_SCHEMA}"
+            ),
+        );
+        let database = Connection::open(directory.path().join("history.db")).unwrap();
+        // Off, as a daemon from before results left them, so its delete
+        // below leaves the result behind.
+        database.pragma_update(None, "foreign_keys", false).unwrap();
+        let first = chat("first");
+        database
+            .execute(INSERT_BEFORE_SECTIONS, params![now_ms() as i64, "dictated"])
+            .unwrap();
+        let insert_ask = "INSERT INTO entries(created,source,text,complete,status,language,own_voice,engine,section,reply,conversation,resume,assistant,session_name)
+             VALUES(?1,0,?2,1,0,'',0,'',2,'reply',?3,?3,?4,?5)";
+        for (question, resume, key) in [
+            ("When?", Some("s1"), Some(&first)),
+            ("And then?", None, Some(&first)),
+            ("Where?", None, None),
+            ("Gone?", None, None),
+        ] {
+            database
+                .execute(
+                    insert_ask,
+                    params![
+                        now_ms() as i64,
+                        question,
+                        resume,
+                        key.map(|key| key.assistant_id.name()),
+                        key.map(|key| key.name.as_str())
+                    ],
+                )
+                .unwrap();
+        }
+        database
+            .execute_batch(
+                "INSERT INTO results(entry,created,prompt_name,text) VALUES(2,0,'Polish','Kept.');
+                 INSERT INTO results(entry,created,prompt_name,text) VALUES(5,0,'Polish','Orphan.');
+                 DELETE FROM entries WHERE id=5;",
+            )
+            .unwrap();
+        drop(database);
+
+        let store = Store::open(directory.path()).unwrap();
+
+        assert_eq!(user_version(&store), 2);
+        let entries = listed(&store)
+            .into_iter()
+            .map(|entry| (entry.text, entry.content.chat().cloned()))
+            .collect::<Vec<_>>();
+        let continued = Some(first.clone());
+        assert_eq!(
+            entries,
+            [
+                ("Where?".to_owned(), None),
+                ("And then?".to_owned(), continued.clone()),
+                ("When?".to_owned(), continued),
+                ("dictated".to_owned(), None),
+            ]
+        );
+        assert_eq!(store.results(2).unwrap().len(), 1);
+        assert_eq!(
             store
-                .save_chat(NewChat {
+                .recall("s1", 1024)
+                .unwrap()
+                .into_iter()
+                .map(|ask| ask.text)
+                .collect::<Vec<_>>(),
+            ["When?"]
+        );
+        let state = store.lock();
+        let columns = state
+            .connection
+            .prepare("SELECT name FROM pragma_table_info('entries')")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<HashSet<_>>>()
+            .unwrap();
+        assert!(!columns.contains("chat"));
+        let results: i64 = state
+            .connection
+            .query_row("SELECT COUNT(*) FROM results", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(results, 1, "the orphaned result is gone");
+        let foreign_keys: bool = state
+            .connection
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+        assert!(foreign_keys);
+        drop(state);
+        assert_eq!(ask(&store, "Next?", None).id, 6, "a deleted ID stays used");
+        store.delete_chat(&first).unwrap();
+        assert_eq!(questions(&listed(&store)), ["Next?", "Where?", "dictated"]);
+        assert!(matches!(store.results(2), Err(HistoryError::Missing)));
+    }
+
+    #[test]
+    fn a_database_at_version_two_reopens_and_a_newer_one_is_refused() {
+        let (directory, store) = opened();
+        assert_eq!(user_version(&store), 2);
+        drop(store);
+        let store = Store::open(directory.path()).unwrap();
+        tamper(&store, "PRAGMA user_version=3", []);
+        drop(store);
+
+        assert!(matches!(
+            Store::open(directory.path()),
+            Err(HistoryError::Unavailable)
+        ));
+    }
+
+    #[test]
+    fn a_session_recalls_its_newest_chats_that_fit_oldest_first() {
+        let (_directory, store) = opened();
+        let ask = |request: &str, resume: Option<&str>| {
+            store
+                .save_ask(NewAsk {
                     request,
                     reply: "ok",
                     workdir: Path::new("/p"),
-                    conversation,
+                    resume,
+                    chat: None,
                     created_at_ms: now_ms(),
                     duration_ms: 1,
                     failure: None,
                 })
                 .unwrap();
         };
-        chat("one", Some("c1"));
-        chat("other", Some("c2"));
-        chat("two", Some("c1"));
-        chat("none", None);
-        chat("three", Some("c1"));
-        let questions = |conversation: &str, max_bytes: usize| {
+        ask("one", Some("c1"));
+        ask("other", Some("c2"));
+        ask("two", Some("c1"));
+        ask("none", None);
+        ask("three", Some("c1"));
+        let questions = |resume: &str, max_bytes: usize| {
             store
-                .conversation(conversation, max_bytes)
+                .recall(resume, max_bytes)
                 .unwrap()
                 .into_iter()
-                .map(|chat| chat.text)
+                .map(|ask| ask.text)
                 .collect::<Vec<_>>()
         };
 
@@ -1746,48 +2203,296 @@ mod tests {
         assert_eq!(questions("c1", 12), ["two", "three"]);
         assert_eq!(questions("c2", 1024), ["other"]);
         // A chat bigger than the whole budget doesn't hide the ones before it.
-        chat("a request far longer than the budget", Some("c1"));
+        ask("a request far longer than the budget", Some("c1"));
         assert_eq!(questions("c1", 12), ["two", "three"]);
         assert!(questions("c3", 1024).is_empty());
     }
 
     #[test]
-    fn an_older_daemon_still_inserts_and_reads_after_the_migration() {
-        let (_directory, store) = opened();
-        store
-            .insert(
-                system_transcription("session", Path::new("/no-folder/session.txt")),
-                None,
-            )
-            .unwrap();
+    fn an_ask_keeps_the_chat_it_continued_and_a_folders_ask_keeps_none() {
+        let (directory, store) = opened();
 
+        let named = ask(&store, "When?", Some(chat("first")));
+        let folders = ask(&store, "Where?", None);
+
+        let key = |entry: &HistoryEntry| entry.content.chat().cloned();
+        assert_eq!(key(&named), Some(chat("first")));
+        assert_eq!(key(&folders), None);
+        drop(store);
+        let reopened = Store::open(directory.path()).unwrap();
+        assert_eq!(key(&reopened.get(named.id).unwrap()), Some(chat("first")));
+    }
+
+    #[test]
+    fn an_ask_whose_assistant_this_daemon_doesnt_know_survives_maintenance_without_a_chat() {
+        let (_directory, store) = opened();
+        let newer = ask(&store, "When?", Some(chat("first")));
         tamper(
             &store,
-            INSERT_BEFORE_SECTIONS,
-            params![now_ms() as i64, "from an older daemon"],
+            "INSERT INTO chats(assistant,name) VALUES('future-assistant','first')",
+            [],
         );
-        let older_reads = store
+        tamper(
+            &store,
+            "UPDATE entries SET assistant='future-assistant' WHERE id=?1",
+            params![sql_integer(newer.id).unwrap()],
+        );
+
+        store.maintenance().unwrap();
+
+        let page = store.list(&collapsed("", None, 10)).unwrap();
+        assert_eq!(page.warning, None);
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].id, newer.id);
+        assert_eq!(page.entries[0].content.chat(), None);
+        let assistant: String = store
             .lock()
             .connection
-            .prepare(SELECT_BEFORE_SECTIONS)
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(6))
-            .unwrap()
-            .collect::<rusqlite::Result<Vec<_>>>()
+            .query_row(
+                "SELECT assistant FROM entries WHERE id=?1",
+                [sql_integer(newer.id).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(assistant, "future-assistant");
+    }
+
+    #[test]
+    fn collapsing_shows_each_chat_once_at_its_newest_ask() {
+        let (_directory, store) = opened();
+        ask(&store, "first one", Some(chat("first")));
+        ask(&store, "folder one", None);
+        ask(&store, "second one", Some(chat("second")));
+        ask(&store, "first two", Some(chat("first")));
+        ask(&store, "folder two", None);
+
+        let page = store.list(&collapsed("", None, 100)).unwrap();
+
+        assert_eq!(
+            questions(&page.entries),
+            ["folder two", "first two", "second one", "folder one"]
+        );
+        assert_eq!(store.list(&query("", None, 100)).unwrap().entries.len(), 5);
+    }
+
+    #[test]
+    fn a_collapsed_search_finds_a_chat_by_any_of_its_asks() {
+        let (_directory, store) = opened();
+        ask(&store, "lunch on friday", Some(chat("first")));
+        ask(&store, "and dinner", Some(chat("first")));
+        ask(&store, "breakfast", Some(chat("second")));
+
+        let page = store.list(&collapsed("lunch", None, 100)).unwrap();
+
+        assert_eq!(questions(&page.entries), ["lunch on friday"]);
+    }
+
+    #[test]
+    fn collapsed_pages_never_repeat_a_chat() {
+        let (_directory, store) = opened();
+        ask(&store, "first one", Some(chat("first")));
+        ask(&store, "second one", Some(chat("second")));
+        ask(&store, "first two", Some(chat("first")));
+        ask(&store, "third one", Some(chat("third")));
+
+        let page = store.list(&collapsed("", None, 2)).unwrap();
+        assert_eq!(questions(&page.entries), ["third one", "first two"]);
+        let next = store.list(&collapsed("", page.next_before_id, 2)).unwrap();
+
+        assert_eq!(questions(&next.entries), ["second one"]);
+        assert_eq!(next.next_before_id, None);
+    }
+
+    #[test]
+    fn reading_a_chat_returns_its_newest_asks_oldest_first_in_full() {
+        let (_directory, store) = opened();
+        let long = "x".repeat(600);
+        ask(&store, "one", Some(chat("first")));
+        ask(&store, "elsewhere", Some(chat("second")));
+        ask(&store, &long, Some(chat("first")));
+        ask(&store, "three", Some(chat("first")));
+        let read = |before_id, limit| {
+            store.chat(&ChatQuery {
+                chat: chat("first"),
+                before_id,
+                limit,
+            })
+        };
+
+        let page = read(None, 2).unwrap();
+        assert_eq!(questions(&page.entries), [long.as_str(), "three"]);
+        let older = read(page.next_before_id, 2).unwrap();
+        assert_eq!(questions(&older.entries), ["one"]);
+        assert_eq!(older.next_before_id, None);
+        for limit in [0, ChatQuery::MAX_LIMIT + 1] {
+            assert!(matches!(
+                read(None, limit),
+                Err(HistoryError::InvalidRequest)
+            ));
+        }
+        assert!(matches!(
+            store.chat(&ChatQuery {
+                chat: chat("never"),
+                before_id: None,
+                limit: 10,
+            }),
+            Err(HistoryError::Missing)
+        ));
+    }
+
+    #[test]
+    fn deleting_a_chat_takes_its_asks_and_their_results_and_leaves_the_rest() {
+        let (_directory, store) = opened();
+        let asked = ask(&store, "one", Some(chat("first")));
+        ask(&store, "two", Some(chat("first")));
+        let other = ask(&store, "elsewhere", Some(chat("second")));
+        let folder = ask(&store, "folder", None);
+        store
+            .save_result(asked.id, "Polish", "Polished.", now_ms())
+            .unwrap();
+        store
+            .save_result(other.id, "Polish", "Kept.", now_ms())
             .unwrap();
 
-        assert_eq!(older_reads, ["session", "from an older daemon"]);
-        let sections = listed(&store)
-            .iter()
-            .map(|entry| (entry.text.clone(), entry.content.section()))
-            .collect::<Vec<_>>();
+        store.delete_chat(&chat("first")).unwrap();
+        store.delete_chat(&chat("never")).unwrap();
+
         assert_eq!(
-            sections,
+            listed(&store)
+                .iter()
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>(),
+            [folder.id, other.id]
+        );
+        let results: i64 = store
+            .lock()
+            .connection
+            .query_row("SELECT COUNT(*) FROM results", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(results, 1);
+    }
+
+    #[test]
+    fn a_chat_whose_delete_fails_keeps_every_ask() {
+        let (_directory, store) = opened();
+        let first = ask(&store, "one", Some(chat("first")));
+        let second = ask(&store, "two", Some(chat("first")));
+        tamper(
+            &store,
+            &format!(
+                "CREATE TEMP TRIGGER refuse BEFORE DELETE ON entries WHEN old.id={}
+                 BEGIN SELECT RAISE(ABORT, 'injected'); END",
+                first.id
+            ),
+            [],
+        );
+
+        assert!(matches!(
+            store.delete_chat(&chat("first")),
+            Err(HistoryError::Storage(_))
+        ));
+
+        assert_eq!(
+            listed(&store)
+                .iter()
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>(),
+            [second.id, first.id]
+        );
+    }
+
+    /// The chat name each listed entry carries, newest first.
+    fn chat_names(entries: &[HistoryEntry]) -> Vec<(&str, Option<&str>)> {
+        entries
+            .iter()
+            .map(|entry| {
+                let name = entry.content.chat().map(|chat| chat.name.as_str());
+                (entry.text.as_str(), name)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_renamed_chat_takes_its_asks_and_search_finds_it_by_name() {
+        let (directory, store) = opened();
+        ask(&store, "one", Some(chat("first")));
+        ask(&store, "elsewhere", Some(chat("second")));
+        ask(&store, "two", Some(chat("first")));
+        ask(&store, "folder", None);
+
+        store
+            .rename_chat(&chat("first"), &ChatName::new("Trip plans").unwrap())
+            .unwrap();
+
+        assert_eq!(
+            chat_names(&listed(&store)),
             [
-                ("from an older daemon".to_owned(), HistorySection::Dictation),
-                ("session".to_owned(), HistorySection::SystemTranscription),
+                ("folder", None),
+                ("two", Some("Trip plans")),
+                ("elsewhere", Some("second")),
+                ("one", Some("Trip plans")),
             ]
         );
+        let page = |name: &str| {
+            store.chat(&ChatQuery {
+                chat: chat(name),
+                before_id: None,
+                limit: 10,
+            })
+        };
+        assert_eq!(
+            questions(&page("Trip plans").unwrap().entries),
+            ["one", "two"]
+        );
+        assert!(matches!(page("first"), Err(HistoryError::Missing)));
+        assert_eq!(
+            questions(&store.list(&collapsed("trip", None, 10)).unwrap().entries),
+            ["two"]
+        );
+        let next = ask(&store, "three", Some(chat("Trip plans")));
+        assert_eq!(chat_names(&[next]), [("three", Some("Trip plans"))]);
+        drop(store);
+        let store = Store::open(directory.path()).unwrap();
+        assert_eq!(
+            chat_names(&listed(&store))[0],
+            ("three", Some("Trip plans"))
+        );
+    }
+
+    #[test]
+    fn a_chat_renamed_to_a_name_another_chat_has_is_refused() {
+        let (_directory, store) = opened();
+        ask(&store, "one", Some(chat("first")));
+        ask(&store, "two", Some(chat("second")));
+
+        assert!(matches!(
+            store.rename_chat(&chat("first"), &ChatName::new("second").unwrap()),
+            Err(HistoryError::ChatNameTaken)
+        ));
+        assert_eq!(
+            chat_names(&listed(&store)),
+            [("two", Some("second")), ("one", Some("first"))]
+        );
+    }
+
+    #[test]
+    fn expiring_a_chats_last_ask_drops_the_chat() {
+        let (_directory, store) = opened();
+        let old = ask(&store, "one", Some(chat("first")));
+        tamper(
+            &store,
+            "UPDATE entries SET created=0 WHERE id=?1",
+            [old.id as i64],
+        );
+
+        store.maintenance().unwrap();
+
+        let chats: i64 = store
+            .lock()
+            .connection
+            .query_row("SELECT COUNT(*) FROM chats", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(chats, 0);
     }
 
     #[test]
@@ -1879,9 +2584,10 @@ mod tests {
 
     #[test]
     fn a_prompt_reads_a_chats_reply_and_any_other_entrys_text() {
-        let chat = HistoryEntry {
-            content: HistoryContent::Chat {
+        let ask = HistoryEntry {
+            content: HistoryContent::Ask {
                 reply: "Friday.".into(),
+                chat: None,
             },
             ..entry("When?", HistoryStatus::Success)
         };
@@ -1893,7 +2599,7 @@ mod tests {
             ..entry("[00:00:01] Ship it.", HistoryStatus::Success)
         };
 
-        assert_eq!(chat.prompt_text().unwrap(), "Friday.");
+        assert_eq!(ask.prompt_text().unwrap(), "Friday.");
         assert_eq!(whole.prompt_text().unwrap(), "[00:00:01] Ship it.");
         assert_eq!(
             entry("Hello", HistoryStatus::Success)
@@ -1906,8 +2612,9 @@ mod tests {
     #[test]
     fn a_prompt_cannot_read_a_blank_entry() {
         let blank_chat = HistoryEntry {
-            content: HistoryContent::Chat {
+            content: HistoryContent::Ask {
                 reply: " \n".into(),
+                chat: None,
             },
             ..entry("When?", HistoryStatus::Success)
         };
@@ -2097,32 +2804,6 @@ mod tests {
     }
 
     #[test]
-    fn results_whose_entry_an_older_daemon_deleted_are_swept() {
-        let (directory, store) = opened();
-        let entry = save(&store, "notes", HistoryStatus::Success, None);
-        store
-            .save_result(entry.id, "Summarize", "Short.", 1)
-            .unwrap();
-
-        drop(store);
-        // An older daemon's connection, with foreign keys off as SQLite starts.
-        let database = Connection::open(directory.path().join("history.db")).unwrap();
-        database
-            .execute("DELETE FROM entries WHERE id=?1", [entry.id as i64])
-            .unwrap();
-        drop(database);
-        let store = Store::open(directory.path()).unwrap();
-        store.maintenance().unwrap();
-
-        let left: i64 = store
-            .lock()
-            .connection
-            .query_row("SELECT COUNT(*) FROM results", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(left, 0);
-    }
-
-    #[test]
     fn one_sections_entries_never_evict_another_sections() {
         let (_directory, store) = opened();
         let session = store
@@ -2146,8 +2827,9 @@ mod tests {
     fn a_chat_keeps_its_reply_which_search_finds_and_its_budget_counts() {
         let (_directory, store) = opened();
         let asked = HistoryEntry {
-            content: HistoryContent::Chat {
+            content: HistoryContent::Ask {
                 reply: "Tuesday at noon".into(),
+                chat: None,
             },
             ..entry("When is lunch?", HistoryStatus::Success)
         };
@@ -2164,8 +2846,9 @@ mod tests {
             "When is lunch?".len() + "Tuesday at noon".len()
         );
         let oversized = HistoryEntry {
-            content: HistoryContent::Chat {
+            content: HistoryContent::Ask {
                 reply: "x".repeat(MAX_ENTRY_BYTES + 1),
+                chat: None,
             },
             ..asked
         };
@@ -2423,6 +3106,7 @@ mod tests {
             (RpcErrorCode::PromptMissing, 305),
             (RpcErrorCode::PromptsFull, 306),
             (RpcErrorCode::PromptWriteFailed, 307),
+            (RpcErrorCode::ChatNameTaken, 308),
             (RpcErrorCode::HistoryProjectUnavailable, 903),
             (RpcErrorCode::HistoryEntryEmpty, 904),
             (RpcErrorCode::HistoryTranscriptUnreadable, 905),
@@ -3066,7 +3750,7 @@ mod tests {
         let state = store.lock();
         let transaction = state.connection.unchecked_transaction().unwrap();
         for _ in 1..budget(HistorySection::Dictation).entries {
-            transaction.execute("INSERT INTO entries(created,source,text,complete,status,language,own_voice,engine) VALUES(?1,0,'',0,1,'en',1,'test')", [sql_integer(now_ms()).unwrap()]).unwrap();
+            transaction.execute("INSERT INTO entries(created,source,text,complete,status,language,own_voice,engine,section) VALUES(?1,0,'',0,1,'en',1,'test',0)", [sql_integer(now_ms()).unwrap()]).unwrap();
         }
         transaction.commit().unwrap();
         drop(state);
@@ -3156,7 +3840,7 @@ mod tests {
             .unwrap();
         assert!(page_size * max_pages <= sql_integer(MAX_DATABASE_BYTES).unwrap());
         let transaction = state.connection.unchecked_transaction().unwrap();
-        transaction.execute("INSERT INTO entries(created,source,text,complete,status,language,own_voice,engine) VALUES(?1,0,'private',1,0,'en',0,'test')", [sql_integer(now_ms()).unwrap()]).unwrap();
+        transaction.execute("INSERT INTO entries(created,source,text,complete,status,language,own_voice,engine,section) VALUES(?1,0,'private',1,0,'en',0,'test',0)", [sql_integer(now_ms()).unwrap()]).unwrap();
         let journal = directory.path().join("history.db-journal");
         assert_eq!(fs::metadata(&journal).unwrap().mode() & 0o777, 0o600);
         assert!(fs::metadata(&journal).unwrap().len() <= MAX_DATABASE_BYTES + 1024 * 1024);

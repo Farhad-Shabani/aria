@@ -9,15 +9,16 @@ use crate::ipc::{
     WAKE_WORD_HEALTH_SERVICE, probe_daemon,
 };
 use aria_assistant::chat::{
-    Ambiguous, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage, ChatStageKind,
-    ChatTarget, Focus, Mention, Project, Projects, ProjectsError, PromptCall, Ticket,
+    Ambiguous, AskCall, AssistantModel, ChatReply, ChatRequest, ChatRequestError, ChatStage,
+    ChatStageKind, ChatTarget, Focus, Mention, Project, Projects, ProjectsError, PromptCall,
+    Ticket,
 };
 use aria_kit::synthesis::{SpeechText, SpeechTextError};
 use aria_platform::delivery::{PlatformTextDelivery, TextDelivery};
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_settings::config::{AssistantId, ConfigError};
 use aria_settings::rpc::RpcFailure;
-use aria_settings::{SettingsPatch, SettingsSnapshot, UpdateResult};
+use aria_settings::{ChatKey, ChatName, SettingsPatch, SettingsSnapshot, UpdateResult};
 use aria_voice::dictation::{
     DictationOutcome, DictationRequest, DictationResult, DictationStage, RecordingId, StopMode,
 };
@@ -121,18 +122,26 @@ impl DaemonSession {
 
     /// Hands the chat to the daemon. The reply arrives on the event stream,
     /// subscribed before the chat goes out so it cannot slip past.
-    pub fn ask(&self, request: ChatRequest) -> Result<PendingChat, ClientError> {
+    pub fn ask(&self, call: AskCall) -> Result<TakenAsk, ClientError> {
         let events = self.client.subscribe()?;
-        let ticket = self.client.ask(request)?;
-        Ok(PendingChat { ticket, events })
+        let (ticket, chat) = self.client.ask(call)?;
+        Ok(TakenAsk {
+            ticket,
+            chat,
+            events,
+        })
     }
 
     /// Hands a prompt run to the daemon. Its result arrives as a chat's
     /// reply does, on the event stream subscribed before the run goes out.
-    pub fn run_prompt(&self, call: PromptCall) -> Result<PendingChat, ClientError> {
+    pub fn run_prompt(&self, call: PromptCall) -> Result<TakenAsk, ClientError> {
         let events = self.client.subscribe()?;
         let ticket = self.client.run_prompt(call)?;
-        Ok(PendingChat { ticket, events })
+        Ok(TakenAsk {
+            ticket,
+            chat: None,
+            events,
+        })
     }
 
     /// Ends the named recording so its text comes back. False when it
@@ -302,6 +311,24 @@ impl DaemonSession {
         title: Option<&aria_voice::history::Title>,
     ) -> Result<aria_voice::history::HistoryEntry, ClientError> {
         self.client.rename_history(id, title)
+    }
+
+    /// One page of a chat's asks, oldest first.
+    pub fn get_chat(
+        &self,
+        query: aria_voice::history::ChatQuery,
+    ) -> Result<aria_voice::history::ChatPage, ClientError> {
+        self.client.get_chat(query)
+    }
+
+    /// Answers the chat under its new name, as the daemon kept it.
+    pub fn rename_chat(&self, chat: ChatKey, name: &ChatName) -> Result<ChatKey, ClientError> {
+        self.client.rename_chat(chat, name)
+    }
+
+    /// Answers whether the daemon knew the chat. One already gone succeeds.
+    pub fn delete_chat(&self, chat: ChatKey) -> Result<bool, ClientError> {
+        self.client.delete_chat(chat)
     }
 
     pub fn clear_history(
@@ -474,15 +501,22 @@ impl Iterator for SystemTranscriptionFollow {
     }
 }
 
-/// A chat the daemon has taken, with the stream its reply arrives on.
-pub struct PendingChat {
+/// An ask the daemon has taken, with the stream its reply arrives on.
+pub struct TakenAsk {
     ticket: Ticket,
+    chat: Option<ChatKey>,
     events: EventStream,
 }
 
-impl PendingChat {
+impl TakenAsk {
     pub fn ticket(&self) -> Ticket {
         self.ticket
+    }
+
+    /// The named chat the ask continues, as the daemon named it.
+    /// `None` for a folder's own chat and for a prompt run.
+    pub fn chat(&self) -> Option<&ChatKey> {
+        self.chat.as_ref()
     }
 
     /// Waits for the reply, skipping every other event on the way. Each
@@ -879,6 +913,7 @@ mod tests {
             text: "one".to_owned(),
             delivery_error: None,
             copied: false,
+            history_entry_id: None,
         };
         let events = vec![
             chat(2, ChatStageKind::Working(Step::Thinking)),

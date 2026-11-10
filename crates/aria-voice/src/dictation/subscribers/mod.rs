@@ -88,6 +88,7 @@ fn message(code: RpcErrorCode) -> &'static str {
         | RpcErrorCode::PromptMissing
         | RpcErrorCode::PromptsFull
         | RpcErrorCode::PromptWriteFailed
+        | RpcErrorCode::ChatNameTaken
         | RpcErrorCode::Unauthenticated
         | RpcErrorCode::PermissionDenied
         | RpcErrorCode::Unsupported

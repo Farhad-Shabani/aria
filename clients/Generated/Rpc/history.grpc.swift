@@ -113,6 +113,19 @@ public enum Aria_Daemon_V1_HistoryService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "GetChat" metadata.
+        public enum GetChat: Sendable {
+            /// Request type for "GetChat".
+            public typealias Input = Aria_Daemon_V1_GetChatRequest
+            /// Response type for "GetChat".
+            public typealias Output = Aria_Daemon_V1_GetChatResponse
+            /// Descriptor for "GetChat".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.HistoryService"),
+                method: "GetChat",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "aria.daemon.v1.HistoryService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             List.descriptor,
@@ -121,7 +134,8 @@ public enum Aria_Daemon_V1_HistoryService: Sendable {
             Clear.descriptor,
             Regenerate.descriptor,
             Rename.descriptor,
-            GetThread.descriptor
+            GetThread.descriptor,
+            GetChat.descriptor
         ]
     }
 }
@@ -300,6 +314,30 @@ extension Aria_Daemon_V1_HistoryService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_HistoryThread>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_HistoryThread>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "GetChat" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > A chat's newest asks before a cursor, returned oldest first with
+        /// > their full text. A chat with no saved asks is HISTORY_MISSING.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_GetChatRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_GetChatRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_GetChatResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func getChat<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetChatRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_GetChatRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_GetChatResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetChatResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -556,6 +594,41 @@ extension Aria_Daemon_V1_HistoryService {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "GetChat" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > A chat's newest asks before a cursor, returned oldest first with
+        /// > their full text. A chat with no saved asks is HISTORY_MISSING.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_GetChatRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_GetChatRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_GetChatResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func getChat<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetChatRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_GetChatRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_GetChatResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetChatResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_HistoryService.Method.GetChat.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -760,6 +833,36 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_GetThreadRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_HistoryThread>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetChat" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > A chat's newest asks before a cursor, returned oldest first with
+    /// > their full text. A chat with no saved asks is HISTORY_MISSING.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_GetChatRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getChat<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_GetChatRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetChatResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.getChat(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_GetChatRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_GetChatResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -994,6 +1097,40 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
             metadata: metadata
         )
         return try await self.getThread(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetChat" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > A chat's newest asks before a cursor, returned oldest first with
+    /// > their full text. A chat with no saved asks is HISTORY_MISSING.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getChat<Result>(
+        _ message: Aria_Daemon_V1_GetChatRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetChatResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_GetChatRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.getChat(
             request: request,
             options: options,
             onResponse: handleResponse

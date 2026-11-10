@@ -267,6 +267,7 @@ pub(in crate::daemon) fn redacted(status: Status) -> Status {
         | RpcErrorCode::PromptMissing
         | RpcErrorCode::PromptsFull
         | RpcErrorCode::PromptWriteFailed
+        | RpcErrorCode::ChatNameTaken
         | RpcErrorCode::SpeakerModelMissing
         | RpcErrorCode::SpeakerAlreadyEnrolled
         | RpcErrorCode::SpeakerNotEnrolled

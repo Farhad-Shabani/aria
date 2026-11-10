@@ -1,5 +1,5 @@
 //! One chat, start to finish: the assistant named by the request, the
-//! conversation it continues, and the reply's optional delivery. Ordering
+//! chat it continues, and the reply's optional delivery. Ordering
 //! between chats is the actor's job; here only the record file is shared.
 
 use super::super::config::{load_chat, load_memory};
@@ -9,11 +9,12 @@ use super::super::subscriptions::Subscriptions;
 use super::error::{ChatError, ResolveError};
 use aria_assistant::chat::ChatConfig;
 use aria_assistant::chat::{
-    Ask, Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY, CODEX_BINARY,
-    ChatEventEmitter, ChatReply, ChatRequest, ChatStage, ChatStageKind, ChatSubscribers,
-    ChatTarget, ClaudeCodeAssistant, CodexAssistant, Conversations, DeliverCall, LocalAssistant,
-    Projects, PromptCall, PromptChoice, PromptInput, PromptInstructions, PromptRequest, PromptRun,
-    Session, SessionSpec, SessionStore, Step, StepSink, Ticket, read_instructions,
+    Ask, AskCall, Assistant, AssistantError, AssistantModel, AssistantStatus, CLAUDE_BINARY,
+    CODEX_BINARY, ChatChoice, ChatEventEmitter, ChatFolders, ChatReply, ChatRequest, ChatStage,
+    ChatStageKind, ChatSubscribers, ChatTarget, ClaudeCodeAssistant, CodexAssistant, DeliverCall,
+    LocalAssistant, Projects, PromptCall, PromptChoice, PromptInput, PromptInstructions,
+    PromptRequest, PromptRun, RenameError, Session, SessionHistory, SessionKey, SessionSpec,
+    SessionStore, Step, StepSink, Ticket, read_instructions,
 };
 use aria_assistant::memory::MemoryConfig;
 use aria_assistant::memory::{DB_FILE, Store, load_profile_block};
@@ -27,38 +28,110 @@ use aria_primitives::error_chain;
 use aria_provider::ProviderError;
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::{ApplicationId, Prompt, PromptId, PromptKind, SettingsCache, SettingsStore};
+use aria_settings::{
+    ApplicationId, ChatKey, ChatName, Prompt, PromptId, PromptKind, SettingsCache, SettingsStore,
+};
 use aria_voice::config::SpeakerConfig;
-use aria_voice::history::{HistoryContent, HistoryEntry, NewChat};
+use aria_voice::history::{HistoryContent, HistoryEntry, HistoryError, NewAsk};
 use aria_voice::speaker::{ProfileStore, Role};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 /// Resume ids outlive the daemon and a reboot, like the assistants' own history.
 const SESSION_FILE: &str = "chat-session.json";
-/// How much of a conversation the local model rereads with each chat.
+/// How much of an assistant session the local model rereads with each chat.
 const RECALL_BYTES: usize = 32 * 1024;
+/// A file of its own, because a daemon from before chat folders
+/// requires a resume id in every record of the session file.
+pub(super) const CHAT_FOLDERS_FILE: &str = "chat-folders.json";
 
 pub(in crate::daemon) enum ChatJob {
-    Ask(ChatRequest),
+    Ask(AskJob),
     Prompt(PromptRequest),
 }
 
 impl ChatJob {
     pub(in crate::daemon) fn assistant_id(&self) -> AssistantId {
         match self {
-            Self::Ask(request) => request.assistant_id,
+            Self::Ask(job) => job.assistant_id,
             Self::Prompt(request) => request.assistant_id,
         }
     }
 
     pub(in crate::daemon) fn tap_cancels(&self) -> bool {
         match self {
-            Self::Ask(request) => request.tap_cancels,
+            Self::Ask(job) => job.tap_cancels,
             Self::Prompt(request) => request.tap_cancels,
         }
+    }
+}
+
+/// An ask on its way through its chat's lane: its model bound and
+/// its chat named. A named chat's folder is read only once
+/// the ask's turn comes, so a delete admitted ahead of it is seen.
+#[derive(Debug)]
+pub(in crate::daemon) struct AskJob {
+    text: String,
+    place: Place,
+    assistant_id: AssistantId,
+    model_id: Option<String>,
+    new_session: bool,
+    output_mode: Option<OutputMode>,
+    own_voice: bool,
+    tap_cancels: bool,
+}
+
+/// Where an ask runs, as far as it's known before the ask's turn.
+#[derive(Debug)]
+enum Place {
+    /// Known at once: a folder's own chat, or, with a name, one this
+    /// ask started and recorded.
+    Folder {
+        workdir: PathBuf,
+        name: Option<ChatName>,
+    },
+    /// The folder the chat's record holds. `workdir` seeds one with
+    /// no record.
+    Named {
+        name: ChatName,
+        workdir: Option<PathBuf>,
+    },
+}
+
+impl AskJob {
+    pub(in crate::daemon) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The lane the ask runs in, the same key its run continues.
+    pub(in crate::daemon) fn key(&self) -> SessionKey {
+        match &self.place {
+            Place::Folder {
+                workdir,
+                name: None,
+            } => SessionKey::folder(self.assistant_id, workdir),
+            Place::Folder {
+                name: Some(name), ..
+            }
+            | Place::Named { name, .. } => SessionKey::named(&ChatKey {
+                assistant_id: self.assistant_id,
+                name: name.clone(),
+            }),
+        }
+    }
+
+    /// The named chat the ask continues; `None` for a folder's own.
+    pub(in crate::daemon) fn chat(&self) -> Option<ChatKey> {
+        let name = match &self.place {
+            Place::Folder { name, .. } => name.clone()?,
+            Place::Named { name, .. } => name.clone(),
+        };
+        Some(ChatKey {
+            assistant_id: self.assistant_id,
+            name,
+        })
     }
 }
 
@@ -67,6 +140,8 @@ pub(in crate::daemon) struct ChatRuntime {
     home: PathBuf,
     codex_home: PathBuf,
     sessions: SessionStore,
+    /// The folder each named chat runs in, kept from its first ask.
+    folders: ChatFolders,
     #[cfg(test)]
     pub(in crate::daemon) assistant_overrides: Option<tests::AssistantOverrides>,
     /// Read per chat, so a reply never types into an app with Aria off.
@@ -97,6 +172,7 @@ impl ChatRuntime {
             home: context.home.clone(),
             codex_home: context.codex_home.clone(),
             sessions: SessionStore::open(context.settings_path.with_file_name(SESSION_FILE)),
+            folders: ChatFolders::open(context.settings_path.with_file_name(CHAT_FOLDERS_FILE)),
             settings,
             cache,
             memory_wake,
@@ -129,11 +205,8 @@ impl ChatRuntime {
     }
 
     /// The local assistant on the provider frozen at startup, with the model
-    /// the settings name now. It recalls a conversation only from `history`.
-    fn local<'a>(
-        &self,
-        history: Option<&'a HistoryStore>,
-    ) -> LocalAssistant<SavedConversations<'a>> {
+    /// the settings name now. It recalls a session's asks only from `history`.
+    fn local<'a>(&self, history: Option<&'a HistoryStore>) -> LocalAssistant<SavedHistory<'a>> {
         let model = self.settings.snapshot().ok().and_then(|snapshot| {
             snapshot
                 .settings
@@ -143,7 +216,7 @@ impl ChatRuntime {
         LocalAssistant::new(
             self.cache.effective().choices().provider.as_ref(),
             model,
-            SavedConversations { history },
+            SavedHistory { history },
         )
     }
 
@@ -182,25 +255,107 @@ impl ChatRuntime {
         }
     }
 
-    pub(in crate::daemon) fn prepare_ask(
-        &self,
-        mut request: ChatRequest,
-    ) -> Result<ChatRequest, ChatError> {
-        if !request.workdir.is_dir() {
-            return Err(ChatError::Assistant(AssistantError::NoWorkdir(
-                request.workdir,
-            )));
-        }
-        if request.model_id.is_none() {
-            request.model_id = self
+    /// Binds the model the call runs and names a chat it starts,
+    /// recording that chat's folder: nobody else knows the name yet.
+    /// A named chat's folder waits for the ask's turn in [`Self::resolve`].
+    pub(in crate::daemon) fn prepare_ask(&self, call: AskCall) -> Result<AskJob, ChatError> {
+        let AskCall {
+            text,
+            chat,
+            assistant_id,
+            model_id,
+            output_mode,
+            own_voice,
+            tap_cancels,
+        } = call;
+        let model_id = match model_id {
+            Some(model_id) => Some(model_id),
+            None => self
                 .settings
                 .snapshot()
                 .map_err(ChatError::Settings)?
                 .settings
-                .model_id(request.assistant_id)
-                .map(str::to_owned);
-        }
-        Ok(request)
+                .model_id(assistant_id)
+                .map(str::to_owned),
+        };
+        let (place, new_session) = match chat {
+            ChatChoice::Folder {
+                workdir,
+                new_session,
+            } => {
+                require_directory(&workdir)?;
+                let name = None;
+                (Place::Folder { workdir, name }, new_session)
+            }
+            ChatChoice::Named {
+                name,
+                workdir,
+                new_session,
+            } => (Place::Named { name, workdir }, new_session),
+            ChatChoice::Start { workdir } => {
+                require_directory(&workdir)?;
+                let name = Some(self.folders.start_new(assistant_id, &text, &workdir)?);
+                // A resume ID a deleted or dropped chat left under the name
+                // belongs to another chat.
+                (Place::Folder { workdir, name }, true)
+            }
+        };
+        Ok(AskJob {
+            text,
+            place,
+            assistant_id,
+            model_id,
+            new_session,
+            output_mode,
+            own_voice,
+            tap_cancels,
+        })
+    }
+
+    /// The request an ask runs, once its turn in its chat's lane
+    /// has come: only then is a named chat's folder read, or
+    /// recorded from the ask's own.
+    fn resolve(&self, job: AskJob) -> Result<ChatRequest, ChatError> {
+        let (workdir, name) = match job.place {
+            Place::Folder { workdir, name } => (workdir, name),
+            Place::Named { name, workdir } => {
+                let chat = ChatKey {
+                    assistant_id: job.assistant_id,
+                    name,
+                };
+                let workdir = self.folder(&chat, workdir)?;
+                (workdir, Some(chat.name))
+            }
+        };
+        Ok(ChatRequest {
+            text: job.text,
+            workdir,
+            assistant_id: job.assistant_id,
+            model_id: job.model_id,
+            name,
+            new_session: job.new_session,
+            output_mode: job.output_mode,
+            own_voice: job.own_voice,
+            tap_cancels: job.tap_cancels,
+        })
+    }
+
+    /// Where a named chat runs: its recorded folder. Only one with
+    /// no record runs in `requested`, which then becomes its folder.
+    fn folder(&self, chat: &ChatKey, requested: Option<PathBuf>) -> Result<PathBuf, ChatError> {
+        let key = SessionKey::named(chat);
+        let workdir = match self.folders.recall(&key)? {
+            Some(workdir) => workdir,
+            None => {
+                let requested = requested.ok_or(ChatError::UnknownChat)?;
+                // Checked before it's recorded, so a mistyped folder never
+                // becomes the chat's.
+                require_directory(&requested)?;
+                self.folders.start(key, &requested)?
+            }
+        };
+        require_directory(&workdir)?;
+        Ok(workdir)
     }
 
     /// Runs one job to its end. Everything a caller learns arrives as an
@@ -263,9 +418,9 @@ impl ChatRuntime {
         let mut steps = StepRelay::new(&self.emitter, ticket, assistant_id);
         steps.step(Step::Thinking);
         let outcome = match job {
-            ChatJob::Ask(request) => {
+            ChatJob::Ask(job) => self.resolve(job).and_then(|request| {
                 self.ask(&assistant, &mut steps, request, history, &cancellation)
-            }
+            }),
             ChatJob::Prompt(request) => {
                 self.run_prompt(&assistant, request, history, &cancellation)
             }
@@ -391,6 +546,68 @@ impl ChatRuntime {
         });
     }
 
+    /// Forgets the resume id and the folder before the asks go, so a delete
+    /// that fails partway never leaves deleted context for the next ask to
+    /// continue. Answers whether the daemon knew the chat.
+    pub(in crate::daemon) fn delete_chat(&self, chat: &ChatKey) -> Result<bool, ChatError> {
+        let key = SessionKey::named(chat);
+        self.sessions.forget(&key)?;
+        let had_folder = self.folders.forget(&key)?;
+        let had_asks = self
+            .history
+            .delete_chat(chat)
+            .map_err(ChatError::DeleteChat)?;
+        Ok(had_folder || had_asks)
+    }
+
+    /// Moves the chat's folder record, then its resume ID, then its saved
+    /// asks to `name`. A step that fails puts the ones before it back, so the
+    /// chat stays whole under one of its names.
+    pub(in crate::daemon) fn rename_chat(
+        &self,
+        chat: &ChatKey,
+        name: ChatName,
+    ) -> Result<ChatKey, ChatError> {
+        if name == chat.name {
+            return match self.folders.recall(&SessionKey::named(chat))? {
+                Some(_) => Ok(chat.clone()),
+                None => Err(ChatError::UnknownChat),
+            };
+        }
+        let renamed = ChatKey {
+            assistant_id: chat.assistant_id,
+            name,
+        };
+        let (old, new) = (SessionKey::named(chat), SessionKey::named(&renamed));
+        self.folders
+            .rename(&old, new.clone())
+            .map_err(|error| match error {
+                RenameError::Taken => ChatError::NameTaken,
+                RenameError::Unknown => ChatError::UnknownChat,
+                RenameError::Record(error) => ChatError::Record(error),
+            })?;
+        let undo_folder = || {
+            if let Err(error) = self.folders.rename(&new, old.clone()) {
+                tracing::warn!(error = %error_chain(&error), "a chat's folder could not be renamed back");
+            }
+        };
+        if let Err(error) = self.sessions.rename(&old, new.clone()) {
+            undo_folder();
+            return Err(error.into());
+        }
+        if let Err(error) = self.history.rename_chat(chat, &renamed.name) {
+            if let Err(error) = self.sessions.rename(&new, old.clone()) {
+                tracing::warn!(error = %error_chain(&error), "a chat's resume ID could not be renamed back");
+            }
+            undo_folder();
+            return Err(match error {
+                HistoryError::ChatNameTaken => ChatError::NameTaken,
+                error => ChatError::RenameChat(error),
+            });
+        }
+        Ok(renamed)
+    }
+
     /// Where a chat goes for a caller with no working directory: the
     /// project in focus, else the one the settings pin. Reading the focus
     /// file and scanning the roots touches the disk, so callers run it off
@@ -470,7 +687,7 @@ impl ChatRuntime {
             Some(block) => format!("{block}\n\n{}", request.text),
             None => request.text.clone(),
         };
-        let Reply { text, conversation } =
+        let Reply { text, resume } =
             self.turn(assistant, steps, &request, &prompt, config.timeout, cancel)?;
         if let Some(memory) = &memory
             && request.own_voice
@@ -484,25 +701,26 @@ impl ChatRuntime {
             (None, None) => None,
         };
         // Saved before the reply goes out, so whoever hears it finds it saved.
-        if let Some(history) = history {
+        let history_entry_id = history.and_then(|history| {
             let failure = delivered
                 .and_then(Result::err)
                 .map(|code| RpcFailure::new(code, "the reply couldn't be typed"));
             let (created_at_ms, duration_ms) = elapsed_ms(started);
-            history.save_chat(NewChat {
+            history.save_ask(NewAsk {
                 request: &request.text,
                 reply: &text,
                 workdir: &request.workdir,
-                conversation: conversation.as_deref(),
+                resume: resume.as_deref(),
+                chat: request.chat(),
                 created_at_ms,
                 duration_ms,
                 failure,
-            });
-        }
-        Ok(replied(text, delivered))
+            })
+        });
+        Ok(replied(text, delivered, history_entry_id))
     }
 
-    /// No memory, conversation, or project: the transcript and the user's
+    /// No memory, chat, or project: the transcript and the user's
     /// instructions are all the assistant sees. The target is bound before the
     /// assistant runs, so speech meant for an app with Aria off, or for an app
     /// the user has since left, is never sent.
@@ -541,7 +759,7 @@ impl ChatRuntime {
             let (created_at_ms, _) = elapsed_ms(started);
             history.save_result(entry, &request.name, &text, created_at_ms);
         }
-        Ok(replied(text, delivered))
+        Ok(replied(text, delivered, None))
     }
 
     pub(in crate::daemon) fn deliver(
@@ -613,7 +831,7 @@ impl ChatRuntime {
         })
     }
 
-    /// One turn on the request's conversation: continues or restarts it,
+    /// One turn on the request's chat: continues or restarts it,
     /// prompts the assistant, and records what continues it next time.
     fn turn<A: Assistant>(
         &self,
@@ -627,7 +845,7 @@ impl ChatRuntime {
         let key = request.key();
         // Forgetting happens before the chat, so a failed one cannot
         // resurrect the session the user asked to drop.
-        let resume = if request.new {
+        let resume = if request.new_session {
             self.sessions.forget(&key)?;
             None
         } else {
@@ -648,11 +866,11 @@ impl ChatRuntime {
             self.sessions.forget(&key)?;
         }
         let text = prompted?;
-        let conversation = session.resume_id().map(str::to_owned);
-        if let Some(resume) = &conversation {
-            self.sessions.record(key, resume)?;
+        let resume = session.resume_id().map(str::to_owned);
+        if let Some(id) = &resume {
+            self.sessions.record(key, id)?;
         }
-        Ok(Reply { text, conversation })
+        Ok(Reply { text, resume })
     }
 
     /// The memory section when it is on.
@@ -670,7 +888,7 @@ impl ChatRuntime {
             tracing::warn!("no owner is enrolled; the chat is not remembered");
             return;
         }
-        let session = request.key().to_string();
+        let session = request.memory_session().to_string();
         let recorded = Store::open(&memory.dir.join(DB_FILE))
             .and_then(|store| store.add_turn(&session, &request.text));
         if let Err(error) = recorded {
@@ -692,10 +910,10 @@ impl ChatRuntime {
     }
 }
 
-/// What one prompt to an assistant answered, and the conversation it went on.
+/// What one prompt to an assistant answered, and the assistant session it went on.
 struct Reply {
     text: String,
-    conversation: Option<String>,
+    resume: Option<String>,
 }
 
 /// Relays each change of step as a `Working` stage.
@@ -761,20 +979,21 @@ fn diagnosed<A: Assistant>(
     }
 }
 
-/// Recalls a conversation from the history store, or nothing while history is off.
-struct SavedConversations<'a> {
+/// Recalls an assistant session's asks from the history store, or nothing
+/// while history is off.
+struct SavedHistory<'a> {
     history: Option<&'a HistoryStore>,
 }
 
-impl Conversations for SavedConversations<'_> {
-    fn recall(&self, conversation: &str) -> Vec<Ask> {
+impl SessionHistory for SavedHistory<'_> {
+    fn recall(&self, resume: &str) -> Vec<Ask> {
         let Some(history) = self.history else {
             return Vec::new();
         };
-        match history.conversation(conversation, RECALL_BYTES) {
+        match history.recall(resume, RECALL_BYTES) {
             Ok(entries) => entries.into_iter().filter_map(ask).collect(),
             Err(error) => {
-                tracing::warn!(error = %error_chain(&error), "the conversation could not be recalled");
+                tracing::warn!(error = %error_chain(&error), "the assistant session could not be recalled");
                 Vec::new()
             }
         }
@@ -783,7 +1002,7 @@ impl Conversations for SavedConversations<'_> {
 
 fn ask(entry: HistoryEntry) -> Option<Ask> {
     match entry.content {
-        HistoryContent::Chat { reply } => Some(Ask {
+        HistoryContent::Ask { reply, .. } => Some(Ask {
             request: entry.text,
             reply,
         }),
@@ -890,6 +1109,15 @@ impl TypingTurns {
     }
 }
 
+fn require_directory(workdir: &Path) -> Result<(), ChatError> {
+    if workdir.is_dir() {
+        return Ok(());
+    }
+    Err(ChatError::Assistant(AssistantError::NoWorkdir(
+        workdir.to_path_buf(),
+    )))
+}
+
 /// When an operation began, and how long it has run, in milliseconds.
 fn elapsed_ms((created, started): (SystemTime, Instant)) -> (u64, u64) {
     let created_at_ms = created
@@ -903,11 +1131,13 @@ fn elapsed_ms((created, started): (SystemTime, Instant)) -> (u64, u64) {
 fn replied(
     text: String,
     delivered: Option<Result<DeliveryOutcome, RpcErrorCode>>,
+    history_entry_id: Option<u64>,
 ) -> ChatStageKind {
     ChatStageKind::Replied(ChatReply {
         text,
         delivery_error: delivered.and_then(Result::err),
         copied: matches!(delivered, Some(Ok(DeliveryOutcome::Copied))),
+        history_entry_id,
     })
 }
 
@@ -1111,6 +1341,7 @@ pub(super) mod tests {
             home: directory.to_path_buf(),
             codex_home: directory.join(".codex"),
             sessions: SessionStore::open(directory.join(SESSION_FILE)),
+            folders: ChatFolders::open(directory.join(CHAT_FOLDERS_FILE)),
             emitter: ChatEventEmitter::subscribed_by("aria-test-chat-events", move |stage| {
                 let _ = events.send(stage);
             }),
@@ -1157,7 +1388,7 @@ pub(super) mod tests {
     fn turns(home: &Path, request: &ChatRequest) -> Vec<String> {
         let store = Store::open(&home.join(".aria/memory").join(DB_FILE)).expect("opens");
         store
-            .turns(&request.key().to_string(), 0, i64::MAX)
+            .turns(&request.memory_session().to_string(), 0, i64::MAX)
             .expect("reads")
     }
 
@@ -1192,7 +1423,7 @@ pub(super) mod tests {
         let missing = home.path().join("gone");
 
         let error = runtime
-            .prepare_ask(request("hello", &missing, false))
+            .prepare_ask(call("hello", &missing))
             .expect_err("a missing workdir is refused");
 
         assert!(matches!(
@@ -1218,9 +1449,7 @@ pub(super) mod tests {
                 ..Default::default()
             })
             .unwrap();
-        let admitted = runtime
-            .prepare_ask(request("hello", home.path(), false))
-            .unwrap();
+        let admitted = runtime.prepare_ask(call("hello", home.path())).unwrap();
         let written = runtime
             .settings
             .modify(SettingsPatch {
@@ -1231,17 +1460,17 @@ pub(super) mod tests {
             .revision;
         assert_eq!(admitted.model_id.as_deref(), Some("claude-first"));
         let explicit = runtime
-            .prepare_ask(ChatRequest {
+            .prepare_ask(AskCall {
                 assistant_id: AssistantId::Codex,
                 model_id: Some("request-model".to_owned()),
-                ..request("hello", home.path(), false)
+                ..call("hello", home.path())
             })
             .unwrap();
         assert_eq!(explicit.model_id.as_deref(), Some("request-model"));
         let codex = runtime
-            .prepare_ask(ChatRequest {
+            .prepare_ask(AskCall {
                 assistant_id: AssistantId::Codex,
-                ..request("hello", home.path(), false)
+                ..call("hello", home.path())
             })
             .unwrap();
         assert_eq!(codex.model_id.as_deref(), Some("codex-first"));
@@ -1480,6 +1709,7 @@ pub(super) mod tests {
                 text: "Polished.".to_owned(),
                 delivery_error: None,
                 copied: false,
+                history_entry_id: None,
             })
         );
     }
@@ -1502,7 +1732,7 @@ pub(super) mod tests {
 
         assert_eq!(text, "Polished.");
         let log = log.lock().unwrap();
-        assert!(log.sessions.is_empty(), "no conversation was opened");
+        assert!(log.sessions.is_empty(), "no chat was opened");
         let [prompt] = log.prompts.as_slice() else {
             panic!("one run: {:?}", log.prompts);
         };
@@ -1666,6 +1896,24 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn memory_keeps_an_assistants_asks_in_one_directory_together_across_chats() {
+        let home = home_with_memory();
+        enroll_owner(home.path());
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
+        let heard = |text: &str, session: &str| ChatRequest {
+            own_voice: true,
+            ..named(text, session, home.path())
+        };
+        let first = heard("one", "first");
+
+        run(&runtime, &events, 1, first.clone());
+        run(&runtime, &events, 2, heard("two", "second"));
+
+        assert_eq!(turns(home.path(), &first), ["one", "two"]);
+    }
+
+    #[test]
     fn without_an_enrolled_owner_nothing_is_kept() {
         let home = home_with_memory();
         let log = Arc::new(Mutex::new(Log::default()));
@@ -1689,6 +1937,7 @@ pub(super) mod tests {
                 query: String::new(),
                 before_id: None,
                 limit: 100,
+                collapse_chats: false,
             })
             .expect("history lists")
             .entries
@@ -1712,28 +1961,50 @@ pub(super) mod tests {
             panic!("one chat, got {}", saved.len());
         };
         assert_eq!(saved.text, "When?", "the memory profile stays out");
-        assert_eq!(saved.content, HistoryContent::Chat { reply });
+        assert_eq!(
+            saved.content,
+            HistoryContent::Ask { reply, chat: None },
+            "a directory's own chat is no named one"
+        );
         assert_eq!(saved.project.as_deref(), Some(home.path()));
-        let conversation = runtime
+        let chat = runtime
             .history
-            .conversation("session-1", 1024)
+            .recall("session-1", 1024)
             .expect("history reads");
-        let ids: Vec<u64> = conversation.iter().map(|chat| chat.id).collect();
-        assert_eq!(ids, [saved.id], "filed under its conversation");
+        let ids: Vec<u64> = chat.iter().map(|ask| ask.id).collect();
+        assert_eq!(ids, [saved.id], "filed under its chat");
+    }
+
+    #[test]
+    fn a_named_ask_saves_its_chat_and_its_reply_names_the_entry() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+
+        let ChatStageKind::Replied(reply) =
+            run(&runtime, &events, 1, named("When?", "first", home.path()))
+        else {
+            panic!("the ask replies");
+        };
+
+        let saved = chats(&runtime);
+        let [saved] = saved.as_slice() else {
+            panic!("one chat, got {}", saved.len());
+        };
+        assert_eq!(saved.content.chat(), Some(&named_key("first")));
+        assert_eq!(reply.history_entry_id, Some(saved.id));
     }
 
     #[test]
     fn a_chat_with_history_off_or_that_failed_is_not_saved() {
-        let home = tempfile::tempdir().expect("a temp home");
-        std::fs::create_dir_all(home.path().join(".aria")).expect("the settings folder");
-        std::fs::write(
-            home.path().join(".aria/settings.toml"),
-            "[history]\nenabled = false\n",
-        )
-        .expect("the settings file");
+        let home = home_without_history();
         let (off, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
-        replied(run(&off, &events, 1, request("hi", home.path(), false)));
+        let ChatStageKind::Replied(reply) =
+            run(&off, &events, 1, request("hi", home.path(), false))
+        else {
+            panic!("the ask replies");
+        };
         assert!(chats(&off).is_empty());
+        assert_eq!(reply.history_entry_id, None);
 
         let home = tempfile::tempdir().expect("a temp home");
         let (failing, events) = runtime_with(home.path(), |_assistant_id| FailingAssistant {
@@ -1755,11 +2026,12 @@ pub(super) mod tests {
     }
 
     fn saved_entry(runtime: &ChatRuntime, home: &Path, reply: &str) -> u64 {
-        runtime.history.save_chat(NewChat {
+        runtime.history.save_ask(NewAsk {
             request: "When?",
             reply,
             workdir: home,
-            conversation: None,
+            resume: None,
+            chat: None,
             created_at_ms: now_ms(),
             duration_ms: 0,
             failure: None,
@@ -1893,11 +2165,12 @@ pub(super) mod tests {
     fn a_prompt_cannot_run_on_a_blank_entry() {
         let home = tempfile::tempdir().expect("a temp home");
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
-        runtime.history.save_chat(NewChat {
+        runtime.history.save_ask(NewAsk {
             request: "When?",
             reply: " \n",
             workdir: home.path(),
-            conversation: None,
+            resume: None,
+            chat: None,
             created_at_ms: now_ms(),
             duration_ms: 0,
             failure: None,
@@ -1933,6 +2206,7 @@ pub(super) mod tests {
                 query: String::new(),
                 before_id: None,
                 limit: 1,
+                collapse_chats: false,
             })
             .expect("history lists")
             .entries[0]
@@ -2128,28 +2402,484 @@ pub(super) mod tests {
         move |_assistant_id| FakeAssistant(Arc::clone(&log))
     }
 
-    pub(in crate::daemon::chat) fn request(text: &str, workdir: &Path, new: bool) -> ChatRequest {
+    /// A request whose folder is known, as an ask a client already resolved.
+    impl From<ChatRequest> for AskJob {
+        fn from(request: ChatRequest) -> Self {
+            Self {
+                text: request.text,
+                place: Place::Folder {
+                    workdir: request.workdir,
+                    name: request.name,
+                },
+                assistant_id: request.assistant_id,
+                model_id: request.model_id,
+                new_session: request.new_session,
+                output_mode: request.output_mode,
+                own_voice: request.own_voice,
+                tap_cancels: request.tap_cancels,
+            }
+        }
+    }
+
+    pub(in crate::daemon::chat) fn request(
+        text: &str,
+        workdir: &Path,
+        new_session: bool,
+    ) -> ChatRequest {
         ChatRequest {
             text: text.to_owned(),
             workdir: workdir.to_path_buf(),
             assistant_id: AssistantId::ClaudeCode,
             model_id: None,
-            session: None,
-            new,
+            name: None,
+            new_session,
             output_mode: None,
             own_voice: false,
             tap_cancels: false,
         }
     }
 
+    /// An ask in the chat `session` names.
+    fn named(text: &str, session: &str, workdir: &Path) -> ChatRequest {
+        ChatRequest {
+            name: Some(ChatName::new(session).expect("a valid name")),
+            ..request(text, workdir, false)
+        }
+    }
+
+    fn named_key(session: &str) -> ChatKey {
+        ChatKey {
+            assistant_id: AssistantId::ClaudeCode,
+            name: ChatName::new(session).expect("a valid name"),
+        }
+    }
+
+    /// An ask in `workdir`'s own chat, as a client sends it.
+    fn call(text: &str, workdir: &Path) -> AskCall {
+        AskCall {
+            text: text.to_owned(),
+            chat: ChatChoice::Folder {
+                workdir: workdir.to_path_buf(),
+                new_session: false,
+            },
+            assistant_id: AssistantId::ClaudeCode,
+            model_id: None,
+            output_mode: None,
+            own_voice: false,
+            tap_cancels: false,
+        }
+    }
+
+    /// An ask in a named chat, as a client sends it.
+    fn named_call(name: &ChatName, workdir: Option<&Path>) -> AskCall {
+        AskCall {
+            chat: ChatChoice::Named {
+                name: name.clone(),
+                workdir: workdir.map(Path::to_path_buf),
+                new_session: false,
+            },
+            ..call("hello", Path::new("/unused"))
+        }
+    }
+
+    /// A call that starts a chat in `workdir`, and the key it got.
+    fn start(runtime: &ChatRuntime, workdir: &Path) -> ChatKey {
+        runtime
+            .prepare_ask(AskCall {
+                chat: ChatChoice::Start {
+                    workdir: workdir.to_path_buf(),
+                },
+                ..call("hello", workdir)
+            })
+            .expect("the chat starts")
+            .chat()
+            .expect("a started ask names its chat")
+    }
+
+    /// The folder the call's ask runs in once its turn comes.
+    fn folder_of(runtime: &ChatRuntime, call: AskCall) -> Result<PathBuf, ChatError> {
+        runtime
+            .prepare_ask(call)
+            .and_then(|job| runtime.resolve(job))
+            .map(|request| request.workdir)
+    }
+
+    /// A home whose history keeps nothing, so only the record knows a folder.
+    fn home_without_history() -> tempfile::TempDir {
+        let home = tempfile::tempdir().expect("a temp home");
+        std::fs::create_dir_all(home.path().join(".aria")).expect("the settings folder");
+        std::fs::write(
+            home.path().join(".aria/settings.toml"),
+            "[history]\nenabled = false\n",
+        )
+        .expect("the settings file");
+        home
+    }
+
+    /// A named ask in `workdir` that replies, so its resume id is recorded.
+    fn named_turn(
+        runtime: &ChatRuntime,
+        events: &std::sync::mpsc::Receiver<ChatStage>,
+        ticket: u64,
+        chat: &ChatKey,
+        workdir: &Path,
+        new_session: bool,
+    ) -> ChatStageKind {
+        run(
+            runtime,
+            events,
+            ticket,
+            ChatRequest {
+                name: Some(chat.name.clone()),
+                ..request("again", workdir, new_session)
+            },
+        )
+    }
+
+    /// The same home as `runtime_with`'s, with an assistant whose every turn
+    /// fails.
+    fn failing_runtime(home: &Path) -> (ChatRuntime, std::sync::mpsc::Receiver<ChatStage>) {
+        runtime_with(home, |_assistant_id| FailingAssistant { signed_out: false })
+    }
+
+    #[test]
+    fn a_follow_up_runs_in_the_recorded_folder_even_when_the_ask_names_another() {
+        let home = home_without_history();
+        let recorded = home.path().join("recorded");
+        let elsewhere = home.path().join("elsewhere");
+        std::fs::create_dir(&recorded).expect("a folder");
+        std::fs::create_dir(&elsewhere).expect("another folder");
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let session = ChatName::new("plans").expect("a valid name");
+        folder_of(&runtime, named_call(&session, Some(&recorded))).expect("the first ask");
+
+        let folder = folder_of(&runtime, named_call(&session, Some(&elsewhere)));
+
+        assert_eq!(folder.expect("the follow-up is admitted"), recorded);
+    }
+
+    #[test]
+    fn a_follow_up_before_the_first_reply_finds_the_folder_even_after_a_restart() {
+        let home = home_without_history();
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let chat = start(&runtime, home.path());
+        let (restarted, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+
+        for runtime in [&runtime, &restarted] {
+            let folder = folder_of(runtime, named_call(&chat.name, None));
+            assert_eq!(folder.expect("the follow-up is admitted"), home.path());
+        }
+    }
+
+    #[test]
+    fn a_new_session_keeps_the_chats_folder() {
+        let home = home_without_history();
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let chat = start(&runtime, home.path());
+        named_turn(&runtime, &events, 1, &chat, home.path(), false);
+        let (failing, failing_events) = failing_runtime(home.path());
+
+        let outcome = named_turn(&failing, &failing_events, 2, &chat, home.path(), true);
+
+        assert!(
+            matches!(outcome, ChatStageKind::Failed { .. }),
+            "{outcome:?}"
+        );
+        let folder = folder_of(&runtime, named_call(&chat.name, None));
+        assert_eq!(folder.expect("the follow-up is admitted"), home.path());
+    }
+
+    #[test]
+    fn a_failed_resume_keeps_the_chats_folder() {
+        let home = home_without_history();
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let chat = start(&runtime, home.path());
+        named_turn(&runtime, &events, 1, &chat, home.path(), false);
+        let (failing, failing_events) = failing_runtime(home.path());
+
+        let outcome = named_turn(&failing, &failing_events, 2, &chat, home.path(), false);
+
+        assert!(
+            matches!(outcome, ChatStageKind::Failed { .. }),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            runtime
+                .sessions
+                .recall(&SessionKey::named(&chat))
+                .expect("the resume record reads"),
+            None,
+            "the failed resume is forgotten"
+        );
+        let folder = folder_of(&runtime, named_call(&chat.name, None));
+        assert_eq!(folder.expect("the follow-up is admitted"), home.path());
+    }
+
+    #[test]
+    fn a_chat_keeps_its_folder_after_the_resume_record_drops_it() {
+        let home = home_without_history();
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let chat = start(&runtime, home.path());
+        named_turn(&runtime, &events, 1, &chat, home.path(), false);
+
+        // Enough other chats to push this one out of the resume record.
+        for ticket in 2..=1_001 {
+            runtime
+                .sessions
+                .record(
+                    SessionKey::named(&named_key(&format!("other-{ticket}"))),
+                    "resume",
+                )
+                .expect("records");
+        }
+
+        assert_eq!(
+            runtime
+                .sessions
+                .recall(&SessionKey::named(&chat))
+                .expect("the resume record reads"),
+            None,
+            "the resume record dropped it"
+        );
+        let folder = folder_of(&runtime, named_call(&chat.name, None));
+        assert_eq!(folder.expect("the follow-up is admitted"), home.path());
+    }
+
+    #[test]
+    fn an_unknown_chat_takes_the_asks_folder_and_without_one_is_refused() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let seeded = ChatName::new("seeded").expect("a valid name");
+        let nobody = ChatName::new("nobody").expect("a valid name");
+
+        let folder = folder_of(&runtime, named_call(&seeded, Some(home.path())));
+        let refused =
+            folder_of(&runtime, named_call(&nobody, None)).expect_err("nothing names a folder");
+
+        assert_eq!(folder.expect("the ask's folder seeds it"), home.path());
+        assert_eq!(
+            folder_of(&runtime, named_call(&seeded, None)).expect("the follow-up is admitted"),
+            home.path()
+        );
+        assert!(matches!(refused, ChatError::UnknownChat), "{refused:?}");
+        assert_eq!(RpcErrorCode::from(&refused), RpcErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn a_missing_folder_never_becomes_a_chats_folder() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let session = ChatName::new("plans").expect("a valid name");
+
+        let missing = folder_of(
+            &runtime,
+            named_call(&session, Some(&home.path().join("gone"))),
+        );
+        let seeded = folder_of(&runtime, named_call(&session, Some(home.path())));
+
+        assert!(
+            matches!(
+                missing,
+                Err(ChatError::Assistant(AssistantError::NoWorkdir(_)))
+            ),
+            "{missing:?}"
+        );
+        assert_eq!(seeded.expect("the ask's folder seeds it"), home.path());
+    }
+
+    #[test]
+    fn deleting_a_chat_forgets_its_folder() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let chat = start(&runtime, home.path());
+        named_turn(&runtime, &events, 1, &chat, home.path(), false);
+
+        assert!(runtime.delete_chat(&chat).expect("the chat is deleted"));
+        assert!(
+            !runtime.delete_chat(&chat).expect("a missing chat succeeds"),
+            "nothing is left to delete"
+        );
+
+        let (restarted, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        for runtime in [&runtime, &restarted] {
+            assert!(matches!(
+                folder_of(runtime, named_call(&chat.name, None)),
+                Err(ChatError::UnknownChat)
+            ));
+        }
+    }
+
+    #[test]
+    fn a_renamed_chat_keeps_its_folder_session_and_asks_under_the_new_name_only() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
+        let chat = start(&runtime, home.path());
+        assert_eq!(chat.name.as_str(), "hello", "named from its first question");
+        named_turn(&runtime, &events, 1, &chat, home.path(), false);
+
+        let renamed = runtime
+            .rename_chat(&chat, ChatName::new(" Trip ").expect("a valid name"))
+            .expect("the chat is renamed");
+
+        assert_eq!(renamed.name.as_str(), "Trip");
+        assert_eq!(
+            folder_of(&runtime, named_call(&renamed.name, None)).expect("the new name runs"),
+            home.path()
+        );
+        assert!(matches!(
+            folder_of(&runtime, named_call(&chat.name, None)),
+            Err(ChatError::UnknownChat)
+        ));
+        assert!(
+            chats(&runtime)
+                .iter()
+                .all(|entry| entry.content.chat() == Some(&renamed)),
+            "its asks follow the name"
+        );
+        named_turn(&runtime, &events, 2, &renamed, home.path(), false);
+        assert_eq!(
+            log.lock().expect("not poisoned").sessions,
+            [None, Some("session-1".to_owned())],
+            "the next ask resumes the assistant session"
+        );
+        assert_eq!(
+            runtime
+                .rename_chat(&renamed, renamed.name.clone())
+                .expect("a no-op"),
+            renamed
+        );
+        assert!(matches!(
+            runtime.rename_chat(&chat, chat.name.clone()),
+            Err(ChatError::UnknownChat)
+        ));
+    }
+
+    #[test]
+    fn a_started_chat_never_resumes_a_session_left_under_its_name() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
+        runtime
+            .sessions
+            .record(SessionKey::named(&named_key("hello")), "stale")
+            .expect("a leftover resume record");
+
+        let job = runtime
+            .prepare_ask(AskCall {
+                chat: ChatChoice::Start {
+                    workdir: home.path().to_path_buf(),
+                },
+                ..call("hello", home.path())
+            })
+            .expect("the chat starts");
+        assert_eq!(job.chat(), Some(named_key("hello")));
+        run(&runtime, &events, 1, job);
+
+        assert_eq!(log.lock().expect("not poisoned").sessions, [None]);
+    }
+
+    #[test]
+    fn a_rename_to_a_taken_name_leaves_the_chat_whole() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let chat = start(&runtime, home.path());
+        let other = start(&runtime, home.path());
+        assert_eq!(other.name.as_str(), "hello 2");
+        named_turn(&runtime, &events, 1, &chat, home.path(), false);
+        let ghost = named_key("ghost");
+        runtime.history.save_ask(NewAsk {
+            request: "kept by history alone",
+            reply: "ok",
+            workdir: home.path(),
+            resume: None,
+            chat: Some(ghost.clone()),
+            created_at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("after the epoch")
+                .as_millis() as u64,
+            duration_ms: 1,
+            failure: None,
+        });
+        let key = SessionKey::named(&chat);
+        let session = runtime.sessions.recall(&key).expect("reads");
+
+        for taken in [other.name, ghost.name] {
+            let result = runtime.rename_chat(&chat, taken.clone());
+            assert!(
+                matches!(result, Err(ChatError::NameTaken)),
+                "{taken:?} {result:?}"
+            );
+            assert_eq!(
+                folder_of(&runtime, named_call(&chat.name, None)).expect("the old name runs"),
+                home.path()
+            );
+            assert_eq!(runtime.sessions.recall(&key).expect("reads"), session);
+        }
+        assert!(session.is_some(), "the chat had a session to keep");
+    }
+
+    #[test]
+    fn a_follow_up_behind_a_delete_saves_and_records_nothing_under_its_name() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let chat = start(&runtime, home.path());
+        named_turn(&runtime, &events, 1, &chat, home.path(), false);
+        let follow_up = runtime
+            .prepare_ask(named_call(&chat.name, None))
+            .expect("the follow-up is taken");
+
+        runtime.delete_chat(&chat).expect("the chat is deleted");
+        let outcome = run(&runtime, &events, 2, follow_up);
+
+        let key = SessionKey::named(&chat);
+        assert!(
+            matches!(
+                outcome,
+                ChatStageKind::Failed {
+                    code: RpcErrorCode::InvalidRequest,
+                    ..
+                }
+            ),
+            "{outcome:?}"
+        );
+        assert!(
+            chats(&runtime).is_empty(),
+            "no reply saves after the delete"
+        );
+        assert_eq!(runtime.sessions.recall(&key).expect("reads"), None);
+        assert_eq!(runtime.folders.recall(&key).expect("reads"), None);
+    }
+
+    #[test]
+    fn a_seeded_ask_behind_a_delete_starts_its_chat_in_its_own_folder() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let elsewhere = home.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).expect("another folder");
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        let chat = start(&runtime, home.path());
+        named_turn(&runtime, &events, 1, &chat, home.path(), false);
+        let seeded = runtime
+            .prepare_ask(named_call(&chat.name, Some(&elsewhere)))
+            .expect("the ask is taken");
+
+        runtime.delete_chat(&chat).expect("the chat is deleted");
+        let outcome = run(&runtime, &events, 2, seeded);
+
+        assert!(matches!(outcome, ChatStageKind::Replied(..)), "{outcome:?}");
+        let folder = folder_of(&runtime, named_call(&chat.name, None));
+        assert_eq!(folder.expect("the follow-up is admitted"), elsewhere);
+    }
+
     fn run(
         runtime: &ChatRuntime,
         events: &std::sync::mpsc::Receiver<ChatStage>,
         ticket: u64,
-        request: ChatRequest,
+        job: impl Into<AskJob>,
     ) -> ChatStageKind {
-        let assistant_id = request.assistant_id;
-        runtime.execute(Ticket(ticket), ChatJob::Ask(request), CancelToken::never());
+        let job = job.into();
+        let assistant_id = job.assistant_id;
+        runtime.execute(Ticket(ticket), ChatJob::Ask(job), CancelToken::never());
         let mut steps = Vec::new();
         loop {
             let stage = events.recv().expect("a stage arrives");
@@ -2229,7 +2959,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn turns_chain_until_a_new_conversation_is_asked_for() {
+    fn turns_chain_until_a_new_chat_is_asked_for() {
         let directory = tempfile::tempdir().expect("test directory");
         let work = directory.path();
         let log = Arc::new(Mutex::new(Log::default()));
@@ -2243,12 +2973,12 @@ pub(super) mod tests {
         assert_eq!(
             log.lock().expect("not poisoned").sessions,
             [None, Some("session-1".to_owned()), None],
-            "the second turn continues the first; `new` forgets it"
+            "the second turn continues the first; `new_session` forgets it"
         );
     }
 
     #[test]
-    fn conversations_are_kept_per_assistant_and_directory() {
+    fn chats_are_kept_per_assistant_and_directory() {
         let directory = tempfile::tempdir().expect("test directory");
         let work = directory.path();
         let elsewhere = tempfile::tempdir().expect("another directory");
@@ -2282,12 +3012,65 @@ pub(super) mod tests {
                 Some("session-1".to_owned()),
                 Some("session-2".to_owned())
             ],
-            "each key continues its own conversation"
+            "each key continues its own chat"
         );
     }
 
     #[test]
-    fn forgetting_drops_only_the_asked_conversation_even_when_the_chat_fails() {
+    fn two_named_chats_in_one_directory_resume_their_own_sessions() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let work = directory.path();
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(work, logging_assistants(&log));
+
+        run(&runtime, &events, 1, named("one", "first", work));
+        run(&runtime, &events, 2, named("two", "second", work));
+        run(&runtime, &events, 3, named("three", "first", work));
+        run(&runtime, &events, 4, named("four", "second", work));
+
+        assert_eq!(
+            log.lock().expect("not poisoned").sessions,
+            [
+                None,
+                None,
+                Some("session-1".to_owned()),
+                Some("session-2".to_owned())
+            ],
+            "each name continues its own chat"
+        );
+    }
+
+    #[test]
+    fn a_deleted_chat_leaves_history_and_its_next_ask_starts_afresh() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let work = directory.path();
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(work, logging_assistants(&log));
+        run(&runtime, &events, 1, named("one", "first", work));
+        run(&runtime, &events, 2, named("two", "second", work));
+
+        runtime
+            .delete_chat(&named_key("first"))
+            .expect("the chat is deleted");
+        run(&runtime, &events, 3, named("three", "first", work));
+        run(&runtime, &events, 4, named("four", "second", work));
+
+        assert_eq!(
+            log.lock().expect("not poisoned").sessions,
+            [None, None, None, Some("session-2".to_owned())],
+            "only the deleted chat starts afresh"
+        );
+        assert_eq!(
+            chats(&runtime)
+                .iter()
+                .map(|entry| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            ["four", "three", "two"]
+        );
+    }
+
+    #[test]
+    fn forgetting_drops_only_the_asked_chat_even_when_the_ask_fails() {
         let directory = tempfile::tempdir().expect("test directory");
         let work = directory.path();
         let elsewhere = tempfile::tempdir().expect("another directory");
@@ -2316,7 +3099,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_signed_out_turn_says_so_and_keeps_the_conversation() {
+    fn a_signed_out_turn_says_so_and_keeps_the_chat() {
         for signed_out in [true, false] {
             let directory = tempfile::tempdir().expect("test directory");
             let work = directory.path();
@@ -2420,7 +3203,11 @@ pub(super) mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
 
-        runtime.execute(Ticket(1), ChatJob::Ask(request("hi", work, false)), cancel);
+        runtime.execute(
+            Ticket(1),
+            ChatJob::Ask(request("hi", work, false).into()),
+            cancel,
+        );
 
         let ended = events.recv().expect("the end arrives");
         assert!(
