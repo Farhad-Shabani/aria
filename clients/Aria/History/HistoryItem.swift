@@ -48,13 +48,13 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
         /// `.whole`.
         case systemTranscription(transcript: String, read: TranscriptRead?)
         /// `text` is the question.
-        case chat(reply: String)
+        case ask(reply: String)
 
         var title: String {
             switch self {
             case .dictation: "Dictation"
             case .systemTranscription: "Transcript"
-            case .chat: "Chat"
+            case .ask: "Chat"
             }
         }
 
@@ -62,7 +62,7 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
             switch self {
             case .dictation: .dictation
             case .systemTranscription: .systemTranscription
-            case .chat: .chat
+            case .ask: .chat
             }
         }
 
@@ -94,6 +94,8 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
     var application: String?
     /// The folder it was made in, such as where a chat's assistant worked.
     var project: String?
+    /// The chat the ask continued. `nil` for an ask in its folder's own chat.
+    var chat: ChatKey?
     var text: String
     var isComplete = true
     /// How many prompt results its thread holds.
@@ -118,7 +120,7 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
             switch kind {
             case .dictation: isComplete
             case .systemTranscription(_, let read): read == .whole
-            case .chat: false
+            case .ask: false
             }
         if countsWords, !text.isEmpty {
             parts.append("\(text.split(whereSeparator: \.isWhitespace).count) words")
@@ -127,7 +129,7 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
     }
 
     var copyText: String {
-        if case .chat(let reply) = kind { reply } else { text }
+        if case .ask(let reply) = kind { reply } else { text }
     }
 
     var canCopy: Bool { !copyText.isEmpty && status != .deletionPending }
@@ -135,7 +137,7 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
 
     var origin: String {
         switch kind {
-        case .dictation, .chat: place ?? kind.title
+        case .dictation, .ask: place ?? kind.title
         case .systemTranscription: elapsed ?? kind.title
         }
     }
@@ -143,7 +145,7 @@ struct HistoryItem: Identifiable, Equatable, Sendable {
     private var place: String? {
         switch kind {
         case .dictation: application ?? source.title
-        case .chat: project.map { URL(fileURLWithPath: $0).lastPathComponent }
+        case .ask: project.map { URL(fileURLWithPath: $0).lastPathComponent }
         case .systemTranscription: nil
         }
     }
@@ -189,6 +191,12 @@ struct HistoryPage: Sendable {
     var items: [HistoryItem]
     var next: UInt64?
     var warning: String?
+}
+
+/// A chat's saved asks, oldest first, and the cursor for the older ones before them.
+struct ChatPage: Sendable {
+    var asks: [HistoryItem]
+    var older: UInt64?
 }
 
 struct HistoryClearResult: Sendable {

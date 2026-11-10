@@ -46,56 +46,56 @@ final class PillStateTests: XCTestCase {
             PillState.failed(PillState.unreadablePrompt).label(prompt: name))
     }
 
-    func testNoChatsNoPill() {
-        XCTAssertNil(PillState(chats: ChatsInFlight()))
+    func testNoAsksNoPill() {
+        XCTAssertNil(PillState(asks: AsksInFlight()))
     }
 
     func testOneChatNamesTheAssistantAndItsStep() {
-        var chats = ChatsInFlight()
-        chats.apply(event(.working, ticket: 3), now: epoch)
-        XCTAssertEqual(PillState(chats: chats), .asking("thinking", since: epoch))
+        var asks = AsksInFlight()
+        asks.apply(event(.working, ticket: 3), now: epoch)
+        XCTAssertEqual(PillState(asks: asks), .asking("thinking", since: epoch))
 
-        chats.apply(event(.working, ticket: 3, step: .reading), now: epoch + 5)
-        XCTAssertEqual(PillState(chats: chats), .asking("reading", since: epoch))
+        asks.apply(event(.working, ticket: 3, step: .reading), now: epoch + 5)
+        XCTAssertEqual(PillState(asks: asks), .asking("reading", since: epoch))
     }
 
     func testSkillStepCarriesTheSkillName() {
-        var chats = ChatsInFlight()
-        chats.apply(event(.working, ticket: 1, step: .skill, skill: "pair"), now: epoch)
-        XCTAssertEqual(PillState(chats: chats), .asking("using pair", since: epoch))
+        var asks = AsksInFlight()
+        asks.apply(event(.working, ticket: 1, step: .skill, skill: "pair"), now: epoch)
+        XCTAssertEqual(PillState(asks: asks), .asking("using pair", since: epoch))
     }
 
-    func testSeveralChatsCountTheRestBehindTheOldest() {
-        var chats = ChatsInFlight()
-        chats.apply(event(.working, ticket: 5, assistantID: .codex, step: .running), now: epoch)
-        chats.apply(event(.working, ticket: 3, step: .reading), now: epoch + 1)
-        XCTAssertEqual(PillState(chats: chats), .asking("reading · +1", since: epoch + 1))
+    func testSeveralAsksCountTheRestBehindTheOldest() {
+        var asks = AsksInFlight()
+        asks.apply(event(.working, ticket: 5, assistantID: .codex, step: .running), now: epoch)
+        asks.apply(event(.working, ticket: 3, step: .reading), now: epoch + 1)
+        XCTAssertEqual(PillState(asks: asks), .asking("reading · +1", since: epoch + 1))
     }
 
     func testAForgottenChatLeavesThePill() {
-        var chats = ChatsInFlight()
-        chats.apply(event(.working, ticket: 1))
+        var asks = AsksInFlight()
+        asks.apply(event(.working, ticket: 1))
 
-        chats.forget(1)
+        asks.forget(1)
 
-        XCTAssertNil(PillState(chats: chats))
+        XCTAssertNil(PillState(asks: asks))
     }
 
     func testReplyAndFailureRetireTheirTicket() {
-        var chats = ChatsInFlight()
-        chats.apply(event(.working, ticket: 1))
-        chats.apply(event(.working, ticket: 2))
-        chats.apply(event(.replied, ticket: 1))
-        XCTAssertEqual(chats.count, 1)
-        chats.apply(event(.failed, ticket: 2))
-        XCTAssertNil(PillState(chats: chats))
+        var asks = AsksInFlight()
+        asks.apply(event(.working, ticket: 1))
+        asks.apply(event(.working, ticket: 2))
+        asks.apply(event(.replied, ticket: 1))
+        XCTAssertEqual(asks.count, 1)
+        asks.apply(event(.failed, ticket: 2))
+        XCTAssertNil(PillState(asks: asks))
     }
 
     func testLosingTheStreamClearsEveryChat() {
-        var chats = ChatsInFlight()
-        chats.apply(event(.working, ticket: 1))
-        chats.apply(nil)
-        XCTAssertEqual(chats.count, 0)
+        var asks = AsksInFlight()
+        asks.apply(event(.working, ticket: 1))
+        asks.apply(nil)
+        XCTAssertEqual(asks.count, 0)
     }
 
     func testMotionPerState() {

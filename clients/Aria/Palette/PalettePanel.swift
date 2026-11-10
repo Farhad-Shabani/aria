@@ -77,6 +77,9 @@ final class PalettePanel {
         panel.contentView = blur
     }
 
+    /// Whether the key view has text selected to copy, such as part of a reply.
+    var hasSelection: Bool { panel.hasSelection }
+
     private func position() {
         guard let screen = NSScreen.main else { return }
         let frame = screen.visibleFrame
@@ -109,8 +112,30 @@ private final class KeyPanel: NSPanel {
     /// otherwise take ⌃N, ⌃P and Esc. A key composing text in an input
     /// method stays with it.
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .keyDown, !isComposing, pressed(event) { return }
+        if event.type == .keyDown, !isComposing {
+            if pressed(event) { return }
+            if let action = Self.editAction(for: event), NSApp.sendAction(action, to: nil, from: self) { return }
+        }
         super.sendEvent(event)
+    }
+
+    /// Aria stays inactive while the panel has the keys, so the Edit menu never sees them.
+    private static func editAction(for event: NSEvent) -> Selector? {
+        guard event.modifierFlags.intersection(PaletteKey.chordModifiers) == .command else { return nil }
+        return switch event.charactersIgnoringModifiers?.lowercased() {
+        case "c": #selector(NSText.copy(_:))
+        case "v": #selector(NSText.paste(_:))
+        case "x": #selector(NSText.cut(_:))
+        case "a": #selector(NSResponder.selectAll(_:))
+        default: nil
+        }
+    }
+
+    var hasSelection: Bool {
+        let copy = #selector(NSText.copy(_:))
+        guard let target = NSApp.target(forAction: copy, to: nil, from: self) else { return false }
+        guard let validator = target as? NSUserInterfaceValidations else { return true }
+        return validator.validateUserInterfaceItem(NSMenuItem(title: "", action: copy, keyEquivalent: ""))
     }
 
     private var isComposing: Bool {

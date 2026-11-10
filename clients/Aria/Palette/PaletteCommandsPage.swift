@@ -16,12 +16,14 @@ struct PaletteCommandsPage: View {
                 }
             }
         } content: {
-            commandList.confirmingDeletion(of: $controller.deletion, from: history)
+            commandList
+                .confirmingDeletion(of: $controller.deletion, from: history)
+                .confirmingDeletion(of: $controller.chatDeletion, perform: controller.deleteChat)
         } bottom: {
             PaletteFooter {
                 footerNote
             } actions: {
-                if controller.model.renamingID != nil {
+                if controller.model.isRenaming {
                     PaletteTitleActions(controller: controller)
                 } else {
                     // Secondary actions, then the one Return runs, pinned to
@@ -105,7 +107,7 @@ struct PaletteCommandsPage: View {
                                     if isHovering { controller.model.select(item.id) }
                                 }
                                 .onAppear {
-                                    if let entry = item.entry { history.loadMore(after: entry.id) }
+                                    if let entry = item.historyItem { history.loadMore(after: entry.id) }
                                 }
                         }
                     }
@@ -147,13 +149,23 @@ struct PaletteCommandsPage: View {
             PaletteCommandRow(command: command, isSelected: isSelected) { controller.run(command) }
         case .entry(let entry) where entry.id == controller.model.renamingID:
             PaletteEntryRow(
-                entry: entry, isSelected: isSelected,
+                entry: entry, symbol: entry.kind.symbol, isSelected: isSelected,
                 titleField: PaletteTitleField(controller: controller, placeholder: entry.preview)
             ) {}
         case .entry(let entry):
-            PaletteEntryRow(entry: entry, isSelected: isSelected, badge: badge(for: entry)) {
+            PaletteEntryRow(entry: entry, symbol: entry.kind.symbol, isSelected: isSelected, badge: badge(for: entry)) {
                 controller.choose(item)
             }
+        case .chat(let chat):
+            // A chat's results stay with each of its asks, on its own page. It names the
+            // assistant it asks, since its folder shows on its page.
+            let isRenaming = controller.model.renaming == .chat(chat.key)
+            PaletteEntryRow(
+                entry: chat.newest, symbol: "bubble.left.and.bubble.right", isSelected: isSelected,
+                origin: controller.assistantName(of: chat.key), name: chat.name,
+                titleField: isRenaming
+                    ? PaletteTitleField(controller: controller, placeholder: chat.newest.name) : nil
+            ) { controller.choose(item) }
         case .result(let result):
             PaletteResultRow(result: result, isSelected: isSelected) { controller.choose(item) }
         }

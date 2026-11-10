@@ -21,7 +21,7 @@ struct PressGesture: Equatable {
     }
 
     private var phase = Phase.idle
-    /// Chats that ended before their ticket reached the gesture. Every
+    /// Asks that ended before their ticket reached the gesture. Every
     /// subscriber sees every chat, so a terminal's tickets land here too, and
     /// one slot would let a stranger's overwrite this one's.
     private var endedEarly: Set<UInt64> = []

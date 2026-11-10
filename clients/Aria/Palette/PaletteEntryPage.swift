@@ -65,7 +65,7 @@ struct PaletteEntryPage: View {
 
     @ViewBuilder
     private var actions: some View {
-        if controller.model.renamingID != nil {
+        if controller.model.isRenaming {
             PaletteTitleActions(controller: controller)
         } else {
             PaletteFooterActions(

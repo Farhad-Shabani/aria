@@ -61,18 +61,18 @@ enum PillState: Equatable {
     init?(ended event: Aria_Daemon_V1_ChatEvent) {
         switch event.stage {
         case .replied: self = .replied(copied: event.copied)
-        case .failed: self = event.errorCode.chatMessage.map(PillState.failed) ?? .noReply
+        case .failed: self = event.errorCode.askMessage.map(PillState.failed) ?? .noReply
         default: return nil
         }
     }
 
-    /// The pill for the chats in flight: the oldest one's step, and how many
+    /// The pill for the asks in flight: the oldest one's step, and how many
     /// others are in flight.
-    init?(chats: ChatsInFlight) {
-        guard let oldest = chats.oldest else { return nil }
+    init?(asks: AsksInFlight) {
+        guard let oldest = asks.oldest else { return nil }
         var step = oldest.stepLabel
-        if chats.count > 1 {
-            step += " · +\(chats.count - 1)"
+        if asks.count > 1 {
+            step += " · +\(asks.count - 1)"
         }
         self = .asking(step, since: oldest.since)
     }
@@ -235,7 +235,7 @@ extension Aria_Daemon_V1_ErrorCode {
     }
 
     /// What a failed chat says when the person can fix the cause.
-    fileprivate var chatMessage: String? {
+    fileprivate var askMessage: String? {
         switch self {
         case .assistantSignedOut: return "assistant signed out"
         case .assistantUnavailable: return "assistant not installed"

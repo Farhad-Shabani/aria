@@ -12,11 +12,14 @@ final class PaletteController: ObservableObject {
     let promptRun: PaletteRun
     /// The entry waiting on its delete to be confirmed.
     @Published var deletion: HistoryItem?
+    /// The chat waiting on its delete to be confirmed.
+    @Published var chatDeletion: ChatKey?
     /// Where Return types text: the app in front when the palette opened.
     private(set) var frontApp: NSRunningApplication?
     private(set) lazy var chord = ChordBinding { [weak self] in self?.press() }
     let systemTranscription: SystemTranscriptionStatus
     let history: HistoryState
+    let chats: Chats
 
     private let prompts: PromptHotkeys
     private let ask: PressController
@@ -47,13 +50,14 @@ final class PaletteController: ObservableObject {
     private var savingDraft: Task<Void, Never>?
     /// Fetches an entry's text to type. Closing the palette cancels it.
     private var typing: Task<Void, Never>?
+    private var namingAssistants: Task<Void, Never>?
     /// Counts the times the palette opened, so work that outlives one opening
     /// leaves the next alone.
     private var openings = 0
 
     init(
         prompts: PromptHotkeys, ask: PressController, systemTranscription: SystemTranscriptionStatus,
-        history: HistoryState,
+        history: HistoryState, chats: Chats,
         events: DaemonEvents, setup: SetupStatus, settingsHealth: SettingsHealth,
         openSettings: @escaping @MainActor (SettingsPane?) -> Void,
         openSetup: @escaping @MainActor () -> Void,
@@ -63,6 +67,7 @@ final class PaletteController: ObservableObject {
         self.ask = ask
         self.systemTranscription = systemTranscription
         self.history = history
+        self.chats = chats
         self.openSettings = openSettings
         self.openSetup = openSetup
         self.setup = setup
@@ -74,18 +79,19 @@ final class PaletteController: ObservableObject {
                 cancel: { ticket in try await ChatClient.cancel(ticket: ticket) }))
         events.onChat { [weak self] event in self?.promptRun.apply(event) }
         // A run's reply is saved under its entry, so the entry's count and
-        // open thread catch up.
+        // open thread catch up, as does the ask saved as that entry.
         replyChange =
             promptRun.$result
-            .compactMap { result -> UInt64? in
+            .compactMap { result -> (ticket: UInt64?, entry: UInt64)? in
                 guard let result, result.source != nil, case .replied = result.state else { return nil }
-                return result.ticket
+                return (result.ticket, result.input.id)
             }
-            .removeDuplicates()
-            .sink { [weak self] _ in
+            .removeDuplicates { $0.ticket == $1.ticket }
+            .sink { [weak self] reply in
                 guard let self else { return }
                 history.refresh()
                 reloadThread()
+                chats.countResult(on: reply.entry)
             }
         pageChange =
             $model
@@ -124,7 +130,10 @@ final class PaletteController: ObservableObject {
         historySettingChange = settings.$snapshot
             .map { $0?.historyEnabled ?? false }
             .removeDuplicates()
-            .sink { [weak self] keepsHistory in self?.model.keepsHistory = keepsHistory }
+            .sink { [weak self] keepsHistory in
+                self?.model.keepsHistory = keepsHistory
+                self?.chats.keepsHistory = keepsHistory
+            }
         assistantChange = settings.$assistantName
             .removeDuplicates()
             .sink { [weak self] name in self?.model.assistantName = name }
@@ -156,8 +165,8 @@ final class PaletteController: ObservableObject {
             close()
             Task { await DictationClient.dictateToHistory() }
         case .startAsk:
-            // The palette closes before recording starts, so the chat begins with the app in front,
-            // as the Ask shortcut does.
+            // The palette closes before recording starts, so the question starts a chat, and
+            // the palette opens on it over the app in front, as with the Ask shortcut.
             close()
             ask.press()
         case .showHistory(let section):
@@ -191,15 +200,73 @@ final class PaletteController: ObservableObject {
         case .command(let command):
             run(command)
         case .entry(let entry):
-            history.select(entry.id)
-            model.open(entry: entry.id)
-            loadThread()
+            openEntry(entry.id)
+        case .chat(let chat):
+            chats.open(chat.key, folder: chat.newest.project)
+            showChat()
         case .result(let result):
             guard let entry = model.threadEntry else { return }
             history.forgetCopied()
             promptRun.show(saved: result, on: entry)
             model.show(.result)
         }
+    }
+
+    private func openEntry(_ id: UInt64) {
+        history.select(id)
+        model.open(entry: id)
+        loadThread()
+    }
+
+    /// Opens the entry an ask was saved as, on its prompt results. Escape comes back here.
+    func openEntry(of ask: ChatAsk) {
+        guard let id = ask.entryID else { return }
+        openEntry(id)
+    }
+
+    /// Where the Ask shortcut sends its question as it is pressed.
+    var askTarget: AskTarget? {
+        model.askTarget(shown: chats.shown)
+    }
+
+    /// Shows the chat that `Chats` shows, opening the palette if it is closed. A
+    /// prompt running on the result page stops, as Escape stops it.
+    func showChat() {
+        if !panel.isVisible { open() }
+        if model.page == .result { promptRun.cancel() }
+        model.openChat()
+    }
+
+    /// Return on the chat page: the follow-up typed goes to the assistant, or with none
+    /// typed, the focused reply goes into the app in front.
+    func returnOnChat() {
+        switch decisions.chatReturn {
+        case .send?:
+            guard chats.send(model.followUp) else { return }
+            model.followUp = ""
+            // Back to the newest reply, which is the one coming.
+            model.messageSelection = MessageSelection()
+        case .type(let reply)?:
+            deliver(reply)
+        case nil:
+            break
+        }
+    }
+
+    /// Whether Return on the chat page would do anything now.
+    var canReturnOnChat: Bool {
+        switch decisions.chatReturn {
+        case .send?: chats.canSend(model.followUp)
+        case .type?: !history.isClearing
+        case nil: false
+        }
+    }
+
+    func deleteChat(_ chat: ChatKey) {
+        history.deleteChat(chat)
+        guard chats.shown?.key == chat else { return }
+        chats.close()
+        model.leaveChat()
     }
 
     /// Return: saved text is typed into the app in front, as in a clipboard
@@ -210,8 +277,9 @@ final class PaletteController: ObservableObject {
         switch item {
         case .result(let result):
             deliver(result.text)
-        case .entry(let entry):
-            guard typing == nil else { return }
+        case .entry, .chat:
+            // A row holds only the start of its text.
+            guard typing == nil, let entry = item.historyItem else { return }
             typing = Task {
                 defer { typing = nil }
                 guard let text = await history.typingText(of: entry.id), !Task.isCancelled else { return }
@@ -259,10 +327,17 @@ final class PaletteController: ObservableObject {
     }
 
     func saveTitle() {
-        guard let id = model.renamingID else { return }
+        guard let renaming = model.renaming else { return }
         let title = model.renamingTitle
         model.stopRenaming()
-        history.rename(id, to: title)
+        switch renaming {
+        case .entry(let id):
+            history.rename(id, to: title)
+        case .chat(let key):
+            history.renameChat(key, to: title) { [weak self] renamed in
+                self?.chats.renamed(key, to: renamed)
+            }
+        }
     }
 
     /// What can be done on the page or with its selected row, built at each
@@ -280,8 +355,8 @@ final class PaletteController: ObservableObject {
         PaletteActions(
             model: model, result: promptRun.result, isSystemTranscriptionRunning: systemTranscription.isRunning,
             isStopping: systemTranscription.isStopping,
-            hasTranscript: !systemTranscription.transcript.lines.isEmpty, detail: history.detail, history: history.work,
-            hasFrontApp: frontApp != nil)
+            hasTranscript: !systemTranscription.transcript.lines.isEmpty, detail: history.detail,
+            chat: chats.shown, history: history.work, hasFrontApp: frontApp != nil)
     }
 
     func perform(_ action: PaletteAction) {
@@ -294,6 +369,7 @@ final class PaletteController: ObservableObject {
         case .runPrompt(let entry): model.attach(entry)
         case .transcribeAgain: history.regenerate()
         case .rename(let entry): model.startRenaming(entry)
+        case .renameChat(let key): model.startRenaming(key)
         case .delete(let entry): deletion = entry
         case .open(let item): choose(item)
         case .editPrompt(let id): editPrompt(id)
@@ -301,6 +377,9 @@ final class PaletteController: ObservableObject {
             model.open(PromptDraft(instructions: instructions, kind: .compose), replacing: true)
         case .retry: promptRun.retry()
         case .stop: stopTranscription()
+        case .typeText(let text): deliver(text)
+        case .stopAsk: chats.stop()
+        case .deleteChat(let chat): chatDeletion = chat
         }
     }
 
@@ -323,16 +402,36 @@ final class PaletteController: ObservableObject {
             escape()
             return true
         }
+        if PaletteKey.copy.matches(event), panel.hasSelection { return false }
         if model.page == .prompt, PaletteKey.save.matches(event) {
             saveDraft()
             return true
+        }
+        // While a name is edited, the keys go to its field.
+        if model.page == .chat, !model.isRenaming {
+            let asks = chats.shown?.asks ?? []
+            if let step = Self.step(for: event) ?? Self.arrowStep(for: event) {
+                model.messageSelection.move(by: step, extending: false, in: asks)
+                return true
+            }
+            if let step = Self.extendStep(for: event) {
+                model.messageSelection.move(by: step, extending: true, in: asks)
+                return true
+            }
+            // With a follow-up typed, ⌘A selects its text instead.
+            if PaletteKey.selectAll.matches(event), model.followUp.isEmpty {
+                model.messageSelection.selectAll(in: asks)
+                return true
+            }
+            // As in Messages: with something typed, ⌘⌫ deletes it rather than the chat.
+            if PaletteKey.delete.matches(event), !model.followUp.isEmpty { return false }
         }
         if model.page == .entry, let entry = history.detail?.id,
             let step = Self.step(for: event) ?? Self.arrowStep(for: event)
         {
             // The ends of the thread still take the keys, so they don't beep.
             model.moveDetailFocus(by: step, on: entry)
-            return model.renamingID == nil
+            return !model.isRenaming
         }
         if let step = Self.step(for: event) {
             guard model.page == .commands else { return false }
@@ -382,7 +481,7 @@ final class PaletteController: ObservableObject {
     /// A digit runs its prompt by dictation, or on the prompt input. With ⌘, it runs on the
     /// selected entry. Returns whether one ran.
     private func runNumber(_ event: NSEvent) -> Bool {
-        guard model.renamingID == nil, let character = event.charactersIgnoringModifiers?.first,
+        guard !model.isRenaming, let character = event.charactersIgnoringModifiers?.first,
             let number = character.wholeNumberValue, character.isASCII
         else { return false }
         switch event.modifierFlags.intersection(PaletteKey.chordModifiers) {
@@ -408,6 +507,16 @@ final class PaletteController: ObservableObject {
         }
     }
 
+    /// ⇧↑ and ⇧↓ extend a selection, as in a list.
+    private static func extendStep(for event: NSEvent) -> Int? {
+        guard event.modifierFlags.intersection(PaletteKey.chordModifiers) == .shift else { return nil }
+        switch Int(event.keyCode) {
+        case kVK_DownArrow: return 1
+        case kVK_UpArrow: return -1
+        default: return nil
+        }
+    }
+
     private static func step(for event: NSEvent) -> Int? {
         if PaletteKey.next.matches(event) { return 1 }
         if PaletteKey.previous.matches(event) { return -1 }
@@ -415,7 +524,7 @@ final class PaletteController: ObservableObject {
     }
 
     func shows(ticket: UInt64) -> Bool {
-        promptRun.shows(ticket: ticket)
+        promptRun.shows(ticket: ticket) || chats.shows(ticket: ticket)
     }
 
     func deliverResult() {
@@ -499,8 +608,14 @@ final class PaletteController: ObservableObject {
     }
 
     func escape() {
+        // Several messages selected go back to one before the page goes.
+        if model.page == .chat, model.messageSelection.collapse(in: chats.shown?.asks ?? []) { return }
+        let leavesChat = model.page == .chat
         if model.page == .result { promptRun.cancel() }
         if model.escape() { close() }
+        if !model.returnsToChat { chats.close() }
+        // The list shows a chat at its newest ask, which may have come since it was read.
+        if leavesChat, model.page == .commands, history.isOpen { history.refresh() }
     }
 
     /// The palette's panel never activates Aria, and macOS declines a plain
@@ -515,6 +630,8 @@ final class PaletteController: ObservableObject {
         promptRun.release()
         model.closeMenu()
         deletion = nil
+        chatDeletion = nil
+        chats.close()
         panel.hide()
         history.close()
     }
@@ -538,6 +655,26 @@ final class PaletteController: ObservableObject {
         let setup = setup
         Task { await setup.refresh() }
         if model.keepsHistory { history.open() }
+        nameAssistants()
         panel.show(PaletteView(controller: self, systemTranscription: systemTranscription, history: history))
+    }
+
+    /// Asks the daemon once for the assistants' names. Until then a chat names its folder.
+    private func nameAssistants() {
+        guard model.assistantNames.isEmpty, namingAssistants == nil else { return }
+        namingAssistants = Task {
+            defer { namingAssistants = nil }
+            do {
+                let assistants = try await ChatClient.assistants()
+                model.assistantNames = Dictionary(assistants.map { ($0.id, $0.name) }) { first, _ in first }
+            } catch {
+                log.error("Naming the assistants failed: \(String(describing: error), privacy: .private)")
+            }
+        }
+    }
+
+    /// The assistant a chat asks, by name, once the daemon has given it.
+    func assistantName(of chat: ChatKey?) -> String? {
+        chat.flatMap { model.assistantNames[$0.assistantID] }
     }
 }

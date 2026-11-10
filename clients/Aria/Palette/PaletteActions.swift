@@ -9,17 +9,20 @@ struct PaletteActions {
     var hasTranscript = false
     /// The entry the entry page shows.
     var detail: HistoryItem?
+    /// The chat the chat page shows.
+    var chat: Chat?
     var history = HistoryWork()
     /// Whether an app was in front when the palette opened, to type into.
     var hasFrontApp = false
 
     var all: [PaletteAction] {
-        guard model.renamingID == nil else { return [] }
+        guard !model.isRenaming else { return [] }
         switch model.page {
         case .commands:
             guard model.input == nil else { return [] }
             switch model.selected {
             case .entry(let entry): return actions(for: entry, isOpen: false)
+            case .chat(let chat): return actions(for: chat)
             case .command(let command) where command.action == .showLiveTranscript: return [stop]
             case .command(let command):
                 guard case .runPrompt(let id) = command.action else { return [] }
@@ -30,6 +33,8 @@ struct PaletteActions {
             }
         case .prompt:
             return []
+        case .chat:
+            return chat.map(chatActions) ?? []
         case .entry:
             return detail.map { actions(for: $0, isOpen: true) } ?? []
         case .liveTranscript:
@@ -49,13 +54,79 @@ struct PaletteActions {
         }
     }
 
+    /// Copy and type take the questions and replies selected. A prompt runs on the saved entry of
+    /// the ask under the cursor, and deleting takes the saved asks, so neither shows while history
+    /// is off.
+    private func chatActions(_ chat: Chat) -> [PaletteAction] {
+        var actions: [PaletteAction] = []
+        let selection = model.messageSelection
+        if let text = selection.text(in: chat.asks) {
+            actions.append(PaletteAction(kind: .copyText(text), isInFooter: true))
+            // Return types it while nothing is typed, so the footer names it there instead.
+            if hasFrontApp { actions.append(PaletteAction(kind: .typeText(text))) }
+        }
+        let ask = selection.focusedAsk(in: chat.asks)
+        if chat.canStop { actions.append(PaletteAction(kind: .stopAsk, isInFooter: true)) }
+        guard model.keepsHistory else { return actions }
+        if let entry = ask.flatMap(chat.entry(of:)) {
+            actions.append(PaletteAction(kind: .runPrompt(on: entry), isEnabled: model.canAttach))
+        }
+        guard let key = chat.key else { return actions }
+        actions.append(
+            PaletteAction(kind: .renameChat(key), isEnabled: !history.isClearing))
+        actions.append(
+            PaletteAction(
+                kind: .deleteChat(key),
+                isEnabled: !chat.isReplying && !history.isClearing && history.deletingID == nil))
+        return actions
+    }
+
+    /// A chat's row copies its newest reply, as an entry's row does, renames or opens it,
+    /// or deletes every ask in it.
+    private func actions(for chat: SavedChat) -> [PaletteAction] {
+        var actions: [PaletteAction] = []
+        if chat.newest.canCopy {
+            actions.append(PaletteAction(kind: .copyEntry(chat.newest), isEnabled: !history.isClearing))
+        }
+        actions.append(
+            PaletteAction(
+                kind: .renameChat(chat.key),
+                isEnabled: !history.isClearing))
+        actions.append(
+            PaletteAction(
+                kind: .deleteChat(chat.key), isEnabled: history.canDelete(chat.newest)))
+        actions.append(PaletteAction(kind: .open(.chat(chat))))
+        return actions
+    }
+
     func typesOnReturn(_ item: PaletteItem) -> Bool {
         hasFrontApp && item.isTypable && !history.isClearing
     }
 
-    /// Names what Return does with the selected row.
+    /// Names what Return does with the selected row, or on the chat page.
+    /// What Return does on the chat page: sends what is typed, or else types the selected
+    /// questions and replies into the app in front, as Return does with a row.
+    enum ChatReturn: Equatable {
+        case send
+        case type(String)
+    }
+
+    var chatReturn: ChatReturn? {
+        if !model.followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .send }
+        guard hasFrontApp, let asks = chat?.asks, let text = model.messageSelection.text(in: asks)
+        else { return nil }
+        return .type(text)
+    }
+
     func returnTitle(typingInto app: String?) -> String? {
-        switch model.selected {
+        if model.page == .chat {
+            return switch chatReturn {
+            case .send?: "Send"
+            case .type?: app.map { "Type into \($0)" }
+            case nil: nil
+            }
+        }
+        return switch model.selected {
         case .command(let command):
             switch command.action {
             case .showLiveTranscript: "Show Transcript"

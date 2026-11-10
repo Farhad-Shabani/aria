@@ -8,8 +8,9 @@ import GRPCProtobuf
 enum HistoryClient {
     static var effects: HistoryState.Effects {
         .init(
-            list: list, get: get, thread: thread, rename: rename, delete: delete, clear: clear,
-            regenerate: regenerate, copy: Pasteboard.copyConcealed)
+            list: list, get: get, thread: thread, rename: rename, renameChat: renameChat,
+            delete: delete, deleteChat: deleteChat, clear: clear, regenerate: regenerate,
+            copy: Pasteboard.copyConcealed)
     }
 
     private static func list(_ query: String, _ section: HistorySection?, _ before: UInt64?) async throws
@@ -27,6 +28,7 @@ enum HistoryClient {
         }
         request.limit = 50
         if let before { request.beforeID = before }
+        request.collapseChats = true
         let sent = request
         return try await history { client, options in
             try await client.list(request: ClientRequest(message: sent), options: options) {
@@ -65,6 +67,38 @@ enum HistoryClient {
         }
     }
 
+    /// The daemon sends no more asks at once (`GetChatRequest.limit`).
+    private static let chatPageLimit: UInt32 = 10
+
+    /// `chat`'s newest saved asks before `before`, with their full text.
+    static func chat(_ chat: ChatKey, before: UInt64?) async throws -> ChatPage {
+        var request = Aria_Daemon_V1_GetChatRequest()
+        request.chat = chat.wire
+        request.limit = chatPageLimit
+        if let before { request.beforeID = before }
+        let sent = request
+        return try await history { client, options in
+            try await client.getChat(request: ClientRequest(message: sent), options: options) {
+                let response = try $0.message
+                let asks = try response.entries.map { try HistoryItem($0) }
+                guard asks.allSatisfy({ $0.chat == chat }) else { throw DaemonFailure.invalidResponse }
+                return ChatPage(asks: asks, older: response.hasNextBeforeID ? response.nextBeforeID : nil)
+            }
+        }
+    }
+
+    /// Deletes every saved ask of `chat` and its prompt results. One already gone succeeds. The
+    /// chat service does it, failing as history does.
+    static func deleteChat(_ chat: ChatKey) async throws {
+        do {
+            try await ChatClient.deleteChat(chat)
+        } catch let failure as DaemonFailure {
+            throw HistoryFailure(failure)
+        } catch is CancellationError {
+            throw HistoryFailure.cancelled
+        }
+    }
+
     private static func rename(_ id: UInt64, _ title: String?) async throws -> HistoryItem {
         var request = Aria_Daemon_V1_RenameHistoryRequest()
         request.id = id
@@ -74,6 +108,16 @@ enum HistoryClient {
             try await client.rename(request: ClientRequest(message: sent), options: options) {
                 try HistoryItem($0.message.entry)
             }
+        }
+    }
+
+    private static func renameChat(_ chat: ChatKey, _ name: String) async throws -> ChatKey {
+        do {
+            return try await ChatClient.renameChat(chat, to: name)
+        } catch let failure as DaemonFailure {
+            throw HistoryFailure(failure)
+        } catch is CancellationError {
+            throw HistoryFailure.cancelled
         }
     }
 
@@ -166,15 +210,21 @@ extension HistoryItem {
         case .relay: source = .relay
         default: throw DaemonFailure.invalidResponse
         }
+        let kind = try Self.kind(wire)
+        let chat = wire.hasChat ? try ChatKey(wire.chat) : nil
+        if chat != nil {
+            guard case .ask = kind else { throw DaemonFailure.invalidResponse }
+        }
         self.init(
             id: wire.id,
             title: wire.hasTitle ? wire.title : nil,
-            kind: try Self.kind(wire),
+            kind: kind,
             created: wire.createTime.date,
             duration: wire.hasDuration ? wire.duration.timeInterval : nil,
             source: source,
             application: wire.hasApplication && !wire.application.name.isEmpty ? wire.application.name : nil,
             project: wire.hasProjectDirectory ? wire.projectDirectory : nil,
+            chat: chat,
             text: wire.text,
             isComplete: wire.transcriptionComplete,
             resultCount: Int(wire.resultCount),
@@ -203,7 +253,7 @@ extension HistoryItem {
             }
             return .systemTranscription(transcript: transcript.path, read: read)
         case (.chat, .reply(let reply)?):
-            return .chat(reply: reply)
+            return .ask(reply: reply)
         default:
             throw DaemonFailure.invalidResponse
         }

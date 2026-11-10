@@ -19,11 +19,32 @@ extension View {
     }
 }
 
+extension View {
+    /// Asks before deleting a chat's saved asks, since it can’t be undone.
+    func confirmingDeletion(
+        of chat: Binding<ChatKey?>, perform delete: @escaping (ChatKey) -> Void
+    ) -> some View {
+        confirmationDialog(
+            "Delete This Chat?",
+            isPresented: Binding(
+                get: { chat.wrappedValue != nil }, set: { if !$0 { chat.wrappedValue = nil } }),
+            titleVisibility: .visible,
+            presenting: chat.wrappedValue
+        ) { chat in
+            Button("Delete", role: .destructive) { delete(chat) }
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Its questions, replies, and prompt results will be deleted. The assistant keeps its own records.")
+        }
+    }
+}
+
 private enum PaletteDeletion {
     static func title(_ kind: HistoryItem.Kind?) -> String {
         switch kind {
         case .systemTranscription: "Delete This Transcript?"
-        case .chat: "Delete This Chat?"
+        case .ask: "Delete This Chat?"
         case .dictation, nil: "Delete This Dictation?"
         }
     }

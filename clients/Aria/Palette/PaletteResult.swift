@@ -30,18 +30,14 @@ struct PaletteResult: Equatable {
 
     static let lost = "Aria lost track of this prompt. Try again."
     static let failed = "Aria couldn’t run this prompt. Try again."
-    private static let earlyLimit = 64
 
     let promptName: String
     /// What the run asked of the assistant, which Try Again runs again. `nil` for a saved result,
     /// which can't be run again from here.
     let source: PromptSource?
     let input: HistoryItem
-    private(set) var ticket: UInt64?
     private(set) var state = State.running("Starting…")
-    /// Events that came before the ticket did. The call that returns the ticket can land after the
-    /// run's first events.
-    private var early: [Aria_Daemon_V1_ChatEvent] = []
+    private var follow = ChatFollow()
 
     init(promptName: String, source: PromptSource, input: HistoryItem) {
         self.promptName = promptName
@@ -57,15 +53,14 @@ struct PaletteResult: Equatable {
         state = .replied(result.text)
     }
 
+    var ticket: UInt64? { follow.ticket }
+
     var isRunning: Bool {
         if case .running = state { true } else { false }
     }
 
     mutating func started(ticket: UInt64) {
-        self.ticket = ticket
-        let held = early
-        early = []
-        for event in held { apply(event) }
+        for event in follow.started(ticket: ticket) { take(event) }
     }
 
     mutating func fail(_ failure: Failure) {
@@ -79,15 +74,15 @@ struct PaletteResult: Equatable {
             fail(Failure(Self.lost))
             return
         }
-        guard let ticket else {
-            early.append(event)
-            if early.count > Self.earlyLimit { early.removeFirst() }
-            return
-        }
-        guard event.ticket == ticket, isRunning else { return }
+        guard follow.admits(event) else { return }
+        take(event)
+    }
+
+    private mutating func take(_ event: Aria_Daemon_V1_ChatEvent) {
+        guard isRunning else { return }
         switch event.stage {
         case .working:
-            state = .running(PendingChat(ticket: ticket, step: event.step, skill: event.skill, since: .now).stepTitle)
+            state = .running(PendingAsk.title(of: event.step, skill: event.skill))
         case .replied:
             state = .replied(event.text)
         case .failed:

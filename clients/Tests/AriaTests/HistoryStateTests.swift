@@ -13,6 +13,8 @@ final class HistoryStateTests: XCTestCase {
         var copySucceeds = true
         var regenerateContinuation: CheckedContinuation<HistoryItem, Error>?
         var clearCalls = 0
+        var renamedChats: [ChatKey] = []
+        var chatRenameFailure: HistoryFailure?
         var clearFailure: HistoryFailure?
         var isCleanupPending = false
 
@@ -36,9 +38,21 @@ final class HistoryStateTests: XCTestCase {
                     self.entries[index].title = title
                     return self.entries[index]
                 },
+                renameChat: { chat, name in
+                    self.renamedChats.append(chat)
+                    if let failure = self.chatRenameFailure { throw failure }
+                    let renamed = ChatKey(assistantID: chat.assistantID, name: name)
+                    for index in self.entries.indices where self.entries[index].chat == chat {
+                        self.entries[index].chat = renamed
+                    }
+                    return renamed
+                },
                 delete: { id in
                     if self.deletionFails { throw HistoryFailure.storage }
                     self.entries.removeAll { $0.id == id }
+                },
+                deleteChat: { chat in
+                    self.entries.removeAll { $0.chat == chat }
                 },
                 clear: {
                     self.clearCalls += 1
@@ -56,6 +70,8 @@ final class HistoryStateTests: XCTestCase {
         }
     }
 
+    private static let chat = ChatKey(assistantID: .claudeCode, name: "c1")
+
     private static func item(_ id: UInt64) -> HistoryItem {
         HistoryItem(id: id, created: Date(timeIntervalSince1970: 100), text: "Text \(id)", status: .success)
     }
@@ -66,6 +82,41 @@ final class HistoryStateTests: XCTestCase {
             await Task.yield()
         }
         XCTFail("State did not settle", file: file, line: line)
+    }
+
+    func testRenamingAChatMovesEachOfItsAsksAndAnEmptyOrTakenNameDoesNot() async {
+        let harness = Harness()
+        harness.entries = ([1, 2, 3] as [UInt64]).map { id in
+            var entry = Self.item(id)
+            entry.kind = .ask(reply: "Noon.")
+            entry.chat = id == 3 ? nil : Self.chat
+            return entry
+        }
+        let state = HistoryState(effects: harness.effects)
+        state.refresh()
+        await waitUntil { state.items.count == 3 }
+        var heard: [ChatKey] = []
+        let renamed = ChatKey(assistantID: Self.chat.assistantID, name: "Lunch plans")
+
+        state.renameChat(Self.chat, to: "  Lunch plans ") { heard.append($0) }
+
+        await waitUntil { heard == [renamed] }
+        XCTAssertEqual(state.items.map(\.chat), [renamed, renamed, nil])
+        for unchanged in [" ", "Lunch plans"] {
+            state.renameChat(renamed, to: unchanged) { heard.append($0) }
+        }
+        state.renameChat(renamed, to: String(repeating: "x", count: ChatKey.nameLimit + 1))
+        XCTAssertEqual(state.error, .nameTooLong)
+        harness.chatRenameFailure = .chatNameTaken
+        state.renameChat(renamed, to: "Dinner")
+        await waitUntil { state.error == .chatNameTaken }
+        harness.chatRenameFailure = .busy
+        state.renameChat(renamed, to: "Dinner")
+        await waitUntil { state.error == .chatRenameReplying }
+
+        XCTAssertEqual(harness.renamedChats, [Self.chat, renamed, renamed])
+        XCTAssertEqual(heard, [renamed], "a failed rename names nothing")
+        XCTAssertEqual(state.items.map(\.chat), [renamed, renamed, nil])
     }
 
     func testRefreshPreservesSelectionAndFetchesFullText() async {
@@ -191,6 +242,29 @@ final class HistoryStateTests: XCTestCase {
         await waitUntil { !state.isLoading && state.detail?.id == 1 }
         XCTAssertEqual(state.items.map(\.id), [2, 1])
         XCTAssertEqual(state.selectedID, 1)
+        state.close()
+    }
+
+    func testALaterPageDropsAChatAlreadyShown() async {
+        let harness = Harness()
+        var newest = Self.item(3)
+        newest.chat = Self.chat
+        var older = Self.item(1)
+        older.chat = Self.chat
+        var effects = harness.effects
+        effects.list = { _, _, before in
+            before == nil
+                ? HistoryPage(items: [newest], next: 3)
+                : HistoryPage(items: [older, harness.entries[0]])
+        }
+        let state = HistoryState(effects: effects)
+        state.refresh()
+        await waitUntil { state.items.count == 1 && !state.isLoading }
+
+        state.loadMore(after: 3)
+
+        await waitUntil { !state.isLoading }
+        XCTAssertEqual(state.items.map(\.id), [3, 2])
         state.close()
     }
 
@@ -352,9 +426,9 @@ final class HistoryStateTests: XCTestCase {
 
     func testNarrowingToASectionListsOnlyItAndOpeningWidensAgain() async {
         let harness = Harness()
-        var chat = Self.item(3)
-        chat.kind = .chat(reply: "reply")
-        harness.entries = [chat, Self.item(2)]
+        var ask = Self.item(3)
+        ask.kind = .ask(reply: "reply")
+        harness.entries = [ask, Self.item(2)]
         let state = HistoryState(effects: harness.effects)
         state.open()
         await waitUntil { state.items.count == 2 }
@@ -372,9 +446,9 @@ final class HistoryStateTests: XCTestCase {
 
     func testCopyingAChatTakesItsReply() async {
         let harness = Harness()
-        var chat = Self.item(3)
-        chat.kind = .chat(reply: "The reply")
-        harness.entries = [chat]
+        var ask = Self.item(3)
+        ask.kind = .ask(reply: "The reply")
+        harness.entries = [ask]
         let state = HistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { state.detail != nil }
@@ -405,6 +479,37 @@ final class HistoryStateTests: XCTestCase {
 
         XCTAssertEqual(harness.copied, ["The whole text"])
         XCTAssertEqual(state.notice, "Copied")
+        state.close()
+    }
+
+    func testDeletingAChatRemovesItsRowAndLeavesTheRest() async {
+        let harness = Harness()
+        harness.entries[0].chat = Self.chat
+        let state = HistoryState(effects: harness.effects)
+        state.open()
+        await waitUntil { state.items.count == 2 }
+
+        state.deleteChat(Self.chat)
+
+        await waitUntil { state.items.map(\.id) == [1] && state.deletingID == nil }
+        XCTAssertEqual(harness.entries.map(\.id), [1])
+        state.close()
+    }
+
+    func testAChatStillReplyingSaysWhyItWasNotDeleted() async {
+        let harness = Harness()
+        harness.entries[0].chat = Self.chat
+        var effects = harness.effects
+        effects.deleteChat = { _ in throw HistoryFailure.busy }
+        let state = HistoryState(effects: effects)
+        state.open()
+        await waitUntil { state.items.count == 2 }
+
+        state.deleteChat(Self.chat)
+
+        await waitUntil { state.error != nil && state.deletingID == nil }
+        XCTAssertEqual(state.error?.message, "Aria can’t delete this chat while it’s replying.")
+        XCTAssertEqual(state.items.map(\.id), [2, 1])
         state.close()
     }
 

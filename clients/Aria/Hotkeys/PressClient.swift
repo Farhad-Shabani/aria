@@ -24,10 +24,6 @@ enum PressClient {
         try? await ChatClient.resolve()
     }
 
-    static func ask(heard: DictationClient.Transcript, target: ChatTarget) async -> UInt64? {
-        try? await ChatClient.ask(text: heard.text, target: target, ownVoice: heard.ownVoice)
-    }
-
     static func runPrompt(text: String, promptID: String, application: String?) async -> UInt64? {
         try? await ChatClient.runPrompt(text: text, promptID: promptID, application: application)
     }

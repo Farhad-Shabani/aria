@@ -784,4 +784,214 @@ final class PaletteTests: XCTestCase {
 
         XCTAssertTrue(PaletteActions(model: model, detail: entry).all.contains { $0.kind == .transcribeAgain })
     }
+
+    private static let chatKey = ChatKey(assistantID: .claudeCode, name: "c1")
+
+    private static func chatRow(_ id: UInt64, at seconds: TimeInterval) -> HistoryItem {
+        var row = entry(id, at: seconds)
+        row.kind = .ask(reply: "Noon.")
+        row.project = "/code/aria"
+        row.chat = chatKey
+        row.resultCount = 2
+        return row
+    }
+
+    func testAChatRowTypesItsNewestReplyAndGoesAsAWhole() throws {
+        let entry = Self.chatRow(2, at: 200)
+        var model = openModel(history: [entry])
+        let row = PaletteItem.chat(try XCTUnwrap(SavedChat(newest: entry)))
+        XCTAssertEqual(model.items, [row])
+
+        let actions = PaletteActions(model: model, hasFrontApp: true)
+
+        XCTAssertTrue(actions.typesOnReturn(row), "as an entry's row does")
+        XCTAssertEqual(actions.returnTitle(typingInto: "Notes"), "Type into Notes")
+        XCTAssertEqual(
+            actions.all.map(\.kind),
+            [
+                .copyEntry(entry), .renameChat(Self.chatKey),
+                .deleteChat(Self.chatKey), .open(row),
+            ])
+        XCTAssertEqual(row.spokenTitle, "c1, chat", "the chat's name, not its newest question")
+        XCTAssertNil(model.threadEntry, "its results stay with each ask")
+        XCTAssertNil(model.prompt(forNumber: 1))
+        model.openChat()
+        XCTAssertEqual(model.page, .chat)
+    }
+
+    /// A chat of one saved ask, entry 2, that replied.
+    private static func repliedChat(question: String, reply: String) -> Chat {
+        var ask = entry(2, at: 200)
+        ask.kind = .ask(reply: reply)
+        ask.text = question
+        var chat = Chat(key: chatKey, folder: "/code/aria")
+        chat.merge(ChatPage(asks: [ask], older: nil))
+        return chat
+    }
+
+    private func modelOnChatPage() -> PaletteModel {
+        var model = openModel(history: [])
+        model.openChat()
+        return model
+    }
+
+    func testOnTheChatPageReturnTypesTheReplyUntilAFollowUpIsTyped() {
+        var model = modelOnChatPage()
+        let chat = Self.repliedChat(question: "Text 2", reply: "Noon.")
+
+        let actions = PaletteActions(model: model, chat: chat, hasFrontApp: true)
+
+        XCTAssertEqual(actions.chatReturn, .type("Noon."))
+        XCTAssertEqual(actions.returnTitle(typingInto: "Notes"), "Type into Notes")
+        XCTAssertEqual(actions.all.filter(\.isInFooter).map(\.kind), [.copyText("Noon.")], "Return names typing")
+        XCTAssertNil(
+            PaletteActions(model: model, chat: chat, hasFrontApp: false).chatReturn,
+            "no app to type into")
+        XCTAssertEqual(actions.all.first { $0.kind == .typeText("Noon.") }?.key, .typeText)
+        XCTAssertEqual(actions.all.first { $0.kind == .copyText("Noon.") }?.key, .copy)
+        XCTAssertEqual(actions.all.map(\.id), ["copy", "type", "run-prompt", "rename", "delete-chat"])
+
+        model.followUp = "And dinner?"
+        let typed = PaletteActions(model: model, chat: chat, hasFrontApp: true)
+        XCTAssertEqual(typed.chatReturn, .send)
+        XCTAssertEqual(typed.returnTitle(typingInto: "Notes"), "Send")
+
+        model.followUp = ""
+        model.keepsHistory = false
+        let unsaved = PaletteActions(model: model, chat: chat, hasFrontApp: true)
+        XCTAssertEqual(unsaved.all.map(\.id), ["copy", "type"], "nothing saved to run on or delete")
+    }
+
+    func testAChatShowsItsNameAndRenamesInPlace() throws {
+        let entry = Self.chatRow(2, at: 200)
+        var model = openModel(history: [entry])
+        let chat = try XCTUnwrap(SavedChat(newest: entry))
+        XCTAssertEqual(chat.name, "c1")
+        XCTAssertEqual(PaletteItem.chat(chat).spokenTitle, "c1, chat")
+
+        model.startRenaming(Self.chatKey)
+
+        XCTAssertTrue(model.isRenaming)
+        XCTAssertEqual(model.renaming, .chat(Self.chatKey))
+        XCTAssertNil(model.renamingID, "no entry is being renamed")
+        XCTAssertEqual(model.renamingTitle, "c1")
+        XCTAssertTrue(PaletteActions(model: model, hasFrontApp: true).all.isEmpty, "the field has the keys")
+        XCTAssertFalse(model.escape(), "Esc ends the rename")
+        XCTAssertFalse(model.isRenaming)
+    }
+
+    func testTheKeysStepThroughQuestionsAndRepliesAndStopAtTheEnds() {
+        var chat = Self.repliedChat(question: "Text 2", reply: "Noon.")
+        chat.append(ChatAsk(live: 1, question: "And dinner?"))
+        let asks = chat.asks
+        var selection = MessageSelection()
+        XCTAssertTrue(selection.isResting)
+        XCTAssertEqual(selection.selected(in: asks).map(\.side), [.reply], "the newest reply")
+
+        selection.move(by: -1, extending: false, in: asks)
+        XCTAssertEqual(selection.selected(in: asks), [ChatMessage(ask: asks[1].id, side: .question)])
+        selection.move(by: -1, extending: false, in: asks)
+        XCTAssertEqual(selection.text(in: asks), "Noon.")
+        selection.move(by: -5, extending: false, in: asks)
+        XCTAssertEqual(selection.text(in: asks), "Text 2", "the first question, and no further")
+        XCTAssertFalse(selection.isResting)
+    }
+
+    func testShiftExtendsASelectionAndItsTextJoinsInOrderWithoutAReplyStillRunning() {
+        var chat = Self.repliedChat(question: "Text 2", reply: "Noon.")
+        chat.append(ChatAsk(live: 1, question: "And dinner?"))
+        let asks = chat.asks
+        var selection = MessageSelection()
+        selection.move(by: -3, extending: false, in: asks)
+
+        selection.move(by: 1, extending: true, in: asks)
+        selection.move(by: 1, extending: true, in: asks)
+        XCTAssertEqual(selection.text(in: asks), "Text 2\n\nNoon.\n\nAnd dinner?")
+        selection.move(by: 1, extending: true, in: asks)
+        XCTAssertEqual(selection.selected(in: asks).count, 4)
+        XCTAssertEqual(selection.text(in: asks), "Text 2\n\nNoon.\n\nAnd dinner?", "the running reply has no text yet")
+
+        XCTAssertTrue(selection.collapse(in: asks))
+        XCTAssertEqual(selection.selected(in: asks).count, 1)
+        XCTAssertFalse(selection.collapse(in: asks), "one already")
+
+        selection.selectAll(in: asks)
+        XCTAssertEqual(selection.selected(in: asks).count, 4)
+        selection.move(by: -1, extending: false, in: asks)
+        XCTAssertEqual(selection.selected(in: asks).count, 1, "a plain move drops the rest")
+    }
+
+    func testCopyAndReturnTakeTheSelectedQuestionAlone() {
+        var model = modelOnChatPage()
+        let chat = Self.repliedChat(question: "Text 2", reply: "Noon.")
+        model.messageSelection.move(by: -1, extending: false, in: chat.asks)
+
+        let actions = PaletteActions(model: model, chat: chat, hasFrontApp: true)
+
+        XCTAssertEqual(actions.all.first?.kind, .copyText("Text 2"))
+        XCTAssertEqual(actions.chatReturn, .type("Text 2"))
+    }
+
+    func testStopShowsOnlyWhileAChatTheDaemonNamedReplies() {
+        let model = modelOnChatPage()
+        var unnamed = Chat(key: nil, folder: "/code/aria")
+        unnamed.append(ChatAsk(live: 1, question: "When is lunch?"))
+        var named = Self.repliedChat(question: "Text 2", reply: "Noon.")
+        named.append(ChatAsk(live: 2, question: "And dinner?"))
+
+        let stops = { (chat: Chat) in
+            PaletteActions(model: model, chat: chat).all.contains { $0.kind == .stopAsk }
+        }
+
+        XCTAssertFalse(stops(unnamed), "nothing to stop it by yet")
+        XCTAssertTrue(stops(named))
+        XCTAssertFalse(stops(Self.repliedChat(question: "Text 2", reply: "Noon.")))
+    }
+
+    func testAskFollowsUpOnlyInTheChatOnScreen() {
+        var model = openModel(history: [])
+        let chat = Self.repliedChat(question: "Text 2", reply: "Noon.")
+        XCTAssertEqual(model.askTarget(shown: chat), .new, "the commands page")
+
+        model.openChat()
+        XCTAssertEqual(model.askTarget(shown: chat), .followUp(Self.chatKey))
+
+        model.open(entry: 2)
+        XCTAssertEqual(model.askTarget(shown: chat), .new, "an ask's entry page")
+        XCTAssertFalse(model.escape())
+        model.attach(Self.chatRow(2, at: 200))
+        XCTAssertEqual(model.askTarget(shown: chat), .new, "the prompts to run on an ask")
+        model.show(.result)
+        XCTAssertEqual(model.askTarget(shown: chat), .new, "a prompt's result")
+
+        model.openChat()
+        XCTAssertNil(model.input, "the chat shows with no prompt input left over")
+    }
+
+    func testEscapeFromAPageOpenedOnTheChatGoesBackToIt() {
+        var model = openModel(history: [Self.entry(1, at: 100)])
+        model.openChat()
+        model.open(entry: 2)
+
+        XCTAssertFalse(model.escape())
+        XCTAssertEqual(model.page, .chat)
+
+        model.attach(Self.chatRow(2, at: 200))
+        model.show(.result)
+        XCTAssertFalse(model.escape())
+        XCTAssertEqual(model.page, .commands, "the result goes back to the prompts")
+        XCTAssertFalse(model.escape())
+        XCTAssertEqual(model.page, .chat)
+        XCTAssertNil(model.input)
+
+        model.followUp = "And dinner?"
+        XCTAssertFalse(model.escape())
+        XCTAssertEqual(model.followUp, "", "a typed follow-up clears first")
+        XCTAssertFalse(model.escape())
+        XCTAssertEqual(model.page, .commands)
+        XCTAssertFalse(model.returnsToChat)
+        model.open(entry: 1)
+        XCTAssertFalse(model.escape())
+        XCTAssertEqual(model.page, .commands, "an entry opened from the list goes back to it")
+    }
 }

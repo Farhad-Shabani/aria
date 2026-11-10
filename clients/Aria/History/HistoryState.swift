@@ -33,7 +33,11 @@ final class HistoryState: ObservableObject {
         var thread: (UInt64) async throws -> [PromptResult]
         /// `nil` removes the title.
         var rename: (UInt64, String?) async throws -> HistoryItem
+        /// Answers the chat under its new name.
+        var renameChat: (ChatKey, String) async throws -> ChatKey
         var delete: (UInt64) async throws -> Void
+        /// Every saved ask of a chat, and their prompt results.
+        var deleteChat: (ChatKey) async throws -> Void
         var clear: () async throws -> HistoryClearResult
         var regenerate: (UInt64) async throws -> HistoryItem
         var copy: (String) -> Bool
@@ -150,8 +154,13 @@ final class HistoryState: ObservableObject {
             do {
                 let page = try await effects.list(query, section, cursor)
                 guard generation == listGeneration, !Task.isCancelled else { return }
+                // History may change between pages, which can bring a chat shown already.
                 let existing = Set(items.map(\.id))
-                items.append(contentsOf: page.items.filter { !existing.contains($0.id) })
+                let chats = Set(items.compactMap(\.chat))
+                items.append(
+                    contentsOf: page.items.filter { item in
+                        !existing.contains(item.id) && !(item.chat.map(chats.contains) ?? false)
+                    })
                 next = page.next
                 notice = page.warning
                 isLoading = false
@@ -271,6 +280,37 @@ final class HistoryState: ObservableObject {
         }
     }
 
+    /// Gives a chat a new name, which its rows follow. An empty or unchanged name does nothing.
+    /// `renamed` hears the chat under its new name, for a page that shows it.
+    func renameChat(
+        _ chat: ChatKey, to name: String, renamed: @escaping (ChatKey) -> Void = { _ in }
+    ) {
+        guard !isClearing else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != chat.name else { return }
+        guard trimmed.utf8.count <= ChatKey.nameLimit else {
+            error = .nameTooLong
+            return
+        }
+        error = nil
+        renameTask?.cancel()
+        renameTask = Task {
+            do {
+                let key = try await effects.renameChat(chat, trimmed)
+                guard !Task.isCancelled else { return }
+                for index in items.indices where items[index].chat == chat {
+                    items[index].chat = key
+                }
+                renamed(key)
+            } catch {
+                guard !Task.isCancelled else { return }
+                // The daemon refuses while an ask under either name runs or waits to.
+                let failure = error as? HistoryFailure ?? .failed
+                self.error = failure == .busy ? .chatRenameReplying : failure
+            }
+        }
+    }
+
     var work: HistoryWork {
         HistoryWork(isClearing: isClearing, deletingID: deletingID, regeneratingID: regeneratingID)
     }
@@ -328,6 +368,28 @@ final class HistoryState: ObservableObject {
                 guard !Task.isCancelled else { return }
                 self.error = error as? HistoryFailure ?? .failed
                 if selectedID == id { select(id) }
+            }
+        }
+    }
+
+    /// Deletes the chat behind a collapsed row, or the one the palette shows.
+    func deleteChat(_ chat: ChatKey) {
+        let row = items.first { $0.chat == chat }
+        guard !isClearing, deletingID == nil, row.map(work.canDelete) ?? true else { return }
+        deletingID = row?.id
+        deleteTask = Task {
+            defer { deletingID = nil }
+            do {
+                try await effects.deleteChat(chat)
+                guard !Task.isCancelled else { return }
+                items.removeAll { $0.chat == chat }
+                if let id = selectedID, row?.id == id { select(items.first?.id) }
+                refresh()
+            } catch {
+                guard !Task.isCancelled else { return }
+                // The daemon refuses while an ask in it runs or waits to.
+                let failure = error as? HistoryFailure ?? .failed
+                self.error = failure == .busy ? .chatReplying : failure
             }
         }
     }
