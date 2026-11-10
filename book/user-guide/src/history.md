@@ -43,6 +43,23 @@ To see one section alone, click its icon under the search field, or press
 section. Click **All**, or press **Esc**, to see everything
 again.
 
+## Continue a chat
+
+Questions you send with the Ask shortcut stay together as a chat. Aria
+names a new chat after its first question. History lists each chat once,
+under its name. Search finds it by any question, reply, or its name.
+
+1. Select a chat and press **⌘↩**. Aria shows its questions and
+   replies, oldest first.
+2. Type a follow-up in the field at the bottom, then press **Return**. Aria
+   sends it to the same assistant, in the same folder.
+
+Press **↑** or **↓** to select a question or reply, and **⇧↑** or **⇧↓** to
+select more. Press **⌘C** to copy the selection. With nothing typed in the
+field, **Return** types it into the app you came from. Press **⌘.** to stop a
+reply, and **⌘E** to rename the chat. Each assistant's chats have different
+names.
+
 ## Run a prompt on an entry
 
 1. Select an entry, then press **Tab** or click **Run Prompt**.
@@ -77,13 +94,15 @@ aria history list
 ```
 
 The list shows each entry's ID, section, status, recording availability
-(available, expired, or unavailable), and the first 512 bytes of its text. To
+(available, expired, or unavailable), and the first 512 bytes of its text. It
+lists each chat once, under its newest question, with the chat's name in
+brackets. To
 list one section, add `--section dictation`, `--section transcription`, or
 `--section chat`. To list only entries that mention something, add
 `--query TEXT`. It matches the text, a chat's reply, the entry's name, and the
 app's name, ignoring case. For scripts, add `--json` to print one JSON array.
 Each entry's `section` is `dictation`, `transcription`, or `chat`. Each entry
-also carries `created_at_ms` and `application`.
+also carries `created_at_ms`, `application`, and the `chat` it belongs to.
 
 To print one entry's full text, or the prompt results saved under it, run:
 
@@ -91,6 +110,17 @@ To print one entry's full text, or the prompt results saved under it, run:
 aria history show 42
 aria history results 42
 ```
+
+To print a whole chat, rename it, or delete it, use its name from the list:
+
+```sh
+aria history chat show trip
+aria history chat rename trip "Weekend trip"
+aria history chat delete "Weekend trip"
+```
+
+After a rename, `aria ask --chat "Weekend trip"` continues the chat. Add
+`--assistant` for a chat with an assistant other than the shared one.
 
 ## Dictate into history
 
@@ -154,6 +184,10 @@ Existing recordings continue to expire.
 In Aria, open an entry and click **Delete…** to remove it. To remove every
 entry and retained recording, type “clear” and choose **Clear All History…**.
 Clear includes entries outside the current search.
+
+To delete a chat, select or open it, then press **⌘⌫**. Aria deletes
+its questions, replies, and prompt results, but not the assistant's own
+records. Aria can't delete a chat while the assistant is replying.
 
 From a terminal, delete one entry by its ID, or clear everything:
 

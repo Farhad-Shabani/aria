@@ -61,8 +61,9 @@ Turn this off with **Return sends** under **Settings → Dictation**.
 Settings calls the key you tap the **Aria key**: right Option, or Fn if you
 chose it. Hold it, tap a second key, then let go:
 
-- **⇧ Shift** asks your assistant. Speak, then tap the Aria key to send. Tap it
-  again while Aria thinks to cancel.
+- **⇧ Shift** asks your assistant. Speak, then tap the Aria key to send. Aria
+  opens on the chat and shows the reply there. Tap the Aria key again
+  while Aria thinks to cancel.
 - **⌘ Command** opens Aria, where you
   [pick a prompt](./prompts.md#pick-a-prompt-in-aria).
 
@@ -70,8 +71,10 @@ Each is a setting under **Settings → Shortcuts**: keep the combo, record a
 shortcut of your own instead, or turn it off. **Restore Defaults** brings
 the combos back.
 
-While a chat or prompt runs, pressing its combo again does nothing. The Aria
-key alone sends and cancels it.
+While Aria shows a chat, Ask follows up in it once its reply arrives.
+Once you close Aria, the next Ask starts a new one. While a prompt runs,
+pressing its combo again does nothing. The Aria key alone sends and cancels a
+question or prompt.
 
 Any other key pressed with the Aria key cancels the press. Option shortcuts
 in other apps keep working. These presses need Accessibility access.

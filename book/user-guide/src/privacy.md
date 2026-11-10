@@ -80,12 +80,13 @@ limit file changes, but those settings don't prevent network access.
 **Local Provider** sends your request to the server that `provider.endpoint`
 names. The server decides where it goes next, as with
 [text cleanup](#text-cleanup-with-a-local-model). With history on, each
-request also carries the conversation so far.
+request also carries the chat so far.
 
 With history on, Aria also saves each request and its reply in
-[history](./history.md) for up to 30 days. Starting a fresh conversation
-doesn't delete earlier records. Clearing Aria's history doesn't delete the
-assistant's conversations.
+[history](./history.md) for up to 30 days. Starting fresh doesn't delete
+earlier records. Clearing Aria's history, or deleting a chat from it,
+doesn't delete the assistant's records. Deleting a chat also makes
+Aria forget the ID it uses to continue it with the assistant.
 
 ## Prompts
 

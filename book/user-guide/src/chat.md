@@ -3,8 +3,8 @@
 # Chat with an assistant
 
 Chat sends what you type or say to Claude Code, Codex, or a model on your
-Mac. The reply appears in your terminal. To keep your requests on your Mac,
-see [Use a local model](#use-a-local-model).
+Mac. The reply appears in your terminal, or in Aria on a Mac. To keep your
+requests on your Mac, see [Use a local model](#use-a-local-model).
 
 **Your request, and project files the assistant reads, may go to cloud
 services.** Aria sends the assistant text, never audio. The assistant keeps
@@ -40,7 +40,7 @@ The reply appears in your terminal. `--project` gives the assistant a folder
 to work in. Aria runs it with read-only settings to limit file changes. The
 assistant can still read files and send their content to its service.
 
-To continue the conversation, ask again from the same folder with the same
+To continue the chat, ask again from the same folder with the same
 assistant:
 
 ```sh
@@ -62,14 +62,23 @@ Speak, then pause. Silence ends the recording.
 The reply appears in the terminal. If a spoken request fails, try a typed
 one. If that works, the problem is the recording.
 
+## Ask on a Mac
+
+On a Mac, the Ask shortcut opens Aria on a chat with your assistant.
+To set it up, follow [Ask or pick a prompt](./macos.md#ask-or-pick-a-prompt).
+To follow up later, see
+[Continue a chat](./history.md#continue-a-chat). A
+chat started on a Mac is separate from the one `aria ask` continues in
+the same folder.
+
 ## Cancel
 
 To cancel, press **Esc** when the terminal shows its cancel prompt.
 
 ## Start fresh
 
-Each request continues the conversation for that folder and assistant.
-Use `--new` to start another:
+Each request continues the chat for that folder and assistant.
+Use `--new` to have the assistant start fresh:
 
 ```sh
 aria ask \
@@ -79,7 +88,10 @@ aria ask \
 ```
 
 Starting fresh does not delete the assistant's earlier conversation records.
-Use `--session` with a name if you want separate conversations in one folder.
+Use `--chat` with a name if you want separate chats in one folder.
+A name can't start with `/`, and each assistant's chats have different
+names. A named chat runs in the folder where it started, even when you ask
+from another folder or with `--project`.
 
 ## Use a different assistant or model
 
@@ -121,7 +133,7 @@ your Mac.
 Send a request as in [Type a request](#type-a-request). The reply should
 appear in your terminal.
 
-The local model remembers the conversation only while history is on.
+The local model remembers the chat only while history is on.
 
 If a chat can't start its assistant, check
 [Troubleshooting](./troubleshooting.md#chat-cant-start).
