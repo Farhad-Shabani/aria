@@ -87,7 +87,7 @@ tracing      = "0.1"
 cidre              = { version = "=0.28.0", default-features = false }
 objc2              = "0.6"
 objc2-foundation   = { version = "0.3.2", default-features = false }
-rusqlite           = { version = "0.40", features = [ "bundled", "hooks" ] }
+rusqlite           = { version = "0.41", features = [ "bundled", "hooks" ] }
 sha2               = "0.10"
 time               = { version = "0.3", features = [ "formatting", "macros" ] }
 tokio              = "1"
