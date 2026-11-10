@@ -87,8 +87,7 @@ enum HistoryClient {
         }
     }
 
-    /// Deletes every saved ask of `chat` and its prompt results. One already gone succeeds. The
-    /// chat service does it, failing as history does.
+    /// Deletes every saved ask of `chat` and its prompt results. A chat already gone succeeds.
     static func deleteChat(_ chat: ChatKey) async throws {
         do {
             try await ChatClient.deleteChat(chat)

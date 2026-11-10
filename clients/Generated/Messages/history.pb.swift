@@ -270,11 +270,11 @@ public nonisolated struct Aria_Daemon_V1_ListHistoryRequest: Sendable {
   /// Clears the value of `section`. Subsequent reads from it will return its default value.
   public mutating func clearSection() {self._section = nil}
 
-  /// Show each chat once, at its newest ask that matches `query`.
-  /// Chats group before `before_id` applies, so pages don't repeat
-  /// one while history is unchanged between reads. A change in between can,
-  /// so a client merging pages should drop a chat it already holds.
-  /// False lists every ask.
+  /// Show each chat once, at its newest ask that matches `query`. The daemon
+  /// groups chats before it applies `before_id`, so pages don't repeat a chat
+  /// while history stays unchanged between reads. If history changes between
+  /// reads, a page can repeat a chat, so a client merging pages should drop one
+  /// it already holds. False lists every ask.
   public var collapseChats: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -761,8 +761,8 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
     set {_uniqueStorage()._canRegenerate = newValue}
   }
 
-  /// The chat a CHAT entry's ask continued. Absent for an ask in its
-  /// folder's own chat, and for an entry saved before chats.
+  /// The chat a CHAT entry's ask continued. Absent for an ask in its folder's
+  /// own chat.
   public var chat: Aria_Daemon_V1_ChatKey {
     get {_storage._chat ?? Aria_Daemon_V1_ChatKey()}
     set {_uniqueStorage()._chat = newValue}

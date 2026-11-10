@@ -386,8 +386,8 @@ impl DaemonClient {
         ChatTarget::try_from(response).map_err(ClientError::from)
     }
 
-    /// Answers as soon as the chat is taken, with its ticket and the named
-    /// chat it continues; the reply follows on the event stream.
+    /// Answers as soon as the ask is taken. The reply follows on the event
+    /// stream.
     pub(crate) fn ask(&self, call: AskCall) -> Result<(Ticket, Option<ChatKey>), ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
         let response = self.call(REQUEST_TIMEOUT, wire::AskRequest::from(call), |request| {
@@ -515,7 +515,6 @@ impl DaemonClient {
         response.try_into().map_err(ClientError::from)
     }
 
-    /// One page of a chat's asks, oldest first.
     pub(crate) fn get_chat(
         &self,
         query: aria_voice::history::ChatQuery,
@@ -529,7 +528,6 @@ impl DaemonClient {
         response.try_into().map_err(ClientError::from)
     }
 
-    /// Answers the chat under its new name, as the daemon kept it.
     pub(crate) fn rename_chat(
         &self,
         chat: ChatKey,
@@ -543,7 +541,6 @@ impl DaemonClient {
         response.try_into().map_err(ClientError::from)
     }
 
-    /// Answers whether the daemon knew the chat. One already gone succeeds.
     pub(crate) fn delete_chat(&self, chat: ChatKey) -> Result<bool, ClientError> {
         let mut service = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
         let request = wire::DeleteChatRequest::from(chat);

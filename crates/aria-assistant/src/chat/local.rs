@@ -22,14 +22,12 @@ const NO_ENDPOINT: &str = "set provider.endpoint in the settings file";
 const NO_MODEL: &str =
     "add local-model = \"MODEL_ID\" under [assistant.models] in the settings file";
 
-/// An earlier ask in an assistant session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ask {
     pub request: String,
     pub reply: String,
 }
 
-/// Where an assistant session's earlier asks come from.
 pub trait SessionHistory: Send + Sync {
     /// The earlier asks of the session `resume` names, oldest first.
     fn recall(&self, resume: &str) -> Vec<Ask>;
@@ -307,7 +305,6 @@ mod tests {
         fn step(&mut self, _step: Step) {}
     }
 
-    /// Recalls `asks` for the session `resume` names and nothing for any other.
     struct ScriptedHistory {
         resume: &'static str,
         asks: Vec<Ask>,

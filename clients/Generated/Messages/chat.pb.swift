@@ -341,7 +341,7 @@ public nonisolated struct Aria_Daemon_V1_AskRequest: Sendable {
   /// A CLI model ID; empty uses the saved setting, then the assistant's default.
   public var modelID: String = String()
 
-  /// Required: which chat the ask goes to.
+  /// Required.
   public var chat: Aria_Daemon_V1_AskRequest.OneOf_Chat? = nil
 
   public var folder: Aria_Daemon_V1_FolderChat {
@@ -384,15 +384,12 @@ public nonisolated struct Aria_Daemon_V1_AskRequest: Sendable {
   /// Clears the value of `outputMode`. Subsequent reads from it will return its default value.
   public mutating func clearOutputMode() {self._outputMode = nil}
 
-  /// A tap of the Aria key cancels this run while it is in flight. The Mac
-  /// app sets it on a run a key press started, so one key drives the run.
-  /// Absent means no: a terminal's ask, or an older client's, is never ended
-  /// by a tap.
+  /// A tap of the Aria key cancels this run while it is in flight.
   public var tapCancels: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  /// Required: which chat the ask goes to.
+  /// Required.
   public nonisolated enum OneOf_Chat: Equatable, Sendable {
     case folder(Aria_Daemon_V1_FolderChat)
     case named(Aria_Daemon_V1_NamedChat)
@@ -423,23 +420,22 @@ public nonisolated struct Aria_Daemon_V1_FolderChat: Sendable {
   public init() {}
 }
 
-/// A chat the client names. A known chat always runs in its
-/// own folder.
+/// A chat the client names.
 public nonisolated struct Aria_Daemon_V1_NamedChat: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// Trimmed, it must be 1 to 128 UTF-8 bytes with no control characters,
-  /// and must not start with `/`, which names a folder's own chat;
-  /// anything else is INVALID_REQUEST.
+  /// Trimmed, it must be 1 to 128 UTF-8 bytes with no control characters. It
+  /// must not start with `/`, which names a folder's own chat. Anything else
+  /// is INVALID_REQUEST.
   public var name: String = String()
 
-  /// The folder a chat with no folder yet starts in, as an absolute
-  /// path; a known one ignores it. A relative one is INVALID_REQUEST. The
-  /// daemon reads the chat's folder only once the ask's turn comes,
-  /// after any delete taken before it. Empty then, or a missing folder, ends
-  /// the ask as a FAILED event with INVALID_REQUEST.
+  /// The absolute path a chat with no folder yet starts in. A known chat
+  /// ignores it. A relative path is INVALID_REQUEST. The daemon reads the
+  /// chat's folder only when the ask's turn comes, after any delete taken
+  /// before it. If the chat has no folder then, or the folder is missing, the
+  /// ask ends as a FAILED event with INVALID_REQUEST.
   public var workdir: String = String()
 
   /// Start a new assistant session instead of resuming the last one. The
@@ -494,8 +490,6 @@ public nonisolated struct Aria_Daemon_V1_AskResponse: Sendable {
   fileprivate var _chat: Aria_Daemon_V1_ChatKey? = nil
 }
 
-/// Names a chat: the asks sent under one name. A new assistant session
-/// keeps the chat and its name.
 public nonisolated struct Aria_Daemon_V1_ChatKey: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -504,8 +498,7 @@ public nonisolated struct Aria_Daemon_V1_ChatKey: Sendable {
   /// UNSPECIFIED is invalid.
   public var assistantID: Aria_Daemon_V1_AssistantId = .unspecified
 
-  /// As on NamedChat: 1 to 128 UTF-8 bytes, trimmed, with no control
-  /// characters, and not starting with `/`.
+  /// Under NamedChat.name's rules.
   public var name: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -897,10 +890,8 @@ public nonisolated struct Aria_Daemon_V1_PendingAsk: Sendable {
 
   public var ticket: UInt64 = 0
 
-  /// The question as asked.
   public var text: String = String()
 
-  /// True for the ask running now, false for one waiting its turn.
   public var running: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -935,7 +926,7 @@ public nonisolated struct Aria_Daemon_V1_CancelChatResponse: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// How many asks this call stopped. An ask already stopping isn't counted.
+  /// An ask already stopping isn't counted.
   public var cancelledCount: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -994,7 +985,7 @@ public nonisolated struct Aria_Daemon_V1_RenameChatRequest: Sendable {
   /// Clears the value of `chat`. Subsequent reads from it will return its default value.
   public mutating func clearChat() {self._chat = nil}
 
-  /// The new name, under ChatKey.name's rules.
+  /// Under NamedChat.name's rules.
   public var name: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -1009,7 +1000,7 @@ public nonisolated struct Aria_Daemon_V1_RenameChatResponse: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// The chat under its new name, as kept: trimmed.
+  /// The chat under its new name, trimmed.
   public var chat: Aria_Daemon_V1_ChatKey {
     get {_chat ?? Aria_Daemon_V1_ChatKey()}
     set {_chat = newValue}

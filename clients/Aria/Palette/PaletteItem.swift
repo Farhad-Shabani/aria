@@ -1,5 +1,4 @@
-/// One row on the commands page: a command, a history entry, a chat, or a prompt
-/// result in an open thread.
+/// One row on the commands page, where a prompt result shows in an open thread.
 enum PaletteItem: Identifiable, Equatable {
     case command(PaletteCommand)
     case entry(HistoryItem)
@@ -10,7 +9,7 @@ enum PaletteItem: Identifiable, Equatable {
         switch self {
         case .command(let command): command.id
         case .entry(let entry): "entry-\(entry.id)"
-        // Its newest ask changes as it goes on. The selection stays on it.
+        // Leaves out the newest ask, which changes as the chat goes on, so the selection stays.
         case .chat(let chat):
             "chat-\(chat.key.assistantID.rawValue)-\(chat.key.name)"
         case .result(let result): "result-\(result.id)"
@@ -29,8 +28,8 @@ enum PaletteItem: Identifiable, Equatable {
         }
     }
 
-    /// Saved text Return can type into the app in front: a chat's is its newest reply. A
-    /// command runs instead.
+    /// Whether Return can type the row's saved text into the app in front. A chat's text is its
+    /// newest reply.
     var isTypable: Bool {
         switch self {
         case .entry(let entry): entry.canCopy
@@ -52,7 +51,6 @@ enum PaletteItem: Identifiable, Equatable {
         if case .result(let result) = self { result } else { nil }
     }
 
-    /// The saved item the row stands for: an entry, or a chat's newest ask.
     var historyItem: HistoryItem? {
         switch self {
         case .entry(let entry): entry
@@ -67,7 +65,6 @@ struct SavedChat: Equatable {
     let key: ChatKey
     let newest: HistoryItem
 
-    /// `nil` for an entry in no chat.
     init?(newest: HistoryItem) {
         guard let key = newest.chat else { return nil }
         self.key = key

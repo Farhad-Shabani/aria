@@ -1,7 +1,7 @@
 //! Domain types for talking to coding assistants.
 //!
 //! The daemon owns chats keyed by assistant and name. Each ask
-//! gets a [`Ticket`]; its reply arrives through [`ChatStage`] events.
+//! gets a [`Ticket`]. Its reply arrives through [`ChatStage`] events.
 //! A [`Step`] describes the assistant's activity while the ask is running.
 
 mod config;
@@ -71,7 +71,6 @@ impl FromStr for Ticket {
 pub struct PendingAsk {
     pub ticket: Ticket,
     pub text: String,
-    /// It runs now, rather than waiting its turn.
     pub running: bool,
 }
 
@@ -115,7 +114,7 @@ pub struct ChatRequest {
     pub assistant_id: AssistantId,
     /// A model ID the assistant's CLI accepts; `None` uses the shared setting.
     pub model_id: Option<String>,
-    /// Names the chat to continue; `None` means the directory's.
+    /// The chat to continue. `None` continues the folder's own chat.
     pub name: Option<ChatName>,
     /// Start a new assistant session rather than resume the last one. A
     /// named chat keeps its name.
@@ -166,7 +165,7 @@ impl ChatRequest {
         }
     }
 
-    /// The named chat the ask continues; `None` for the directory's.
+    /// The named chat the ask continues. `None` means the folder's own chat.
     pub fn chat(&self) -> Option<ChatKey> {
         self.name.clone().map(|name| ChatKey {
             assistant_id: self.assistant_id,
@@ -174,9 +173,9 @@ impl ChatRequest {
         })
     }
 
-    /// What memory files the chat's turn under: its assistant and directory,
-    /// whichever chat it continues, so consolidation runs once per
-    /// directory rather than once per chat.
+    /// The key memory files each turn under: the assistant and directory,
+    /// whichever chat the ask continues. Consolidation then runs once per
+    /// directory.
     pub fn memory_session(&self) -> SessionKey {
         SessionKey::folder(self.assistant_id, &self.workdir)
     }
@@ -263,7 +262,7 @@ pub struct DeliverCall {
 }
 
 /// A prompt call resolved against the stored prompt and the configured
-/// assistant. One fresh assistant run; no chat.
+/// assistant. One fresh assistant run, outside any chat.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptRequest {
     pub text: String,
@@ -443,7 +442,7 @@ impl AssistantStatus {
     }
 }
 
-/// One chat with an assistant, taking one turn at a time.
+/// One assistant session, taking one turn at a time.
 pub trait Session: Send {
     /// Sends one prompt, reports its steps to `steps`, and returns the reply.
     fn prompt(
@@ -454,7 +453,7 @@ pub trait Session: Send {
         timeout: Duration,
     ) -> Result<String, AssistantError>;
 
-    /// What continues this chat next time; `None` before the
+    /// What continues this session next time. `None` before the
     /// first reply.
     fn resume_id(&self) -> Option<&str>;
 }

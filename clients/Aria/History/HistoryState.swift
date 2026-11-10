@@ -33,10 +33,10 @@ final class HistoryState: ObservableObject {
         var thread: (UInt64) async throws -> [PromptResult]
         /// `nil` removes the title.
         var rename: (UInt64, String?) async throws -> HistoryItem
-        /// Answers the chat under its new name.
+        /// Returns the chat under the name the daemon kept.
         var renameChat: (ChatKey, String) async throws -> ChatKey
         var delete: (UInt64) async throws -> Void
-        /// Every saved ask of a chat, and their prompt results.
+        /// Deletes every saved ask of a chat, and their prompt results.
         var deleteChat: (ChatKey) async throws -> Void
         var clear: () async throws -> HistoryClearResult
         var regenerate: (UInt64) async throws -> HistoryItem
@@ -154,7 +154,7 @@ final class HistoryState: ObservableObject {
             do {
                 let page = try await effects.list(query, section, cursor)
                 guard generation == listGeneration, !Task.isCancelled else { return }
-                // History may change between pages, which can bring a chat shown already.
+                // History can change between pages, so a page can bring a chat already shown.
                 let existing = Set(items.map(\.id))
                 let chats = Set(items.compactMap(\.chat))
                 items.append(
@@ -280,8 +280,6 @@ final class HistoryState: ObservableObject {
         }
     }
 
-    /// Gives a chat a new name, which its rows follow. An empty or unchanged name does nothing.
-    /// `renamed` hears the chat under its new name, for a page that shows it.
     func renameChat(
         _ chat: ChatKey, to name: String, renamed: @escaping (ChatKey) -> Void = { _ in }
     ) {
@@ -304,7 +302,7 @@ final class HistoryState: ObservableObject {
                 renamed(key)
             } catch {
                 guard !Task.isCancelled else { return }
-                // The daemon refuses while an ask under either name runs or waits to.
+                // The daemon refuses as busy while an ask under either name runs or waits.
                 let failure = error as? HistoryFailure ?? .failed
                 self.error = failure == .busy ? .chatRenameReplying : failure
             }
@@ -372,7 +370,6 @@ final class HistoryState: ObservableObject {
         }
     }
 
-    /// Deletes the chat behind a collapsed row, or the one the palette shows.
     func deleteChat(_ chat: ChatKey) {
         let row = items.first { $0.chat == chat }
         guard !isClearing, deletingID == nil, row.map(work.canDelete) ?? true else { return }
@@ -387,7 +384,7 @@ final class HistoryState: ObservableObject {
                 refresh()
             } catch {
                 guard !Task.isCancelled else { return }
-                // The daemon refuses while an ask in it runs or waits to.
+                // The daemon refuses as busy while an ask in the chat runs or waits.
                 let failure = error as? HistoryFailure ?? .failed
                 self.error = failure == .busy ? .chatReplying : failure
             }

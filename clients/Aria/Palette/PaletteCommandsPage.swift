@@ -157,8 +157,8 @@ struct PaletteCommandsPage: View {
                 controller.choose(item)
             }
         case .chat(let chat):
-            // A chat's results stay with each of its asks, on its own page. It names the
-            // assistant it asks, since its folder shows on its page.
+            // No results badge: a chat's prompt results show with each ask on the chat page.
+            // The row names the assistant, since the chat page shows the folder.
             let isRenaming = controller.model.renaming == .chat(chat.key)
             PaletteEntryRow(
                 entry: chat.newest, symbol: "bubble.left.and.bubble.right", isSelected: isSelected,

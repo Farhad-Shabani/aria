@@ -5,10 +5,9 @@
 //! one after another, since a resumed CLI session can't take two turns at once. Every other job
 //! runs side by side. Typing takes turns in the runtime, so two texts never type into the same
 //! field at once. A run that types nothing waits for nobody. A cancel ends one job by ticket, or
-//! every ask in one chat.
-//! Deleting a chat takes its lane too, and only when no ask runs or waits there, so no
-//! reply saves after the delete. Renaming one takes the lanes of both its names, so no ask
-//! starts under either name halfway through. Daemon shutdown cancels what is running.
+//! every ask in one chat. A delete runs only while no ask on the chat runs or waits, and holds
+//! the chat's lane, so no reply saves after the delete. A rename holds the lanes of both names,
+//! so no ask starts under either name mid-rename. Daemon shutdown cancels what is running.
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
@@ -73,7 +72,6 @@ struct RenameJob {
 }
 
 impl RenameJob {
-    /// The lane of the chat's new name.
     fn target(&self) -> Lane {
         Lane::Session(SessionKey::named(&ChatKey {
             assistant_id: self.chat.assistant_id,
@@ -83,8 +81,8 @@ impl RenameJob {
 }
 
 /// What waits in a lane and runs there. A delivery's, a delete's, or a rename's ticket is never
-/// handed out. It only keys the job's lane. A delete or a rename never waits: admission refuses it
-/// while a lane it needs is taken.
+/// handed out. Admission refuses a delete or a rename while a lane it needs is taken, so neither
+/// ever waits.
 enum Job {
     Run(ChatJob),
     Deliver(DeliverJob),
@@ -127,8 +125,6 @@ enum Control {
     Pending(SessionKey, Reply<Vec<PendingAsk>, Infallible>),
 }
 
-/// The application-facing entry point for chat. Cloneable; the channels
-/// behind it are private.
 #[derive(Clone)]
 pub(in crate::daemon) struct ChatHandle {
     submissions: mpsc::Sender<SubmitCommand>,
@@ -137,7 +133,7 @@ pub(in crate::daemon) struct ChatHandle {
 
 impl ChatHandle {
     /// Answers as soon as the ask is taken, with the named chat it
-    /// continues; the reply follows as an event.
+    /// continues. The reply follows as an event.
     pub(in crate::daemon) async fn ask(
         &self,
         job: AskJob,
@@ -228,7 +224,7 @@ impl ChatHandle {
     }
 
     /// Ends the chat's running ask and every ask waiting behind it.
-    /// Answers how many it ended; one already told to stop isn't counted.
+    /// Answers how many it ended. An ask already told to stop isn't counted.
     pub(in crate::daemon) async fn cancel_chat(
         &self,
         chat: &ChatKey,
@@ -401,7 +397,8 @@ impl ChatActor {
         };
         let lane = Lane::of(ticket, &job);
         let second = job.second_lane(&lane);
-        // Nothing waits in a lane with no job running, so this covers both.
+        // Nothing waits in a lane with no job running, so checking `running`
+        // also rules out waiting asks.
         let taken = |lane: &Lane| self.running.contains_key(lane);
         match job {
             Job::Delete(job) if taken(&lane) => job.reply.fail(ChatError::Replying),
@@ -512,7 +509,6 @@ impl ChatActor {
         ended
     }
 
-    /// Ends a job lifted out of its lane before it started.
     fn end_waiting(&self, ticket: Ticket, job: Job) {
         match job {
             Job::Run(job) => self.runtime.cancel_unstarted(ticket, job.assistant_id()),
@@ -524,7 +520,6 @@ impl ChatActor {
         }
     }
 
-    /// The lane's running ask, then the asks waiting behind it.
     fn pending(&self, lane: &Lane) -> Vec<PendingAsk> {
         let running = self.running.get(lane).and_then(|job| match &job.kind {
             Kind::Ask { text } => Some(PendingAsk {
@@ -584,7 +579,6 @@ impl ChatActor {
         taken
     }
 
-    /// A finished job frees its lanes for the next job waiting in each.
     fn finished(
         &mut self,
         finished: Result<Held, tokio::task::JoinError>,

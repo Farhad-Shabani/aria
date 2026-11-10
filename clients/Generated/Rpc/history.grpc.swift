@@ -320,8 +320,8 @@ extension Aria_Daemon_V1_HistoryService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > A chat's newest asks before a cursor, returned oldest first with
-        /// > their full text. A chat with no saved asks is HISTORY_MISSING.
+        /// > A page of a chat's newest asks before a cursor. A chat with no saved asks
+        /// > is HISTORY_MISSING.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_GetChatRequest` message.
@@ -599,8 +599,8 @@ extension Aria_Daemon_V1_HistoryService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > A chat's newest asks before a cursor, returned oldest first with
-        /// > their full text. A chat with no saved asks is HISTORY_MISSING.
+        /// > A page of a chat's newest asks before a cursor. A chat with no saved asks
+        /// > is HISTORY_MISSING.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_GetChatRequest` message.
@@ -842,8 +842,8 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > A chat's newest asks before a cursor, returned oldest first with
-    /// > their full text. A chat with no saved asks is HISTORY_MISSING.
+    /// > A page of a chat's newest asks before a cursor. A chat with no saved asks
+    /// > is HISTORY_MISSING.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_GetChatRequest` message.
@@ -1107,8 +1107,8 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > A chat's newest asks before a cursor, returned oldest first with
-    /// > their full text. A chat with no saved asks is HISTORY_MISSING.
+    /// > A page of a chat's newest asks before a cursor. A chat with no saved asks
+    /// > is HISTORY_MISSING.
     ///
     /// - Parameters:
     ///   - message: request message to send.

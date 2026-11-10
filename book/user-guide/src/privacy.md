@@ -85,8 +85,12 @@ request also carries the chat so far.
 With history on, Aria also saves each request and its reply in
 [history](./history.md) for up to 30 days. Starting fresh doesn't delete
 earlier records. Clearing Aria's history, or deleting a chat from it,
-doesn't delete the assistant's records. Deleting a chat also makes
-Aria forget the ID it uses to continue it with the assistant.
+doesn't delete the assistant's records. Deleting a chat also deletes the ID
+Aria uses to continue that chat with the assistant.
+
+Aria names a chat started on a Mac after its first question. Clearing
+history doesn't remove that name from `~/.aria`, and expiry doesn't either.
+Deleting the chat does.
 
 ## Prompts
 

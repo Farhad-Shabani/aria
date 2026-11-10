@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// One saved entry in full, then the prompt results run on it, as a chat reads.
 struct PaletteEntryDetail: View {
     /// One scroll target per block, so the keys bring the current one into view.
     private enum Block: Hashable {

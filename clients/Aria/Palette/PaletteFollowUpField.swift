@@ -1,12 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The chat page's field for a typed follow-up. Return sends it.
-///
-/// AppKit, as the search field is, so the keys come back here after another page.
+/// Built on AppKit, as the search field is, so it takes the keys back after another page.
 struct PaletteFollowUpField: NSViewRepresentable {
     @ObservedObject var controller: PaletteController
-    /// Off while the last ask is replying or a spoken follow-up is recorded.
     let isEnabled: Bool
     let placeholder: String
 

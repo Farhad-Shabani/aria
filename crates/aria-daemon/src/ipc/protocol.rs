@@ -797,8 +797,8 @@ impl TryFrom<wire::AskRequest> for AskCall {
 }
 
 /// Empty is proto3's absent. A relative path would name a folder beside the
-/// daemon, not the caller, and a folder's own chat goes by its path,
-/// which only an absolute one keeps apart from chat names.
+/// daemon, not the caller. A folder's own chat goes by its path, and only an
+/// absolute path keeps it apart from chat names.
 fn ask_workdir(workdir: String) -> Result<Option<std::path::PathBuf>, ProtocolError> {
     if workdir.is_empty() {
         return Ok(None);
@@ -1892,7 +1892,6 @@ impl From<ChatKey> for wire::ChatKey {
     }
 }
 
-/// A request or response whose chat is required.
 fn required_chat(chat: Option<wire::ChatKey>) -> Result<ChatKey, ProtocolError> {
     chat.ok_or(ProtocolError::MissingBody("chat"))?.try_into()
 }
@@ -3987,7 +3986,6 @@ mod tests {
         }
     }
 
-    /// An ask that starts a chat in `/tmp`, as the wire carries it.
     fn started_ask() -> wire::AskRequest {
         wire::AskRequest::from(ask_call(ChatChoice::Start {
             workdir: "/tmp".into(),

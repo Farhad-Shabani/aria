@@ -389,7 +389,6 @@ fn reply(entry: &aria_voice::history::HistoryEntry) -> Option<&str> {
     }
 }
 
-/// An ask in a named chat leads with the chat's name.
 fn row_text(entry: &aria_voice::history::HistoryEntry) -> String {
     let text = entry.text.replace(['\n', '\r', '\t'], " ");
     match entry.content.chat() {

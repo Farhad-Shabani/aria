@@ -1,6 +1,5 @@
 import Foundation
 
-/// Names a chat: the asks sent under one name. History groups asks by it.
 struct ChatKey: Hashable, Sendable {
     /// A chat's name is one line of at most this many bytes.
     static let nameLimit = 128
@@ -13,8 +12,8 @@ struct ChatKey: Hashable, Sendable {
 struct Chat: Equatable {
     /// `nil` for a new chat until the daemon names it in the reply to its first ask.
     private(set) var key: ChatKey?
-    /// The folder its asks run in, as far as the app knows, for the page to name, a spoken
-    /// follow-up's vocabulary, and a follow-up to seed. The daemon keeps the folder each ask runs in.
+    /// The folder its asks run in, as far as the app knows. The daemon records the folder each
+    /// ask runs in.
     let folder: String?
     private(set) var asks: [ChatAsk] = []
     /// The cursor for the saved asks older than these. `nil` once none are left.
@@ -25,13 +24,11 @@ struct Chat: Equatable {
         self.folder = folder
     }
 
-    /// While its last ask runs, it takes no other.
     var isReplying: Bool { asks.last?.isRunning == true }
 
-    /// Stopping goes through the daemon by its key, so not before the daemon names it.
+    /// The daemon stops a chat by its key, so an unnamed chat can't stop.
     var canStop: Bool { key != nil && isReplying }
 
-    /// The history entry `ask` was saved as, which a prompt can run on.
     func entry(of ask: ChatAsk) -> HistoryItem? {
         guard let id = ask.entryID, let reply = ask.reply else { return nil }
         return HistoryItem(
@@ -43,21 +40,19 @@ struct Chat: Equatable {
         asks.append(ask)
     }
 
-    /// Adds the saved asks not already here, keyed by their history entry. An ask asked here
-    /// stays, since it is the one on screen.
+    /// Skips a saved ask already here, matched by history entry, so the copy on screen stays.
     mutating func merge(_ page: ChatPage) {
         add(page.asks)
         older = page.older
     }
 
-    /// The chat took a new name, which its asks follow.
     mutating func rename(to key: ChatKey) {
         self.key = key
     }
 
-    /// Shows the asks the daemon runs or has waiting, by their ticket: one the stream lost goes
-    /// on, and one not here follows the rest. `heard` is what the stream brought while they were
-    /// listed, which those asks missed.
+    /// Matches the asks the daemon runs or has waiting by ticket. A lost ask goes on, and one
+    /// not here goes last. `heard` holds the events the stream brought during the listing, which
+    /// those asks missed.
     mutating func merge(_ pending: [Aria_Daemon_V1_PendingAsk], heard: [Aria_Daemon_V1_ChatEvent?]) {
         var listed: Set<ChatAsk.ID> = []
         for ask in pending {
@@ -76,7 +71,7 @@ struct Chat: Equatable {
         }
     }
 
-    /// The asks the stream lost that `pending` no longer lists, which ended while it was gone.
+    /// Lost asks that `pending` no longer lists. These ended while the stream was gone.
     func lost(notIn pending: [Aria_Daemon_V1_PendingAsk]) -> Set<ChatAsk.ID> {
         let tickets = Set(pending.map(\.ticket))
         let ended = asks.filter { ask in
@@ -110,13 +105,11 @@ struct Chat: Equatable {
             .map(\.element)
     }
 
-    /// A prompt result was saved under `entry`, which may be one of its asks.
     mutating func countResult(on entry: UInt64) {
         guard let index = asks.firstIndex(where: { $0.entryID == entry }) else { return }
         asks[index].countResult()
     }
 
-    /// The daemon named it in the reply to `id`, its first ask.
     mutating func named(_ key: ChatKey, by id: ChatAsk.ID) {
         guard self.key == nil, asks.contains(where: { $0.id == id }) else { return }
         self.key = key
@@ -125,7 +118,7 @@ struct Chat: Equatable {
     mutating func started(_ id: ChatAsk.ID, ticket: UInt64) {
         guard let index = asks.firstIndex(where: { $0.id == id }) else { return }
         asks[index].started(ticket: ticket)
-        // The daemon may have listed it before its ticket came. The ask asked here holds its events.
+        // The daemon may have listed this ask before its ticket came. The copy asked here holds its events.
         asks.removeAll { $0.id == .pending(ticket) }
     }
 
@@ -149,7 +142,6 @@ struct Chat: Equatable {
     }
 }
 
-/// One question in a chat, and the assistant's reply once it comes.
 struct ChatAsk: Identifiable, Equatable {
     enum ID: Hashable {
         /// Read back from history, by its entry.
@@ -180,11 +172,9 @@ struct ChatAsk: Identifiable, Equatable {
     /// The history entry it was saved as. `nil` while it runs, while history is off, or when the
     /// save failed.
     private(set) var entryID: UInt64?
-    /// How many prompt results its entry holds.
     private(set) var resultCount = 0
     private var follow = ChatFollow()
 
-    /// Just sent, before its ticket comes.
     init(live number: Int, question: String, created: Date = .now) {
         id = .live(number)
         self.question = question
@@ -192,7 +182,6 @@ struct ChatAsk: Identifiable, Equatable {
         state = .running(Self.starting)
     }
 
-    /// Listed by the daemon, which runs it or has it waiting.
     init(pending ask: Aria_Daemon_V1_PendingAsk) {
         id = .pending(ask.ticket)
         question = ask.text
@@ -230,7 +219,6 @@ struct ChatAsk: Identifiable, Equatable {
         for event in follow.started(ticket: ticket) { take(event) }
     }
 
-    /// The stream lost it, and the daemon still lists it as `ask`.
     mutating func goesOn(_ ask: Aria_Daemon_V1_PendingAsk) {
         guard isLost else { return }
         state = .running(Self.step(of: ask))

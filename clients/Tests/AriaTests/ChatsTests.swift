@@ -27,11 +27,8 @@ final class ChatsTests: XCTestCase {
         var tickets: [CheckedContinuation<UInt64, Error>] = []
         var page: CheckedContinuation<ChatPage, Error>?
         var cancelled: [ChatKey] = []
-        /// Each stop fails as this, while set.
         var cancelFailure: DaemonFailure?
-        /// The cursor of each read.
         var reads: [UInt64?] = []
-        /// Each listing of pending asks waits in `lists` while set. Otherwise it lists none.
         var holdsLists = false
         var lists: [CheckedContinuation<[Aria_Daemon_V1_PendingAsk], Error>] = []
 
@@ -102,7 +99,6 @@ final class ChatsTests: XCTestCase {
         XCTAssertTrue(condition(), file: file, line: line)
     }
 
-    /// A new chat whose start call waits in `harness.starts`.
     private func starting(_ harness: Harness) async -> Chats {
         let chats = Chats(effects: harness.effects)
         chats.startNew("When is lunch?", at: Self.target, ownVoice: true)
@@ -110,7 +106,6 @@ final class ChatsTests: XCTestCase {
         return chats
     }
 
-    /// `Self.key` opened in its folder.
     private func opened(_ harness: Harness, keepsHistory: Bool) -> Chats {
         let chats = Chats(effects: harness.effects)
         chats.keepsHistory = keepsHistory
@@ -118,7 +113,6 @@ final class ChatsTests: XCTestCase {
         return chats
     }
 
-    /// A chat the daemon named, whose first ask has its ticket, 7.
     private func started(_ harness: Harness) async -> Chats {
         let chats = Chats(effects: harness.effects)
         chats.startNew("When is lunch?", at: Self.target, ownVoice: true)

@@ -28,10 +28,10 @@ pub(super) struct AskArgs {
     /// Override the shared model choice for this question
     #[arg(long = "model", value_name = "MODEL_ID")]
     pub(super) model_id: Option<String>,
-    /// Continue a chat by name, in the folder it runs in; this directory only seeds a new name. Defaults to this directory's chat
+    /// Continue a chat by name, in the folder it runs in. This directory only sets the folder of a new chat. Defaults to this directory's chat
     #[arg(long, value_parser = |name: &str| aria_settings::ChatName::new(name), value_name = "NAME")]
     pub(super) chat: Option<aria_settings::ChatName>,
-    /// Start a new assistant session in the chat instead of resuming the last one; history still shows the chat's earlier asks with it
+    /// Start a new assistant session in the chat instead of resuming the last one. History still shows the chat's earlier asks
     #[arg(long)]
     pub(super) new: bool,
     /// Print the ticket and return; the reply shows up in `aria events`

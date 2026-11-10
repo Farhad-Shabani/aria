@@ -162,8 +162,8 @@ impl HistorySection {
     }
 }
 
-/// A name someone gave an entry or a chat: trimmed, not empty, at
-/// most `MAX_BYTES`, with no control characters.
+/// A name someone gave an entry: trimmed, not empty, at most `MAX_BYTES`,
+/// with no control characters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Title(String);
 
@@ -254,7 +254,7 @@ pub struct ChatQuery {
 }
 
 impl ChatQuery {
-    /// Ten asks at their largest fit a client's 4 MiB message limit.
+    /// The most asks, at their largest, that fit in one client message.
     pub const MAX_LIMIT: usize = 10;
 }
 

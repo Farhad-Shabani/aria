@@ -72,7 +72,7 @@ shortcut of your own instead, or turn it off. **Restore Defaults** brings
 the combos back.
 
 While Aria shows a chat, Ask follows up in it once its reply arrives.
-Once you close Aria, the next Ask starts a new one. While a prompt runs,
+Once you close Aria, the next ask starts a new chat. While a prompt runs,
 pressing its combo again does nothing. The Aria key alone sends and cancels a
 question or prompt.
 

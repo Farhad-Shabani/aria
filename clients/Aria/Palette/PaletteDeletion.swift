@@ -20,7 +20,6 @@ extension View {
 }
 
 extension View {
-    /// Asks before deleting a chat's saved asks, since it can’t be undone.
     func confirmingDeletion(
         of chat: Binding<ChatKey?>, perform delete: @escaping (ChatKey) -> Void
     ) -> some View {

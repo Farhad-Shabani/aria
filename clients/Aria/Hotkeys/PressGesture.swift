@@ -21,9 +21,9 @@ struct PressGesture: Equatable {
     }
 
     private var phase = Phase.idle
-    /// Asks that ended before their ticket reached the gesture. Every
-    /// subscriber sees every chat, so a terminal's tickets land here too, and
-    /// one slot would let a stranger's overwrite this one's.
+    /// Runs that ended before their ticket reached the gesture. Every
+    /// subscriber sees every chat, so a terminal's tickets land here too.
+    /// One slot would let a stranger's ticket overwrite this run's.
     private var endedEarly: Set<UInt64> = []
     /// The stream dropped while recording, so the chat's end may pass
     /// unseen before the stream is back. Its ticket is not held.

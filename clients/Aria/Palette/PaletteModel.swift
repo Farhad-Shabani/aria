@@ -43,17 +43,14 @@ struct PaletteModel: Equatable {
     /// While off, no saved entry or history command shows.
     var keepsHistory = false
     var isConfirmingClear = false
-    /// The entry whose title is being edited in place. The selection holds
-    /// still meanwhile.
-    /// What is being renamed in place.
     enum Renaming: Equatable {
         case entry(UInt64)
         case chat(ChatKey)
     }
 
+    /// The selection holds still while something is renamed in place.
     private(set) var renaming: Renaming?
     var isRenaming: Bool { renaming != nil }
-    /// The entry being renamed, if it is one.
     var renamingID: UInt64? {
         if case .entry(let id) = renaming { id } else { nil }
     }
@@ -77,9 +74,7 @@ struct PaletteModel: Equatable {
     /// Escape goes back to the chat from a page opened on it, such as an ask's entry or
     /// the prompts to run on it.
     private(set) var returnsToChat = false
-    /// The follow-up typed on the chat page.
     var followUp = ""
-    /// The questions and replies the keys rest on in the chat page.
     var messageSelection = MessageSelection()
     /// The prompt being written or edited. Closing the palette keeps it, for
     /// New Prompt or Edit Prompt to bring back.
@@ -92,7 +87,6 @@ struct PaletteModel: Equatable {
     /// New Prompt shows while the prompts are under the daemon's limit.
     var canAddPrompt = false
     var assistantName: String?
-    /// Each assistant's name, as the daemon gives it, for the chats it holds.
     var assistantNames: [Aria_Daemon_V1_AssistantId: String] = [:]
     /// The steps left in Finish Setting Up Aria.
     private(set) var setupSteps = 0
@@ -463,7 +457,6 @@ struct PaletteModel: Equatable {
         requestThread(of: entry, opens: false)
     }
 
-    /// Shows the chat page from its newest ask, with nothing typed and no prompt input.
     mutating func openChat() {
         show(.chat)
         input = nil
@@ -472,7 +465,6 @@ struct PaletteModel: Equatable {
         followUp = ""
     }
 
-    /// Back to the commands page, with no chat under it.
     mutating func leaveChat() {
         if returnsToChat { page = .commands }
         returnsToChat = false
@@ -494,9 +486,7 @@ struct PaletteModel: Equatable {
         focusedResultID = order[min(max(index + step, 0), order.count - 1)]
     }
 
-    /// Escape ends a rename, asks before dropping a changed draft, clears a typed follow-up, or
-    /// leaves a page. On the commands page it folds the thread, clears what is typed, drops the
-    /// prompt input, then widens the section. Returns whether the palette closes.
+    /// Returns whether the palette closes.
     mutating func escape() -> Bool {
         if renaming != nil {
             renaming = nil

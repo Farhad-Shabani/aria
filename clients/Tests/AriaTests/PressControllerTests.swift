@@ -18,7 +18,6 @@ final class PressControllerTests: XCTestCase {
                 pending: { _ in [] }))
     }
 
-    /// Hears `heard` from every recording, and notes the folder each one used.
     private static func effects(
         hearing heard: String?, during: @escaping @MainActor () -> Void = {},
         folders: @escaping @MainActor (String?) -> Void

@@ -4,9 +4,8 @@ struct PaletteEntryRow: View {
     let entry: HistoryItem
     let symbol: String
     let isSelected: Bool
-    /// What the row names before its time, in place of where the entry came from.
+    /// Shown before the row's time. `nil` shows where the entry came from.
     var origin: String?
-    /// The row's text in place of the entry's own name, such as a chat's.
     var name: String?
     /// Set while the title is being edited in place.
     var titleField: PaletteTitleField?

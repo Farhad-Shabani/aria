@@ -3,9 +3,8 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "Chats")
 
-/// The chat the palette shows: its saved asks, the ones the daemon still runs, the ones
-/// asked since, and their replies as the event stream brings them. One shows at a time. An ask goes
-/// on in the daemon while its chat is closed, and shows again when it reopens.
+/// The chat the palette shows, one at a time. An ask goes on in the daemon while its chat is
+/// closed, and shows again when the chat reopens.
 @MainActor
 final class Chats: ObservableObject {
     struct Effects {
@@ -29,7 +28,7 @@ final class Chats: ObservableObject {
     @Published private(set) var shown: Chat?
     /// The chat a spoken follow-up is being recorded for.
     @Published var recording: ChatKey?
-    /// Why its saved asks couldn't be read.
+    /// Why the shown chat's saved asks couldn't be read.
     @Published private(set) var error: HistoryFailure?
     /// Why the last Stop didn't reach the daemon, while the ask it meant to stop still runs.
     @Published private(set) var stopFailure: String?
@@ -41,18 +40,15 @@ final class Chats: ObservableObject {
     /// Numbers the asks asked here, across chats, so a late ticket finds only its own.
     private var asked = 0
     private var reading: Task<Void, Never>?
-    /// The read that swaps the asks the stream lost, which ended while it was gone, for what
-    /// history saved.
     private var rereading: Task<Void, Never>?
     private var listing: Task<Void, Never>?
-    /// What the stream brought while the pending asks were listed, which the asks listed missed.
+    /// Events the stream brought during a pending listing, which the listed asks missed.
     private var heard: [Aria_Daemon_V1_ChatEvent?] = []
     private let effects: Effects
 
     init(effects: Effects) { self.effects = effects }
 
-    /// Starts a chat with the assistant and folder `target` names. It shows at once, and
-    /// takes its key from the daemon's reply.
+    /// Shows the new chat at once. The chat takes its key from the daemon's reply.
     func startNew(_ question: String, at target: ChatTarget, ownVoice: Bool) {
         show(Chat(key: nil, folder: target.workdir))
         let id = append(question)
@@ -67,27 +63,21 @@ final class Chats: ObservableObject {
         }
     }
 
-    /// A spoken follow-up. The chat may have closed while it was recorded, so it opens
-    /// again, naming `folder`.
+    /// A spoken follow-up. The chat may have closed during recording, so it opens again.
     func followUp(_ question: String, in chat: ChatKey, folder: String?, ownVoice: Bool) {
         open(chat, folder: folder)
         ask(question, ownVoice: ownVoice, tapCancels: true)
     }
 
-    /// Whether the chat that shows takes a typed follow-up: not while its last ask replies,
-    /// nor while a spoken one is recorded for it.
     var takesFollowUp: Bool {
         guard let shown, let key = shown.key else { return false }
         return !shown.isReplying && recording != key
     }
 
-    /// Whether `text` would go as a typed follow-up: something besides spaces, while one is taken.
     func canSend(_ text: String) -> Bool {
         takesFollowUp && !Self.question(text).isEmpty
     }
 
-    /// A typed follow-up in the chat that shows, while it takes one. Returns whether it
-    /// was sent.
     func send(_ text: String) -> Bool {
         guard canSend(text) else { return false }
         ask(Self.question(text), ownVoice: false, tapCancels: false)
@@ -98,9 +88,6 @@ final class Chats: ObservableObject {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Shows `chat`, with its saved asks while history is on, then the asks the daemon
-    /// still runs. `folder` is where its asks last ran, for the page to name. The one already
-    /// showing stays as it is.
     func open(_ chat: ChatKey, folder: String?) {
         guard shown?.key != chat else { return }
         show(Chat(key: chat, folder: folder))
@@ -108,21 +95,19 @@ final class Chats: ObservableObject {
         listPending()
     }
 
-    /// Reads the saved asks before the oldest one shown.
     func readEarlier() {
         guard reading == nil, error == nil, let older = shown?.older else { return }
         read(before: older)
     }
 
-    /// Reads again the asks a read couldn't get.
     func retryRead() {
         guard reading == nil, error != nil, shown != nil else { return }
         error = nil
         read(before: lastRead)
     }
 
-    /// Stops the chat that shows: the ask the assistant runs, and every one waiting behind
-    /// it. Their replies aren't saved.
+    /// Stops the shown chat's running ask and every ask waiting behind it. The daemon saves none
+    /// of their replies.
     func stop() {
         guard let shown, shown.canStop, let key = shown.key else { return }
         stopFailure = nil
@@ -145,24 +130,21 @@ final class Chats: ObservableObject {
         if shown?.isReplying != true { stopFailure = nil }
     }
 
-    /// The event stream connected again. It replays nothing, so the asks it lost are listed
-    /// again: one the daemon still runs goes on, and one that ended meanwhile is read from history.
+    /// The event stream replays nothing after it reconnects, so the lost asks get listed again.
+    /// One the daemon still runs goes on. One that ended meanwhile is read from history.
     func reconnected() {
         listPending()
     }
 
-    /// `chat` goes by `renamed` from now on.
     func renamed(_ chat: ChatKey, to renamed: ChatKey) {
         if shown?.key == chat { shown?.rename(to: renamed) }
         if recording == chat { recording = renamed }
     }
 
-    /// A prompt result was saved under `entry`, so the ask saved as it counts one more.
     func countResult(on entry: UInt64) {
         shown?.countResult(on: entry)
     }
 
-    /// Whether the pill should leave this ticket's events to the palette.
     func shows(ticket: UInt64) -> Bool {
         shown?.asks.contains { $0.ticket == ticket } ?? false
     }
@@ -197,7 +179,6 @@ final class Chats: ObservableObject {
         }
     }
 
-    /// Shows `question` as asked, before its ticket comes.
     private func append(_ question: String) -> ChatAsk.ID {
         asked += 1
         shown?.append(ChatAsk(live: asked, question: question))

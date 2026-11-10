@@ -77,7 +77,6 @@ final class PalettePanel {
         panel.contentView = blur
     }
 
-    /// Whether the key view has text selected to copy, such as part of a reply.
     var hasSelection: Bool { panel.hasSelection }
 
     private func position() {

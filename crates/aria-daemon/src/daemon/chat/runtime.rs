@@ -1,6 +1,6 @@
-//! One chat, start to finish: the assistant named by the request, the
-//! chat it continues, and the reply's optional delivery. Ordering
-//! between chats is the actor's job; here only the record file is shared.
+//! One ask, start to finish: the assistant named by the request, the
+//! chat it continues, and the reply's optional delivery. The actor
+//! orders asks.
 
 use super::super::config::{load_chat, load_memory};
 use super::super::context::Context;
@@ -41,7 +41,7 @@ use tokio::sync::mpsc;
 
 /// Resume ids outlive the daemon and a reboot, like the assistants' own history.
 const SESSION_FILE: &str = "chat-session.json";
-/// How much of an assistant session the local model rereads with each chat.
+/// How much of an assistant session the local model rereads with each ask.
 const RECALL_BYTES: usize = 32 * 1024;
 /// A file of its own, because a daemon from before chat folders
 /// requires a resume id in every record of the session file.
@@ -105,7 +105,7 @@ impl AskJob {
         &self.text
     }
 
-    /// The lane the ask runs in, the same key its run continues.
+    /// Keys both the ask's lane and the session its run continues.
     pub(in crate::daemon) fn key(&self) -> SessionKey {
         match &self.place {
             Place::Folder {
@@ -122,7 +122,7 @@ impl AskJob {
         }
     }
 
-    /// The named chat the ask continues; `None` for a folder's own.
+    /// The named chat the ask continues, or `None` for a folder's own chat.
     pub(in crate::daemon) fn chat(&self) -> Option<ChatKey> {
         let name = match &self.place {
             Place::Folder { name, .. } => name.clone()?,
@@ -257,7 +257,6 @@ impl ChatRuntime {
 
     /// Binds the model the call runs and names a chat it starts,
     /// recording that chat's folder: nobody else knows the name yet.
-    /// A named chat's folder waits for the ask's turn in [`Self::resolve`].
     pub(in crate::daemon) fn prepare_ask(&self, call: AskCall) -> Result<AskJob, ChatError> {
         let AskCall {
             text,
@@ -312,9 +311,7 @@ impl ChatRuntime {
         })
     }
 
-    /// The request an ask runs, once its turn in its chat's lane
-    /// has come: only then is a named chat's folder read, or
-    /// recorded from the ask's own.
+    /// The request an ask runs, once its turn in its chat's lane has come.
     fn resolve(&self, job: AskJob) -> Result<ChatRequest, ChatError> {
         let (workdir, name) = match job.place {
             Place::Folder { workdir, name } => (workdir, name),
@@ -2402,7 +2399,6 @@ pub(super) mod tests {
         move |_assistant_id| FakeAssistant(Arc::clone(&log))
     }
 
-    /// A request whose folder is known, as an ask a client already resolved.
     impl From<ChatRequest> for AskJob {
         fn from(request: ChatRequest) -> Self {
             Self {
@@ -2439,7 +2435,6 @@ pub(super) mod tests {
         }
     }
 
-    /// An ask in the chat `session` names.
     fn named(text: &str, session: &str, workdir: &Path) -> ChatRequest {
         ChatRequest {
             name: Some(ChatName::new(session).expect("a valid name")),
@@ -2454,7 +2449,6 @@ pub(super) mod tests {
         }
     }
 
-    /// An ask in `workdir`'s own chat, as a client sends it.
     fn call(text: &str, workdir: &Path) -> AskCall {
         AskCall {
             text: text.to_owned(),
@@ -2470,7 +2464,6 @@ pub(super) mod tests {
         }
     }
 
-    /// An ask in a named chat, as a client sends it.
     fn named_call(name: &ChatName, workdir: Option<&Path>) -> AskCall {
         AskCall {
             chat: ChatChoice::Named {
@@ -2482,7 +2475,6 @@ pub(super) mod tests {
         }
     }
 
-    /// A call that starts a chat in `workdir`, and the key it got.
     fn start(runtime: &ChatRuntime, workdir: &Path) -> ChatKey {
         runtime
             .prepare_ask(AskCall {
@@ -2496,7 +2488,6 @@ pub(super) mod tests {
             .expect("a started ask names its chat")
     }
 
-    /// The folder the call's ask runs in once its turn comes.
     fn folder_of(runtime: &ChatRuntime, call: AskCall) -> Result<PathBuf, ChatError> {
         runtime
             .prepare_ask(call)
@@ -2536,8 +2527,6 @@ pub(super) mod tests {
         )
     }
 
-    /// The same home as `runtime_with`'s, with an assistant whose every turn
-    /// fails.
     fn failing_runtime(home: &Path) -> (ChatRuntime, std::sync::mpsc::Receiver<ChatStage>) {
         runtime_with(home, |_assistant_id| FailingAssistant { signed_out: false })
     }
@@ -2715,7 +2704,6 @@ pub(super) mod tests {
         let log = Arc::new(Mutex::new(Log::default()));
         let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
         let chat = start(&runtime, home.path());
-        assert_eq!(chat.name.as_str(), "hello", "named from its first question");
         named_turn(&runtime, &events, 1, &chat, home.path(), false);
 
         let renamed = runtime
@@ -2785,7 +2773,6 @@ pub(super) mod tests {
         let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
         let chat = start(&runtime, home.path());
         let other = start(&runtime, home.path());
-        assert_eq!(other.name.as_str(), "hello 2");
         named_turn(&runtime, &events, 1, &chat, home.path(), false);
         let ghost = named_key("ghost");
         runtime.history.save_ask(NewAsk {

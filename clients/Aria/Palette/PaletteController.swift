@@ -78,8 +78,8 @@ final class PaletteController: ObservableObject {
                 run: { entry, source in try await ChatClient.runPromptForReply(entry: entry, source: source) },
                 cancel: { ticket in try await ChatClient.cancel(ticket: ticket) }))
         events.onChat { [weak self] event in self?.promptRun.apply(event) }
-        // A run's reply is saved under its entry, so the entry's count and
-        // open thread catch up, as does the ask saved as that entry.
+        // A run's reply is saved under its entry, so the entry's count, its
+        // open thread, and the chat ask saved as that entry catch up.
         replyChange =
             promptRun.$result
             .compactMap { result -> (ticket: UInt64?, entry: UInt64)? in
@@ -165,8 +165,8 @@ final class PaletteController: ObservableObject {
             close()
             Task { await DictationClient.dictateToHistory() }
         case .startAsk:
-            // The palette closes before recording starts, so the question starts a chat, and
-            // the palette opens on it over the app in front, as with the Ask shortcut.
+            // Closes first, as the Ask shortcut does, so the question starts a chat and the
+            // palette opens on it over the app in front.
             close()
             ask.press()
         case .showHistory(let section):
@@ -218,33 +218,28 @@ final class PaletteController: ObservableObject {
         loadThread()
     }
 
-    /// Opens the entry an ask was saved as, on its prompt results. Escape comes back here.
     func openEntry(of ask: ChatAsk) {
         guard let id = ask.entryID else { return }
         openEntry(id)
     }
 
-    /// Where the Ask shortcut sends its question as it is pressed.
     var askTarget: AskTarget? {
         model.askTarget(shown: chats.shown)
     }
 
-    /// Shows the chat that `Chats` shows, opening the palette if it is closed. A
-    /// prompt running on the result page stops, as Escape stops it.
+    /// Shows the chat `Chats.shown` holds.
     func showChat() {
         if !panel.isVisible { open() }
         if model.page == .result { promptRun.cancel() }
         model.openChat()
     }
 
-    /// Return on the chat page: the follow-up typed goes to the assistant, or with none
-    /// typed, the focused reply goes into the app in front.
     func returnOnChat() {
         switch decisions.chatReturn {
         case .send?:
             guard chats.send(model.followUp) else { return }
             model.followUp = ""
-            // Back to the newest reply, which is the one coming.
+            // Back to resting, so the selection follows the reply to this follow-up.
             model.messageSelection = MessageSelection()
         case .type(let reply)?:
             deliver(reply)
@@ -253,7 +248,6 @@ final class PaletteController: ObservableObject {
         }
     }
 
-    /// Whether Return on the chat page would do anything now.
     var canReturnOnChat: Bool {
         switch decisions.chatReturn {
         case .send?: chats.canSend(model.followUp)
@@ -507,7 +501,6 @@ final class PaletteController: ObservableObject {
         }
     }
 
-    /// ⇧↑ and ⇧↓ extend a selection, as in a list.
     private static func extendStep(for event: NSEvent) -> Int? {
         guard event.modifierFlags.intersection(PaletteKey.chordModifiers) == .shift else { return nil }
         switch Int(event.keyCode) {
@@ -659,7 +652,7 @@ final class PaletteController: ObservableObject {
         panel.show(PaletteView(controller: self, systemTranscription: systemTranscription, history: history))
     }
 
-    /// Asks the daemon once for the assistants' names. Until then a chat names its folder.
+    /// Until the daemon gives the assistants' names, a chat names its folder.
     private func nameAssistants() {
         guard model.assistantNames.isEmpty, namingAssistants == nil else { return }
         namingAssistants = Task {
@@ -673,7 +666,6 @@ final class PaletteController: ObservableObject {
         }
     }
 
-    /// The assistant a chat asks, by name, once the daemon has given it.
     func assistantName(of chat: ChatKey?) -> String? {
         chat.flatMap { model.assistantNames[$0.assistantID] }
     }

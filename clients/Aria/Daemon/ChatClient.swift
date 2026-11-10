@@ -64,7 +64,6 @@ struct ChatTarget: Sendable {
     let assistantID: Aria_Daemon_V1_AssistantId
 }
 
-/// A chat the daemon started and named, and its first ask's ticket.
 struct StartedChat: Equatable, Sendable {
     let ticket: UInt64
     let chat: ChatKey
@@ -111,8 +110,7 @@ enum ChatClient {
         }
     }
 
-    /// Sends the first question of a chat the daemon starts and names, in `target`'s folder.
-    /// The reply comes back only as the ticket's REPLIED event: nothing is typed.
+    /// The daemon names the chat. The reply comes back only as the ticket's REPLIED event.
     static func start(text: String, at target: ChatTarget, ownVoice: Bool) async throws -> StartedChat {
         let sent = startRequest(text: text, at: target, ownVoice: ownVoice)
         return try await DaemonTransport.call { client, options in
@@ -132,15 +130,13 @@ enum ChatClient {
         return request
     }
 
-    /// A daemon from before it started chats answers with no key, which leaves nothing to
-    /// follow up in.
+    /// A daemon without chats answers with no key, which leaves nothing to follow up in.
     static func started(_ response: Aria_Daemon_V1_AskResponse) throws -> StartedChat {
         guard response.hasChat else { throw DaemonFailure.invalidResponse }
         return StartedChat(ticket: response.ticket, chat: try ChatKey(response.chat))
     }
 
-    /// Sends a question in `chat` and returns its ticket. The reply comes back only as the
-    /// ticket's REPLIED event: nothing is typed.
+    /// The reply comes back only as the returned ticket's REPLIED event.
     static func ask(
         text: String, in chat: ChatKey, folder: String?, ownVoice: Bool, tapCancels: Bool
     ) async throws -> UInt64 {
@@ -152,8 +148,7 @@ enum ChatClient {
         }
     }
 
-    /// With no output mode, the daemon types nothing. It runs the ask in the folder it recorded
-    /// for the chat.
+    /// With no output mode, the daemon types nothing.
     static func askRequest(
         text: String, in chat: ChatKey, folder: String?, ownVoice: Bool, tapCancels: Bool
     ) -> Aria_Daemon_V1_AskRequest {
@@ -162,11 +157,10 @@ enum ChatClient {
         request.assistantID = chat.assistantID
         request.named = .with {
             $0.name = chat.name
-            // Only seeds a chat whose folder record the daemon lost, such as to its record
-            // cap, which would otherwise refuse the ask. A recorded folder wins.
+            // The daemon uses this only for a chat whose folder record it lost, such as to its
+            // record cap. Without it the daemon would refuse the ask. A recorded folder wins.
             $0.workdir = folder ?? ""
         }
-        // The daemon's own verdict, handed back: it may remember what its owner said.
         request.ownVoice = ownVoice
         request.tapCancels = tapCancels
         return request
@@ -237,8 +231,8 @@ enum ChatClient {
         }
     }
 
-    /// Deletes every saved ask of `chat` and forgets what continues it. One already gone succeeds;
-    /// one with an ask running or waiting fails as busy.
+    /// Deletes every saved ask of `chat` and forgets what continues it. A chat already gone
+    /// succeeds. One with an ask running or waiting fails as busy.
     static func deleteChat(_ chat: ChatKey) async throws {
         let sent = Aria_Daemon_V1_DeleteChatRequest.with { $0.chat = chat.wire }
         _ = try await DaemonTransport.call { client, options in
@@ -247,8 +241,8 @@ enum ChatClient {
         }
     }
 
-    /// Gives `chat` a new name, and answers it under the name the daemon kept. A name another chat
-    /// of the assistant has fails as taken; an ask running or waiting under either name, as busy.
+    /// Returns `chat` under the name the daemon kept. A name another chat of the assistant has
+    /// fails as taken. An ask running or waiting under either name fails as busy.
     static func renameChat(_ chat: ChatKey, to name: String) async throws -> ChatKey {
         let sent = Aria_Daemon_V1_RenameChatRequest.with {
             $0.chat = chat.wire

@@ -30,8 +30,8 @@ service HistoryService {
   // An entry's prompt results, newest first. A missing entry is
   // HISTORY_MISSING.
   rpc GetThread(GetThreadRequest) returns (HistoryThread);
-  // A chat's newest asks before a cursor, returned oldest first with
-  // their full text. A chat with no saved asks is HISTORY_MISSING.
+  // A page of a chat's newest asks before a cursor. A chat with no saved asks
+  // is HISTORY_MISSING.
   rpc GetChat(GetChatRequest) returns (GetChatResponse);
 }
 
@@ -44,11 +44,11 @@ message ListHistoryRequest {
   uint32 limit = 3;
   // Absent lists every section. UNSPECIFIED is invalid.
   optional HistorySection section = 4;
-  // Show each chat once, at its newest ask that matches `query`.
-  // Chats group before `before_id` applies, so pages don't repeat
-  // one while history is unchanged between reads. A change in between can,
-  // so a client merging pages should drop a chat it already holds.
-  // False lists every ask.
+  // Show each chat once, at its newest ask that matches `query`. The daemon
+  // groups chats before it applies `before_id`, so pages don't repeat a chat
+  // while history stays unchanged between reads. If history changes between
+  // reads, a page can repeat a chat, so a client merging pages should drop one
+  // it already holds. False lists every ask.
   bool collapse_chats = 5;
 }
 
@@ -175,8 +175,8 @@ message HistoryEntry {
   bool deletion_pending = 22;
   // Audio is available and neither regeneration nor deletion is pending.
   bool can_regenerate = 23;
-  // The chat a CHAT entry's ask continued. Absent for an ask in its
-  // folder's own chat, and for an entry saved before chats.
+  // The chat a CHAT entry's ask continued. Absent for an ask in its folder's
+  // own chat.
   ChatKey chat = 24;
 }
 

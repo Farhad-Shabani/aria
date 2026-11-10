@@ -281,11 +281,10 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Send one question to an assistant. Answers with a ticket as soon as the ask
-        /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
-        /// > run side by side, except that asks on one chat (assistant and
-        /// > session) take turns. Served only by a persistent daemon; an on-demand
-        /// > daemon refuses with UNSUPPORTED.
+        /// > Answers with a ticket as soon as the daemon takes the ask. The reply
+        /// > follows as a `ChatEvent` under that ticket. Asks run side by side, except
+        /// > that asks on one chat take turns. Served only by a persistent daemon. An
+        /// > on-demand daemon refuses with UNSUPPORTED.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_AskRequest` message.
@@ -309,8 +308,8 @@ extension Aria_Daemon_V1_ChatService {
         /// > Source IDL Documentation:
         /// >
         /// > Stop an ask that is running or still waiting its turn. Its assistant is
-        /// > killed and the ask ends as a FAILED event with CANCELLED; the
-        /// > chat stays resumable.
+        /// > killed and the ask ends as a FAILED event with CANCELLED. The chat stays
+        /// > resumable.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_CancelAskRequest` message.
@@ -333,8 +332,7 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > A chat's asks still running or waiting their turn, in the order
-        /// > they run. Served only by a persistent daemon, on the unix socket.
+        /// > Served only by a persistent daemon, on the unix socket.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_ListPendingAsksRequest` message.
@@ -357,10 +355,9 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Stop a chat's running ask and every ask waiting behind it. Each
-        /// > ends as a FAILED event with CANCELLED, as `Cancel` ends one, and the
-        /// > chat stays resumable. Served only by a persistent daemon, on the
-        /// > unix socket.
+        /// > Stop a chat's running ask and every ask waiting behind it. Each ends as a
+        /// > FAILED event with CANCELLED, and the chat stays resumable. Served only by
+        /// > a persistent daemon, on the unix socket.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_CancelChatRequest` message.
@@ -383,11 +380,10 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Delete a chat's asks and their prompt results from history, and
-        /// > forget what continues the chat and its folder, so its next ask
-        /// > starts a new one. A missing chat succeeds. An ask on it still
-        /// > running or waiting refuses the delete with BUSY. The assistant keeps its
-        /// > own records.
+        /// > Delete a chat's asks and their prompt results from history. Forget its
+        /// > assistant session and folder, so its next ask starts a new chat. A missing
+        /// > chat succeeds. An ask on it still running or waiting refuses the delete
+        /// > with BUSY. The assistant keeps its own records.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_DeleteChatRequest` message.
@@ -410,11 +406,10 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Give a chat a new name. Its asks, folder, and assistant session follow
-        /// > it. A name another chat of the same assistant has refuses with
-        /// > CHAT_NAME_TAKEN, and a chat the daemon doesn't know is INVALID_REQUEST.
-        /// > An ask on either name running or waiting refuses with BUSY. Served only
-        /// > on the unix socket.
+        /// > A chat's asks, folder, and assistant session move to the new name. A name
+        /// > that another chat of the same assistant has refuses with CHAT_NAME_TAKEN.
+        /// > A chat the daemon doesn't know is INVALID_REQUEST. An ask on either name
+        /// > running or waiting refuses with BUSY. Served only on the unix socket.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_RenameChatRequest` message.
@@ -461,11 +456,11 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
-        /// > into the app the request names, else the one in front. One fresh
-        /// > assistant run with no chat, memory, or tools. Progress and the
-        /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
-        /// > `Cancel` stops it.
+        /// > Run a stored prompt, or instructions for one run, on text or a history
+        /// > entry. With an output mode, type the result into the app the request
+        /// > names, else the one in front. One fresh assistant run with no chat,
+        /// > memory, or tools. Progress and the outcome arrive as `ChatEvent`s under
+        /// > the ticket, as for `Ask`, and `Cancel` stops it.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
@@ -669,11 +664,10 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Send one question to an assistant. Answers with a ticket as soon as the ask
-        /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
-        /// > run side by side, except that asks on one chat (assistant and
-        /// > session) take turns. Served only by a persistent daemon; an on-demand
-        /// > daemon refuses with UNSUPPORTED.
+        /// > Answers with a ticket as soon as the daemon takes the ask. The reply
+        /// > follows as a `ChatEvent` under that ticket. Asks run side by side, except
+        /// > that asks on one chat take turns. Served only by a persistent daemon. An
+        /// > on-demand daemon refuses with UNSUPPORTED.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_AskRequest` message.
@@ -708,8 +702,8 @@ extension Aria_Daemon_V1_ChatService {
         /// > Source IDL Documentation:
         /// >
         /// > Stop an ask that is running or still waiting its turn. Its assistant is
-        /// > killed and the ask ends as a FAILED event with CANCELLED; the
-        /// > chat stays resumable.
+        /// > killed and the ask ends as a FAILED event with CANCELLED. The chat stays
+        /// > resumable.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_CancelAskRequest` message.
@@ -743,8 +737,7 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > A chat's asks still running or waiting their turn, in the order
-        /// > they run. Served only by a persistent daemon, on the unix socket.
+        /// > Served only by a persistent daemon, on the unix socket.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_ListPendingAsksRequest` message.
@@ -778,10 +771,9 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Stop a chat's running ask and every ask waiting behind it. Each
-        /// > ends as a FAILED event with CANCELLED, as `Cancel` ends one, and the
-        /// > chat stays resumable. Served only by a persistent daemon, on the
-        /// > unix socket.
+        /// > Stop a chat's running ask and every ask waiting behind it. Each ends as a
+        /// > FAILED event with CANCELLED, and the chat stays resumable. Served only by
+        /// > a persistent daemon, on the unix socket.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_CancelChatRequest` message.
@@ -815,11 +807,10 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Delete a chat's asks and their prompt results from history, and
-        /// > forget what continues the chat and its folder, so its next ask
-        /// > starts a new one. A missing chat succeeds. An ask on it still
-        /// > running or waiting refuses the delete with BUSY. The assistant keeps its
-        /// > own records.
+        /// > Delete a chat's asks and their prompt results from history. Forget its
+        /// > assistant session and folder, so its next ask starts a new chat. A missing
+        /// > chat succeeds. An ask on it still running or waiting refuses the delete
+        /// > with BUSY. The assistant keeps its own records.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_DeleteChatRequest` message.
@@ -853,11 +844,10 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Give a chat a new name. Its asks, folder, and assistant session follow
-        /// > it. A name another chat of the same assistant has refuses with
-        /// > CHAT_NAME_TAKEN, and a chat the daemon doesn't know is INVALID_REQUEST.
-        /// > An ask on either name running or waiting refuses with BUSY. Served only
-        /// > on the unix socket.
+        /// > A chat's asks, folder, and assistant session move to the new name. A name
+        /// > that another chat of the same assistant has refuses with CHAT_NAME_TAKEN.
+        /// > A chat the daemon doesn't know is INVALID_REQUEST. An ask on either name
+        /// > running or waiting refuses with BUSY. Served only on the unix socket.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_RenameChatRequest` message.
@@ -926,11 +916,11 @@ extension Aria_Daemon_V1_ChatService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
-        /// > into the app the request names, else the one in front. One fresh
-        /// > assistant run with no chat, memory, or tools. Progress and the
-        /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
-        /// > `Cancel` stops it.
+        /// > Run a stored prompt, or instructions for one run, on text or a history
+        /// > entry. With an output mode, type the result into the app the request
+        /// > names, else the one in front. One fresh assistant run with no chat,
+        /// > memory, or tools. Progress and the outcome arrive as `ChatEvent`s under
+        /// > the ticket, as for `Ask`, and `Cancel` stops it.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
@@ -1167,11 +1157,10 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Send one question to an assistant. Answers with a ticket as soon as the ask
-    /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
-    /// > run side by side, except that asks on one chat (assistant and
-    /// > session) take turns. Served only by a persistent daemon; an on-demand
-    /// > daemon refuses with UNSUPPORTED.
+    /// > Answers with a ticket as soon as the daemon takes the ask. The reply
+    /// > follows as a `ChatEvent` under that ticket. Asks run side by side, except
+    /// > that asks on one chat take turns. Served only by a persistent daemon. An
+    /// > on-demand daemon refuses with UNSUPPORTED.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_AskRequest` message.
@@ -1201,8 +1190,8 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Stop an ask that is running or still waiting its turn. Its assistant is
-    /// > killed and the ask ends as a FAILED event with CANCELLED; the
-    /// > chat stays resumable.
+    /// > killed and the ask ends as a FAILED event with CANCELLED. The chat stays
+    /// > resumable.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_CancelAskRequest` message.
@@ -1231,8 +1220,7 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > A chat's asks still running or waiting their turn, in the order
-    /// > they run. Served only by a persistent daemon, on the unix socket.
+    /// > Served only by a persistent daemon, on the unix socket.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_ListPendingAsksRequest` message.
@@ -1261,10 +1249,9 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Stop a chat's running ask and every ask waiting behind it. Each
-    /// > ends as a FAILED event with CANCELLED, as `Cancel` ends one, and the
-    /// > chat stays resumable. Served only by a persistent daemon, on the
-    /// > unix socket.
+    /// > Stop a chat's running ask and every ask waiting behind it. Each ends as a
+    /// > FAILED event with CANCELLED, and the chat stays resumable. Served only by
+    /// > a persistent daemon, on the unix socket.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_CancelChatRequest` message.
@@ -1293,11 +1280,10 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Delete a chat's asks and their prompt results from history, and
-    /// > forget what continues the chat and its folder, so its next ask
-    /// > starts a new one. A missing chat succeeds. An ask on it still
-    /// > running or waiting refuses the delete with BUSY. The assistant keeps its
-    /// > own records.
+    /// > Delete a chat's asks and their prompt results from history. Forget its
+    /// > assistant session and folder, so its next ask starts a new chat. A missing
+    /// > chat succeeds. An ask on it still running or waiting refuses the delete
+    /// > with BUSY. The assistant keeps its own records.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_DeleteChatRequest` message.
@@ -1326,11 +1312,10 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Give a chat a new name. Its asks, folder, and assistant session follow
-    /// > it. A name another chat of the same assistant has refuses with
-    /// > CHAT_NAME_TAKEN, and a chat the daemon doesn't know is INVALID_REQUEST.
-    /// > An ask on either name running or waiting refuses with BUSY. Served only
-    /// > on the unix socket.
+    /// > A chat's asks, folder, and assistant session move to the new name. A name
+    /// > that another chat of the same assistant has refuses with CHAT_NAME_TAKEN.
+    /// > A chat the daemon doesn't know is INVALID_REQUEST. An ask on either name
+    /// > running or waiting refuses with BUSY. Served only on the unix socket.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_RenameChatRequest` message.
@@ -1389,11 +1374,11 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
-    /// > into the app the request names, else the one in front. One fresh
-    /// > assistant run with no chat, memory, or tools. Progress and the
-    /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
-    /// > `Cancel` stops it.
+    /// > Run a stored prompt, or instructions for one run, on text or a history
+    /// > entry. With an output mode, type the result into the app the request
+    /// > names, else the one in front. One fresh assistant run with no chat,
+    /// > memory, or tools. Progress and the outcome arrive as `ChatEvent`s under
+    /// > the ticket, as for `Ask`, and `Cancel` stops it.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_RunPromptRequest` message.
@@ -1612,11 +1597,10 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Send one question to an assistant. Answers with a ticket as soon as the ask
-    /// > is taken; the reply follows as a `ChatEvent` under that ticket. Asks
-    /// > run side by side, except that asks on one chat (assistant and
-    /// > session) take turns. Served only by a persistent daemon; an on-demand
-    /// > daemon refuses with UNSUPPORTED.
+    /// > Answers with a ticket as soon as the daemon takes the ask. The reply
+    /// > follows as a `ChatEvent` under that ticket. Asks run side by side, except
+    /// > that asks on one chat take turns. Served only by a persistent daemon. An
+    /// > on-demand daemon refuses with UNSUPPORTED.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -1650,8 +1634,8 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Stop an ask that is running or still waiting its turn. Its assistant is
-    /// > killed and the ask ends as a FAILED event with CANCELLED; the
-    /// > chat stays resumable.
+    /// > killed and the ask ends as a FAILED event with CANCELLED. The chat stays
+    /// > resumable.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -1684,8 +1668,7 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > A chat's asks still running or waiting their turn, in the order
-    /// > they run. Served only by a persistent daemon, on the unix socket.
+    /// > Served only by a persistent daemon, on the unix socket.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -1718,10 +1701,9 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Stop a chat's running ask and every ask waiting behind it. Each
-    /// > ends as a FAILED event with CANCELLED, as `Cancel` ends one, and the
-    /// > chat stays resumable. Served only by a persistent daemon, on the
-    /// > unix socket.
+    /// > Stop a chat's running ask and every ask waiting behind it. Each ends as a
+    /// > FAILED event with CANCELLED, and the chat stays resumable. Served only by
+    /// > a persistent daemon, on the unix socket.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -1754,11 +1736,10 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Delete a chat's asks and their prompt results from history, and
-    /// > forget what continues the chat and its folder, so its next ask
-    /// > starts a new one. A missing chat succeeds. An ask on it still
-    /// > running or waiting refuses the delete with BUSY. The assistant keeps its
-    /// > own records.
+    /// > Delete a chat's asks and their prompt results from history. Forget its
+    /// > assistant session and folder, so its next ask starts a new chat. A missing
+    /// > chat succeeds. An ask on it still running or waiting refuses the delete
+    /// > with BUSY. The assistant keeps its own records.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -1791,11 +1772,10 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Give a chat a new name. Its asks, folder, and assistant session follow
-    /// > it. A name another chat of the same assistant has refuses with
-    /// > CHAT_NAME_TAKEN, and a chat the daemon doesn't know is INVALID_REQUEST.
-    /// > An ask on either name running or waiting refuses with BUSY. Served only
-    /// > on the unix socket.
+    /// > A chat's asks, folder, and assistant session move to the new name. A name
+    /// > that another chat of the same assistant has refuses with CHAT_NAME_TAKEN.
+    /// > A chat the daemon doesn't know is INVALID_REQUEST. An ask on either name
+    /// > running or waiting refuses with BUSY. Served only on the unix socket.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -1862,11 +1842,11 @@ extension Aria_Daemon_V1_ChatService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
-    /// > into the app the request names, else the one in front. One fresh
-    /// > assistant run with no chat, memory, or tools. Progress and the
-    /// > outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
-    /// > `Cancel` stops it.
+    /// > Run a stored prompt, or instructions for one run, on text or a history
+    /// > entry. With an output mode, type the result into the app the request
+    /// > names, else the one in front. One fresh assistant run with no chat,
+    /// > memory, or tools. Progress and the outcome arrive as `ChatEvent`s under
+    /// > the ticket, as for `Ask`, and `Cancel` stops it.
     ///
     /// - Parameters:
     ///   - message: request message to send.

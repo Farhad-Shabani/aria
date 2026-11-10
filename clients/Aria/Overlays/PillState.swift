@@ -66,8 +66,6 @@ enum PillState: Equatable {
         }
     }
 
-    /// The pill for the asks in flight: the oldest one's step, and how many
-    /// others are in flight.
     init?(asks: AsksInFlight) {
         guard let oldest = asks.oldest else { return nil }
         var step = oldest.stepLabel

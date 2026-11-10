@@ -193,7 +193,7 @@ struct HistoryPage: Sendable {
     var warning: String?
 }
 
-/// A chat's saved asks, oldest first, and the cursor for the older ones before them.
+/// A chat's saved asks, oldest first, and the cursor for older ones.
 struct ChatPage: Sendable {
     var asks: [HistoryItem]
     var older: UInt64?

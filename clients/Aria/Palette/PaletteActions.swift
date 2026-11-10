@@ -54,15 +54,14 @@ struct PaletteActions {
         }
     }
 
-    /// Copy and type take the questions and replies selected. A prompt runs on the saved entry of
-    /// the ask under the cursor, and deleting takes the saved asks, so neither shows while history
-    /// is off.
+    /// A prompt, a rename, and a delete each need the chat's saved asks, so none shows while
+    /// history is off.
     private func chatActions(_ chat: Chat) -> [PaletteAction] {
         var actions: [PaletteAction] = []
         let selection = model.messageSelection
         if let text = selection.text(in: chat.asks) {
             actions.append(PaletteAction(kind: .copyText(text), isInFooter: true))
-            // Return types it while nothing is typed, so the footer names it there instead.
+            // Kept out of the footer. With no follow-up typed, the footer shows Return typing the text.
             if hasFrontApp { actions.append(PaletteAction(kind: .typeText(text))) }
         }
         let ask = selection.focusedAsk(in: chat.asks)
@@ -81,8 +80,6 @@ struct PaletteActions {
         return actions
     }
 
-    /// A chat's row copies its newest reply, as an entry's row does, renames or opens it,
-    /// or deletes every ask in it.
     private func actions(for chat: SavedChat) -> [PaletteAction] {
         var actions: [PaletteAction] = []
         if chat.newest.canCopy {
@@ -103,9 +100,6 @@ struct PaletteActions {
         hasFrontApp && item.isTypable && !history.isClearing
     }
 
-    /// Names what Return does with the selected row, or on the chat page.
-    /// What Return does on the chat page: sends what is typed, or else types the selected
-    /// questions and replies into the app in front, as Return does with a row.
     enum ChatReturn: Equatable {
         case send
         case type(String)

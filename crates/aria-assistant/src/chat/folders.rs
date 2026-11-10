@@ -1,6 +1,6 @@
-//! The chat record: the folder each named chat runs in. It
-//! lives apart from the resume record, so starting a new assistant session,
-//! a failed resume, or that record's cap never loses the folder.
+//! The chat folder record: the folder each named chat runs in. It lives
+//! apart from the resume record, so a new assistant session, a failed resume,
+//! or the resume record's cap never loses the folder.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -12,24 +12,20 @@ use serde::{Deserialize, Serialize};
 use super::SessionKey;
 use super::sessions::{RecordError, lock, read_records, write_records};
 
-/// History keeps at most 500 asks, so at most 500 chats show there.
-/// Every ask marks its chat used, so one shown in history was used
-/// more recently than all but 499 others its saved asks name. Twice that
-/// leaves room for chats asked while history was off.
+/// Twice history's cap on asks. Every ask marks its chat used, so every
+/// chat that history shows keeps its folder, with room left for chats
+/// asked while history was off.
 const MAX_RECORDS: usize = 1_000;
 
 const RECORD: &str = "chat folder record";
 
-/// How many names a new chat tries, `base` through `base 1000`.
 const MAX_NAME_TRIES: usize = 1_000;
 
-/// A default name cut longer than this many characters ends at a word.
 const DEFAULT_NAME_CHARS: usize = 40;
 
-/// Leaves room under a name's 128 bytes for a numeric suffix.
+/// Leaves room under a chat name's byte limit for a numeric suffix.
 const DEFAULT_NAME_BYTES: usize = 120;
 
-/// Chat folders on disk, newest use last.
 pub struct ChatFolders {
     path: PathBuf,
     lock: Mutex<()>,
@@ -50,9 +46,8 @@ impl ChatFolders {
         }
     }
 
-    /// The folder the chat runs in. Unlike the resume record's
-    /// `recall`, it marks the record just used, so the cap drops it last.
-    /// `None` when it has no record.
+    /// The folder the chat runs in, or `None` when it has no record. It
+    /// also marks the record used, so the cap drops it last.
     pub fn recall(&self, key: &SessionKey) -> Result<Option<PathBuf>, RecordError> {
         let _lock = lock(&self.lock);
         let mut records = read_records::<FolderRecord>(&self.path, RECORD)?;
@@ -68,9 +63,9 @@ impl ChatFolders {
         Ok(Some(workdir))
     }
 
-    /// Records `workdir` for a chat with none, and answers the folder
-    /// the chat runs in: a record already there keeps its own, so two
-    /// first asks racing under one name still share a folder.
+    /// Records `workdir` for a chat with no folder and answers the chat's
+    /// folder. A chat that already has one keeps it, so two first asks
+    /// racing under one name share a folder.
     pub fn start(&self, key: SessionKey, workdir: &Path) -> Result<PathBuf, RecordError> {
         let _lock = lock(&self.lock);
         let mut records = read_records::<FolderRecord>(&self.path, RECORD)?;
@@ -89,8 +84,8 @@ impl ChatFolders {
         Ok(workdir)
     }
 
-    /// Starts a chat for `assistant_id` under a name taken from `question`,
-    /// adding a number when another chat has it, and answers the name.
+    /// Starts a chat named after `question` and answers the name. A number
+    /// follows the name when another chat has it.
     pub fn start_new(
         &self,
         assistant_id: AssistantId,
@@ -122,8 +117,6 @@ impl ChatFolders {
         Ok(free.name)
     }
 
-    /// Moves the chat's record to `new`. A name another chat has refuses,
-    /// as does a chat with no record.
     pub fn rename(&self, old: &SessionKey, new: SessionKey) -> Result<(), RenameError> {
         let _lock = lock(&self.lock);
         let mut records = read_records::<FolderRecord>(&self.path, RECORD)?;
@@ -240,6 +233,12 @@ mod tests {
         );
     }
 
+    fn opened() -> (tempfile::TempDir, ChatFolders) {
+        let directory = tempfile::tempdir().unwrap();
+        let store = ChatFolders::open(directory.path().join("chat-folders.json"));
+        (directory, store)
+    }
+
     fn named(name: &str) -> SessionKey {
         SessionKey::named(&ChatKey {
             assistant_id: AssistantId::ClaudeCode,
@@ -249,8 +248,7 @@ mod tests {
 
     #[test]
     fn a_renamed_chat_keeps_its_folder_under_the_new_name_only() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = ChatFolders::open(directory.path().join("chat-folders.json"));
+        let (_directory, store) = opened();
         store.start(named("trip"), Path::new("/work/trip")).unwrap();
         store
             .start(named("other"), Path::new("/work/other"))
@@ -275,8 +273,7 @@ mod tests {
 
     #[test]
     fn a_new_chat_takes_its_questions_words_and_a_number_when_they_are_taken() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = ChatFolders::open(directory.path().join("chat-folders.json"));
+        let (_directory, store) = opened();
         let start = |question| {
             store
                 .start_new(AssistantId::ClaudeCode, question, Path::new("/work"))
@@ -312,8 +309,7 @@ mod tests {
 
     #[test]
     fn a_started_chat_keeps_the_folder_it_started_in() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = ChatFolders::open(directory.path().join("chat-folders.json"));
+        let (_directory, store) = opened();
 
         let first = store.start(key(1), Path::new("/work/first")).unwrap();
         let second = store.start(key(1), Path::new("/work/second")).unwrap();

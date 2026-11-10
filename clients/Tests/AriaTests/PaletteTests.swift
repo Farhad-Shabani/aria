@@ -819,7 +819,6 @@ final class PaletteTests: XCTestCase {
         XCTAssertEqual(model.page, .chat)
     }
 
-    /// A chat of one saved ask, entry 2, that replied.
     private static func repliedChat(question: String, reply: String) -> Chat {
         var ask = entry(2, at: 200)
         ask.kind = .ask(reply: reply)

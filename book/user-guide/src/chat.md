@@ -64,12 +64,10 @@ one. If that works, the problem is the recording.
 
 ## Ask on a Mac
 
-On a Mac, the Ask shortcut opens Aria on a chat with your assistant.
-To set it up, follow [Ask or pick a prompt](./macos.md#ask-or-pick-a-prompt).
-To follow up later, see
-[Continue a chat](./history.md#continue-a-chat). A
-chat started on a Mac is separate from the one `aria ask` continues in
-the same folder.
+The Ask shortcut opens Aria on a chat with your assistant. To set it up,
+follow [Ask or pick a prompt](./macos.md#ask-or-pick-a-prompt). To follow up
+later, see [Continue a chat](./history.md#continue-a-chat). A chat started on
+a Mac is separate from the one `aria ask` continues in the same folder.
 
 ## Cancel
 
@@ -88,7 +86,7 @@ aria ask \
 ```
 
 Starting fresh does not delete the assistant's earlier conversation records.
-Use `--chat` with a name if you want separate chats in one folder.
+Use `--chat` with a name to keep separate chats in one folder.
 A name can't start with `/`, and each assistant's chats have different
 names. A named chat runs in the folder where it started, even when you ask
 from another folder or with `--project`.

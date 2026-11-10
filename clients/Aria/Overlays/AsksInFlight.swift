@@ -1,6 +1,5 @@
 import Foundation
 
-/// One ask the daemon has not answered yet.
 struct PendingAsk: Equatable {
     let ticket: UInt64
     var step: Aria_Daemon_V1_ChatStep
@@ -9,7 +8,6 @@ struct PendingAsk: Equatable {
 
     var stepLabel: String { Self.label(of: step, skill: skill) }
 
-    /// A step as a page shows it, in sentence case: “Thinking…”. The pill keeps it lowercase.
     static func title(of step: Aria_Daemon_V1_ChatStep, skill: String) -> String {
         let text = label(of: step, skill: skill)
         return text.prefix(1).uppercased() + text.dropFirst() + "…"
@@ -20,7 +18,6 @@ struct PendingAsk: Equatable {
     }
 }
 
-/// Which asks the daemon has not answered yet, by ticket.
 struct AsksInFlight: Equatable {
     private var asks: [UInt64: PendingAsk] = [:]
 

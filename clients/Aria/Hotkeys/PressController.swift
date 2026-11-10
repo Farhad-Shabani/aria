@@ -4,29 +4,22 @@ import Foundation
 /// Runs an ask, or a stored prompt, from a press: a chord, an Aria key
 /// combo, or the prompt list. A press only starts the run. The Aria key
 /// then stops its recording and cancels it, daemon-side.
-///
-/// The caption and status overlays show the recording from the event stream.
-/// An ask then shows in its chat in the palette, and a prompt's
-/// progress in the status pill.
 @MainActor
 final class PressController {
     enum Operation {
-        /// The question goes where `target` says as the key is pressed: the chat on
-        /// screen, or a new one. `nil` ignores the press. `show` opens the palette on the
-        /// chat once the question is heard.
+        /// `target` is read as the key is pressed, and `nil` ignores the press. `show` runs once
+        /// the question is heard.
         case ask(Chats, target: @MainActor () -> AskTarget?, show: @MainActor () -> Void)
         /// `canRun` is asked before recording, so a prompt that can't run
         /// records nothing.
         case prompt(id: String, canRun: @MainActor () -> Bool)
     }
 
-    /// The calls a press makes.
     struct Effects {
         /// Records until the press is stopped. `nil` for silence and for a recording that failed.
         var transcribe:
             (_ projectDirectory: String?, _ onRecording: @escaping @MainActor (UInt64) -> Void) async ->
                 DictationClient.Transcript?
-        /// The assistant and folder a new chat goes to.
         var resolve: () async -> ChatTarget?
         var runPrompt: (_ text: String, _ promptID: String, _ application: String?) async -> UInt64?
 
@@ -38,7 +31,6 @@ final class PressController {
         }
     }
 
-    /// What one press runs, decided as it is pressed.
     private enum Run {
         case ask(AskTarget, Chats, show: @MainActor () -> Void)
         case prompt(id: String, canRun: @MainActor () -> Bool)
@@ -81,7 +73,7 @@ final class PressController {
     }
 
     func press() {
-        // Decided as the key is pressed: what shows then is what the person asks into.
+        // The target is read at press time, since the chat on screen then is the one the person asks into.
         guard let run = pressed() else { return }
         switch gesture.press() {
         case .record:
@@ -92,7 +84,6 @@ final class PressController {
         }
     }
 
-    /// What a press runs now. `nil` ignores it.
     private func pressed() -> Run? {
         switch operation {
         case .ask(let chats, let target, let show):
@@ -105,10 +96,9 @@ final class PressController {
     var isBusy: Bool { !gesture.isIdle }
 
     /// One `Start` spans the whole recording and answers with the text
-    /// once it has been stopped. Nothing is typed at that point: the text is
-    /// what gets asked, not what gets delivered.
+    /// once it stops. The daemon types nothing then, since the text is the question.
     ///
-    /// Silence just returns to idle. A chord has no way to explain itself,
+    /// Silence returns to idle. A chord has no way to explain itself,
     /// and the daemon's own failure sound already covers a broken recording.
     private func run(_ run: Run) async {
         switch run {
@@ -131,9 +121,8 @@ final class PressController {
         gesture.issued(ticket: ticket)
     }
 
-    /// A new chat goes to the project in front, whose vocabulary the recording uses, and a
-    /// follow-up to its chat, recorded with the vocabulary of the folder it shows. Returns
-    /// whether a question was heard.
+    /// A recording uses the vocabulary of the folder its chat runs in. Returns whether a
+    /// question was heard.
     private func ask(_ target: AskTarget, in chats: Chats) async -> Bool {
         switch target {
         case .new:
@@ -146,7 +135,7 @@ final class PressController {
             chats.recording = chat
             defer { chats.recording = nil }
             guard let heard = await record(projectDirectory: folder) else { return false }
-            // A rename while it was recorded moves `recording` to the new name.
+            // A rename during recording moves `recording` to the new name.
             chats.followUp(heard.text, in: chats.recording ?? chat, folder: folder, ownVoice: heard.ownVoice)
         }
         return true

@@ -46,9 +46,8 @@ const UNREADABLE_WARNING: &str = "Some unreadable history entries were removed."
 /// The version this daemon writes. It refuses a newer database.
 const SCHEMA_VERSION: u32 = 2;
 const COLUMNS: &str = "id,created,source,app_name,bundle_id,duration,text,complete,status,error,expires,audio_present,deleting,language,own_voice,project,engine,section,title,transcript,reply,assistant,chat_name";
-/// What a chat's asks share. Its asks reference it, so deleting it
-/// deletes them, and their results with them, and renaming it renames
-/// theirs.
+/// What a chat's asks share. Each ask references its chat, so deleting a
+/// chat deletes its asks and their results, and renaming it renames theirs.
 const CHATS_SCHEMA: &str = "CREATE TABLE chats (
         assistant TEXT NOT NULL CHECK(length(CAST(assistant AS BLOB)) BETWEEN 1 AND 64),
         name TEXT NOT NULL CHECK(length(CAST(name AS BLOB)) BETWEEN 1 AND 128),
@@ -56,10 +55,10 @@ const CHATS_SCHEMA: &str = "CREATE TABLE chats (
 /// Finds a chat's asks, for reads and for its delete's cascade.
 const CHAT_INDEX: &str = "CREATE INDEX entries_by_chat
      ON entries(assistant, chat_name) WHERE chat_name IS NOT NULL";
-/// A version 1 table may lack these: the names each one had there, newest
-/// first, its name now, and the value a table with none of them gets, so its
-/// rows keep their meaning. A row from before sections is a dictation, and
-/// `conversation` held what `resume` holds.
+/// Columns a version 1 table may lack. Each holds the names the column had
+/// there, newest first, then its name now, then the value a table without it
+/// gets so its rows keep their meaning. A row from before sections is a
+/// dictation.
 const VERSION_ONE_LATER_COLUMNS: &[(&[&str], &str, &str)] = &[
     (&["section"], "section", "0"),
     (&["title"], "title", "NULL"),
@@ -147,7 +146,7 @@ pub struct NewAsk<'a> {
     pub request: &'a str,
     pub reply: &'a str,
     pub workdir: &'a Path,
-    /// The assistant session it continued, so the next chat on it can recall it.
+    /// The assistant session the ask continued, so a later ask in it can recall it.
     pub resume: Option<&'a str>,
     pub chat: Option<ChatKey>,
     pub created_at_ms: u64,
@@ -339,8 +338,8 @@ impl Store {
                         .as_ref()
                         .is_some_and(|app| app.name.to_lowercase().contains(&needle))
             })
-            // Before the cursor, so a chat shown on one page has no
-            // older ask on the next.
+            // Runs before the cursor filter, so a chat shown on one page
+            // shows no older ask on the next.
             .filter(|entry| {
                 !query.collapse_chats
                     || entry
@@ -441,10 +440,10 @@ impl Store {
         self.insert_into(entry, None, resume)
     }
 
-    /// The chats saved under the assistant session `resume`, oldest first:
-    /// the newest whose requests and replies fit in `max_bytes` together. A
-    /// chat too big to fit on its own is left out, so it doesn't cost the
-    /// ones before it.
+    /// The newest asks saved under the assistant session `resume` whose
+    /// requests and replies fit in `max_bytes` together, oldest first. An ask
+    /// too big to fit on its own is skipped, so it doesn't cost the ones
+    /// before it.
     pub fn recall(
         &self,
         resume: &str,
@@ -606,7 +605,7 @@ impl Store {
     }
 
     /// A chat's newest asks before the cursor, returned oldest first.
-    /// A chat with no saved asks is missing.
+    /// A chat with no saved asks fails with `HistoryError::Missing`.
     pub fn chat(&self, query: &ChatQuery) -> Result<ChatPage, HistoryError> {
         if !(1..=ChatQuery::MAX_LIMIT).contains(&query.limit) {
             return Err(HistoryError::InvalidRequest);
@@ -638,8 +637,8 @@ impl Store {
         })
     }
 
-    /// Gives a chat a new name, which its asks follow. A chat with no saved
-    /// asks has nothing to rename.
+    /// Gives a chat a new name, which its asks follow. Renaming a chat with
+    /// no saved asks succeeds and changes nothing.
     pub fn rename_chat(&self, chat: &ChatKey, name: &ChatName) -> Result<(), HistoryError> {
         let mut state = self.lock();
         self.maintain(&mut state)?;
@@ -658,17 +657,16 @@ impl Store {
         }
     }
 
-    /// Deletes a chat, its name, its asks, and their results, and answers
-    /// whether history had it. A missing chat is already deleted.
+    /// Deletes a chat, its asks, and their results, and answers whether
+    /// history had the chat.
     pub fn delete_chat(&self, chat: &ChatKey) -> Result<bool, HistoryError> {
         let mut state = self.lock();
         let asks = chat_ids(&state, chat)?;
         if asks.iter().any(|id| state.pinned.contains(id)) {
             return Err(HistoryError::Busy);
         }
-        // One statement, whose cascade takes the asks and their results, so a
-        // failure leaves the whole chat. Any audio goes after it, as
-        // `clear` sweeps it.
+        // One statement cascades to the asks and their results, so a failure
+        // leaves the chat whole. Audio goes afterward, as in `clear`.
         let deleted = state.connection.execute(
             "DELETE FROM chats WHERE assistant=?1 AND name=?2",
             params![chat.assistant_id.name(), chat.name.as_str()],
@@ -970,7 +968,7 @@ impl Store {
         Ok(())
     }
 
-    /// Removes orphaned audio, and the chats whose last ask went.
+    /// Removes orphaned audio and every chat with no asks left.
     fn remove_orphans(&self, state: &mut State) -> Result<(), HistoryError> {
         state.connection.execute(
             "DELETE FROM chats WHERE NOT EXISTS (SELECT 1 FROM entries
@@ -1295,8 +1293,8 @@ fn leading_text(mut bytes: Vec<u8>) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-/// Every column inline. `table` is `entries`, or the table a migration
-/// copies into before it takes the name.
+/// `table` is `entries`, or the table a migration copies into before
+/// renaming it to `entries`.
 fn entries_schema(table: &str) -> String {
     format!(
         "CREATE TABLE {table} (
@@ -1317,7 +1315,7 @@ fn entries_schema(table: &str) -> String {
                 CHECK((section=1)=(transcript IS NOT NULL)),
             reply TEXT CHECK(reply IS NULL OR length(CAST(reply AS BLOB))<={MAX_ENTRY_BYTES})
                 CHECK((section=2)=(reply IS NOT NULL)),
-            -- Which assistant session a chat continued, so the next chat on it
+            -- Which assistant session an ask continued, so a later ask in it
             -- can recall it. Clients never see it.
             resume TEXT CHECK(resume IS NULL
                 OR (section=2 AND length(CAST(resume AS BLOB)) BETWEEN 1 AND 128)),
@@ -1341,12 +1339,13 @@ fn create_schema(connection: &Database) -> Result<(), HistoryError> {
     Ok(())
 }
 
-/// Rebuilds a version 1 database in the steps SQLite gives for changing a
-/// table's schema: its entries gained columns over time, and referenced no
-/// chats table.
+/// Rebuilds a version 1 database with SQLite's steps for changing a table's
+/// schema. Version 1 entries gained columns over time and reference no chats
+/// table.
 fn migrate_from_version_one(connection: &Database) -> Result<(), HistoryError> {
-    // Outside the transaction, where the pragma has no effect. Left on,
-    // dropping the old table would delete every result through its cascade.
+    // Set outside the transaction, because inside one the pragma has no
+    // effect. Left on, dropping the old table would delete every result
+    // through its cascade.
     connection.pragma_update(None, "foreign_keys", false)?;
     let transaction = connection.unchecked_transaction()?;
     let present = transaction
@@ -1717,7 +1716,6 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
     })
 }
 
-/// A chat's asks, newest first.
 fn chat_ids(state: &State, chat: &ChatKey) -> Result<Vec<u64>, HistoryError> {
     let mut statement = state
         .connection
@@ -1897,8 +1895,8 @@ mod tests {
         project BLOB, engine TEXT NOT NULL)";
     const INSERT_BEFORE_SECTIONS: &str = "INSERT INTO entries(created,source,app_name,bundle_id,duration,text,complete,status,error,language,own_voice,project,engine)
         VALUES(?1,0,NULL,NULL,NULL,?2,1,0,NULL,'en',0,NULL,'test')";
-    /// The columns a version 1 table gained after sections, up to
-    /// `conversation`, which held what `resume` holds now.
+    /// The columns a version 1 table gained after sections, through
+    /// `conversation`, which held what `resume` holds.
     const ADDED_BEFORE_RESUME: &str = "
         ALTER TABLE entries ADD COLUMN section INTEGER NOT NULL DEFAULT 0 CHECK(section IN (0,1,2));
         ALTER TABLE entries ADD COLUMN title TEXT
@@ -1962,7 +1960,6 @@ mod tests {
         }
     }
 
-    /// Saves an ask that replied, continuing `chat`.
     fn ask(store: &Store, question: &str, chat: Option<ChatKey>) -> HistoryEntry {
         store
             .save_ask(NewAsk {
@@ -2061,8 +2058,8 @@ mod tests {
             ),
         );
         let database = Connection::open(directory.path().join("history.db")).unwrap();
-        // Off, as a daemon from before results left them, so its delete
-        // below leaves the result behind.
+        // Foreign keys off, as a daemon from before results ran, so the
+        // delete below leaves the result behind.
         database.pragma_update(None, "foreign_keys", false).unwrap();
         let first = chat("first");
         database
@@ -2401,7 +2398,6 @@ mod tests {
         );
     }
 
-    /// The chat name each listed entry carries, newest first.
     fn chat_names(entries: &[HistoryEntry]) -> Vec<(&str, Option<&str>)> {
         entries
             .iter()

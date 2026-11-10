@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// A chat's asks, oldest first, each with its reply or what the assistant is doing, then a
-/// field for a typed follow-up.
 struct PaletteChatPage: View {
     @ObservedObject var controller: PaletteController
     @ObservedObject var chats: Chats
@@ -70,7 +68,6 @@ struct PaletteChatPage: View {
         }
     }
 
-    /// Who answers and where: “Claude Code · aria”.
     private var place: String {
         let shown = chats.shown
         let folder = shown?.folder.map { URL(fileURLWithPath: $0).lastPathComponent }
@@ -85,7 +82,7 @@ struct PaletteChatPage: View {
                 .frame(width: PaletteRowMetrics.symbolWidth)
                 .accessibilityHidden(true)
             PaletteFollowUpField(
-                // Off while a name is edited, so the field doesn't take the keys from it.
+                // Off while a name is edited, so the name field keeps the keys.
                 controller: controller, isEnabled: chats.takesFollowUp && !controller.model.isRenaming,
                 placeholder: chats.shown?.isReplying == true ? "Replying…" : "Ask a follow-up")
         }
@@ -110,10 +107,8 @@ struct PaletteChatPage: View {
 }
 
 private enum Metrics {
-    /// Between a row's symbol column and its text.
     static let columnSpacing: CGFloat = 10
-    /// The asks' text starts where a row's does, under the header's title, and ends as far from
-    /// the right edge.
+    /// The asks' text starts where a row's text does and ends as far from the right edge.
     static let textInset = PaletteBarMetrics.leading + PaletteRowMetrics.symbolWidth + columnSpacing
     /// Between one ask's highlight and the next's, so each reads as its own exchange.
     static let askGap: CGFloat = 14
@@ -130,7 +125,7 @@ private struct PaletteChatDetail: View {
     let chat: Chat
     let selection: MessageSelection
     let assistantName: String?
-    /// The footer says why. The list offers to read again where the asks would be.
+    /// The footer shows why the read failed, so the list offers Try Again with no message.
     let readFailed: Bool
     let readEarlier: () -> Void
     let retryRead: () -> Void
@@ -147,8 +142,7 @@ private struct PaletteChatDetail: View {
                         Button("Try Again", action: retryRead)
                             .frame(maxWidth: .infinity)
                     } else if let older = chat.older {
-                        // Keyed on the cursor, so a page too short to push the spinner away reads
-                        // the next.
+                        // Keyed on the cursor, so the next page loads too while the spinner stays in view.
                         ProgressView()
                             .controlSize(.small)
                             .frame(maxWidth: .infinity)
@@ -182,8 +176,8 @@ private struct PaletteChatDetail: View {
         }
     }
 
-    /// One question or reply, highlighted across the width a selected row takes. Resting on the
-    /// newest reply shows no highlight, so a page reads clean until the keys move.
+    /// Highlighted across the width a selected row takes. A selection resting on the newest reply
+    /// shows no highlight, so a page reads clean until the keys move.
     private func message(
         _ ask: ChatAsk, _ side: ChatMessage.Side, selected: Set<ChatMessage>,
         @ViewBuilder content: () -> some View
@@ -197,7 +191,6 @@ private struct PaletteChatDetail: View {
     }
 }
 
-/// What the person asked, in a bubble on the far side from the replies.
 private struct PaletteQuestionView: View {
     let question: String
 
@@ -213,7 +206,6 @@ private struct PaletteQuestionView: View {
     }
 }
 
-/// The assistant's reply, what it is doing, or why it didn't reply, then when it was asked.
 private struct PaletteReplyView: View {
     let ask: ChatAsk
     let assistantName: String?
@@ -222,7 +214,7 @@ private struct PaletteReplyView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             answer
-                // One element, so the spinner and its step don't each read the label.
+                // One element, so VoiceOver reads only the label, not the spinner and its step.
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(spokenAnswer)
             details
@@ -240,7 +232,7 @@ private struct PaletteReplyView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
         case .replied(let reply):
-            // Compared by its text, so a step in another ask doesn't parse it again.
+            // Equatable on its text, so another ask's step changing doesn't parse the Markdown again.
             PaletteReplyText(reply: reply).equatable()
         case .failed(let message):
             NoticeText(notice: message)
@@ -275,8 +267,7 @@ private struct PaletteReplyView: View {
     }
 }
 
-/// A reply's text. Assistants answer in Markdown: its inline marks show as styles, and its line
-/// breaks stay.
+/// Assistants answer in Markdown. Inline marks show as styles, and line breaks stay.
 private struct PaletteReplyText: View, Equatable {
     let reply: String
 

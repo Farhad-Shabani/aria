@@ -156,8 +156,6 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         Ok(Response::new(wire::CancelChatResponse { cancelled_count }))
     }
 
-    /// Runs through the chat actor, which refuses it while the chat
-    /// still replies.
     async fn delete_chat(
         &self,
         request: Request<wire::DeleteChatRequest>,
@@ -174,8 +172,6 @@ impl wire::chat_service_server::ChatService for ChatRpc {
         Ok(Response::new(wire::DeleteChatResponse { deleted }))
     }
 
-    /// Runs through the chat actor, which refuses it while either name has
-    /// an ask.
     async fn rename_chat(
         &self,
         request: Request<wire::RenameChatRequest>,
@@ -336,7 +332,6 @@ mod tests {
         (runtime, rpc)
     }
 
-    /// A chat service whose actor runs until `shutdown` is cancelled.
     struct Harness {
         rpc: ChatRpc,
         shutdown: tokio_util::sync::CancellationToken,

@@ -17,12 +17,9 @@ struct PaletteAction: Identifiable, Equatable {
         case saveAsPrompt(instructions: String)
         case retry
         case stop
-        /// The questions and replies selected on the chat page.
         case typeText(String)
-        /// The ask the chat is waiting on.
         case stopAsk
         case deleteChat(ChatKey)
-        /// A chat, starting from the name it has.
         case renameChat(ChatKey)
     }
 

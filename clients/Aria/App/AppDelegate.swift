@@ -30,8 +30,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let status: StatusController
     let systemTranscriptionStatus: SystemTranscriptionStatus
     private let ghost: GhostController
-    /// Lazy, since it opens the palette on the chat it asks into, and the palette takes it
-    /// in turn.
     private(set) lazy var askShortcut: PressController = PressController(
         events: events,
         operation: .ask(

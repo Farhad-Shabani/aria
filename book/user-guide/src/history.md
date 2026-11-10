@@ -56,9 +56,8 @@ under its name. Search finds it by any question, reply, or its name.
 
 Press **↑** or **↓** to select a question or reply, and **⇧↑** or **⇧↓** to
 select more. Press **⌘C** to copy the selection. With nothing typed in the
-field, **Return** types it into the app you came from. Press **⌘.** to stop a
-reply, and **⌘E** to rename the chat. Each assistant's chats have different
-names.
+field, **Return** types the selection into the app you came from. Press **⌘.**
+to stop a reply, and **⌘E** to rename the chat.
 
 ## Run a prompt on an entry
 
@@ -96,11 +95,11 @@ aria history list
 The list shows each entry's ID, section, status, recording availability
 (available, expired, or unavailable), and the first 512 bytes of its text. It
 lists each chat once, under its newest question, with the chat's name in
-brackets. To
-list one section, add `--section dictation`, `--section transcription`, or
-`--section chat`. To list only entries that mention something, add
-`--query TEXT`. It matches the text, a chat's reply, the entry's name, and the
-app's name, ignoring case. For scripts, add `--json` to print one JSON array.
+brackets. To list one section, add `--section dictation`,
+`--section transcription`, or `--section chat`. To list only entries that
+mention something, add `--query TEXT`. It matches the text, a chat's reply,
+the entry's name, and the app's name, ignoring case. For scripts, add `--json`
+to print one JSON array.
 Each entry's `section` is `dictation`, `transcription`, or `chat`. Each entry
 also carries `created_at_ms`, `application`, and the `chat` it belongs to.
 
@@ -114,13 +113,12 @@ aria history results 42
 To print a whole chat, rename it, or delete it, use its name from the list:
 
 ```sh
-aria history chat show trip
-aria history chat rename trip "Weekend trip"
-aria history chat delete "Weekend trip"
+aria history chat show NAME
+aria history chat rename NAME "NEW_NAME"
+aria history chat delete NAME
 ```
 
-After a rename, `aria ask --chat "Weekend trip"` continues the chat. Add
-`--assistant` for a chat with an assistant other than the shared one.
+Add `--assistant` for a chat with an assistant other than your usual one.
 
 ## Dictate into history
 

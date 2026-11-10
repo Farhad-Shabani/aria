@@ -2,10 +2,10 @@ use crate::config::AssistantId;
 
 const MAX_NAME_BYTES: usize = 128;
 
-/// Names an assistant chat a client continues, apart from a
-/// folder's own: trimmed, 1 to 128 bytes, with no control characters. It
-/// never starts with `/`, because a folder's own chat goes by its
-/// absolute path, and the two share one set of names.
+/// The name of a chat other than a folder's own: trimmed, 1 to
+/// `MAX_NAME_BYTES` bytes, with no control characters. It never starts with
+/// `/`, because a folder's own chat goes by its absolute path and the two
+/// share one set of names.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ChatName(String);
 

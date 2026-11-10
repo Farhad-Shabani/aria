@@ -81,7 +81,7 @@ impl SessionStore {
     }
 }
 
-/// Chats on different keys run side by side; a record file is the one thing
+/// Chats on different keys run side by side. A record file is the one thing
 /// they share. The lock guards no data, so a panic leaves nothing to repair.
 pub(super) fn lock(lock: &Mutex<()>) -> MutexGuard<'_, ()> {
     lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
