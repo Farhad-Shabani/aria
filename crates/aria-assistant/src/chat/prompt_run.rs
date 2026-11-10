@@ -1,5 +1,5 @@
 //! One transcript turned into text under a user's instructions by one fresh
-//! assistant run: no conversation, memory, project, or tools.
+//! assistant run: no chat, memory, project, or tools.
 //!
 //! The assistant answers in a JSON object whose shape the CLI enforces, so the
 //! text to type is a field to read, never a guess at where a reply starts.

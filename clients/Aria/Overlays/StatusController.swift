@@ -23,10 +23,10 @@ final class StatusController: ObservableObject {
     private var lastRecording: UInt64?
     /// The app in front when that recording opened: where its words go.
     private var startApp = StartApp(bundleID: nil)
-    private var chats = ChatsInFlight()
+    private var asks = AsksInFlight()
     /// The last recording a chat press started. Its events carry no sign of
     /// the chat, so the press reports it.
-    private var chatRecording: RunID?
+    private var askRecording: RunID?
     private var runsChange: AnyCancellable?
     private var refusalsChange: AnyCancellable?
     private var shown: Pill?
@@ -51,7 +51,7 @@ final class StatusController: ObservableObject {
                 self.heard.apply(nil)
                 self.lastRecording = nil
                 // A new daemon numbers its recordings from 1 again.
-                self.chatRecording = nil
+                self.askRecording = nil
                 self.show(nil)
                 return
             }
@@ -77,14 +77,14 @@ final class StatusController: ObservableObject {
             // Events can come before the owner learns its ticket, so the chat may already be in
             // flight here. It ends now, since its reply is skipped.
             if let chat, skips(chat.ticket) {
-                self.chats.forget(chat.ticket)
+                self.asks.forget(chat.ticket)
                 self.render()
                 return
             }
             if let chat, let ended = PillState(ended: chat) {
                 self.show(ended, run: .ticket(chat.ticket))
             }
-            self.chats.apply(chat)
+            self.asks.apply(chat)
             self.render()
         }
         events.onLevel { [weak self] level in
@@ -131,9 +131,9 @@ final class StatusController: ObservableObject {
 
     private func render() {
         // A press is the person's turn; it outranks whatever an agent is doing.
-        let live = foregroundState ?? PillState(chats: chats)
+        let live = foregroundState ?? PillState(asks: asks)
         if self.live != live { self.live = live }
-        let run = foregroundState == nil ? chats.oldest.map { RunID.ticket($0.ticket) } : foregroundRun
+        let run = foregroundState == nil ? asks.oldest.map { RunID.ticket($0.ticket) } : foregroundRun
         let enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         // Only a press is spoken; an agent's step has no voice to show.
         let voice: VoiceEmphasis? =
@@ -142,7 +142,7 @@ final class StatusController: ObservableObject {
             case .recording, nil: foregroundState == nil ? nil : heard.voice.map(VoiceEmphasis.init)
             }
         let prompt = run.flatMap(prompts.runs.prompt(of:))
-        let glows = Pill.glows(run: run, chat: chatRecording, prompt: prompt)
+        let glows = Pill.glows(run: run, chat: askRecording, prompt: prompt)
         let wanted = enabled ? live.map { Pill(state: $0, prompt: prompt, voice: voice, glows: glows) } : nil
         guard wanted != shown else { return }
         shown = wanted
@@ -159,10 +159,10 @@ final class StatusController: ObservableObject {
         }
     }
 
-    func noteChat(_ run: RunID) {
+    func noteAsk(_ run: RunID) {
         // A ticket is Aria's work anyway; only the recording needs marking.
         guard case .recording = run else { return }
-        chatRecording = run
+        askRecording = run
         render()
     }
 

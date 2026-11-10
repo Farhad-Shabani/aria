@@ -1,12 +1,13 @@
 //! Domain types for talking to coding assistants.
 //!
-//! The daemon owns conversations keyed by assistant and session name. Each chat
-//! gets a [`Ticket`]; its reply arrives through [`ChatStage`] events.
-//! A [`Step`] describes the assistant's activity while the chat is running.
+//! The daemon owns chats keyed by assistant and name. Each ask
+//! gets a [`Ticket`]. Its reply arrives through [`ChatStage`] events.
+//! A [`Step`] describes the assistant's activity while the ask is running.
 
 mod config;
 pub use config::ChatConfig;
 mod assistants;
+mod folders;
 mod local;
 mod models;
 pub use models::AssistantModel;
@@ -27,25 +28,26 @@ use serde::{Deserialize, Serialize};
 
 use aria_platform::delivery::OutputMode;
 use aria_primitives::error_chain;
-use aria_settings::PromptKind;
 use aria_settings::config::AssistantId;
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
+use aria_settings::{ChatKey, ChatName, PromptKind};
 
 pub use assistants::{CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant};
 pub(crate) use assistants::{claude_command, parse_claude};
-pub use local::{Ask, Conversations, LocalAssistant, LocalSession};
+pub use folders::{ChatFolders, RenameError, StartError};
+pub use local::{Ask, LocalAssistant, LocalSession, SessionHistory};
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
 pub use prompt_run::{
     Instructions, InstructionsError, InstructionsTextError, PromptRun, read_instructions,
 };
-pub use sessions::{SessionStore, SessionStoreError};
+pub use sessions::{RecordError, SessionStore};
 pub use subscribers::ChatSubscribers;
 
 pub const EVENT_THREAD: &str = "aria-chat-events";
 
-/// Names one chat for as long as the daemon that took it runs.
+/// Names one ask for as long as the daemon that took it runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ticket(pub u64);
 
@@ -64,6 +66,47 @@ impl FromStr for Ticket {
     }
 }
 
+/// An ask still running or waiting its turn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingAsk {
+    pub ticket: Ticket,
+    pub text: String,
+    pub running: bool,
+}
+
+/// An ask as a client sends it. The daemon resolves its chat into a
+/// [`ChatRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskCall {
+    pub text: String,
+    pub chat: ChatChoice,
+    pub assistant_id: AssistantId,
+    /// A model ID the assistant's CLI accepts; `None` uses the shared setting.
+    pub model_id: Option<String>,
+    pub output_mode: Option<OutputMode>,
+    pub own_voice: bool,
+    pub tap_cancels: bool,
+}
+
+/// Which chat an ask continues, and the folder it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatChoice {
+    /// The folder's own chat. `new_session` starts a new assistant
+    /// session behind it.
+    Folder { workdir: PathBuf, new_session: bool },
+    /// A chat the client names. `new_session` starts a new assistant
+    /// session behind it, under the same name. A known
+    /// chat runs in its own folder, so `workdir` only seeds one the
+    /// daemon has no folder for.
+    Named {
+        name: ChatName,
+        workdir: Option<PathBuf>,
+        new_session: bool,
+    },
+    /// A chat in `workdir` that the daemon names.
+    Start { workdir: PathBuf },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatRequest {
     pub text: String,
@@ -71,10 +114,11 @@ pub struct ChatRequest {
     pub assistant_id: AssistantId,
     /// A model ID the assistant's CLI accepts; `None` uses the shared setting.
     pub model_id: Option<String>,
-    /// Names the conversation to continue; `None` means the directory's.
-    pub session: Option<String>,
-    /// Forget the running conversation and start another.
-    pub new: bool,
+    /// The chat to continue. `None` continues the folder's own chat.
+    pub name: Option<ChatName>,
+    /// Start a new assistant session rather than resume the last one. A
+    /// named chat keeps its name.
+    pub new_session: bool,
     /// Deliver the reply like dictated text instead of only announcing it.
     pub output_mode: Option<OutputMode>,
     /// The daemon's own-voice gate judged the recording this came from as
@@ -99,8 +143,8 @@ impl ChatRequest {
             workdir,
             assistant_id,
             model_id: None,
-            session: None,
-            new: false,
+            name: None,
+            new_session: false,
             output_mode: None,
             own_voice: false,
             tap_cancels: false,
@@ -115,13 +159,25 @@ impl ChatRequest {
     }
 
     pub fn key(&self) -> SessionKey {
-        SessionKey {
-            assistant_id: self.assistant_id.name().to_owned(),
-            name: self
-                .session
-                .clone()
-                .unwrap_or_else(|| self.workdir.to_string_lossy().into_owned()),
+        match self.chat() {
+            Some(chat) => SessionKey::named(&chat),
+            None => SessionKey::folder(self.assistant_id, &self.workdir),
         }
+    }
+
+    /// The named chat the ask continues. `None` means the folder's own chat.
+    pub fn chat(&self) -> Option<ChatKey> {
+        self.name.clone().map(|name| ChatKey {
+            assistant_id: self.assistant_id,
+            name,
+        })
+    }
+
+    /// The key memory files each turn under: the assistant and directory,
+    /// whichever chat the ask continues. Consolidation then runs once per
+    /// directory.
+    pub fn memory_session(&self) -> SessionKey {
+        SessionKey::folder(self.assistant_id, &self.workdir)
     }
 }
 
@@ -132,6 +188,23 @@ impl ChatRequest {
 pub struct SessionKey {
     pub(crate) assistant_id: String,
     pub(crate) name: String,
+}
+
+impl SessionKey {
+    /// The folder's own chat.
+    pub fn folder(assistant_id: AssistantId, workdir: &Path) -> Self {
+        Self {
+            assistant_id: assistant_id.name().to_owned(),
+            name: workdir.to_string_lossy().into_owned(),
+        }
+    }
+
+    pub fn named(chat: &ChatKey) -> Self {
+        Self {
+            assistant_id: chat.assistant_id.name().to_owned(),
+            name: chat.name.as_str().to_owned(),
+        }
+    }
 }
 
 impl std::fmt::Display for SessionKey {
@@ -189,7 +262,7 @@ pub struct DeliverCall {
 }
 
 /// A prompt call resolved against the stored prompt and the configured
-/// assistant. One fresh assistant run; no conversation.
+/// assistant. One fresh assistant run, outside any chat.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptRequest {
     pub text: String,
@@ -283,6 +356,9 @@ pub struct ChatReply {
     pub delivery_error: Option<RpcErrorCode>,
     /// The reply went to the clipboard instead of being typed.
     pub copied: bool,
+    /// The history entry the ask was saved as. `None` when history is off,
+    /// the save failed, or the run was a prompt run.
+    pub history_entry_id: Option<u64>,
 }
 
 pub type ChatEventEmitter = EventEmitter<ChatStage>;
@@ -303,7 +379,7 @@ pub trait Assistant: Send + Sync {
 
     fn open(&self, spec: SessionSpec<'_>) -> Self::Session;
 
-    /// One run outside any conversation or project, with no tools: the
+    /// One run outside any chat or project, with no tools: the
     /// text to type, or why there is none.
     fn run_prompt(
         &self,
@@ -366,7 +442,7 @@ impl AssistantStatus {
     }
 }
 
-/// One conversation with an assistant, taking one turn at a time.
+/// One assistant session, taking one turn at a time.
 pub trait Session: Send {
     /// Sends one prompt, reports its steps to `steps`, and returns the reply.
     fn prompt(
@@ -377,7 +453,7 @@ pub trait Session: Send {
         timeout: Duration,
     ) -> Result<String, AssistantError>;
 
-    /// What continues this conversation next time; `None` before the
+    /// What continues this session next time. `None` before the
     /// first reply.
     fn resume_id(&self) -> Option<&str>;
 }

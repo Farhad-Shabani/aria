@@ -2,19 +2,23 @@ import SwiftUI
 
 struct PaletteEntryRow: View {
     let entry: HistoryItem
+    let symbol: String
     let isSelected: Bool
+    /// Shown before the row's time. `nil` shows where the entry came from.
+    var origin: String?
+    var name: String?
     /// Set while the title is being edited in place.
     var titleField: PaletteTitleField?
     var badge: PaletteThreadBadge?
     let action: () -> Void
 
     var body: some View {
-        PaletteRow(symbol: entry.kind.symbol, isSelected: isSelected, action: titleField == nil ? action : nil) {
+        PaletteRow(symbol: symbol, isSelected: isSelected, action: titleField == nil ? action : nil) {
             Group {
                 if let titleField {
                     titleField
                 } else {
-                    Text(entry.name)
+                    Text(name ?? entry.name)
                 }
             }
             .paletteRowText()
@@ -30,6 +34,6 @@ struct PaletteEntryRow: View {
     }
 
     private var place: String {
-        "\(entry.origin) · \(HistoryDay.time(of: entry.created))"
+        "\(origin ?? entry.origin) · \(HistoryDay.time(of: entry.created))"
     }
 }

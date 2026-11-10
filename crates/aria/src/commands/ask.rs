@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use aria_daemon::{
-    AssistantId, ChatReply, ChatRequest, ChatStageKind, Clarify, DaemonSession, PendingChat,
-    ReplyError, Routing, StopMode, Ticket,
+    AskCall, AssistantId, ChatChoice, ChatReply, ChatRequest, ChatStageKind, Clarify,
+    DaemonSession, ReplyError, Routing, StopMode, TakenAsk, Ticket,
 };
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use clap::Args;
@@ -28,10 +28,10 @@ pub(super) struct AskArgs {
     /// Override the shared model choice for this question
     #[arg(long = "model", value_name = "MODEL_ID")]
     pub(super) model_id: Option<String>,
-    /// The conversation to continue, by name; defaults to this directory's
-    #[arg(long)]
-    pub(super) session: Option<String>,
-    /// Start a fresh conversation instead of continuing the last one
+    /// Continue a chat by name, in the folder it runs in. This directory only sets the folder of a new chat. Defaults to this directory's chat
+    #[arg(long, value_parser = |name: &str| aria_settings::ChatName::new(name), value_name = "NAME")]
+    pub(super) chat: Option<aria_settings::ChatName>,
+    /// Start a new assistant session in the chat instead of resuming the last one. History still shows the chat's earlier asks
     #[arg(long)]
     pub(super) new: bool,
     /// Print the ticket and return; the reply shows up in `aria events`
@@ -47,7 +47,7 @@ pub(super) struct AskArgs {
     #[arg(
         long,
         value_name = "TICKET",
-        conflicts_with_all = ["text", "assistant_id", "model_id", "session", "new", "detach", "mode", "toggle", "project"]
+        conflicts_with_all = ["text", "assistant_id", "model_id", "chat", "new", "detach", "mode", "toggle", "project"]
     )]
     pub(super) cancel: Option<Ticket>,
 }
@@ -148,18 +148,30 @@ pub(super) fn run(args: AskArgs) -> anyhow::Result<()> {
             Err(error) => return Err(error.into()),
         }
     };
-    let request = ChatRequest {
+    let workdir = configured.workdir;
+    let folder = workdir.display().to_string();
+    let chat = match args.chat {
+        Some(name) => ChatChoice::Named {
+            name,
+            workdir: Some(workdir),
+            new_session: args.new,
+        },
+        None => ChatChoice::Folder {
+            workdir,
+            new_session: args.new,
+        },
+    };
+    let call = AskCall {
+        text: configured.text,
+        chat,
         assistant_id,
         model_id: args.model_id,
-        session: args.session,
-        new: args.new,
         output_mode: args.mode.map(Into::into),
         own_voice: spoken.unwrap_or(false),
-        ..configured
+        tap_cancels: configured.tap_cancels,
     };
-    let assistant_name = request.assistant_id.name();
-    let workdir = request.workdir.display().to_string();
-    let pending = match session.ask(request) {
+    let assistant_name = assistant_id.name();
+    let pending = match session.ask(call) {
         Ok(pending) => pending,
         // What was said is not lost with the chat that failed.
         Err(error) if spoken.is_some() => {
@@ -169,10 +181,15 @@ pub(super) fn run(args: AskArgs) -> anyhow::Result<()> {
         Err(error) => return Err(error.into()),
     };
     let pending_ticket = pending.ticket();
+    // A named chat runs in its own folder, which may not be this one.
+    let place = match pending.chat() {
+        Some(chat) => format!("chat {}", chat.name.as_str()),
+        None => folder,
+    };
     if let Some(error) = focus.and_then(|focus| focus.store().err()) {
         eprintln!("warning: the project was not remembered: {error:#}");
     }
-    eprintln!("asked {pending_ticket} {assistant_name} in {workdir}");
+    eprintln!("asked {pending_ticket} {assistant_name} in {place}");
     if args.detach {
         println!("ticket {pending_ticket}");
         return Ok(());
@@ -200,7 +217,7 @@ pub(super) fn print_reply(reply: &ChatReply, mode: Option<CliOutputMode>) {
 /// Shows each step of the chat or prompt run until it ends. Esc or Ctrl-C
 /// cancels it, and a cancelled one ends the process as Ctrl-C would.
 pub(super) fn wait_for_reply(
-    pending: PendingChat,
+    pending: TakenAsk,
     interrupt: &mut Interrupt,
 ) -> anyhow::Result<ChatReply> {
     let pending_ticket = pending.ticket();
@@ -273,5 +290,17 @@ mod tests {
             ));
         }
         assert!(Cli::try_parse_from(["aria", "assistant", "unknown"]).is_err());
+    }
+
+    #[test]
+    fn ask_takes_a_chat_name_only_when_it_is_valid() {
+        let parsed = Cli::try_parse_from(["aria", "ask", "--chat", " planning ", "hello"]);
+        assert!(matches!(
+            parsed.unwrap().command,
+            Command::Ask(AskArgs { chat: Some(chat), .. }) if chat.as_str() == "planning"
+        ));
+        for name in ["   ", "two\nlines", "/Users/me/proj"] {
+            assert!(Cli::try_parse_from(["aria", "ask", "--chat", name, "hello"]).is_err());
+        }
     }
 }

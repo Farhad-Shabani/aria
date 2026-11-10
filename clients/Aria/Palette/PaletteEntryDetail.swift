@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// One saved entry in full, then the prompt results run on it, as a conversation reads.
 struct PaletteEntryDetail: View {
     /// One scroll target per block, so the keys bring the current one into view.
     private enum Block: Hashable {
@@ -62,7 +61,7 @@ struct PaletteEntryDetail: View {
                 Text(note).foregroundStyle(.secondary)
             }
             Text(entry.text)
-        case .chat(let reply):
+        case .ask(let reply):
             VStack(alignment: .leading, spacing: 12) {
                 Text(entry.text).font(.headline)
                 Text(reply)

@@ -93,7 +93,7 @@ impl From<sqlite::Error> for Error {
 
 impl Catalog {
     pub fn open(directory: &Path, cancelled: CancelToken) -> Result<Self, Error> {
-        let connection =
+        let mut connection =
             Database::open(&directory.join("catalog.db"), &DATABASE_POLICY, &cancelled)?;
         let progress = cancelled.clone();
         connection.progress_handler(1_000, Some(move || progress.is_cancelled()))?;

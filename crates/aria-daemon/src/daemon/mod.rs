@@ -49,10 +49,10 @@ pub use inference::host::{InferenceHostError, serve_inference};
 pub use inference::pairing::{Forgotten, PairingFailure, pair_server, read_invitation};
 pub use log::{DaemonLogError, open_log_writer, read_log_tail};
 pub use session::{
-    Clarify, DaemonSession, PendingChat, ReplyError, RouteError, Routing, StartupError,
+    Clarify, DaemonSession, ReplyError, RouteError, Routing, StartupError,
     SystemTranscriptionCommandError, SystemTranscriptionFollow, SystemTranscriptionSnapshot,
-    SystemTranscriptionStarted, SystemTranscriptionStopped, WakeWordStatus, WakeWordStatusError,
-    restart_required_keys,
+    SystemTranscriptionStarted, SystemTranscriptionStopped, TakenAsk, WakeWordStatus,
+    WakeWordStatusError, restart_required_keys,
 };
 #[cfg(target_os = "macos")]
 pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
@@ -68,9 +68,9 @@ pub use relay::SERVICE_TYPE as RELAY_SERVICE_TYPE;
 
 pub use crate::ipc::{ClientError, ConnectError, DaemonEvent, EventStream, TransportFailure};
 pub use aria_assistant::chat::{
-    Ambiguous, ChatReply, ChatRequest, ChatRequestError, ChatStage, ChatStageKind, DiscoverError,
-    Focus, Instructions, Project, ProjectsError, PromptCall, PromptChoice, PromptInput, Step,
-    Ticket,
+    Ambiguous, AskCall, ChatChoice, ChatReply, ChatRequest, ChatRequestError, ChatStage,
+    ChatStageKind, DiscoverError, Focus, Instructions, Project, ProjectsError, PromptCall,
+    PromptChoice, PromptInput, Step, Ticket,
 };
 pub use aria_platform::delivery::OutputMode;
 pub use aria_settings::DeliveryMode;

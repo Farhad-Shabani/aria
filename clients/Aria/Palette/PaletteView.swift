@@ -12,6 +12,9 @@ struct PaletteView: View {
                 PaletteCommandsPage(controller: controller, systemTranscription: systemTranscription, history: history)
             case .liveTranscript:
                 PaletteLivePage(controller: controller, systemTranscription: systemTranscription, history: history)
+            case .chat:
+                PaletteChatPage(
+                    controller: controller, chats: controller.chats, history: history)
             case .entry: PaletteEntryPage(controller: controller, history: history)
             case .result: PaletteResultPage(controller: controller, run: controller.promptRun, history: history)
             case .prompt:

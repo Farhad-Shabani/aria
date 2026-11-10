@@ -350,6 +350,7 @@ mod tests {
                             query: String::new(),
                             before_id: None,
                             limit: 10,
+                            collapse_chats: false,
                         })
                         .expect("history lists");
                     *listed_at_stop.lock().unwrap() = Some(page.entries.len());

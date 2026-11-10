@@ -58,10 +58,15 @@ struct AssistantModel: Equatable, Sendable {
     let name: String
 }
 
-/// Where a chat goes: the project in front, and the assistant chosen in settings.
+/// Where a new chat goes: the project in front, and the assistant chosen in settings.
 struct ChatTarget: Sendable {
     let workdir: String
     let assistantID: Aria_Daemon_V1_AssistantId
+}
+
+struct StartedChat: Equatable, Sendable {
+    let ticket: UInt64
+    let chat: ChatKey
 }
 
 enum ChatClient {
@@ -105,24 +110,60 @@ enum ChatClient {
         }
     }
 
-    /// Starts a chat from a press and returns its ticket. The reply is typed
-    /// where the user is looking, or copied when the app in front refuses
-    /// insertion, and the Aria key cancels the run.
-    static func ask(text: String, target: ChatTarget, ownVoice: Bool) async throws -> UInt64 {
+    /// The daemon names the chat. The reply comes back only as the ticket's REPLIED event.
+    static func start(text: String, at target: ChatTarget, ownVoice: Bool) async throws -> StartedChat {
+        let sent = startRequest(text: text, at: target, ownVoice: ownVoice)
+        return try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                .ask(request: ClientRequest(message: sent), options: options) { try started($0.message) }
+        }
+    }
+
+    /// With no output mode, the daemon types nothing.
+    static func startRequest(text: String, at target: ChatTarget, ownVoice: Bool) -> Aria_Daemon_V1_AskRequest {
         var request = Aria_Daemon_V1_AskRequest()
         request.text = text
-        request.workdir = target.workdir
         request.assistantID = target.assistantID
-        request.outputMode = .insertOrCopy
-        // The daemon's own verdict, handed back: it may remember what its
-        // owner said.
+        request.start = .with { $0.workdir = target.workdir }
         request.ownVoice = ownVoice
         request.tapCancels = true
-        let sent = request
+        return request
+    }
+
+    /// A daemon without chats answers with no key, which leaves nothing to follow up in.
+    static func started(_ response: Aria_Daemon_V1_AskResponse) throws -> StartedChat {
+        guard response.hasChat else { throw DaemonFailure.invalidResponse }
+        return StartedChat(ticket: response.ticket, chat: try ChatKey(response.chat))
+    }
+
+    /// The reply comes back only as the returned ticket's REPLIED event.
+    static func ask(
+        text: String, in chat: ChatKey, folder: String?, ownVoice: Bool, tapCancels: Bool
+    ) async throws -> UInt64 {
+        let sent = askRequest(
+            text: text, in: chat, folder: folder, ownVoice: ownVoice, tapCancels: tapCancels)
         return try await DaemonTransport.call { client, options in
             try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
                 .ask(request: ClientRequest(message: sent), options: options) { try $0.message.ticket }
         }
+    }
+
+    /// With no output mode, the daemon types nothing.
+    static func askRequest(
+        text: String, in chat: ChatKey, folder: String?, ownVoice: Bool, tapCancels: Bool
+    ) -> Aria_Daemon_V1_AskRequest {
+        var request = Aria_Daemon_V1_AskRequest()
+        request.text = text
+        request.assistantID = chat.assistantID
+        request.named = .with {
+            $0.name = chat.name
+            // The daemon uses this only for a chat whose folder record it lost, such as to its
+            // record cap. Without it the daemon would refuse the ask. A recorded folder wins.
+            $0.workdir = folder ?? ""
+        }
+        request.ownVoice = ownVoice
+        request.tapCancels = tapCancels
+        return request
     }
 
     /// Runs a stored prompt from a press and returns its ticket. The result
@@ -162,11 +203,58 @@ enum ChatClient {
         return request
     }
 
+    /// `chat`'s asks the daemon runs or has waiting, the running one first.
+    static func pendingAsks(in chat: ChatKey) async throws -> [Aria_Daemon_V1_PendingAsk] {
+        let sent = Aria_Daemon_V1_ListPendingAsksRequest.with { $0.chat = chat.wire }
+        return try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                .listPendingAsks(request: ClientRequest(message: sent), options: options) { try $0.message.asks }
+        }
+    }
+
     static func cancel(ticket: UInt64) async throws {
         let sent = Aria_Daemon_V1_CancelAskRequest.with { $0.ticket = ticket }
         _ = try await DaemonTransport.call { client, options in
             try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
                 .cancel(request: ClientRequest(message: sent), options: options) { try $0.message.wasPending }
+        }
+    }
+
+    /// Stops `chat`'s running ask and every one waiting behind it.
+    static func cancel(chat: ChatKey) async throws {
+        let sent = Aria_Daemon_V1_CancelChatRequest.with { $0.chat = chat.wire }
+        _ = try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                .cancelChat(request: ClientRequest(message: sent), options: options) {
+                    try $0.message.cancelledCount
+                }
+        }
+    }
+
+    /// Deletes every saved ask of `chat` and forgets what continues it. A chat already gone
+    /// succeeds. One with an ask running or waiting fails as busy.
+    static func deleteChat(_ chat: ChatKey) async throws {
+        let sent = Aria_Daemon_V1_DeleteChatRequest.with { $0.chat = chat.wire }
+        _ = try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                .deleteChat(request: ClientRequest(message: sent), options: options) { try $0.message }
+        }
+    }
+
+    /// Returns `chat` under the name the daemon kept. A name another chat of the assistant has
+    /// fails as taken. An ask running or waiting under either name fails as busy.
+    static func renameChat(_ chat: ChatKey, to name: String) async throws -> ChatKey {
+        let sent = Aria_Daemon_V1_RenameChatRequest.with {
+            $0.chat = chat.wire
+            $0.name = name
+        }
+        return try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
+                .renameChat(request: ClientRequest(message: sent), options: options) {
+                    let response = try $0.message
+                    guard response.hasChat else { throw DaemonFailure.invalidResponse }
+                    return try ChatKey(response.chat)
+                }
         }
     }
 
@@ -240,6 +328,24 @@ extension PromptDraft.Contents {
         case .instructions(let text): self = .text(text)
         case .missing: self = .missing
         case nil: throw DaemonFailure.invalidResponse
+        }
+    }
+}
+
+extension ChatKey {
+    init(_ wire: Aria_Daemon_V1_ChatKey) throws {
+        switch wire.assistantID {
+        case .unspecified, .UNRECOGNIZED: throw DaemonFailure.invalidResponse
+        default: break
+        }
+        guard !wire.name.isEmpty else { throw DaemonFailure.invalidResponse }
+        self.init(assistantID: wire.assistantID, name: wire.name)
+    }
+
+    var wire: Aria_Daemon_V1_ChatKey {
+        .with {
+            $0.assistantID = assistantID
+            $0.name = name
         }
     }
 }

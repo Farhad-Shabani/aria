@@ -1,5 +1,6 @@
 enum HistoryFailure: Error, Equatable {
-    case offline, storage, missing, audioUnavailable, projectUnavailable, tooLarge, busy, cancelled,
+    case offline, storage, missing, audioUnavailable, projectUnavailable, tooLarge, busy, chatReplying,
+        chatRenameReplying, chatNameTaken, cancelled,
         timeout, queryTooLong, nameTooLong, tooLongToType, copyFailed, unsupported, clearUncertain, failed
 
     init(_ failure: DaemonFailure) {
@@ -12,6 +13,7 @@ enum HistoryFailure: Error, Equatable {
             case .refused(.payloadTooLarge): .tooLarge
             case .refused(.historyProjectUnavailable): .projectUnavailable
             case .refused(.busy): .busy
+            case .refused(.chatNameTaken): .chatNameTaken
             case .refused(.cancelled): .cancelled
             case .timeout: .timeout
             case .cancelled: .cancelled
@@ -29,6 +31,9 @@ enum HistoryFailure: Error, Equatable {
         case .projectUnavailable: "This dictation’s project folder is missing. Restore it, then transcribe again."
         case .tooLarge: "The text is too large for history to store."
         case .busy: "Aria is busy. Try again in a moment."
+        case .chatReplying: "Aria can’t delete this chat while it’s replying."
+        case .chatRenameReplying: "Aria can’t rename this chat while it’s replying."
+        case .chatNameTaken: "Another chat already has that name."
         case .cancelled: "Transcribing again was canceled."
         case .timeout: "Aria took too long to respond. Try again."
         case .queryTooLong: "Use a shorter search."

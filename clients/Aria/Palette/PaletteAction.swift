@@ -17,6 +17,10 @@ struct PaletteAction: Identifiable, Equatable {
         case saveAsPrompt(instructions: String)
         case retry
         case stop
+        case typeText(String)
+        case stopAsk
+        case deleteChat(ChatKey)
+        case renameChat(ChatKey)
     }
 
     let kind: Kind
@@ -28,13 +32,15 @@ struct PaletteAction: Identifiable, Equatable {
         case .copyEntry, .copyDetail, .copyText, .copyTranscript: "copy"
         case .runPrompt: "run-prompt"
         case .transcribeAgain: "transcribe-again"
-        case .rename: "rename"
+        case .rename, .renameChat: "rename"
         case .delete: "delete"
         case .open: "open"
         case .editPrompt: "edit-prompt"
         case .saveAsPrompt: "save-as-prompt"
         case .retry: "retry"
-        case .stop: "stop"
+        case .stop, .stopAsk: "stop"
+        case .typeText: "type"
+        case .deleteChat: "delete-chat"
         }
     }
 
@@ -43,13 +49,15 @@ struct PaletteAction: Identifiable, Equatable {
         case .copyEntry, .copyDetail, .copyText, .copyTranscript: "Copy"
         case .runPrompt: "Run Prompt"
         case .transcribeAgain: "Transcribe Again"
-        case .rename: "Rename"
+        case .rename, .renameChat: "Rename"
         case .delete: "Delete…"
         case .open: "Open"
         case .editPrompt: "Edit Prompt"
         case .saveAsPrompt: "Save as Prompt"
         case .retry: "Try Again"
-        case .stop: "Stop"
+        case .stop, .stopAsk: "Stop"
+        case .typeText: "Type"
+        case .deleteChat: "Delete Chat…"
         }
     }
 
@@ -58,13 +66,15 @@ struct PaletteAction: Identifiable, Equatable {
         case .copyEntry, .copyDetail, .copyText, .copyTranscript: .copy
         case .runPrompt: .runPrompt
         case .transcribeAgain: .transcribeAgain
-        case .rename: .rename
+        case .rename, .renameChat: .rename
         case .delete: .delete
         case .open: .open
         case .editPrompt: .editPrompt
         case .saveAsPrompt: .saveAsPrompt
         case .retry: .retry
-        case .stop: .stop
+        case .stop, .stopAsk: .stop
+        case .typeText: .typeText
+        case .deleteChat: .delete
         }
     }
 }

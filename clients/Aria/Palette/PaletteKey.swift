@@ -1,7 +1,12 @@
 import AppKit
 
 struct PaletteKey: Equatable {
+    /// Text selected on the page takes ⌘C first.
     static let copy = PaletteKey(character: "c", modifiers: .command, label: "⌘C")
+    /// Return sends the follow-up typed on the chat page.
+    static let typeText = PaletteKey(character: "\r", modifiers: .command, label: "⌘↩")
+    /// Selects every question and reply on the chat page. A typed follow-up takes ⌘A first.
+    static let selectAll = PaletteKey(character: "a", modifiers: .command, label: "⌘A")
     static let rename = PaletteKey(character: "e", modifiers: .command, label: "⌘E")
     static let editPrompt = PaletteKey(character: "e", modifiers: .command, label: "⌘E")
     /// Return types a row into the app in front. ⌘↩ opens it instead.

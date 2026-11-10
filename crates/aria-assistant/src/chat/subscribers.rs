@@ -51,6 +51,7 @@ mod tests {
             text: "done".to_owned(),
             delivery_error: None,
             copied: false,
+            history_entry_id: None,
         });
         let failed = ChatStageKind::Failed {
             code: RpcErrorCode::AssistantFailed,

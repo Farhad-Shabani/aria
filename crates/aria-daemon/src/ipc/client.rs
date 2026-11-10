@@ -3,12 +3,12 @@
 //! Synchronous: each client owns a single-threaded tokio runtime and blocks on it.
 
 use super::{protocol, wire};
-use aria_assistant::chat::{
-    AssistantModel, ChatRequest, ChatStage, ChatTarget, PromptCall, Ticket,
-};
+use aria_assistant::chat::{AskCall, AssistantModel, ChatStage, ChatTarget, PromptCall, Ticket};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::{SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult};
+use aria_settings::{
+    ChatKey, ChatName, SettingsPatch, SettingsSnapshot, SettingsStatus, UpdateResult,
+};
 use aria_voice::dictation::{DictationOutcome, DictationRequest, DictationStage, RecordingId};
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
@@ -386,17 +386,15 @@ impl DaemonClient {
         ChatTarget::try_from(response).map_err(ClientError::from)
     }
 
-    /// Answers with the ticket as soon as the chat is taken; the reply
-    /// follows on the event stream.
-    pub(crate) fn ask(&self, request: ChatRequest) -> Result<Ticket, ClientError> {
+    /// Answers as soon as the ask is taken. The reply follows on the event
+    /// stream.
+    pub(crate) fn ask(&self, call: AskCall) -> Result<(Ticket, Option<ChatKey>), ClientError> {
         let mut chat = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
-        let response = self.call(
-            REQUEST_TIMEOUT,
-            wire::AskRequest::from(request),
-            |request| chat.ask(request),
-        )?;
+        let response = self.call(REQUEST_TIMEOUT, wire::AskRequest::from(call), |request| {
+            chat.ask(request)
+        })?;
 
-        Ok(Ticket::from(response))
+        <(Ticket, Option<ChatKey>)>::try_from(response).map_err(ClientError::from)
     }
 
     /// Answers with the ticket as soon as the run is taken. The result follows on the event stream,
@@ -447,6 +445,7 @@ impl DaemonClient {
                 .map(|section| wire::HistorySection::from(section) as i32),
             query: query.query,
             before_id: query.before_id,
+            collapse_chats: query.collapse_chats,
             limit: u32::try_from(query.limit).map_err(|_| {
                 ClientError::Rpc(RpcFailure::new(
                     RpcErrorCode::InvalidRequest,
@@ -514,6 +513,41 @@ impl DaemonClient {
             history.get_thread(request)
         })?;
         response.try_into().map_err(ClientError::from)
+    }
+
+    pub(crate) fn get_chat(
+        &self,
+        query: aria_voice::history::ChatQuery,
+    ) -> Result<aria_voice::history::ChatPage, ClientError> {
+        let mut history =
+            wire::history_service_client::HistoryServiceClient::new(self.channel.clone());
+        let request = wire::GetChatRequest::from(query);
+        let response = self.call(REQUEST_TIMEOUT, request, |request| {
+            history.get_chat(request)
+        })?;
+        response.try_into().map_err(ClientError::from)
+    }
+
+    pub(crate) fn rename_chat(
+        &self,
+        chat: ChatKey,
+        name: &ChatName,
+    ) -> Result<ChatKey, ClientError> {
+        let mut service = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
+        let request = wire::RenameChatRequest::from((chat, name));
+        let response = self.call(REQUEST_TIMEOUT, request, |request| {
+            service.rename_chat(request)
+        })?;
+        response.try_into().map_err(ClientError::from)
+    }
+
+    pub(crate) fn delete_chat(&self, chat: ChatKey) -> Result<bool, ClientError> {
+        let mut service = wire::chat_service_client::ChatServiceClient::new(self.channel.clone());
+        let request = wire::DeleteChatRequest::from(chat);
+        let response = self.call(REQUEST_TIMEOUT, request, |request| {
+            service.delete_chat(request)
+        })?;
+        Ok(response.deleted)
     }
 
     pub(crate) fn retry_history(

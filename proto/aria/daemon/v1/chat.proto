@@ -10,24 +10,39 @@ import "aria/daemon/v1/errors.proto";
 service ChatService {
   rpc ListAssistants(ListAssistantsRequest) returns (ListAssistantsResponse);
   rpc ListModels(ListAssistantModelsRequest) returns (ListAssistantModelsResponse);
-  // Send one question to an assistant. Answers with a ticket as soon as the chat
-  // is taken; the reply follows as a `ChatEvent` under that ticket. Chats
-  // run side by side, except that chats on one conversation (assistant and
-  // session) take turns. Served only by a persistent daemon; an on-demand
-  // daemon refuses with UNSUPPORTED.
+  // Answers with a ticket as soon as the daemon takes the ask. The reply
+  // follows as a `ChatEvent` under that ticket. Asks run side by side, except
+  // that asks on one chat take turns. Served only by a persistent daemon. An
+  // on-demand daemon refuses with UNSUPPORTED.
   rpc Ask(AskRequest) returns (AskResponse);
-  // Stop a chat that is running or still waiting its turn. Its assistant is
-  // killed and the chat ends as a FAILED event with CANCELLED; the
-  // conversation stays resumable.
+  // Stop an ask that is running or still waiting its turn. Its assistant is
+  // killed and the ask ends as a FAILED event with CANCELLED. The chat stays
+  // resumable.
   rpc Cancel(CancelAskRequest) returns (CancelAskResponse);
-  // Where a chat goes, for a client with no working directory of its own.
+  // Served only by a persistent daemon, on the unix socket.
+  rpc ListPendingAsks(ListPendingAsksRequest) returns (ListPendingAsksResponse);
+  // Stop a chat's running ask and every ask waiting behind it. Each ends as a
+  // FAILED event with CANCELLED, and the chat stays resumable. Served only by
+  // a persistent daemon, on the unix socket.
+  rpc CancelChat(CancelChatRequest) returns (CancelChatResponse);
+  // Delete a chat's asks and their prompt results from history. Forget its
+  // assistant session and folder, so its next ask starts a new chat. A missing
+  // chat succeeds. An ask on it still running or waiting refuses the delete
+  // with BUSY. The assistant keeps its own records.
+  rpc DeleteChat(DeleteChatRequest) returns (DeleteChatResponse);
+  // A chat's asks, folder, and assistant session move to the new name. A name
+  // that another chat of the same assistant has refuses with CHAT_NAME_TAKEN.
+  // A chat the daemon doesn't know is INVALID_REQUEST. An ask on either name
+  // running or waiting refuses with BUSY. Served only on the unix socket.
+  rpc RenameChat(RenameChatRequest) returns (RenameChatResponse);
+  // Where an ask goes, for a client with no working directory of its own.
   // Answers with the focused project, else the configured one.
   rpc Resolve(ResolveChatTargetRequest) returns (ResolveChatTargetResponse);
-  // Run a stored prompt, or instructions for one run, on text or a history entry. With an output mode, type the result
-  // into the app the request names, else the one in front. One fresh
-  // assistant run with no conversation, memory, or tools. Progress and the
-  // outcome arrive as `ChatEvent`s under the ticket, as for `Ask`, and
-  // `Cancel` stops it.
+  // Run a stored prompt, or instructions for one run, on text or a history
+  // entry. With an output mode, type the result into the app the request
+  // names, else the one in front. One fresh assistant run with no chat,
+  // memory, or tools. Progress and the outcome arrive as `ChatEvent`s under
+  // the ticket, as for `Ask`, and `Cancel` stops it.
   rpc RunPrompt(RunPromptRequest) returns (AskResponse);
   // Save a prompt: its file first, then its entry in the prompt list, so a
   // failed write leaves the list as it was. The daemon rereads settings.toml and
@@ -45,7 +60,7 @@ service ChatService {
   rpc RemovePrompt(RemovePromptRequest) returns (RemovePromptResponse);
   // Type text the caller already has, such as a prompt result it showed
   // first, into the app the request names, else the one in front. Waits for
-  // a chat, prompt run, or other Deliver still typing, but never for an
+  // an ask, prompt run, or other Deliver still typing, but never for an
   // assistant's run. It answers once its own typing ends. A caller that
   // goes away first cancels it.
   rpc Deliver(DeliverRequest) returns (DeliverResponse);
@@ -70,13 +85,12 @@ message AskRequest {
   // A CLI model ID; empty uses the saved setting, then the assistant's default.
   string model_id = 2;
 
-  // The directory the assistant works in.
-  string workdir = 3;
-  // Names the conversation to continue; empty means the directory's.
-  string session_name = 4;
-  // Forget the running conversation and start another.
-  bool new_conversation = 5;
-
+  // Required.
+  oneof chat {
+    FolderChat folder = 11;
+    NamedChat named = 12;
+    StartChat start = 13;
+  }
   string text = 6;
   // The text came from a recording the own-voice gate judged as the
   // owner's; see DictationResult.own_voice.
@@ -85,15 +99,58 @@ message AskRequest {
   // Deliver the reply like dictated text instead of only announcing it.
   optional OutputMode output_mode = 8;
 
-  // A tap of the Aria key cancels this run while it is in flight. The Mac
-  // app sets it on a run a key press started, so one key drives the run.
-  // Absent means no: a terminal's chat, or an older client's, is never ended
-  // by a tap.
+  // A tap of the Aria key cancels this run while it is in flight.
   bool tap_cancels = 9;
+}
+
+// A folder's own chat, one per assistant and folder.
+message FolderChat {
+  // Required: the absolute path of the directory the assistant works in. A
+  // relative one is INVALID_REQUEST.
+  string workdir = 1;
+  // Start a new assistant session instead of resuming the last one.
+  bool new_session = 2;
+}
+
+// A chat the client names.
+message NamedChat {
+  // Trimmed, it must be 1 to 128 UTF-8 bytes with no control characters. It
+  // must not start with `/`, which names a folder's own chat. Anything else
+  // is INVALID_REQUEST.
+  string name = 1;
+  // The absolute path a chat with no folder yet starts in. A known chat
+  // ignores it. A relative path is INVALID_REQUEST. The daemon reads the
+  // chat's folder only when the ask's turn comes, after any delete taken
+  // before it. If the chat has no folder then, or the folder is missing, the
+  // ask ends as a FAILED event with INVALID_REQUEST.
+  string workdir = 2;
+  // Start a new assistant session instead of resuming the last one. The
+  // chat keeps its name and folder, and history shows its earlier
+  // asks with the new ones as one chat.
+  bool new_session = 3;
+}
+
+// A chat the daemon names, in `workdir`. The reply's `chat`
+// names it, and later asks continue it by that name.
+message StartChat {
+  // Required: the absolute path of the directory the assistant works in. A
+  // relative one is INVALID_REQUEST.
+  string workdir = 1;
 }
 
 message AskResponse {
   uint64 ticket = 1;
+  // The named chat the ask continues: the one `start` started, or
+  // the one `named` names. Absent for a folder's own chat and for a
+  // prompt run.
+  ChatKey chat = 2;
+}
+
+message ChatKey {
+  // UNSPECIFIED is invalid.
+  AssistantId assistant_id = 1;
+  // Under NamedChat.name's rules.
+  string name = 2;
 }
 
 message RunPromptRequest {
@@ -216,6 +273,56 @@ message CancelAskResponse {
   bool was_pending = 1;
 }
 
+message ListPendingAsksRequest {
+  // Required.
+  ChatKey chat = 1;
+}
+
+message ListPendingAsksResponse {
+  // The running ask first, then those waiting, in the order they run. Empty
+  // when the chat has none.
+  repeated PendingAsk asks = 1;
+}
+
+message PendingAsk {
+  uint64 ticket = 1;
+  string text = 2;
+  bool running = 3;
+}
+
+message CancelChatRequest {
+  // Required.
+  ChatKey chat = 1;
+}
+
+message CancelChatResponse {
+  // An ask already stopping isn't counted.
+  uint32 cancelled_count = 1;
+}
+
+message DeleteChatRequest {
+  // Required.
+  ChatKey chat = 1;
+}
+
+message DeleteChatResponse {
+  // False when the daemon knew no chat by that name: no folder for it, and
+  // no saved asks.
+  bool deleted = 1;
+}
+
+message RenameChatRequest {
+  // Required.
+  ChatKey chat = 1;
+  // Under NamedChat.name's rules.
+  string name = 3;
+}
+
+message RenameChatResponse {
+  // The chat under its new name, trimmed.
+  ChatKey chat = 1;
+}
+
 message ResolveChatTargetRequest {}
 
 message ResolveChatTargetResponse {
@@ -243,6 +350,9 @@ message ChatEvent {
   ErrorCode error_code = 8;
   // The failure, in words; only on FAILED.
   string error_message = 9;
+  // On REPLIED: the history entry the ask was saved as. Absent when history
+  // is off, the save failed, or the run was a prompt run.
+  optional uint64 history_entry_id = 10;
 }
 
 message Assistant {

@@ -1,15 +1,16 @@
 use std::io::IsTerminal;
 
-use aria_daemon::DaemonSession;
+use aria_daemon::{AssistantId, ClientError, DaemonSession};
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use clap::Subcommand;
+use aria_settings::{ChatKey, ChatName};
+use clap::{Args, Subcommand};
 
-use super::answer;
 use super::runtime_paths;
+use super::{answer, assistant_parser};
 
 #[derive(Subcommand)]
 pub(super) enum HistoryCommand {
-    /// List saved history and recording availability
+    /// List saved history and recording availability, each chat once
     List {
         /// Print one JSON array instead of text
         #[arg(long)]
@@ -40,7 +41,7 @@ pub(super) enum HistoryCommand {
         /// Leave out to remove the name
         title: Option<String>,
     },
-    /// Print an entry's text, and a chat's reply
+    /// Print an entry's text, and an ask's reply
     Show {
         /// The entry's ID, as `aria history list` prints it
         #[arg(value_parser = clap::value_parser!(u64).range(1..=i64::MAX as u64))]
@@ -79,6 +80,50 @@ pub(super) enum HistoryCommand {
         #[arg(long)]
         language: Option<aria_voice::stt::Language>,
     },
+    /// Show, rename, or delete a chat
+    Chat {
+        #[command(subcommand)]
+        command: ChatCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub(super) enum ChatCommand {
+    /// Print a chat's questions and replies, oldest first
+    Show {
+        #[command(flatten)]
+        chat: ChatArgs,
+        /// Print one JSON array instead of text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Give a chat a new name, which `aria ask --chat` then continues
+    Rename {
+        #[command(flatten)]
+        chat: ChatArgs,
+        /// One line of up to 128 bytes, not starting with `/`, that no other
+        /// chat of the assistant has
+        #[arg(value_parser = |name: &str| ChatName::new(name))]
+        new_name: ChatName,
+    },
+    /// Delete a chat's questions, replies, and prompt results
+    Delete {
+        #[command(flatten)]
+        chat: ChatArgs,
+        /// Skip confirmation (required for noninteractive use)
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Args)]
+pub(super) struct ChatArgs {
+    /// The chat's name, as `aria history list` prints it
+    #[arg(value_parser = |name: &str| ChatName::new(name))]
+    name: ChatName,
+    /// The assistant the chat runs with. Defaults to the shared one
+    #[arg(long = "assistant", value_parser = assistant_parser(), value_name = "ASSISTANT")]
+    assistant_id: Option<AssistantId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -99,7 +144,7 @@ impl From<Section> for aria_voice::history::HistorySection {
 }
 
 pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
-    use aria_voice::history::{HistoryContent, HistoryQuery, RetryOptions, Title};
+    use aria_voice::history::{HistoryQuery, RetryOptions, Title};
 
     if let HistoryCommand::Clear { yes, section } = &command
         && !confirm_clear(*yes, *section, std::io::stdin().is_terminal(), answer)?
@@ -111,6 +156,14 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
         && !confirm_delete(*yes, *id, std::io::stdin().is_terminal(), answer)?
     {
         println!("History delete cancelled.");
+        return Ok(());
+    }
+    if let HistoryCommand::Chat {
+        command: ChatCommand::Delete { yes, chat },
+    } = &command
+        && !confirm_chat_delete(*yes, &chat.name, std::io::stdin().is_terminal(), answer)?
+    {
+        println!("Chat delete cancelled.");
         return Ok(());
     }
 
@@ -136,6 +189,7 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
                     query: query.clone().unwrap_or_default(),
                     before_id,
                     limit: 100,
+                    collapse_chats: true,
                 })?;
                 if let Some(warning) = page.warning {
                     eprintln!("warning: {warning}");
@@ -153,7 +207,7 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
                             entry.content.section().as_str(),
                             entry.status,
                             audio_label(entry.audio()),
-                            entry.text.replace(['\n', '\r', '\t'], " ")
+                            row_text(&entry)
                         );
                     }
                     if let Some(warning) = entry.warning {
@@ -189,10 +243,7 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
             if let Some(notice) = transcript_notice(&entry.content) {
                 eprintln!("warning: {notice}");
             }
-            let reply = match &entry.content {
-                HistoryContent::Chat { reply } => Some(reply.as_str()),
-                HistoryContent::Dictation(_) | HistoryContent::SystemTranscription { .. } => None,
-            };
+            let reply = reply(&entry);
             if json {
                 let mut object = entry_json(&entry);
                 object["reply"] = reply.into();
@@ -234,8 +285,116 @@ pub(super) fn run(command: HistoryCommand) -> anyhow::Result<()> {
                 eprintln!("warning: {warning}");
             }
         }
+        HistoryCommand::Chat { command } => run_chat(&session, command)?,
     }
     Ok(())
+}
+
+fn run_chat(session: &DaemonSession, command: ChatCommand) -> anyhow::Result<()> {
+    let (ChatCommand::Show { chat, .. }
+    | ChatCommand::Rename { chat, .. }
+    | ChatCommand::Delete { chat, .. }) = &command;
+    let name = chat.name.as_str().to_owned();
+    let key = ChatKey {
+        assistant_id: match chat.assistant_id {
+            Some(assistant_id) => assistant_id,
+            None => session.get_settings()?.settings.resolve_assistant_id(),
+        },
+        name: chat.name.clone(),
+    };
+    match command {
+        ChatCommand::Show { json, .. } => {
+            let asks = chat_asks(session, key).map_err(|error| match error {
+                ClientError::Rpc(RpcFailure {
+                    code: RpcErrorCode::HistoryMissing,
+                    ..
+                }) => anyhow::anyhow!("no chat named {name} has saved asks"),
+                error => error.into(),
+            })?;
+            if json {
+                let asks: Vec<serde_json::Value> = asks
+                    .iter()
+                    .map(|ask| {
+                        let mut object = entry_json(ask);
+                        object["reply"] = reply(ask).into();
+                        object
+                    })
+                    .collect();
+                println!("{}", serde_json::Value::Array(asks));
+            } else {
+                let blocks: Vec<String> = asks
+                    .iter()
+                    .map(|ask| {
+                        format!(
+                            "{}\t{}\n{}",
+                            ask.id,
+                            ask.text,
+                            reply(ask).unwrap_or_default()
+                        )
+                    })
+                    .collect();
+                println!("{}", blocks.join("\n\n"));
+            }
+        }
+        ChatCommand::Rename { new_name, .. } => {
+            let renamed = session.rename_chat(key, &new_name)?;
+            println!("Renamed chat {name} to {}.", renamed.name.as_str());
+        }
+        ChatCommand::Delete { .. } => {
+            let assistant = key.assistant_id.name();
+            if session.delete_chat(key)? {
+                println!("Deleted chat {name}.");
+            } else {
+                println!("No chat named {name} with {assistant}.");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every saved ask of the chat, oldest first.
+fn chat_asks(
+    session: &DaemonSession,
+    chat: ChatKey,
+) -> Result<Vec<aria_voice::history::HistoryEntry>, ClientError> {
+    use aria_voice::history::ChatQuery;
+
+    let mut asks = Vec::new();
+    let mut before_id = None;
+    loop {
+        let page = session.get_chat(ChatQuery {
+            chat: chat.clone(),
+            before_id,
+            limit: ChatQuery::MAX_LIMIT,
+        })?;
+        // Pages run newest to oldest, and each one is oldest first.
+        asks.splice(0..0, page.entries);
+        let Some(next) = page.next_before_id else {
+            return Ok(asks);
+        };
+        if before_id.is_some_and(|previous| next >= previous) {
+            return Err(ClientError::MalformedResponse(
+                "chat pagination did not advance".to_owned(),
+            ));
+        }
+        before_id = Some(next);
+    }
+}
+
+fn reply(entry: &aria_voice::history::HistoryEntry) -> Option<&str> {
+    use aria_voice::history::HistoryContent;
+    match &entry.content {
+        HistoryContent::Ask { reply, .. } => Some(reply),
+        HistoryContent::Dictation(_) | HistoryContent::SystemTranscription { .. } => None,
+    }
+}
+
+fn row_text(entry: &aria_voice::history::HistoryEntry) -> String {
+    let text = entry.text.replace(['\n', '\r', '\t'], " ");
+    match entry.content.chat() {
+        Some(chat) => format!("[{}] {text}", chat.name.as_str()),
+        None => text,
+    }
 }
 
 fn confirm_clear(
@@ -256,6 +415,24 @@ fn confirm_clear(
         "clearing history",
         &format!(
             "Clear {scope} and retained recordings? This cannot be undone. History and audio-retention settings stay as they are; a dictation in progress is not stopped. [y/N] ",
+        ),
+        read_answer,
+    )
+}
+
+fn confirm_chat_delete(
+    yes: bool,
+    session: &ChatName,
+    interactive: bool,
+    read_answer: impl FnOnce(&str) -> anyhow::Result<String>,
+) -> anyhow::Result<bool> {
+    confirm(
+        yes,
+        interactive,
+        "deleting a chat",
+        &format!(
+            "Delete chat {}, its questions, replies, and prompt results? This cannot be undone. [y/N] ",
+            session.as_str()
         ),
         read_answer,
     )
@@ -349,6 +526,10 @@ fn entry_json(entry: &aria_voice::history::HistoryEntry) -> serde_json::Value {
         "audio": entry.audio().as_str(),
         "result_count": entry.result_count,
         "text": entry.text,
+        "chat": entry.content.chat().map(|chat| serde_json::json!({
+            "assistant": chat.assistant_id.name(),
+            "name": chat.name.as_str(),
+        })),
     })
 }
 
@@ -531,6 +712,103 @@ mod tests {
         ] {
             assert!(Cli::try_parse_from(&arguments).is_err(), "{arguments:?}");
         }
+    }
+
+    #[test]
+    fn a_chat_is_shown_renamed_and_deleted_by_its_name() {
+        let parsed = |arguments: &[&str]| Cli::try_parse_from(arguments).map(|cli| cli.command);
+        assert!(matches!(
+            parsed(&["aria", "history", "chat", "show", "trip", "--assistant", "codex", "--json"]).unwrap(),
+            Command::History {
+                command: HistoryCommand::Chat {
+                    command: ChatCommand::Show {
+                        chat: ChatArgs { name, assistant_id: Some(AssistantId::Codex) },
+                        json: true,
+                    }
+                }
+            } if name.as_str() == "trip"
+        ));
+        assert!(matches!(
+            parsed(&["aria", "history", "chat", "rename", "trip", "Weekend"]).unwrap(),
+            Command::History {
+                command: HistoryCommand::Chat {
+                    command: ChatCommand::Rename {
+                        chat: ChatArgs { assistant_id: None, .. },
+                        new_name,
+                    }
+                }
+            } if new_name.as_str() == "Weekend"
+        ));
+        assert!(matches!(
+            parsed(&["aria", "history", "chat", "delete", "trip", "--yes"]).unwrap(),
+            Command::History {
+                command: HistoryCommand::Chat {
+                    command: ChatCommand::Delete { yes: true, .. }
+                }
+            }
+        ));
+        for arguments in [
+            vec!["aria", "history", "chat", "show"],
+            vec!["aria", "history", "chat", "show", "/a/folder"],
+            vec!["aria", "history", "chat", "rename", "trip"],
+            vec!["aria", "history", "chat", "rename", "trip", "/a/folder"],
+        ] {
+            assert!(parsed(&arguments).is_err(), "{arguments:?}");
+        }
+    }
+
+    #[test]
+    fn deleting_a_chat_requires_explicit_confirmation() {
+        let trip = ChatName::new("trip").unwrap();
+        for response in ["y", "yes", "", "n"] {
+            assert_eq!(
+                confirm_chat_delete(false, &trip, true, |question| {
+                    assert!(question.contains("trip"), "{question}");
+                    Ok(response.into())
+                })
+                .unwrap(),
+                matches!(response, "y" | "yes")
+            );
+        }
+        let error =
+            confirm_chat_delete(false, &trip, false, |_| panic!("must not prompt")).unwrap_err();
+        assert!(error.to_string().contains("--yes"));
+    }
+
+    #[test]
+    fn an_ask_in_a_named_chat_lists_under_its_name() {
+        use aria_voice::history::{HistoryContent, HistoryEntry, HistoryStatus};
+        let ask = |name: Option<&str>| HistoryEntry {
+            id: 7,
+            title: None,
+            content: HistoryContent::Ask {
+                reply: "Friday.".to_owned(),
+                chat: name.map(|name| ChatKey {
+                    assistant_id: AssistantId::Codex,
+                    name: ChatName::new(name).unwrap(),
+                }),
+            },
+            created_at_ms: 1,
+            duration_ms: None,
+            source: aria_voice::history::HistorySource::Local,
+            application: None,
+            project: None,
+            text: "When\tnext?".to_owned(),
+            complete: true,
+            result_count: 0,
+            status: HistoryStatus::Success,
+            error: None,
+            warning: None,
+            deletion_pending: false,
+        };
+
+        assert_eq!(row_text(&ask(Some("Trip"))), "[Trip] When next?");
+        assert_eq!(row_text(&ask(None)), "When next?");
+        assert_eq!(
+            entry_json(&ask(Some("Trip")))["chat"],
+            serde_json::json!({"assistant": "codex", "name": "Trip"})
+        );
+        assert!(entry_json(&ask(None))["chat"].is_null());
     }
 
     #[test]

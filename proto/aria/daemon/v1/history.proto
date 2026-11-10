@@ -4,6 +4,7 @@ syntax = "proto3";
 
 package aria.daemon.v1;
 
+import "aria/daemon/v1/chat.proto";
 import "aria/daemon/v1/errors.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
@@ -29,6 +30,9 @@ service HistoryService {
   // An entry's prompt results, newest first. A missing entry is
   // HISTORY_MISSING.
   rpc GetThread(GetThreadRequest) returns (HistoryThread);
+  // A page of a chat's newest asks before a cursor. A chat with no saved asks
+  // is HISTORY_MISSING.
+  rpc GetChat(GetChatRequest) returns (GetChatResponse);
 }
 
 message ListHistoryRequest {
@@ -40,6 +44,12 @@ message ListHistoryRequest {
   uint32 limit = 3;
   // Absent lists every section. UNSPECIFIED is invalid.
   optional HistorySection section = 4;
+  // Show each chat once, at its newest ask that matches `query`. The daemon
+  // groups chats before it applies `before_id`, so pages don't repeat a chat
+  // while history stays unchanged between reads. If history changes between
+  // reads, a page can repeat a chat, so a client merging pages should drop one
+  // it already holds. False lists every ask.
+  bool collapse_chats = 5;
 }
 
 message ListHistoryResponse {
@@ -97,6 +107,22 @@ message HistoryThread {
   repeated PromptResult results = 1;
 }
 
+message GetChatRequest {
+  // Required.
+  ChatKey chat = 1;
+  // Exclusive cursor in descending ID order. Absent starts at the newest ask.
+  optional uint64 before_id = 2;
+  // Required range: 1 to 10. Zero is invalid.
+  uint32 limit = 3;
+}
+
+message GetChatResponse {
+  // Oldest first, each with its full text.
+  repeated HistoryEntry entries = 1;
+  // The cursor for the next, older page. Absent when no older ask is left.
+  optional uint64 next_before_id = 2;
+}
+
 // A prompt's reply, saved under the history entry it ran on. Results don't
 // appear in List, and search doesn't cover them. Deleting their entry, or
 // clearing history, deletes them.
@@ -120,7 +146,7 @@ message HistoryEntry {
   HistorySource source = 6;
   HistoryApplication application = 7;
   // The folder the entry was made in: the project whose vocabulary a
-  // dictation used, or the folder a chat worked in. Absent when none.
+  // dictation used, or the folder an ask worked in. Absent when none.
   optional string project_directory = 8;
 
   string text = 9;
@@ -149,6 +175,9 @@ message HistoryEntry {
   bool deletion_pending = 22;
   // Audio is available and neither regeneration nor deletion is pending.
   bool can_regenerate = 23;
+  // The chat a CHAT entry's ask continued. Absent for an ask in its folder's
+  // own chat.
+  ChatKey chat = 24;
 }
 
 // A system transcription's transcript file. The entry's `text` is the file's

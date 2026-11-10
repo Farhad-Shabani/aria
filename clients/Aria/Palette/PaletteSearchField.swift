@@ -26,7 +26,7 @@ struct PaletteSearchField: NSViewRepresentable {
         if field.stringValue != controller.model.query { field.stringValue = controller.model.query }
         // The keys come back here whenever no title is being edited, such as
         // after a rename.
-        guard controller.model.renamingID == nil, field.currentEditor() == nil, let window = field.window else {
+        guard !controller.model.isRenaming, field.currentEditor() == nil, let window = field.window else {
             return
         }
         window.makeFirstResponder(field)

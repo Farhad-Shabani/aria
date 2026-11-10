@@ -9,8 +9,8 @@ use tonic::{Request, Response, Status};
 
 use crate::ipc::{protocol, wire};
 use aria_voice::history::{
-    ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery, HistorySection,
-    PromptResult, RetryOptions, Title,
+    ChatPage, ChatQuery, ClearHistoryResult, HistoryEntry, HistoryError, HistoryPage, HistoryQuery,
+    HistorySection, PromptResult, RetryOptions, Title,
 };
 
 use super::super::dictation::DictationRuntime;
@@ -57,6 +57,11 @@ enum Command {
     Clear(
         Option<HistorySection>,
         Reply<ClearHistoryResult, HistoryError>,
+        Option<Arc<ActivityGuard>>,
+    ),
+    Chat(
+        ChatQuery,
+        Reply<ChatPage, HistoryError>,
         Option<Arc<ActivityGuard>>,
     ),
     Retry(
@@ -149,6 +154,10 @@ impl Supervised for HistoryWorker {
                             let _activity = activity;
                             store.clear(section)
                         }),
+                        Command::Chat(query, reply, activity) => reply.answer_with(&mut jobs, "history chat", move || {
+                            let _activity = activity;
+                            store.chat(&query)
+                        }),
                         Command::Retry(id, options, cancel, reply, activity) => {
                             let runtime = Arc::clone(&self.runtime);
                             let cancel = operation_cancellation(cancel, shutdown.clone());
@@ -177,9 +186,12 @@ impl Supervised for HistoryWorker {
                     reply.unavailable();
                 }
                 Command::Rename(_, _, reply, _) => reply.unavailable(),
-                Command::Delete(_, reply, _) => reply.unavailable(),
+                Command::Delete(_, reply, _) => {
+                    reply.unavailable();
+                }
                 Command::Results(_, reply, _) => reply.unavailable(),
                 Command::Clear(_, reply, _) => reply.unavailable(),
+                Command::Chat(_, reply, _) => reply.unavailable(),
             }
         }
         while let Some(result) = jobs.join_next().await {
@@ -275,6 +287,20 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
         self.submit(METHOD, command, pending)
             .await
             .map(|entry| Response::new(entry.into()))
+    }
+
+    async fn get_chat(
+        &self,
+        mut request: Request<wire::GetChatRequest>,
+    ) -> Result<Response<wire::GetChatResponse>, Status> {
+        const METHOD: &str = "HistoryService/GetChat";
+        let activity = ActivityGuard::take(&mut request);
+        let query = ChatQuery::try_from(request.into_inner())
+            .map_err(|error| super::invalid_request(METHOD, &error))?;
+        let (command, pending) = call(|reply| Command::Chat(query, reply, activity));
+        self.submit(METHOD, command, pending)
+            .await
+            .map(|page| Response::new(page.into()))
     }
 
     async fn regenerate(

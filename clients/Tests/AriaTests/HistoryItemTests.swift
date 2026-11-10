@@ -29,15 +29,41 @@ final class HistoryItemTests: XCTestCase {
         XCTAssertEqual(try HistoryItem(systemTranscription).origin, "42 min")
         XCTAssertFalse(session.facts.contains("words"), "only part of the file was read")
 
-        var chat = Self.wire(.chat)
-        chat.text = "When is lunch?"
-        chat.reply = "Noon."
-        let asked = try HistoryItem(chat)
-        XCTAssertEqual(asked.kind, .chat(reply: "Noon."))
+        var ask = Self.wire(.chat)
+        ask.text = "When is lunch?"
+        ask.reply = "Noon."
+        let asked = try HistoryItem(ask)
+        XCTAssertEqual(asked.kind, .ask(reply: "Noon."))
         XCTAssertEqual(asked.copyText, "Noon.")
         XCTAssertEqual(asked.origin, "Chat", "no folder, so it names its kind")
-        chat.projectDirectory = "/Users/me/code/aria"
-        XCTAssertEqual(try HistoryItem(chat).origin, "aria")
+        ask.projectDirectory = "/Users/me/code/aria"
+        XCTAssertEqual(try HistoryItem(ask).origin, "aria")
+    }
+
+    func testAnAskKeepsTheChatItContinuedAndOnlyAnAskMayHaveOne() throws {
+        var ask = Self.wire(.chat)
+        ask.reply = "Noon."
+        ask.projectDirectory = "/Users/me/code/aria"
+        XCTAssertNil(try HistoryItem(ask).chat, "an ask in its folder's own chat")
+        ask.chat = .with {
+            $0.assistantID = .claudeCode
+            $0.name = "c1"
+        }
+        XCTAssertEqual(
+            try HistoryItem(ask).chat, ChatKey(assistantID: .claudeCode, name: "c1"))
+        var noFolder = ask
+        noFolder.clearProjectDirectory()
+        XCTAssertNotNil(try HistoryItem(noFolder).chat, "the daemon keeps the folder, not the entry")
+
+        var unnamed = ask
+        unnamed.chat.name = ""
+        var noAssistant = ask
+        noAssistant.chat.assistantID = .unspecified
+        var dictation = Self.wire(.dictation)
+        dictation.chat = ask.chat
+        for wire in [unnamed, noAssistant, dictation] {
+            XCTAssertThrowsError(try HistoryItem(wire))
+        }
     }
 
     func testAnEntryFromADaemonBeforeSectionsIsADictation() throws {

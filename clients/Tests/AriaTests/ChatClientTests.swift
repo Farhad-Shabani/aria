@@ -75,4 +75,66 @@ final class ChatClientTests: XCTestCase {
 
         XCTAssertEqual(request.prompt, .instructions("List the action items."))
     }
+
+    func testANewChatAsksTheDaemonToNameItInTheFolderInFront() {
+        let request = ChatClient.startRequest(
+            text: "When is lunch?", at: ChatTarget(workdir: "/code/aria", assistantID: .codex), ownVoice: true)
+
+        XCTAssertEqual(request.text, "When is lunch?")
+        XCTAssertEqual(request.assistantID, .codex)
+        XCTAssertEqual(request.chat, .start(.with { $0.workdir = "/code/aria" }))
+        XCTAssertTrue(request.ownVoice)
+        XCTAssertTrue(request.tapCancels)
+        XCTAssertFalse(request.hasOutputMode, "nothing is typed into the app in front")
+    }
+
+    func testANewChatTakesItsKeyFromTheReply() throws {
+        let response = Aria_Daemon_V1_AskResponse.with {
+            $0.ticket = 7
+            $0.chat = .with {
+                $0.assistantID = .codex
+                $0.name = "c1"
+            }
+        }
+
+        XCTAssertEqual(
+            try ChatClient.started(response),
+            StartedChat(ticket: 7, chat: ChatKey(assistantID: .codex, name: "c1")))
+    }
+
+    func testAReplyThatNamesNoChatIsInvalid() {
+        let unnamed = Aria_Daemon_V1_AskResponse.with {
+            $0.ticket = 7
+            $0.chat = .with { $0.assistantID = .codex }
+        }
+        for response in [Aria_Daemon_V1_AskResponse.with { $0.ticket = 7 }, unnamed] {
+            XCTAssertThrowsError(try ChatClient.started(response)) {
+                XCTAssertEqual($0 as? DaemonFailure, .invalidResponse)
+            }
+        }
+    }
+
+    func testAFollowUpSendsItsChatAndKnownFolderButNoOutputMode() {
+        let key = ChatKey(assistantID: .codex, name: "c1")
+        let request = ChatClient.askRequest(
+            text: "When is lunch?", in: key, folder: "/code/aria", ownVoice: true, tapCancels: false)
+
+        XCTAssertEqual(request.text, "When is lunch?")
+        XCTAssertEqual(request.assistantID, .codex)
+        XCTAssertEqual(
+            request.chat,
+            .named(
+                .with {
+                    $0.name = "c1"
+                    $0.workdir = "/code/aria"
+                }),
+            "the folder seeds a chat whose folder record the daemon lost")
+        XCTAssertEqual(
+            ChatClient.askRequest(text: "When is lunch?", in: key, folder: nil, ownVoice: true, tapCancels: false)
+                .chat,
+            .named(.with { $0.name = "c1" }), "an unknown folder seeds nothing")
+        XCTAssertTrue(request.ownVoice)
+        XCTAssertFalse(request.tapCancels)
+        XCTAssertFalse(request.hasOutputMode, "nothing is typed into the app in front")
+    }
 }

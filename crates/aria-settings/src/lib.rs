@@ -17,6 +17,7 @@ mod limits;
 mod overrides;
 mod prompts;
 pub mod rpc;
+mod session;
 mod store;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
@@ -63,6 +64,7 @@ pub use prompts::{
     CLEANUP_PROMPT_FILE, EXTRACT_PROMPT_FILE, MAX_NAME_BYTES as MAX_PROMPT_NAME_BYTES, PROMPTS_DIR,
     Prompt, PromptError, PromptId, PromptKind, Prompts, RESERVED_PROMPT_FILES,
 };
+pub use session::{ChatKey, ChatName, ChatNameError};
 pub use store::SettingsStore;
 pub use store::{SettingsPatch, SettingsSnapshot, UpdateResult};
 pub use watch::{SettingsCache, SettingsPoll};

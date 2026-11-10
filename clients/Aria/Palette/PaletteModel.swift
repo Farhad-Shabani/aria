@@ -43,9 +43,17 @@ struct PaletteModel: Equatable {
     /// While off, no saved entry or history command shows.
     var keepsHistory = false
     var isConfirmingClear = false
-    /// The entry whose title is being edited in place. The selection holds
-    /// still meanwhile.
-    private(set) var renamingID: UInt64?
+    enum Renaming: Equatable {
+        case entry(UInt64)
+        case chat(ChatKey)
+    }
+
+    /// The selection holds still while something is renamed in place.
+    private(set) var renaming: Renaming?
+    var isRenaming: Bool { renaming != nil }
+    var renamingID: UInt64? {
+        if case .entry(let id) = renaming { id } else { nil }
+    }
     var renamingTitle = ""
     /// The one history section the list keeps to. `nil` shows every section.
     private(set) var section: HistorySection?
@@ -63,6 +71,11 @@ struct PaletteModel: Equatable {
     private(set) var threadRequest: ThreadRequest?
     /// The result the keys rest on in an open entry's page. `nil` rests on the entry itself.
     private(set) var focusedResultID: UInt64?
+    /// Escape goes back to the chat from a page opened on it, such as an ask's entry or
+    /// the prompts to run on it.
+    private(set) var returnsToChat = false
+    var followUp = ""
+    var messageSelection = MessageSelection()
     /// The prompt being written or edited. Closing the palette keeps it, for
     /// New Prompt or Edit Prompt to bring back.
     var draft: PromptDraft?
@@ -74,6 +87,7 @@ struct PaletteModel: Equatable {
     /// New Prompt shows while the prompts are under the daemon's limit.
     var canAddPrompt = false
     var assistantName: String?
+    var assistantNames: [Aria_Daemon_V1_AssistantId: String] = [:]
     /// The steps left in Finish Setting Up Aria.
     private(set) var setupSteps = 0
     private var prompts: [PaletteCommand] = []
@@ -96,9 +110,10 @@ struct PaletteModel: Equatable {
         isConfirmingDiscard = false
         waitingDraft = nil
         editFailure = nil
-        renamingID = nil
+        renaming = nil
         input = nil
         dropThread()
+        leaveChat()
     }
 
     /// Follows settings while the palette is open. The selection stays on its row.
@@ -193,12 +208,17 @@ struct PaletteModel: Equatable {
     }
 
     mutating func startRenaming(_ entry: HistoryItem) {
-        renamingID = entry.id
+        renaming = .entry(entry.id)
         renamingTitle = entry.title ?? ""
     }
 
+    mutating func startRenaming(_ chat: ChatKey) {
+        renaming = .chat(chat)
+        renamingTitle = chat.name
+    }
+
     mutating func stopRenaming() {
-        renamingID = nil
+        renaming = nil
     }
 
     var commands: [PaletteCommand] {
@@ -239,6 +259,7 @@ struct PaletteModel: Equatable {
 
     private func threaded(_ entries: [HistoryItem]) -> [PaletteItem] {
         entries.flatMap { entry -> [PaletteItem] in
+            if let chat = SavedChat(newest: entry) { return [.chat(chat)] }
             guard let thread, thread.isOpen, thread.entryID == entry.id else { return [.entry(entry)] }
             return [.entry(entry)] + thread.results.map(PaletteItem.result)
         }
@@ -250,7 +271,7 @@ struct PaletteModel: Equatable {
         switch selected {
         case .entry(let entry) where entry.resultCount > 0: entry
         case .result: thread.flatMap { thread in entries.first { $0.id == thread.entryID } }
-        case .entry, .command, nil: nil
+        case .entry, .chat, .command, nil: nil
         }
     }
 
@@ -341,15 +362,15 @@ struct PaletteModel: Equatable {
 
     /// Takes `items` so a list can build them once per render, not once per row.
     static func dayStarting(at index: Int, in items: [PaletteItem], calendar: Calendar = .current) -> Date? {
-        guard let entry = items[index].entry else { return nil }
+        guard let entry = items[index].historyItem else { return nil }
         let day = calendar.startOfDay(for: entry.created)
-        let previous = items[..<index].last { $0.entry != nil }?.entry
+        let previous = items[..<index].last { $0.historyItem != nil }?.historyItem
         guard let previous, calendar.startOfDay(for: previous.created) == day else { return day }
         return nil
     }
 
     mutating func select(_ id: PaletteItem.ID) {
-        guard renamingID == nil, let index = items.firstIndex(where: { $0.id == id }), index != selectedIndex
+        guard !isRenaming, let index = items.firstIndex(where: { $0.id == id }), index != selectedIndex
         else { return }
         selectedIndex = index
         menuIndex = nil
@@ -357,7 +378,7 @@ struct PaletteModel: Equatable {
 
     mutating func moveSelection(by step: Int) {
         let last = items.count - 1
-        guard renamingID == nil, last >= 0 else { return }
+        guard !isRenaming, last >= 0 else { return }
         selectedIndex = min(max(selectedIndex + step, 0), last)
         menuIndex = nil
     }
@@ -389,7 +410,7 @@ struct PaletteModel: Equatable {
 
     /// ⌘ and a digit: that prompt, run on the selected entry, whatever is typed.
     func prompt(forNumber number: Int) -> (promptID: String, entry: HistoryItem)? {
-        guard page == .commands, renamingID == nil, input == nil, case .entry(let entry) = selected,
+        guard page == .commands, !isRenaming, input == nil, case .entry(let entry) = selected,
             case .runPrompt(let id)? = prompts.first(where: { $0.number == number })?.action
         else { return nil }
         return (id, entry)
@@ -397,7 +418,7 @@ struct PaletteModel: Equatable {
 
     /// A command's key runs it from the commands page, whatever is typed, while the page offers it.
     func command(pressing event: NSEvent) -> PaletteCommand? {
-        guard page == .commands, renamingID == nil, input == nil else { return nil }
+        guard page == .commands, !isRenaming, input == nil else { return nil }
         return pageCommands.first { $0.key?.matches(event) == true }
     }
 
@@ -409,7 +430,7 @@ struct PaletteModel: Equatable {
     /// Moves to the next section pill, or the previous one, wrapping round
     /// past All. Returns whether the pills could move.
     mutating func cycleSection(by step: Int) -> Bool {
-        guard page == .commands, renamingID == nil, showsSectionPills else { return false }
+        guard page == .commands, !isRenaming, showsSectionPills else { return false }
         let order: [HistorySection?] = [nil] + HistorySection.allCases
         let index = order.firstIndex(of: section) ?? 0
         show(section: order[(index + step + order.count) % order.count])
@@ -425,7 +446,7 @@ struct PaletteModel: Equatable {
 
     mutating func show(_ page: PalettePage) {
         self.page = page
-        renamingID = nil
+        renaming = nil
     }
 
     /// Opens `entry`'s page on its own text, and asks for its thread, which
@@ -436,20 +457,39 @@ struct PaletteModel: Equatable {
         requestThread(of: entry, opens: false)
     }
 
+    mutating func openChat() {
+        show(.chat)
+        input = nil
+        returnsToChat = true
+        messageSelection = MessageSelection()
+        followUp = ""
+    }
+
+    mutating func leaveChat() {
+        if returnsToChat { page = .commands }
+        returnsToChat = false
+        messageSelection = MessageSelection()
+        followUp = ""
+    }
+
+    /// Where Ask sends its question: the chat on screen, or a new one from any other page.
+    /// `nil` while the one on screen is replying.
+    func askTarget(shown: Chat?) -> AskTarget? {
+        AskTarget(shown: page == .chat ? shown : nil)
+    }
+
     /// Steps from `entry` through its results, stopping at either end.
     mutating func moveDetailFocus(by step: Int, on entry: UInt64) {
-        guard renamingID == nil else { return }
+        guard !isRenaming else { return }
         let order = [nil] + threadResults(of: entry).map { Optional($0.id) }
         let index = order.firstIndex(of: focusedResultID) ?? 0
         focusedResultID = order[min(max(index + step, 0), order.count - 1)]
     }
 
-    /// Escape ends a rename, asks before dropping a changed draft, or leaves a page. On the
-    /// commands page it folds the thread, clears what is typed, drops the prompt input, then widens
-    /// the section. Returns whether the palette closes.
+    /// Returns whether the palette closes.
     mutating func escape() -> Bool {
-        if renamingID != nil {
-            renamingID = nil
+        if renaming != nil {
+            renaming = nil
             return false
         }
         if page == .prompt {
@@ -461,8 +501,12 @@ struct PaletteModel: Equatable {
             }
             return false
         }
+        if page == .chat {
+            if followUp.isEmpty { leaveChat() } else { followUp = "" }
+            return false
+        }
         if page != .commands {
-            page = .commands
+            page = returnsToChat && input == nil ? .chat : .commands
             return false
         }
         if foldThread() { return false }
@@ -472,6 +516,10 @@ struct PaletteModel: Equatable {
         }
         if let input {
             self.input = nil
+            if returnsToChat {
+                page = .chat
+                return false
+            }
             let row = PaletteItem.entry(input).id
             selectedIndex = items.firstIndex { $0.id == row } ?? 0
             return false

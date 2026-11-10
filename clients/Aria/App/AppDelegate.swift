@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var serverStt = ServerStt(effects: .live, setup: setupStatus, runner: setupRunner)
     let updates = UpdateController()
     let history = HistoryState(effects: HistoryClient.effects)
+    let chats = Chats(effects: .live)
 
     private static let setupOfferedKey = "setupOffered"
 
@@ -29,7 +30,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let status: StatusController
     let systemTranscriptionStatus: SystemTranscriptionStatus
     private let ghost: GhostController
-    let askShortcut: PressController
+    private(set) lazy var askShortcut: PressController = PressController(
+        events: events,
+        operation: .ask(
+            chats, target: { [weak self] in self?.palette.askTarget },
+            show: { [weak self] in self?.palette.showChat() })
+    ) { [weak self] run in
+        self?.status.noteAsk(run)
+    }
     let promptHotkeys: PromptHotkeys
     private var caption = CaptionState()
     private var shownCommitted: String?
@@ -39,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var askChordChange: AnyCancellable?
     private(set) lazy var palette = PaletteController(
         prompts: promptHotkeys, ask: askShortcut, systemTranscription: systemTranscriptionStatus, history: history,
-        events: events,
+        chats: chats, events: events,
         setup: setupStatus, settingsHealth: settingsHealth,
         openSettings: { [weak self] pane in
             guard let self else { return }
@@ -58,10 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.status = status
         systemTranscriptionStatus = SystemTranscriptionStatus(events: events)
         ghost = GhostController(events: events)
-        askShortcut = PressController(events: events, operation: .ask) { [weak status] run in
-            status?.noteChat(run)
-        }
         super.init()
+        events.onChat { [weak chats] event in chats?.apply(event) }
+        events.onStreamOpened { [weak chats] in chats?.reconnected() }
         status.skips = { [weak self] ticket in self?.palette.shows(ticket: ticket) ?? false }
         events.onHotkey { [weak self] combo in
             self?.run(combo)

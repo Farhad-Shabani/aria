@@ -1,5 +1,5 @@
 //! A model on the local provider. It answers from what it knows and the
-//! recent conversation. It has no tools, so it never reads the project.
+//! asks of its session. It has no tools, so it never reads the project.
 
 use std::time::{Duration, Instant};
 
@@ -22,32 +22,30 @@ const NO_ENDPOINT: &str = "set provider.endpoint in the settings file";
 const NO_MODEL: &str =
     "add local-model = \"MODEL_ID\" under [assistant.models] in the settings file";
 
-/// An earlier ask in a conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ask {
     pub request: String,
     pub reply: String,
 }
 
-/// Where a conversation's earlier asks come from.
-pub trait Conversations: Send + Sync {
-    /// The conversation's earlier asks, oldest first.
-    fn recall(&self, conversation: &str) -> Vec<Ask>;
+pub trait SessionHistory: Send + Sync {
+    /// The earlier asks of the session `resume` names, oldest first.
+    fn recall(&self, resume: &str) -> Vec<Ask>;
 }
 
-pub struct LocalAssistant<C> {
+pub struct LocalAssistant<H> {
     client: Option<Client>,
     model: Option<String>,
-    conversations: C,
+    history: H,
 }
 
-impl<C: Conversations> LocalAssistant<C> {
+impl<H: SessionHistory> LocalAssistant<H> {
     /// `model` is the one `[assistant.models] local-model` names.
-    pub fn new(provider: Option<&LocalProvider>, model: Option<String>, conversations: C) -> Self {
+    pub fn new(provider: Option<&LocalProvider>, model: Option<String>, history: H) -> Self {
         Self {
             client: provider.map(|provider| Client::new(provider.endpoint(), provider.listing())),
             model,
-            conversations,
+            history,
         }
     }
 
@@ -58,7 +56,7 @@ impl<C: Conversations> LocalAssistant<C> {
     }
 }
 
-impl<C: Conversations> Assistant for LocalAssistant<C> {
+impl<H: SessionHistory> Assistant for LocalAssistant<H> {
     type Session = LocalSession;
 
     fn models(&self, _cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
@@ -111,9 +109,9 @@ impl<C: Conversations> Assistant for LocalAssistant<C> {
                 .or_else(|| self.model.clone()),
             earlier: spec
                 .resume
-                .map(|conversation| self.conversations.recall(conversation))
+                .map(|resume| self.history.recall(resume))
                 .unwrap_or_default(),
-            conversation: spec.resume.map(str::to_owned),
+            resume: spec.resume.map(str::to_owned),
         }
     }
 
@@ -140,14 +138,14 @@ impl<C: Conversations> Assistant for LocalAssistant<C> {
     }
 }
 
-/// One conversation with the local model. The model keeps nothing between
-/// requests, so each one carries the recent conversation.
+/// One assistant session with the local model. The model keeps nothing
+/// between requests, so each one carries the session's recent asks.
 pub struct LocalSession {
     client: Option<Client>,
     model: Option<String>,
     earlier: Vec<Ask>,
-    /// `None` until the first reply of a new conversation.
-    conversation: Option<String>,
+    /// `None` until the first reply of a new session.
+    resume: Option<String>,
 }
 
 impl Session for LocalSession {
@@ -176,8 +174,8 @@ impl Session for LocalSession {
         if reply.trim().is_empty() {
             return Err(AssistantError::Malformed("the reply is empty".to_owned()));
         }
-        if self.conversation.is_none() {
-            self.conversation = Some(new_conversation()?);
+        if self.resume.is_none() {
+            self.resume = Some(new_resume_id()?);
         }
         self.earlier.push(Ask {
             request: text.to_owned(),
@@ -187,7 +185,7 @@ impl Session for LocalSession {
     }
 
     fn resume_id(&self) -> Option<&str> {
-        self.conversation.as_deref()
+        self.resume.as_deref()
     }
 }
 
@@ -218,8 +216,8 @@ fn provider_error(error: ProviderError, budget: Duration) -> AssistantError {
     }
 }
 
-/// A conversation's id: random, so it names nothing about what was said.
-fn new_conversation() -> Result<String, AssistantError> {
+/// A session's resume ID: random, so it names nothing about what was said.
+fn new_resume_id() -> Result<String, AssistantError> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|error| AssistantError::Failed(error.to_string()))?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
@@ -307,24 +305,23 @@ mod tests {
         fn step(&mut self, _step: Step) {}
     }
 
-    /// Recalls `asks` for `conversation` and nothing for any other.
-    struct ScriptedConversations {
-        conversation: &'static str,
+    struct ScriptedHistory {
+        resume: &'static str,
         asks: Vec<Ask>,
     }
 
-    impl ScriptedConversations {
+    impl ScriptedHistory {
         fn empty() -> Self {
             Self {
-                conversation: "",
+                resume: "",
                 asks: Vec::new(),
             }
         }
     }
 
-    impl Conversations for ScriptedConversations {
-        fn recall(&self, conversation: &str) -> Vec<Ask> {
-            if conversation == self.conversation {
+    impl SessionHistory for ScriptedHistory {
+        fn recall(&self, resume: &str) -> Vec<Ask> {
+            if resume == self.resume {
                 self.asks.clone()
             } else {
                 Vec::new()
@@ -350,16 +347,16 @@ mod tests {
     }
 
     #[test]
-    fn a_resumed_conversation_sends_its_earlier_asks_before_the_request() {
+    fn a_resumed_session_sends_its_earlier_asks_before_the_request() {
         let (provider, requests) = serve(|_path, _body| streamed("Tuesday."));
-        let conversations = ScriptedConversations {
-            conversation: "c1",
+        let history = ScriptedHistory {
+            resume: "c1",
             asks: vec![Ask {
                 request: "When is the review?".to_owned(),
                 reply: "Monday.".to_owned(),
             }],
         };
-        let local = LocalAssistant::new(Some(&provider), Some("qwen".to_owned()), conversations);
+        let local = LocalAssistant::new(Some(&provider), Some("qwen".to_owned()), history);
 
         let mut session = local.open(spec(Some("c1")));
         assert_eq!(ask(&mut session, "And the launch?").unwrap(), "Tuesday.");
@@ -380,12 +377,12 @@ mod tests {
     }
 
     #[test]
-    fn a_new_conversation_gets_an_id_only_once_it_replies() {
+    fn a_new_session_gets_a_resume_id_only_once_it_replies() {
         let (provider, _requests) = serve(|_path, _body| streamed("Hi."));
         let local = LocalAssistant::new(
             Some(&provider),
             Some("qwen".to_owned()),
-            ScriptedConversations::empty(),
+            ScriptedHistory::empty(),
         );
 
         let mut session = local.open(spec(None));
@@ -403,7 +400,7 @@ mod tests {
         let local = LocalAssistant::new(
             Some(&provider),
             Some("qwen".to_owned()),
-            ScriptedConversations::empty(),
+            ScriptedHistory::empty(),
         );
         let run = PromptRun {
             model_id: None,
@@ -429,12 +426,8 @@ mod tests {
             listing(&["qwen:latest"])
         });
         let status = |provider: Option<&LocalProvider>, model: Option<&str>| {
-            LocalAssistant::new(
-                provider,
-                model.map(str::to_owned),
-                ScriptedConversations::empty(),
-            )
-            .check_ready(&CancelToken::never())
+            LocalAssistant::new(provider, model.map(str::to_owned), ScriptedHistory::empty())
+                .check_ready(&CancelToken::never())
         };
 
         assert!(matches!(
@@ -472,7 +465,7 @@ mod tests {
         let (provider, _requests) = serve(|_path, _body| {
             "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
         });
-        let local = LocalAssistant::new(Some(&provider), None, ScriptedConversations::empty());
+        let local = LocalAssistant::new(Some(&provider), None, ScriptedHistory::empty());
 
         assert!(matches!(
             local.check_ready(&CancelToken::never()),
@@ -489,7 +482,7 @@ mod tests {
         let local = LocalAssistant::new(
             Some(&dead),
             Some("qwen".to_owned()),
-            ScriptedConversations::empty(),
+            ScriptedHistory::empty(),
         );
 
         let error = ask(&mut local.open(spec(None)), "Hello").unwrap_err();

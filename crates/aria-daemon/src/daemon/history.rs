@@ -6,13 +6,14 @@ use aria_kit::audio::RecordingReader;
 use aria_platform::delivery::Caret;
 use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::{ChatKey, ChatName};
 use aria_voice::dictation::{
     DictationError, DictationSettings, ExecutionControl, TranscriptSink, Utterance,
 };
 use aria_voice::history::{
-    AudioAvailability, ClearHistoryResult, DictationContent, HistoryContent, HistoryEntry,
-    HistoryError, HistoryPage, HistoryQuery, HistorySection, HistoryStatus, MAX_ENTRY_BYTES,
-    NewChat, PromptResult, Store, Title,
+    AudioAvailability, ChatPage, ChatQuery, ClearHistoryResult, DictationContent, HistoryContent,
+    HistoryEntry, HistoryError, HistoryPage, HistoryQuery, HistorySection, HistoryStatus,
+    MAX_ENTRY_BYTES, NewAsk, PromptResult, Store, Title,
 };
 
 pub(super) struct HistoryStore {
@@ -57,12 +58,12 @@ impl HistoryStore {
         self.storage.clone().ok_or(HistoryError::Unavailable)
     }
 
-    pub(super) fn conversation(
+    pub(super) fn recall(
         &self,
-        conversation: &str,
+        resume: &str,
         max_bytes: usize,
     ) -> Result<Vec<HistoryEntry>, HistoryError> {
-        self.storage()?.conversation(conversation, max_bytes)
+        self.storage()?.recall(resume, max_bytes)
     }
 
     pub(super) fn list(&self, query: HistoryQuery) -> Result<HistoryPage, HistoryError> {
@@ -107,6 +108,18 @@ impl HistoryStore {
         section: Option<HistorySection>,
     ) -> Result<ClearHistoryResult, HistoryError> {
         self.storage()?.clear(section)
+    }
+
+    pub(super) fn chat(&self, query: &ChatQuery) -> Result<ChatPage, HistoryError> {
+        self.storage()?.chat(query)
+    }
+
+    pub(super) fn rename_chat(&self, chat: &ChatKey, name: &ChatName) -> Result<(), HistoryError> {
+        self.storage()?.rename_chat(chat, name)
+    }
+
+    pub(super) fn delete_chat(&self, chat: &ChatKey) -> Result<bool, HistoryError> {
+        self.storage()?.delete_chat(chat)
     }
 
     pub(super) fn results(&self, entry: u64) -> Result<Vec<PromptResult>, HistoryError> {
@@ -155,17 +168,23 @@ impl HistoryStore {
         }
     }
 
-    pub(super) fn save_chat(&self, chat: NewChat<'_>) {
-        let saved = self.storage().and_then(|store| store.save_chat(chat));
-        let warning = match saved {
-            Ok(entry) => entry.warning,
-            Err(error) => {
-                tracing::warn!(error = %error_chain(&error), "chat history could not be saved");
-                Some(format!("A chat could not be saved to history: {error}"))
+    /// Saves an ask that replied and returns its entry's ID. Like `save`, a
+    /// failed save is logged and kept as a warning, never returned to the
+    /// ask, which replies without an ID.
+    pub(super) fn save_ask(&self, ask: NewAsk<'_>) -> Option<u64> {
+        let saved = self.storage().and_then(|store| store.save_ask(ask));
+        match saved {
+            Ok(entry) => {
+                if let Some(message) = entry.warning {
+                    self.warn(message);
+                }
+                Some(entry.id)
             }
-        };
-        if let Some(message) = warning {
-            self.warn(message);
+            Err(error) => {
+                tracing::warn!(error = %error_chain(&error), "an ask could not be saved to history");
+                self.warn(format!("An ask could not be saved to history: {error}"));
+                None
+            }
         }
     }
 
@@ -382,6 +401,7 @@ mod tests {
                 query: String::new(),
                 before_id: None,
                 limit: 100,
+                collapse_chats: false,
             })
             .unwrap()
             .entries
@@ -616,7 +636,8 @@ mod tests {
                 section: None,
                 query: String::new(),
                 before_id: None,
-                limit: 100
+                limit: 100,
+                collapse_chats: false,
             }),
             Err(HistoryError::Unavailable)
         ));
@@ -638,6 +659,7 @@ mod tests {
                 query: String::new(),
                 before_id: None,
                 limit: 100,
+                collapse_chats: false,
             })
             .unwrap();
         assert!(page.entries.is_empty());
