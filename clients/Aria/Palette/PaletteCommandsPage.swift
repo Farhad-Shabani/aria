@@ -4,6 +4,7 @@ struct PaletteCommandsPage: View {
     @ObservedObject var controller: PaletteController
     @ObservedObject var systemTranscription: SystemTranscriptionStatus
     @ObservedObject var history: HistoryState
+    @ObservedObject var chats: Chats
 
     var body: some View {
         PaletteBars {
@@ -55,6 +56,9 @@ struct PaletteCommandsPage: View {
         .announcingNotes(of: history)
         .onChange(of: controller.model.promptFailure) { _, failure in
             if let failure { NSAccessibility.announce(failure.message) }
+        }
+        .onChange(of: chats.lastOutcome) { _, outcome in
+            if let outcome { NSAccessibility.announce(outcome.announcement) }
         }
         .onChange(of: systemTranscription.didFailToStart) { _, didFail in
             guard didFail else { return }
@@ -153,9 +157,12 @@ struct PaletteCommandsPage: View {
                 titleField: PaletteTitleField(controller: controller, placeholder: entry.preview)
             ) {}
         case .entry(let entry):
-            PaletteEntryRow(entry: entry, symbol: entry.kind.symbol, isSelected: isSelected, badge: badge(for: entry)) {
-                controller.choose(item)
-            }
+            PaletteEntryRow(
+                entry: entry, symbol: entry.kind.symbol, isSelected: isSelected,
+                replying: chats.isReplying(quoting: entry.id)
+                    ? PaletteReplyingBadge { controller.openReplying(quoting: entry.id) } : nil,
+                thread: thread(for: entry)
+            ) { controller.choose(item) }
         case .chat(let chat):
             // No results badge: a chat's prompt results show with each ask on the chat page.
             // The row names the assistant, since the chat page shows the folder.
@@ -164,14 +171,15 @@ struct PaletteCommandsPage: View {
                 entry: chat.newest, symbol: "bubble.left.and.bubble.right", isSelected: isSelected,
                 origin: controller.assistantName(of: chat.key), name: chat.name,
                 titleField: isRenaming
-                    ? PaletteTitleField(controller: controller, placeholder: chat.newest.name) : nil
+                    ? PaletteTitleField(controller: controller, placeholder: chat.newest.name) : nil,
+                replying: chats.isReplying(chat.key) ? PaletteReplyingBadge { controller.choose(item) } : nil
             ) { controller.choose(item) }
         case .result(let result):
             PaletteResultRow(result: result, isSelected: isSelected) { controller.choose(item) }
         }
     }
 
-    private func badge(for entry: HistoryItem) -> PaletteThreadBadge? {
+    private func thread(for entry: HistoryItem) -> PaletteThreadBadge? {
         guard entry.resultCount > 0 else { return nil }
         return PaletteThreadBadge(
             count: entry.resultCount, isOpen: controller.model.isThreadOpen(of: entry.id)
@@ -188,6 +196,8 @@ struct PaletteCommandsPage: View {
             NoticeText(notice: SystemTranscriptionStatus.stopFailure)
         } else if let failure = controller.model.promptFailure {
             NoticeText(notice: failure.message)
+        } else if let failure = chats.lastStop?.failure {
+            NoticeText(notice: failure)
         } else if !controller.model.keepsHistory {
             Text("Nothing is saved.")
         } else if let error = history.error {

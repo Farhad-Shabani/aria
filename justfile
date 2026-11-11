@@ -185,10 +185,12 @@ swift-project:
     test -f clients/project.local.yml || printf '{}\n' > clients/project.local.yml
     cd clients && xcodegen generate
 
-# Run the macOS app tests
+# Run the macOS app tests. Packages go to clients/build/SourcePackages, which
+# CI caches.
 swift-test: swift-project
     cd clients && xcodebuild test -project Aria.xcodeproj -scheme Aria \
         -destination "platform=macOS,arch=$(uname -m)" -onlyUsePackageVersionsFromResolvedFile \
+        -clonedSourcePackagesDirPath build/SourcePackages \
         CODE_SIGNING_ALLOWED=NO {{ swift_settings }} -quiet
 
 version := `sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1`

@@ -229,6 +229,11 @@ final class PaletteController: ObservableObject {
         model.askTarget(shown: chats.shown)
     }
 
+    func openReplying(quoting entry: UInt64) {
+        guard chats.open(quoting: entry) else { return }
+        showChat()
+    }
+
     /// Shows the chat `Chats.shown` holds.
     func showChat() {
         if !panel.isVisible { open() }
@@ -245,12 +250,12 @@ final class PaletteController: ObservableObject {
             model.followUp = ""
             // Back to resting, so the selection follows the reply to this follow-up.
             model.messageSelection = MessageSelection()
-        case .start(let quote)?:
+        case .start(let quote, let entry)?:
             guard starting == nil else { return }
             let question = model.followUp
             starting = Task {
                 defer { starting = nil }
-                await chats.startNew(question, quoting: quote)
+                await chats.startNew(question, quoting: quote, from: entry)
                 // The palette closed while the folder resolved, so nothing was asked.
                 guard !Task.isCancelled else { return }
                 showChat()
@@ -272,7 +277,7 @@ final class PaletteController: ObservableObject {
     }
 
     func deleteChat(_ chat: ChatKey) {
-        history.deleteChat(chat)
+        history.deleteChat(chat) { [weak self] in self?.chats.deleted(chat) }
         guard chats.shown?.key == chat else { return }
         chats.close()
         model.leaveChat()
@@ -365,7 +370,7 @@ final class PaletteController: ObservableObject {
             model: model, result: promptRun.result, isSystemTranscriptionRunning: systemTranscription.isRunning,
             isStopping: systemTranscription.isStopping,
             hasTranscript: !systemTranscription.transcript.lines.isEmpty, detail: history.detail,
-            chat: chats.shown, history: history.work, hasFrontApp: frontApp != nil)
+            chat: chats.shown, offPage: chats.offPage, history: history.work, hasFrontApp: frontApp != nil)
     }
 
     func perform(_ action: PaletteAction) {
@@ -387,7 +392,7 @@ final class PaletteController: ObservableObject {
         case .retry: promptRun.retry()
         case .stop: stopTranscription()
         case .typeText(let text): deliver(text)
-        case .stopAsk: chats.stop()
+        case .stopAsk(let key): chats.stop(key)
         case .deleteChat(let chat): chatDeletion = chat
         }
     }

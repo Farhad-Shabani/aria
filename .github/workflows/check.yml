@@ -126,5 +126,11 @@ jobs:
       - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         with:
           tool: just@1.58.0
+      # Sparkle's binary comes from a GitHub release download, which times out
+      # now and then.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: clients/build/SourcePackages
+          key: swift-packages-${{ hashFiles('clients/Aria.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
       - name: just swift-check
         run: just swift_settings=ARIA_WARNINGS_AS_ERRORS=YES swift-check

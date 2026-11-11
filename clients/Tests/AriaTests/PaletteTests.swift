@@ -261,10 +261,11 @@ final class PaletteTests: XCTestCase {
         model.followUp = "Make it shorter"
         XCTAssertEqual(
             PaletteActions(model: model, detail: detail, hasFrontApp: true).followUpReturn,
-            .start(quote: "Text 2"))
+            .start(quote: "Text 2", entry: 2))
         model.moveDetailFocus(by: 1, on: 2)
         let onResult = PaletteActions(model: model, detail: detail, hasFrontApp: false)
-        XCTAssertEqual(onResult.followUpReturn, .start(quote: "Short."), "the focused result, with no app in front")
+        XCTAssertEqual(
+            onResult.followUpReturn, .start(quote: "Short.", entry: 2), "the focused result, with no app in front")
         XCTAssertEqual(onResult.returnTitle(typingInto: nil), "Ask")
     }
 
@@ -292,7 +293,8 @@ final class PaletteTests: XCTestCase {
         XCTAssertNil(PaletteActions(model: model, detail: ask, hasFrontApp: true).followUpQuote)
         model.moveDetailFocus(by: 1, on: 2)
         XCTAssertEqual(
-            PaletteActions(model: model, detail: ask, hasFrontApp: true).followUpReturn, .start(quote: "Short."))
+            PaletteActions(model: model, detail: ask, hasFrontApp: true).followUpReturn,
+            .start(quote: "Short.", entry: 2))
     }
 
     func testATooLongOrPartlyReadTextTakesNoFollowUp() {
@@ -788,6 +790,16 @@ final class PaletteTests: XCTestCase {
         return PaletteActions(model: model, result: result).all.map(\.kind)
     }
 
+    func testAFollowUpOnAResultQuotesItsReplyFromTheEntryItRanOn() {
+        var model = openModel()
+        model.show(.result)
+        model.followUp = "Shorter?"
+
+        XCTAssertEqual(
+            PaletteActions(model: model, result: Self.replied(.stored(id: "p"))).followUpReturn,
+            .start(quote: "Done.", entry: 1))
+    }
+
     func testOnlyAOneOffThatRepliedCanBeSavedAsAPrompt() {
         XCTAssertEqual(
             resultActions(Self.replied(.oneOff(instructions: "Shorter."))),
@@ -999,6 +1011,22 @@ final class PaletteTests: XCTestCase {
         XCTAssertEqual(actions.followUpReturn, .type("Text 2"))
     }
 
+    func testARowWhoseChatRepliesOffItsPageCanStopIt() throws {
+        var model = openModel(history: [Self.entry(1, at: 100), Self.chatRow(2, at: 200)])
+        var quoting = Chat(key: Self.chatKey, folder: "/code/aria", quote: "Text 1")
+        quoting.append(ChatAsk(live: 1, question: "Shorter?", from: 1))
+        let stop = PaletteAction(kind: .stopAsk(Self.chatKey), isInFooter: true)
+
+        model.select("entry-1")
+        XCTAssertTrue(PaletteActions(model: model, offPage: [quoting]).all.contains(stop), "the entry it quotes")
+        XCTAssertFalse(PaletteActions(model: model).all.contains(stop), "nothing replying")
+        let chatRow = try XCTUnwrap(model.items.first { if case .chat = $0 { true } else { false } })
+        model.select(chatRow.id)
+        let onChatRow = PaletteActions(model: model, offPage: [quoting]).all
+        XCTAssertTrue(onChatRow.contains(stop), "its own row")
+        XCTAssertEqual(onChatRow.first { $0.id == "delete-chat" }?.isEnabled, false, "it refuses a delete")
+    }
+
     func testStopShowsOnlyWhileAChatTheDaemonNamedReplies() {
         let model = modelOnChatPage()
         var unnamed = Chat(key: nil, folder: "/code/aria")
@@ -1007,7 +1035,7 @@ final class PaletteTests: XCTestCase {
         named.append(ChatAsk(live: 2, question: "And dinner?"))
 
         let stops = { (chat: Chat) in
-            PaletteActions(model: model, chat: chat).all.contains { $0.kind == .stopAsk }
+            PaletteActions(model: model, chat: chat).all.contains { $0.kind == .stopAsk(Self.chatKey) }
         }
 
         XCTAssertFalse(stops(unnamed), "nothing to stop it by yet")

@@ -112,6 +112,14 @@ final class ChatsTests: XCTestCase {
         return chats
     }
 
+    /// A chat started on “Launch notes” from history entry `entry`, its start still out.
+    private func startingQuote(_ harness: Harness, from entry: UInt64) async -> Chats {
+        let chats = Chats(effects: harness.effects)
+        await chats.startNew("Make it shorter", quoting: "Launch notes", from: entry)
+        await waitUntil { harness.starts.count == 1 }
+        return chats
+    }
+
     private func opened(_ harness: Harness, keepsHistory: Bool) -> Chats {
         let chats = Chats(effects: harness.effects)
         chats.keepsHistory = keepsHistory
@@ -355,13 +363,13 @@ final class ChatsTests: XCTestCase {
         let harness = Harness()
         let chats = await starting(harness)
 
-        chats.stop()
+        chats.stop(Self.key)
         XCTAssertEqual(chats.shown?.canStop, false)
         harness.starts[0].resume(returning: Self.named(7))
         await waitUntil { chats.shown?.canStop == true }
         XCTAssertEqual(harness.cancelled, [], "a stop before the key stops nothing")
 
-        chats.stop()
+        chats.stop(Self.key)
 
         await waitUntil { harness.cancelled == [Self.key] }
     }
@@ -371,12 +379,27 @@ final class ChatsTests: XCTestCase {
         harness.cancelFailure = .invalidResponse
         let chats = await started(harness)
 
-        chats.stop()
+        chats.stop(Self.key)
 
-        await waitUntil { chats.stopFailure != nil }
-        XCTAssertEqual(chats.stopFailure, Chats.stopFailed)
+        await waitUntil { chats.lastStop?.failure != nil }
+        XCTAssertEqual(chats.lastStop?.failure, Chats.stopFailed)
         chats.apply(Self.event(7, .replied, text: "Noon."))
-        XCTAssertNil(chats.stopFailure, "the ask it meant to stop ended")
+        XCTAssertNil(chats.lastStop?.failure, "the ask it meant to stop ended")
+    }
+
+    func testStopReachesAChatClosedWhileItRepliesAndSaysWhenItFails() async {
+        let harness = Harness()
+        harness.cancelFailure = .invalidResponse
+        let chats = await started(harness)
+        chats.close()
+
+        chats.stop(Self.key)
+
+        await waitUntil { chats.lastStop?.failure != nil }
+        XCTAssertEqual(harness.cancelled, [Self.key])
+        XCTAssertEqual(chats.lastStop?.failure, Chats.stopFailed)
+        chats.apply(Self.event(7, .failed))
+        XCTAssertNil(chats.lastStop?.failure, "the ask it meant to stop ended")
     }
 
     func testAnEarlierReadThatFailedReadsTheSamePageAgain() async {
@@ -425,7 +448,7 @@ final class ChatsTests: XCTestCase {
         let harness = Harness()
         let chats = Chats(effects: harness.effects)
 
-        await chats.startNew(" Make it shorter \n", quoting: "Launch notes")
+        await chats.startNew(" Make it shorter \n", quoting: "Launch notes", from: 2)
 
         XCTAssertEqual(chats.shown?.folder, "/code/aria", "the folder Resolve gave")
         XCTAssertEqual(chats.shown?.asks.map(\.question), ["Make it shorter"])
@@ -445,7 +468,7 @@ final class ChatsTests: XCTestCase {
         let harness = Harness()
         harness.holdsResolve = true
         let chats = Chats(effects: harness.effects)
-        let start = Task { await chats.startNew("Make it shorter", quoting: "Launch notes") }
+        let start = Task { await chats.startNew("Make it shorter", quoting: "Launch notes", from: 2) }
         await waitUntil { harness.resolves.count == 1 }
 
         start.cancel()
@@ -454,6 +477,156 @@ final class ChatsTests: XCTestCase {
 
         XCTAssertNil(chats.shown)
         XCTAssertTrue(harness.started.isEmpty)
+    }
+
+    func testAChatClosedWhileItRepliesFollowsItsAskUntilTheReply() async {
+        let harness = Harness()
+        let chats = await started(harness)
+
+        chats.close()
+        chats.apply(Self.event(7, .working))
+
+        XCTAssertNil(chats.shown)
+        XCTAssertEqual(chats.offPage.map(\.key), [Self.key])
+        chats.apply(Self.event(7, .replied, text: "Noon.", entry: 4))
+        XCTAssertTrue(chats.offPage.isEmpty, "it goes once nothing in it runs")
+        XCTAssertEqual(chats.lastOutcome?.announcement, "Reply ready", "VoiceOver hears it on the list")
+    }
+
+    func testAStartThatAnswersAfterItsChatClosedStillNamesItAndTakesItsTicket() async {
+        let harness = Harness()
+        let chats = await starting(harness)
+
+        chats.close()
+        harness.starts[0].resume(returning: Self.named(7))
+
+        await waitUntil { chats.offPage.first?.asks.first?.ticket == 7 }
+        XCTAssertEqual(chats.offPage.first?.key, Self.key)
+        chats.apply(Self.event(7, .failed))
+        XCTAssertTrue(chats.offPage.isEmpty, "its ticket's events reach it")
+    }
+
+    func testAQuotedChatClosedWhileItRepliesShowsOnTheEntryItQuotes() async {
+        let harness = Harness()
+        let chats = await startingQuote(harness, from: 2)
+        harness.starts[0].resume(returning: Self.named(7))
+        await waitUntil { chats.shown?.asks.first?.ticket == 7 }
+
+        chats.close()
+
+        XCTAssertTrue(chats.isReplying(quoting: 2))
+        XCTAssertFalse(chats.isReplying(quoting: 3))
+        XCTAssertTrue(chats.isReplying(Self.key))
+        chats.apply(Self.event(7, .failed))
+        XCTAssertFalse(chats.isReplying(quoting: 2), "a failed ask no longer replies")
+    }
+
+    func testReopeningAQuotedChatBeforeItsNameComesShowsItsQuestion() async {
+        let harness = Harness()
+        let chats = await startingQuote(harness, from: 2)
+        chats.close()
+
+        XCTAssertTrue(chats.open(quoting: 2))
+
+        XCTAssertNil(chats.shown?.key)
+        XCTAssertEqual(chats.shown?.asks.map(\.question), ["Make it shorter"])
+        XCTAssertEqual(chats.shown?.quote, "Launch notes")
+        harness.starts[0].resume(returning: Self.named(7))
+        await waitUntil { chats.shown?.key == Self.key }
+    }
+
+    func testAClosedChatWhoseStreamDroppedStaysUntilTheDaemonListsItsAskAgain() async {
+        let harness = Harness()
+        let chats = await started(harness)
+        chats.close()
+        harness.holdsLists = true
+
+        chats.apply(nil)
+        XCTAssertEqual(chats.offPage.map(\.key), [Self.key], "lost, not ended")
+        chats.reconnected()
+        await waitUntil { harness.lists.count == 1 }
+        harness.lists[0].resume(returning: [Self.pending(7, "When is lunch?", running: true)])
+
+        await waitUntil { chats.isReplying(Self.key) }
+    }
+
+    func testAClosedChatWhoseLostAskEndedGoesOnceTheDaemonListsNothing() async {
+        let harness = Harness()
+        let chats = await started(harness)
+        chats.close()
+        harness.holdsLists = true
+        chats.apply(nil)
+
+        chats.reconnected()
+        await waitUntil { harness.lists.count == 1 }
+        harness.lists[0].resume(returning: [])
+
+        await waitUntil { chats.offPage.isEmpty }
+    }
+
+    func testAStopThatFailsAfterItsPageClosedStillSaysSo() async {
+        let harness = Harness()
+        harness.cancelFailure = .invalidResponse
+        let chats = await started(harness)
+
+        chats.stop(Self.key)
+        chats.close()
+
+        await waitUntil { chats.lastStop?.failure != nil }
+        XCTAssertEqual(chats.lastStop?.failure, Chats.stopFailed)
+    }
+
+    func testAStopFailureShowsOnlyWhereItsChatDoes() async {
+        let harness = Harness()
+        harness.cancelFailure = .invalidResponse
+        let chats = await started(harness)
+        chats.close()
+
+        chats.stop(Self.key)
+        await waitUntil { chats.lastStop?.failure != nil }
+        chats.open(ChatKey(assistantID: .claudeCode, name: "other"), folder: "/code/aria")
+
+        XCTAssertNil(chats.lastStop, "another chat's page")
+    }
+
+    func testADeletedChatLeavesNothingBehind() async {
+        let harness = Harness()
+        let chats = await started(harness)
+        chats.close()
+        chats.apply(nil)
+        XCTAssertEqual(chats.offPage.map(\.key), [Self.key], "lost, waiting to be listed")
+
+        chats.deleted(Self.key)
+
+        XCTAssertTrue(chats.offPage.isEmpty)
+    }
+
+    func testOnlyTheAskThatQuotedAnEntryShowsOnThatEntry() async {
+        let harness = Harness()
+        let chats = await startingQuote(harness, from: 2)
+        harness.starts[0].resume(returning: Self.named(7))
+        await waitUntil { chats.shown?.asks.first?.ticket == 7 }
+        chats.apply(Self.event(7, .replied, text: "Shorter.", entry: 4))
+
+        XCTAssertTrue(chats.send("And the title?"))
+        chats.close()
+
+        XCTAssertTrue(chats.isReplying(Self.key))
+        XCTAssertFalse(chats.isReplying(quoting: 2), "the follow-up quoted nothing")
+        harness.tickets.first?.resume(returning: 8)
+    }
+
+    func testOpeningAChatClosedWhileItRepliesShowsItsRunningAsk() async {
+        let harness = Harness()
+        let chats = await started(harness)
+        chats.close()
+
+        chats.open(Self.key, folder: "/code/aria")
+
+        XCTAssertTrue(chats.offPage.isEmpty)
+        XCTAssertEqual(chats.shown?.asks.map(\.question), ["When is lunch?"])
+        XCTAssertEqual(chats.shown?.asks.first?.ticket, 7)
+        XCTAssertEqual(chats.shown?.isReplying, true)
     }
 
     func testAPromptResultSavedOnAnAskCountsOnIt() {
