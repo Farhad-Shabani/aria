@@ -9,7 +9,10 @@ struct ChatKey: Hashable, Sendable {
 }
 
 /// The asks sent under one name, oldest first.
-struct Chat: Equatable {
+struct Chat: Identifiable, Equatable {
+    /// Tells chats apart in this app run. The key can't: it's `nil` until the daemon names the
+    /// chat, and a rename changes it.
+    let id: Int
     /// `nil` for a new chat until the daemon names it in the reply to its first ask.
     private(set) var key: ChatKey?
     /// The folder its asks run in, as far as the app knows. The daemon records the folder each
@@ -21,7 +24,8 @@ struct Chat: Equatable {
     /// The text the chat is about, which the assistant reads ahead of a new session's question.
     private(set) var quote: String?
 
-    init(key: ChatKey?, folder: String?, quote: String? = nil) {
+    init(id: Int, key: ChatKey?, folder: String?, quote: String? = nil) {
+        self.id = id
         self.key = key
         self.folder = folder
         self.quote = quote

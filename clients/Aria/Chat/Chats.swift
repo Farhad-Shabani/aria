@@ -28,10 +28,10 @@ final class Chats: ObservableObject {
         var pending: (ChatKey) async throws -> [Aria_Daemon_V1_PendingAsk]
     }
 
-    /// The shown chat, last, after the chats closed while an ask in them runs. A closed one whose
-    /// ask the stream lost stays until the daemon lists its asks again. Each goes once none runs.
+    /// The shown chat and the chats closed while an ask in them runs. A closed one whose ask the
+    /// stream lost stays until the daemon lists its asks again. Each goes once none runs.
     @Published private(set) var followed: [Chat] = []
-    @Published private var isShowing = false
+    @Published private var shownID: Chat.ID?
     /// The chat a spoken follow-up is being recorded for.
     @Published var recording: ChatKey?
     /// Why the shown chat's saved asks couldn't be read.
@@ -48,6 +48,7 @@ final class Chats: ObservableObject {
     private var lastRead: UInt64?
     /// Numbers the asks asked here, across chats, so a late ticket finds only its own.
     private var asked = 0
+    private var made = 0
     private var reading: Task<Void, Never>?
     private var rereading: Task<Void, Never>?
     private var listings: [ChatKey: Task<Void, Never>] = [:]
@@ -59,16 +60,14 @@ final class Chats: ObservableObject {
 
     init(effects: Effects) { self.effects = effects }
 
-    var shown: Chat? { shownIndex.map { followed[$0] } }
-
-    private var shownIndex: Int? { isShowing ? followed.indices.last : nil }
+    var shown: Chat? { followed.first { $0.id == shownID } }
 
     /// Shows the new chat at once. The chat takes its key from the daemon's reply.
     func startNew(
         _ question: String, quoting quote: String? = nil, from entry: UInt64? = nil, at target: ChatTarget,
         ownVoice: Bool
     ) {
-        show(Chat(key: nil, folder: target.workdir, quote: quote))
+        show(makeChat(key: nil, folder: target.workdir, quote: quote))
         let id = append(question, from: entry)
         Task {
             do {
@@ -92,7 +91,7 @@ final class Chats: ObservableObject {
             target = try await effects.resolve()
         } catch {
             guard !Task.isCancelled else { return }
-            show(Chat(key: nil, folder: nil, quote: quote))
+            show(makeChat(key: nil, folder: nil, quote: quote))
             fail(append(question, from: entry), error)
             return
         }
@@ -127,16 +126,14 @@ final class Chats: ObservableObject {
 
     func open(_ chat: ChatKey, folder: String?) {
         guard shown?.key != chat else { return }
-        let index = followed.firstIndex { $0.key == chat }
-        load(index.map { followed.remove(at: $0) } ?? Chat(key: chat, folder: folder))
+        load(find(chat) ?? makeChat(key: chat, folder: folder))
     }
 
     /// Shows the chat replying to a quote of `entry`, which may have no name yet. False when none
     /// does, such as once the reply came.
     func open(quoting entry: UInt64) -> Bool {
-        if shown?.isReplying(quoting: entry) == true { return true }
-        guard let index = followed.firstIndex(where: { $0.isReplying(quoting: entry) }) else { return false }
-        load(followed.remove(at: index))
+        guard let chat = replying(quoting: entry) else { return false }
+        if chat.id != shownID { load(chat) }
         return true
     }
 
@@ -199,7 +196,7 @@ final class Chats: ObservableObject {
 
     /// History deleted `chat`, so nothing of it stays here.
     func deleted(_ chat: ChatKey) {
-        if shown?.key != chat { followed.removeAll { $0.key == chat } }
+        followed.removeAll { $0.key == chat && $0.id != shownID }
         if lastStop?.chat == chat { lastStop = nil }
     }
 
@@ -221,19 +218,24 @@ final class Chats: ObservableObject {
         reading = nil
         rereading = nil
         let leaving = shown
-        isShowing = false
+        shownID = nil
         if let leaving, !staysOffPage(leaving) {
-            followed.removeLast()
+            followed.removeAll { $0.id == leaving.id }
             if let key = leaving.key { stopListing(key) }
         }
         error = nil
         settle()
     }
 
+    private func makeChat(key: ChatKey?, folder: String?, quote: String? = nil) -> Chat {
+        made += 1
+        return Chat(id: made, key: key, folder: folder, quote: quote)
+    }
+
     private func show(_ chat: Chat) {
         close()
-        followed.append(chat)
-        isShowing = true
+        if !followed.contains(where: { $0.id == chat.id }) { followed.append(chat) }
+        shownID = chat.id
         // A failure shows only where its chat does: on that chat's page, or on the list.
         if let stop = lastStop, stop.chat != chat.key { lastStop = nil }
     }
@@ -255,11 +257,10 @@ final class Chats: ObservableObject {
 
     /// Drops the closed chats nothing runs in, and a Stop failure once its chat stops replying.
     private func settle() {
-        let closed = followed.indices.filter { $0 != shownIndex }
-        let ended = closed.filter { !staysOffPage(followed[$0]) }
-        let announcement = ended.last.flatMap { followed[$0].asks.last?.state.announcement }
-        for index in ended.reversed() { followed.remove(at: index) }
-        if let announcement {
+        let ended = followed.filter { $0.id != shownID && !staysOffPage($0) }
+        let endedIDs = Set(ended.map(\.id))
+        followed.removeAll { endedIDs.contains($0.id) }
+        if let announcement = ended.last?.asks.last?.state.announcement {
             outcomes += 1
             lastOutcome = Outcome(number: outcomes, announcement: announcement)
         }
@@ -291,7 +292,7 @@ final class Chats: ObservableObject {
     }
 
     private func changeShown(_ change: (inout Chat) -> Void) {
-        guard let index = shownIndex else { return }
+        guard let index = followed.firstIndex(where: { $0.id == shownID }) else { return }
         change(&followed[index])
     }
 
@@ -329,7 +330,7 @@ final class Chats: ObservableObject {
         guard let pending, let index = followed.firstIndex(where: { $0.key == key }) else { return settle() }
         let ended = followed[index].lost(notIn: pending)
         followed[index].merge(pending, heard: heard)
-        if index == shownIndex, keepsHistory, !ended.isEmpty { reread(replacing: ended) }
+        if followed[index].id == shownID, keepsHistory, !ended.isEmpty { reread(replacing: ended) }
         settle()
     }
 

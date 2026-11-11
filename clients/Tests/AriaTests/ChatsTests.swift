@@ -630,7 +630,7 @@ final class ChatsTests: XCTestCase {
     }
 
     func testAPromptResultSavedOnAnAskCountsOnIt() {
-        var chat = Chat(key: Self.key, folder: "/code/aria")
+        var chat = Chat(id: 1, key: Self.key, folder: "/code/aria")
         chat.merge(ChatPage(asks: [Self.saved(4, at: 0), Self.saved(5, at: 1)], older: nil))
 
         chat.countResult(on: 5)
@@ -640,7 +640,7 @@ final class ChatsTests: XCTestCase {
     }
 
     func testAShownChatTakesTheNextQuestionUnlessItIsReplying() {
-        var chat = Chat(key: Self.key, folder: "/code/aria")
+        var chat = Chat(id: 1, key: Self.key, folder: "/code/aria")
         XCTAssertEqual(AskTarget(shown: chat), .followUp(Self.key))
 
         chat.append(ChatAsk(live: 1, question: "When is lunch?"))

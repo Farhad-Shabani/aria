@@ -903,7 +903,7 @@ final class PaletteTests: XCTestCase {
         var ask = entry(2, at: 200)
         ask.kind = .ask(reply: reply)
         ask.text = question
-        var chat = Chat(key: chatKey, folder: "/code/aria")
+        var chat = Chat(id: 1, key: chatKey, folder: "/code/aria")
         chat.merge(ChatPage(asks: [ask], older: nil))
         return chat
     }
@@ -1013,7 +1013,7 @@ final class PaletteTests: XCTestCase {
 
     func testARowWhoseChatRepliesOffItsPageCanStopIt() throws {
         var model = openModel(history: [Self.entry(1, at: 100), Self.chatRow(2, at: 200)])
-        var quoting = Chat(key: Self.chatKey, folder: "/code/aria", quote: "Text 1")
+        var quoting = Chat(id: 1, key: Self.chatKey, folder: "/code/aria", quote: "Text 1")
         quoting.append(ChatAsk(live: 1, question: "Shorter?", from: 1))
         let stop = PaletteAction(kind: .stopAsk(Self.chatKey), isInFooter: true)
 
@@ -1029,7 +1029,7 @@ final class PaletteTests: XCTestCase {
 
     func testStopShowsOnlyWhileAChatTheDaemonNamedReplies() {
         let model = modelOnChatPage()
-        var unnamed = Chat(key: nil, folder: "/code/aria")
+        var unnamed = Chat(id: 1, key: nil, folder: "/code/aria")
         unnamed.append(ChatAsk(live: 1, question: "When is lunch?"))
         var named = Self.repliedChat(question: "Text 2", reply: "Noon.")
         named.append(ChatAsk(live: 2, question: "And dinner?"))
