@@ -18,7 +18,8 @@ struct PaletteAction: Identifiable, Equatable {
         case retry
         case stop
         case typeText(String)
-        case stopAsk
+        /// Stops a chat's reply, on its page or from its row.
+        case stopAsk(ChatKey)
         case deleteChat(ChatKey)
         case renameChat(ChatKey)
     }

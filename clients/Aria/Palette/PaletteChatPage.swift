@@ -44,13 +44,8 @@ struct PaletteChatPage: View {
         .confirmingDeletion(of: $controller.chatDeletion, perform: controller.deleteChat)
         .announcingNotes(of: history)
         .onChange(of: chats.shown?.asks.last?.state) { old, state in
-            guard case .running? = old else { return }
-            switch state {
-            case .replied?: NSAccessibility.announce("Reply ready")
-            case .failed(let message)?: NSAccessibility.announce(message)
-            case .lost?: NSAccessibility.announce(ChatAsk.lost)
-            case .running?, nil: break
-            }
+            guard case .running? = old, let message = state?.announcement else { return }
+            NSAccessibility.announce(message)
         }
     }
 
@@ -83,7 +78,7 @@ struct PaletteChatPage: View {
 
     @ViewBuilder
     private var footerNote: some View {
-        if let failure = chats.stopFailure {
+        if let failure = chats.lastStop?.failure {
             NoticeText(notice: failure)
         } else if let error = chats.error {
             NoticeText(notice: error.message)

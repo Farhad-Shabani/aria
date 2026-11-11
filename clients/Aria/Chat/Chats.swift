@@ -3,8 +3,8 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "Chats")
 
-/// The chat the palette shows, one at a time. An ask goes on in the daemon while its chat is
-/// closed, and shows again when the chat reopens.
+/// The chat the palette shows, one at a time, and the chats closed while they reply. An ask goes
+/// on in the daemon while its chat is closed, and shows again when the chat reopens.
 @MainActor
 final class Chats: ObservableObject {
     struct Effects {
@@ -29,12 +29,18 @@ final class Chats: ObservableObject {
     }
 
     @Published private(set) var shown: Chat?
+    /// Chats closed while an ask in them runs. One whose ask the stream lost stays until the daemon
+    /// lists its asks again. Each goes once none runs.
+    @Published private(set) var offPage: [Chat] = []
     /// The chat a spoken follow-up is being recorded for.
     @Published var recording: ChatKey?
     /// Why the shown chat's saved asks couldn't be read.
     @Published private(set) var error: HistoryFailure?
-    /// Why the last Stop didn't reach the daemon, while the ask it meant to stop still runs.
-    @Published private(set) var stopFailure: String?
+    /// The last Stop, until the chat it was for stops replying or another chat shows.
+    @Published private(set) var lastStop: Stop?
+    /// How the last off-page chat's ask ended, for VoiceOver on the list.
+    @Published private(set) var lastOutcome: Outcome?
+    private var outcomes = 0
     /// While off, nothing is read from history: a chat holds what was asked here and the
     /// asks the daemon still runs.
     var keepsHistory = false
@@ -44,30 +50,38 @@ final class Chats: ObservableObject {
     private var asked = 0
     private var reading: Task<Void, Never>?
     private var rereading: Task<Void, Never>?
-    private var listing: Task<Void, Never>?
-    /// Events the stream brought during a pending listing, which the listed asks missed.
-    private var heard: [Aria_Daemon_V1_ChatEvent?] = []
+    private var listings: [ChatKey: Task<Void, Never>] = [:]
+    /// Events the stream brought during each chat's pending listing, which the listed asks missed.
+    private var heard: [ChatKey: [Aria_Daemon_V1_ChatEvent?]] = [:]
+    /// Whether the event stream is up. While it's down, a lost ask can't be listed yet.
+    private var isConnected = true
     private let effects: Effects
 
     init(effects: Effects) { self.effects = effects }
 
     /// Shows the new chat at once. The chat takes its key from the daemon's reply.
-    func startNew(_ question: String, quoting quote: String? = nil, at target: ChatTarget, ownVoice: Bool) {
+    func startNew(
+        _ question: String, quoting quote: String? = nil, from entry: UInt64? = nil, at target: ChatTarget,
+        ownVoice: Bool
+    ) {
         show(Chat(key: nil, folder: target.workdir, quote: quote))
-        let id = append(question)
+        let id = append(question, from: entry)
         Task {
             do {
                 let started = try await effects.start(question, quote, target, ownVoice)
-                shown?.named(started.chat, by: id)
-                shown?.started(id, ticket: started.ticket)
+                update(id) { chat in
+                    chat.named(started.chat, by: id)
+                    chat.started(id, ticket: started.ticket)
+                }
             } catch {
                 fail(id, error)
             }
         }
     }
 
-    /// Starts a chat quoting `quote`. It shows once the daemon picks a folder, or fails to.
-    func startNew(_ text: String, quoting quote: String) async {
+    /// Starts a chat quoting `quote`, the text of history entry `entry`. It shows once the daemon
+    /// picks a folder, or fails to.
+    func startNew(_ text: String, quoting quote: String, from entry: UInt64) async {
         let question = Self.question(text)
         let target: ChatTarget
         do {
@@ -75,11 +89,11 @@ final class Chats: ObservableObject {
         } catch {
             guard !Task.isCancelled else { return }
             show(Chat(key: nil, folder: nil, quote: quote))
-            fail(append(question), error)
+            fail(append(question, from: entry), error)
             return
         }
         guard !Task.isCancelled else { return }
-        startNew(question, quoting: quote, at: target, ownVoice: false)
+        startNew(question, quoting: quote, from: entry, at: target, ownVoice: false)
     }
 
     /// A spoken follow-up. The chat may have closed during recording, so it opens again.
@@ -109,9 +123,25 @@ final class Chats: ObservableObject {
 
     func open(_ chat: ChatKey, folder: String?) {
         guard shown?.key != chat else { return }
-        show(Chat(key: chat, folder: folder))
-        if keepsHistory { read(before: nil) }
-        listPending()
+        let index = offPage.firstIndex { $0.key == chat }
+        load(index.map { offPage.remove(at: $0) } ?? Chat(key: chat, folder: folder))
+    }
+
+    /// Shows the chat replying to a quote of `entry`, which may have no name yet. False when none
+    /// does, such as once the reply came.
+    func open(quoting entry: UInt64) -> Bool {
+        if shown?.isReplying(quoting: entry) == true { return true }
+        guard let index = offPage.firstIndex(where: { $0.isReplying(quoting: entry) }) else { return false }
+        load(offPage.remove(at: index))
+        return true
+    }
+
+    func isReplying(_ chat: ChatKey) -> Bool {
+        find(chat)?.isReplying == true
+    }
+
+    func isReplying(quoting entry: UInt64) -> Bool {
+        shown?.isReplying(quoting: entry) == true || offPage.contains { $0.isReplying(quoting: entry) }
     }
 
     func readEarlier() {
@@ -125,18 +155,18 @@ final class Chats: ObservableObject {
         read(before: lastRead)
     }
 
-    /// Stops the shown chat's running ask and every ask waiting behind it. The daemon saves none
-    /// of their replies.
-    func stop() {
-        guard let shown, shown.canStop, let key = shown.key else { return }
-        stopFailure = nil
+    /// Stops a chat's running ask and every ask waiting behind it, whether its page shows or not.
+    /// The daemon saves none of their replies.
+    func stop(_ key: ChatKey) {
+        guard find(key)?.canStop == true else { return }
+        lastStop = Stop(chat: key)
         Task {
             do {
                 try await effects.cancel(key)
             } catch {
                 log.error("Stopping a chat failed: \(String(describing: error), privacy: .private)")
-                guard self.shown?.key == key, self.shown?.isReplying == true else { return }
-                stopFailure =
+                guard lastStop?.chat == key, find(key)?.isReplying == true else { return }
+                lastStop?.failure =
                     (error as? DaemonFailure)?.isOffline == true
                     ? DaemonFailure.offlineMessage : Self.stopFailed
             }
@@ -144,15 +174,29 @@ final class Chats: ObservableObject {
     }
 
     func apply(_ event: Aria_Daemon_V1_ChatEvent?) {
-        if listing != nil { heard.append(event) }
+        if event == nil { isConnected = false }
+        for key in heard.keys { heard[key]?.append(event) }
         shown?.apply(event)
-        if shown?.isReplying != true { stopFailure = nil }
+        for index in offPage.indices { offPage[index].apply(event) }
+        settle()
     }
 
-    /// The event stream replays nothing after it reconnects, so the lost asks get listed again.
-    /// One the daemon still runs goes on. One that ended meanwhile is read from history.
+    private func find(_ key: ChatKey) -> Chat? {
+        shown?.key == key ? shown : offPage.first { $0.key == key }
+    }
+
+    /// The event stream replays nothing after it reconnects, so each chat's lost asks get
+    /// listed again. One the daemon still runs goes on. One that ended meanwhile is read from
+    /// history.
     func reconnected() {
-        listPending()
+        isConnected = true
+        for key in ([shown?.key] + offPage.map(\.key)).compactMap({ $0 }) { listPending(key) }
+    }
+
+    /// History deleted `chat`, so nothing of it stays here.
+    func deleted(_ chat: ChatKey) {
+        offPage.removeAll { $0.key == chat }
+        if lastStop?.chat == chat { lastStop = nil }
     }
 
     func renamed(_ chat: ChatKey, to renamed: ChatKey) {
@@ -169,19 +213,50 @@ final class Chats: ObservableObject {
     }
 
     func close() {
-        for task in [reading, rereading, listing] { task?.cancel() }
+        for task in [reading, rereading] { task?.cancel() }
         reading = nil
         rereading = nil
-        listing = nil
-        heard = []
+        if let shown, staysOffPage(shown) {
+            offPage.append(shown)
+        } else if let key = shown?.key {
+            stopListing(key)
+        }
         shown = nil
         error = nil
-        stopFailure = nil
+        settle()
     }
 
     private func show(_ chat: Chat) {
         close()
         shown = chat
+        // A failure shows only where its chat does: on that chat's page, or on the list.
+        if let stop = lastStop, stop.chat != chat.key { lastStop = nil }
+    }
+
+    /// Shows `chat`, then reads its saved asks and lists those the daemon runs.
+    private func load(_ chat: Chat) {
+        show(chat)
+        if keepsHistory { read(before: nil) }
+        if let key = chat.key { listPending(key) }
+    }
+
+    /// A closed chat stays while an ask in it runs, or while its lost ask waits to be listed.
+    private func staysOffPage(_ chat: Chat) -> Bool {
+        if chat.isReplying { return true }
+        guard chat.hasLostAsk else { return false }
+        guard let key = chat.key else { return true }
+        return !isConnected || listings[key] != nil
+    }
+
+    /// Drops the closed chats nothing runs in, and a Stop failure once its chat stops replying.
+    private func settle() {
+        let ended = offPage.filter { !staysOffPage($0) }
+        offPage.removeAll { !staysOffPage($0) }
+        if let announcement = ended.last?.asks.last?.state.announcement {
+            outcomes += 1
+            lastOutcome = Outcome(number: outcomes, announcement: announcement)
+        }
+        if let stop = lastStop, find(stop.chat)?.isReplying != true { lastStop = nil }
     }
 
     private func ask(_ question: String, ownVoice: Bool, tapCancels: Bool) {
@@ -191,45 +266,72 @@ final class Chats: ObservableObject {
         Task {
             do {
                 let ticket = try await effects.ask(question, key, folder, ownVoice, tapCancels)
-                shown?.started(id, ticket: ticket)
+                update(id) { $0.started(id, ticket: ticket) }
             } catch {
                 fail(id, error)
             }
         }
     }
 
-    private func append(_ question: String) -> ChatAsk.ID {
+    private func append(_ question: String, from entry: UInt64? = nil) -> ChatAsk.ID {
         asked += 1
-        shown?.append(ChatAsk(live: asked, question: question))
+        shown?.append(ChatAsk(live: asked, question: question, from: entry))
         return .live(asked)
     }
 
     private func fail(_ id: ChatAsk.ID, _ error: Error) {
-        shown?.fail(id, Self.message(for: error))
+        update(id) { $0.fail(id, Self.message(for: error)) }
     }
 
-    private func listPending() {
-        guard let key = shown?.key else { return }
-        listing?.cancel()
-        heard = []
-        listing = Task {
-            defer {
-                if !Task.isCancelled {
-                    listing = nil
-                    heard = []
-                }
-            }
+    /// Changes the chat that holds the ask `id`, shown or closed while it replies.
+    private func update(_ id: ChatAsk.ID, _ change: (inout Chat) -> Void) {
+        let changed: Chat
+        if var chat = shown, chat.asks.contains(where: { $0.id == id }) {
+            change(&chat)
+            shown = chat
+            changed = chat
+        } else if let index = offPage.firstIndex(where: { $0.asks.contains { $0.id == id } }) {
+            change(&offPage[index])
+            changed = offPage[index]
+        } else {
+            return
+        }
+        // Named after the stream went away, so its events were missed.
+        if changed.hasLostAsk, isConnected, let key = changed.key, listings[key] == nil { listPending(key) }
+        settle()
+    }
+
+    private func listPending(_ key: ChatKey) {
+        listings[key]?.cancel()
+        heard[key] = []
+        listings[key] = Task {
             do {
                 let pending = try await effects.pending(key)
-                guard !Task.isCancelled, shown?.key == key else { return }
-                let ended = shown?.lost(notIn: pending) ?? []
-                shown?.merge(pending, heard: heard)
-                if keepsHistory, !ended.isEmpty { reread(replacing: ended) }
+                guard !Task.isCancelled else { return }
+                stopListing(key, listed: pending)
             } catch {
                 guard !Task.isCancelled else { return }
                 log.error("Listing a chat's asks failed: \(String(describing: error), privacy: .private)")
+                stopListing(key)
             }
         }
+    }
+
+    /// Ends `key`'s listing, merging the asks it listed into that chat.
+    private func stopListing(_ key: ChatKey, listed pending: [Aria_Daemon_V1_PendingAsk]? = nil) {
+        let heard = self.heard[key] ?? []
+        listings.removeValue(forKey: key)?.cancel()
+        self.heard[key] = nil
+        guard let pending else { return settle() }
+        if var chat = shown, chat.key == key {
+            let ended = chat.lost(notIn: pending)
+            chat.merge(pending, heard: heard)
+            shown = chat
+            if keepsHistory, !ended.isEmpty { reread(replacing: ended) }
+        } else if let index = offPage.firstIndex(where: { $0.key == key }) {
+            offPage[index].merge(pending, heard: heard)
+        }
+        settle()
     }
 
     private func reread(replacing ended: Set<ChatAsk.ID>) {
@@ -267,6 +369,18 @@ final class Chats: ObservableObject {
     }
 
     static let stopFailed = "Aria couldn’t stop this question. Try again."
+
+    /// An off-page chat's ask outcome, numbered so the same words announce again.
+    struct Outcome: Equatable {
+        let number: Int
+        let announcement: String
+    }
+
+    /// A Stop sent for `chat`, with why it didn't reach the daemon once it fails.
+    struct Stop: Equatable {
+        let chat: ChatKey
+        var failure: String?
+    }
 
     private static func message(for error: Error) -> String {
         let failure = error as? DaemonFailure

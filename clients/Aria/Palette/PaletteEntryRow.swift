@@ -9,7 +9,8 @@ struct PaletteEntryRow: View {
     var name: String?
     /// Set while the title is being edited in place.
     var titleField: PaletteTitleField?
-    var badge: PaletteThreadBadge?
+    var replying: PaletteReplyingBadge?
+    var thread: PaletteThreadBadge?
     let action: () -> Void
 
     var body: some View {
@@ -23,9 +24,10 @@ struct PaletteEntryRow: View {
             }
             .paletteRowText()
         } accessory: {
-            // The count comes before the place, so every row's time lines up on the right. The
+            // The badges come before the place, so every row's time lines up on the right. The
             // place sits outside the row's button, so its tap gesture opens the entry.
-            badge
+            replying
+            thread
             Text(place)
                 .paletteRowDetail()
                 .contentShape(Rectangle())

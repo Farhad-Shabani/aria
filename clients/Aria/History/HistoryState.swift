@@ -95,6 +95,10 @@ final class HistoryState: ObservableObject {
         if isOpen { refresh() }
     }
 
+    func askSaved() {
+        if isOpen { refresh() }
+    }
+
     /// A filter set during a clear waits for the refresh that ends it.
     func filter(query: String, section: HistorySection?) {
         guard query != self.query || section != self.section else { return }
@@ -370,7 +374,7 @@ final class HistoryState: ObservableObject {
         }
     }
 
-    func deleteChat(_ chat: ChatKey) {
+    func deleteChat(_ chat: ChatKey, deleted: @escaping () -> Void = {}) {
         let row = items.first { $0.chat == chat }
         guard !isClearing, deletingID == nil, row.map(work.canDelete) ?? true else { return }
         deletingID = row?.id
@@ -380,6 +384,7 @@ final class HistoryState: ObservableObject {
                 try await effects.deleteChat(chat)
                 guard !Task.isCancelled else { return }
                 items.removeAll { $0.chat == chat }
+                deleted()
                 if let id = selectedID, row?.id == id { select(items.first?.id) }
                 refresh()
             } catch {

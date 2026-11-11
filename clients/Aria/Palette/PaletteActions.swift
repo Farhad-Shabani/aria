@@ -11,6 +11,8 @@ struct PaletteActions {
     var detail: HistoryItem?
     /// The chat the chat page shows.
     var chat: Chat?
+    /// Chats closed while they reply, which their rows can stop.
+    var offPage: [Chat] = []
     var history = HistoryWork()
     /// Whether an app was in front when the palette opened, to type into.
     var hasFrontApp = false
@@ -21,8 +23,11 @@ struct PaletteActions {
         case .commands:
             guard model.input == nil else { return [] }
             switch model.selected {
-            case .entry(let entry): return actions(for: entry, isOpen: false)
-            case .chat(let chat): return actions(for: chat)
+            case .entry(let entry):
+                return actions(for: entry, isOpen: false) + stop(offPage.first { $0.isReplying(quoting: entry.id) })
+            case .chat(let chat):
+                let replying = offPage.first { $0.key == chat.key && $0.isReplying }
+                return actions(for: chat, isReplying: replying != nil) + stop(replying)
             case .command(let command) where command.action == .showLiveTranscript: return [stop]
             case .command(let command):
                 guard case .runPrompt(let id) = command.action else { return [] }
@@ -65,7 +70,7 @@ struct PaletteActions {
             if hasFrontApp { actions.append(PaletteAction(kind: .typeText(text))) }
         }
         let ask = selection.focusedAsk(in: chat.asks)
-        if chat.canStop { actions.append(PaletteAction(kind: .stopAsk, isInFooter: true)) }
+        if chat.canStop, let key = chat.key { actions.append(PaletteAction(kind: .stopAsk(key), isInFooter: true)) }
         guard model.keepsHistory else { return actions }
         if let entry = ask.flatMap(chat.entry(of:)) {
             actions.append(PaletteAction(kind: .runPrompt(on: entry), isEnabled: model.canAttach))
@@ -80,7 +85,8 @@ struct PaletteActions {
         return actions
     }
 
-    private func actions(for chat: SavedChat) -> [PaletteAction] {
+    /// A replying chat refuses a delete, as on its page.
+    private func actions(for chat: SavedChat, isReplying: Bool) -> [PaletteAction] {
         var actions: [PaletteAction] = []
         if chat.newest.canCopy {
             actions.append(PaletteAction(kind: .copyEntry(chat.newest), isEnabled: !history.isClearing))
@@ -91,9 +97,15 @@ struct PaletteActions {
                 isEnabled: !history.isClearing))
         actions.append(
             PaletteAction(
-                kind: .deleteChat(chat.key), isEnabled: history.canDelete(chat.newest)))
+                kind: .deleteChat(chat.key), isEnabled: !isReplying && history.canDelete(chat.newest)))
         actions.append(PaletteAction(kind: .open(.chat(chat))))
         return actions
+    }
+
+    /// Stop for a row whose chat replies off its page, once the daemon has named it.
+    private func stop(_ chat: Chat?) -> [PaletteAction] {
+        guard let chat, chat.canStop, let key = chat.key else { return [] }
+        return [PaletteAction(kind: .stopAsk(key), isInFooter: true)]
     }
 
     func typesOnReturn(_ item: PaletteItem) -> Bool {
@@ -103,8 +115,8 @@ struct PaletteActions {
     enum FollowUpReturn: Equatable {
         /// Sends the follow-up in the chat on screen.
         case send
-        /// Starts a chat that quotes the text on screen.
-        case start(quote: String)
+        /// Starts a chat that quotes the text on screen, from history entry `entry`.
+        case start(quote: String, entry: UInt64)
         case type(String)
     }
 
@@ -120,8 +132,10 @@ struct PaletteActions {
             return .type(text)
         case .entry, .result:
             // Too long to quote turns the field off, so Return does nothing.
-            guard let quote = followUpQuote, quote.utf8.count <= ChatAsk.quoteLimit else { return nil }
-            if isTyped { return .start(quote: quote) }
+            guard let quote = followUpQuote, quote.utf8.count <= ChatAsk.quoteLimit,
+                let entry = model.page == .entry ? detail?.id : result?.input.id
+            else { return nil }
+            if isTyped { return .start(quote: quote, entry: entry) }
             return hasFrontApp ? .type(quote) : nil
         case .commands, .liveTranscript, .prompt:
             return nil

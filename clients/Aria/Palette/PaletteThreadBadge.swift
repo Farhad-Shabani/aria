@@ -12,12 +12,8 @@ struct PaletteThreadBadge: View {
                 .imageScale(.small)
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(.quinary, in: Capsule())
-                .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.paletteBadge)
         .help(isOpen ? "Hide Results (←)" : "Show Results (→)")
         .accessibilityLabel(isOpen ? "Hide Results" : "Show Results")
         .accessibilityValue(PromptResult.countLabel(count))

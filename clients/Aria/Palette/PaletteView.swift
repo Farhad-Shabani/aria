@@ -9,7 +9,9 @@ struct PaletteView: View {
         Group {
             switch controller.model.page {
             case .commands:
-                PaletteCommandsPage(controller: controller, systemTranscription: systemTranscription, history: history)
+                PaletteCommandsPage(
+                    controller: controller, systemTranscription: systemTranscription, history: history,
+                    chats: controller.chats)
             case .liveTranscript:
                 PaletteLivePage(controller: controller, systemTranscription: systemTranscription, history: history)
             case .chat:

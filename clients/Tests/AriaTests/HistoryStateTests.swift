@@ -489,10 +489,12 @@ final class HistoryStateTests: XCTestCase {
         state.open()
         await waitUntil { state.items.count == 2 }
 
-        state.deleteChat(Self.chat)
+        var wasDeleted = false
+        state.deleteChat(Self.chat) { wasDeleted = true }
 
         await waitUntil { state.items.map(\.id) == [1] && state.deletingID == nil }
         XCTAssertEqual(harness.entries.map(\.id), [1])
+        XCTAssertTrue(wasDeleted, "the chat's copies go too")
         state.close()
     }
 
@@ -505,7 +507,7 @@ final class HistoryStateTests: XCTestCase {
         state.open()
         await waitUntil { state.items.count == 2 }
 
-        state.deleteChat(Self.chat)
+        state.deleteChat(Self.chat) { XCTFail("a refused delete keeps the chat") }
 
         await waitUntil { state.error != nil && state.deletingID == nil }
         XCTAssertEqual(state.error?.message, "Aria can’t delete this chat while it’s replying.")

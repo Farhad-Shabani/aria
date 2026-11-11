@@ -29,6 +29,13 @@ struct Chat: Equatable {
 
     var isReplying: Bool { asks.last?.isRunning == true }
 
+    /// Whether the ask that quoted history entry `entry` still runs, for that entry's row.
+    func isReplying(quoting entry: UInt64) -> Bool {
+        asks.contains { $0.quotedEntry == entry && $0.isRunning }
+    }
+
+    var hasLostAsk: Bool { asks.contains(where: \.isLost) }
+
     /// The daemon stops a chat by its key, so an unnamed chat can't stop.
     var canStop: Bool { key != nil && isReplying }
 
@@ -163,6 +170,16 @@ struct ChatAsk: Identifiable, Equatable {
         case failed(String)
         /// The event stream went away while it ran, so its reply didn't come here.
         case lost
+
+        /// What VoiceOver says once an ask ends this way.
+        var announcement: String? {
+            switch self {
+            case .replied: "Reply ready"
+            case .failed(let message): message
+            case .lost: ChatAsk.lost
+            case .running: nil
+            }
+        }
     }
 
     static let lost = "Aria lost track of this question. Ask again."
@@ -179,12 +196,15 @@ struct ChatAsk: Identifiable, Equatable {
     /// save failed.
     private(set) var entryID: UInt64?
     private(set) var resultCount = 0
+    /// The history entry whose text this ask quoted, when it started a chat here.
+    private(set) var quotedEntry: UInt64?
     private var follow = ChatFollow()
 
-    init(live number: Int, question: String, created: Date = .now) {
+    init(live number: Int, question: String, from entry: UInt64? = nil, created: Date = .now) {
         id = .live(number)
         self.question = question
         self.created = created
+        quotedEntry = entry
         state = .running(Self.starting)
     }
 
@@ -230,8 +250,9 @@ struct ChatAsk: Identifiable, Equatable {
         state = .running(Self.step(of: ask))
     }
 
+    /// A lost ask fails too, since the failure is the answer the stream couldn't bring.
     mutating func fail(_ message: String) {
-        guard isRunning else { return }
+        guard isRunning || isLost else { return }
         state = .failed(message)
     }
 

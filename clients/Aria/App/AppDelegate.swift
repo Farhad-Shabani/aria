@@ -67,7 +67,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         systemTranscriptionStatus = SystemTranscriptionStatus(events: events)
         ghost = GhostController(events: events)
         super.init()
-        events.onChat { [weak chats] event in chats?.apply(event) }
+        events.onChat { [weak self] event in
+            self?.chats.apply(event)
+            // A new chat has no row until its first reply is saved.
+            guard let event, event.stage == .replied, event.hasHistoryEntryID else { return }
+            self?.history.askSaved()
+        }
         events.onStreamOpened { [weak chats] in chats?.reconnected() }
         status.skips = { [weak self] ticket in self?.palette.shows(ticket: ticket) ?? false }
         events.onHotkey { [weak self] combo in
