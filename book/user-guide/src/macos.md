@@ -151,8 +151,8 @@ next time.
 
 **Copy Code** puts the code on the clipboard, marked hidden from clipboard
 managers and wiped when the code expires. Universal Clipboard may still carry
-it to your other devices meanwhile. **Revoke All…** unpairs every phone: Aria
-restarts with a new code, and each phone scans again.
+it to your other devices meanwhile. **Revoke All…** unpairs every phone at
+once, and each phone scans a new code to pair again.
 
 ## Keep Aria running
 

@@ -31,7 +31,7 @@ use super::host::DaemonLifetime;
 use super::hotkey::HotkeyTrigger;
 use super::memory::MemoryBacklog;
 use super::service::{
-    ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, InviteRpc, SettingsRpc,
+    ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, PairingAdminRpc, SettingsRpc,
     SpeakerRpc, SpeechRpc, SystemTranscriptionRpc, VocabularyRpc,
 };
 use super::settings::SettingsActor;
@@ -151,12 +151,12 @@ impl Server {
         let lan::Opened {
             bound,
             advert: _advert,
-            invites,
+            admin,
         } = match services.relay.take() {
             Some(relay) => lan::open(relay, &services.health).await,
             None => lan::Opened::default(),
         };
-        let router = build_router(services, invites, &activity).await?;
+        let router = build_router(services, admin, &activity).await?;
         // Before wake or a request can submit work. Tracked, so waiting on
         // tasks waits for each actor — and through it, that capability's jobs.
         tasks.supervise(actors.dictation);
@@ -300,7 +300,7 @@ pub(super) struct Services {
 
 async fn build_router(
     services: Services,
-    invites: Option<InviteRpc>,
+    admin: Option<PairingAdminRpc>,
     activity: &Activity,
 ) -> Result<ActivityRouter> {
     let health_reporter = &services.health;
@@ -333,9 +333,9 @@ async fn build_router(
     health_reporter
         .set_serving::<wire::history_service_server::HistoryServiceServer<HistoryRpc>>()
         .await;
-    if invites.is_some() {
+    if admin.is_some() {
         health_reporter
-            .set_serving::<wire::invite_service_server::InviteServiceServer<InviteRpc>>()
+            .set_serving::<wire::pairing_admin_service_server::PairingAdminServiceServer<PairingAdminRpc>>()
             .await;
     }
     let health = HealthServer::new(HealthService::from_health_reporter(health_reporter.clone()));
@@ -384,7 +384,9 @@ async fn build_router(
         .add_service(wire::history_service_server::HistoryServiceServer::new(
             services.history,
         ))
-        .add_optional_service(invites.map(wire::invite_service_server::InviteServiceServer::new))
+        .add_optional_service(
+            admin.map(wire::pairing_admin_service_server::PairingAdminServiceServer::new),
+        )
         .add_service(health)
         .add_service(reflection_v1)
         .add_service(reflection_v1alpha);
@@ -717,7 +719,9 @@ mod tests {
             // issue.
             let issuing = health
                 .check(HealthCheckRequest {
-                    service: wire::invite_service_server::InviteServiceServer::<InviteRpc>::NAME
+                    service: wire::pairing_admin_service_server::PairingAdminServiceServer::<
+                        PairingAdminRpc,
+                    >::NAME
                         .to_owned(),
                 })
                 .await

@@ -13,8 +13,8 @@ use tonic::service::interceptor::InterceptedService;
 use tonic_health::pb::health_server::HealthServer;
 use tonic_health::server::{HealthReporter, HealthService};
 
-use crate::daemon::relay::{Advert, LanSettings, Pairing, PairingCodes, Phones, require_paired};
-use crate::daemon::service::{InviteRpc, PairingRpc, RelayRpc, SettingsRpc};
+use crate::daemon::relay::{Advert, LanSettings, Pairing, Phones, require_paired};
+use crate::daemon::service::{PairingAdminRpc, PairingRpc, RelayRpc, SettingsRpc};
 use crate::ipc::wire;
 use aria_primitives::error_chain;
 use connections::Admitted;
@@ -56,7 +56,6 @@ pub(in crate::daemon) struct Relay {
     pub(in crate::daemon) port: u16,
     pub(in crate::daemon) settings: SettingsRpc,
     pub(in crate::daemon) pairing: Pairing,
-    pub(in crate::daemon) codes: Arc<PairingCodes>,
     pub(in crate::daemon) instance: String,
 }
 
@@ -76,7 +75,7 @@ pub(super) struct Opened {
     pub(super) advert: Option<Advert>,
     /// Present exactly when `bound` is: a code is worth showing only while a
     /// phone can redeem it. Unix socket only.
-    pub(super) invites: Option<InviteRpc>,
+    pub(super) admin: Option<PairingAdminRpc>,
 }
 
 pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
@@ -85,7 +84,6 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
         port,
         settings,
         pairing,
-        codes,
         instance,
     } = relay;
     // Its own reporter, not the daemon's. Sharing one would answer a LAN
@@ -96,7 +94,7 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
     relay_health
         .set_serving::<wire::relay_service_server::RelayServiceServer<RelayRpc>>()
         .await;
-    let handshake = match tls::Handshake::new(&pairing, Arc::clone(&codes)) {
+    let handshake = match tls::Handshake::new(&pairing) {
         Ok(handshake) => handshake,
         Err(error) => {
             tracing::error!(
@@ -109,16 +107,19 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
     let router = router(
         rpc,
         LanSettings::new(settings),
-        Arc::clone(&codes),
         relay_health,
         Arc::clone(&pairing.phones),
     );
-    let invites = InviteRpc::new(codes, instance, pairing.certificate_fingerprint);
+    let admin = PairingAdminRpc::new(
+        Arc::clone(&pairing.phones),
+        instance,
+        pairing.certificate_fingerprint,
+    );
     bind(
         router,
         handshake,
         port,
-        invites,
+        admin,
         &pairing.certificate_fingerprint,
         health,
     )
@@ -128,19 +129,13 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
 /// What a phone reaches over TCP, all behind TLS: relay, settings, and
 /// health for a paired phone, and Pair, which takes a pairing code instead.
 /// The generic services let tests build it without a model.
-fn router<R, P>(
-    relay: R,
-    settings: P,
-    codes: Arc<PairingCodes>,
-    health: HealthReporter,
-    phones: Arc<Phones>,
-) -> RelayRouter
+fn router<R, P>(relay: R, settings: P, health: HealthReporter, phones: Arc<Phones>) -> RelayRouter
 where
     R: wire::relay_service_server::RelayService,
     P: wire::settings_service_server::SettingsService,
 {
     let paired = require_paired(Arc::clone(&phones));
-    let pair = PairingRpc::new(codes, phones);
+    let pair = PairingRpc::new(phones);
     tonic::transport::Server::builder()
         // Even a paired client gets no more streams than a phone needs.
         .concurrency_limit_per_connection(MAX_LAN_STREAMS)
@@ -178,7 +173,7 @@ async fn bind(
     router: RelayRouter,
     handshake: tls::Handshake,
     port: u16,
-    invites: InviteRpc,
+    admin: PairingAdminRpc,
     fingerprint: &[u8; 32],
     health: &HealthReporter,
 ) -> Opened {
@@ -209,7 +204,7 @@ async fn bind(
                     listener,
                 }),
                 advert: None,
-                invites: Some(invites),
+                admin: Some(admin),
             };
         }
     };
@@ -226,7 +221,7 @@ async fn bind(
             listener,
         }),
         advert,
-        invites: Some(invites),
+        admin: Some(admin),
     }
 }
 
@@ -267,7 +262,7 @@ fn incoming(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use rustls_pki_types::pem::PemObject;
     use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
@@ -375,20 +370,25 @@ mod tests {
     struct Lan {
         address: std::net::SocketAddr,
         pairing: Pairing,
-        codes: Arc<PairingCodes>,
         stop: CancellationToken,
         serving: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
         _directory: tempfile::TempDir,
     }
 
-    fn material() -> (tempfile::TempDir, Pairing, Arc<PairingCodes>) {
+    fn material() -> (tempfile::TempDir, Pairing) {
         let directory = tempfile::tempdir().unwrap();
         let pairing = crate::daemon::relay::load_pairing(
             &directory.path().join("pairing.json"),
             "Aria (test)",
         )
         .unwrap();
-        (directory, pairing, Arc::new(PairingCodes::default()))
+        (directory, pairing)
+    }
+
+    /// Pins `phone` the way Pair does: with a code the Mac issued.
+    fn pin(phones: &Phones, phone: &Phone) {
+        let (code, _) = phones.issue().unwrap();
+        phones.pair(phone.fingerprint, code.raw()).unwrap();
     }
 
     async fn loopback() -> (TcpListener, std::net::SocketAddr) {
@@ -439,16 +439,15 @@ mod tests {
 
     impl Lan {
         async fn start() -> Self {
-            let (directory, pairing, codes) = material();
+            let (directory, pairing) = material();
             let (listener, address) = loopback().await;
             let (health, _service) = tonic_health::server::health_reporter();
-            let handshake = tls::Handshake::new(&pairing, Arc::clone(&codes)).unwrap();
+            let handshake = tls::Handshake::new(&pairing).unwrap();
             let stop = CancellationToken::new();
             let serving = tokio::spawn(
                 router(
                     SilentRelay,
                     SilentSettings,
-                    Arc::clone(&codes),
                     health,
                     Arc::clone(&pairing.phones),
                 )
@@ -460,7 +459,6 @@ mod tests {
             Self {
                 address,
                 pairing,
-                codes,
                 stop,
                 serving,
                 _directory: directory,
@@ -553,7 +551,7 @@ mod tests {
     async fn the_lan_serves_exactly_four_services() {
         let lan = Lan::start().await;
         let phone = Phone::mint();
-        lan.pairing.phones.admit(phone.fingerprint).unwrap();
+        pin(&lan.pairing.phones, &phone);
         let channel = lan.connect(&phone).await;
 
         let mut reached = Vec::new();
@@ -569,7 +567,7 @@ mod tests {
             "/aria.daemon.v1.InferenceService/GetInfo",
             "/aria.daemon.v1.InferenceAdminService/Invite",
             "/aria.daemon.v1.InferencePairingService/Pair",
-            "/aria.daemon.v1.InviteService/IssueInvite",
+            "/aria.daemon.v1.PairingAdminService/IssueInvite",
             "/aria.daemon.v1.SystemTranscriptionService/GetStatus",
             "/aria.daemon.v1.SpeakerService/List",
             "/aria.daemon.v1.SpeechService/Stop",
@@ -618,7 +616,7 @@ mod tests {
             "an unpaired phone gets no handshake while no code is live"
         );
 
-        let (code, _) = lan.codes.issue(Instant::now()).unwrap();
+        let (code, _) = lan.pairing.phones.issue().unwrap();
         let channel = lan.connect(&phone).await;
         let unpaired = health(&channel)
             .await
@@ -664,7 +662,7 @@ mod tests {
     async fn every_handshake_is_a_full_one() {
         let lan = Lan::start().await;
         let phone = Phone::mint();
-        lan.pairing.phones.admit(phone.fingerprint).unwrap();
+        pin(&lan.pairing.phones, &phone);
         let client = client(&lan.pairing, Some(&phone));
 
         for _ in 0..2 {
@@ -680,11 +678,11 @@ mod tests {
     /// A silent TCP client holds its slot only until the handshake times out.
     #[tokio::test]
     async fn a_stalled_handshake_frees_its_slot_at_the_timeout() {
-        let (_directory, pairing, codes) = material();
+        let (_directory, pairing) = material();
         let phone = Phone::mint();
-        pairing.phones.admit(phone.fingerprint).unwrap();
+        pin(&pairing.phones, &phone);
         let (listener, address) = loopback().await;
-        let mut incoming = Box::pin(tls::Handshake::new(&pairing, codes).unwrap().secured(
+        let mut incoming = Box::pin(tls::Handshake::new(&pairing).unwrap().secured(
             connections::admitted(listener, 1),
             SHORT,
             SHORT,
@@ -707,15 +705,16 @@ mod tests {
         shaking.await.unwrap().unwrap();
     }
 
-    /// A connection admitted on a code closes at its lease; a paired one stays.
+    /// A connection admitted on a code closes at its lease. A paired one
+    /// lasts until its phone is revoked, and the phone gets no new one.
     #[tokio::test]
-    async fn a_connection_admitted_on_a_code_closes_when_its_lease_ends() {
-        let (_directory, pairing, codes) = material();
+    async fn a_connection_ends_with_its_lease_or_when_its_phone_is_revoked() {
+        let (_directory, pairing) = material();
         let (listener, address) = loopback().await;
         let paired = Phone::mint();
-        pairing.phones.admit(paired.fingerprint).unwrap();
-        codes.issue(Instant::now()).unwrap();
-        let mut incoming = Box::pin(tls::Handshake::new(&pairing, codes).unwrap().secured(
+        pin(&pairing.phones, &paired);
+        pairing.phones.issue().unwrap();
+        let mut incoming = Box::pin(tls::Handshake::new(&pairing).unwrap().secured(
             connections::admitted(listener, 1),
             SHORT,
             SHORT,
@@ -738,13 +737,54 @@ mod tests {
         let _phone_client = shaking.await.unwrap().unwrap();
         let open = tokio::time::timeout(SHORT * 2, phone.read(&mut byte)).await;
         assert!(open.is_err(), "a paired phone's connection has no lease");
+
+        pairing.phones.revoke_all().unwrap();
+        let revoked = tokio::time::timeout(SHORT, phone.read(&mut byte))
+            .await
+            .expect("revoking ends the connection at once")
+            .expect_err("revoking ends the connection");
+        assert_eq!(revoked.kind(), io::ErrorKind::ConnectionAborted);
+        drop(phone);
+
+        let refused = tokio::select! {
+            shaken = handshake(address, client(&pairing, Some(&paired))) => shaken,
+            _ = incoming.next() => panic!("a revoked phone shook hands"),
+        };
+        assert!(refused.is_err(), "a revoked phone gets no new connection");
+    }
+
+    /// A phone can pair on the connection a code let it in on, so a revoke
+    /// ends that connection too, before its lease does.
+    #[tokio::test]
+    async fn a_revoke_ends_a_connection_admitted_on_a_code() {
+        let (_directory, pairing) = material();
+        let (listener, address) = loopback().await;
+        pairing.phones.issue().unwrap();
+        let mut incoming = Box::pin(tls::Handshake::new(&pairing).unwrap().secured(
+            connections::admitted(listener, 1),
+            SHORT,
+            Duration::from_secs(60),
+            1,
+        ));
+        let mut byte = [0u8; 1];
+        let shaking = tokio::spawn(handshake(address, client(&pairing, Some(&Phone::mint()))));
+        let mut admitted = incoming.next().await.unwrap().unwrap();
+        let _client = shaking.await.unwrap().unwrap();
+
+        pairing.phones.revoke_all().unwrap();
+
+        let revoked = tokio::time::timeout(SHORT, admitted.read(&mut byte))
+            .await
+            .expect("revoking ends the connection before its lease")
+            .expect_err("revoking ends the connection");
+        assert_eq!(revoked.kind(), io::ErrorKind::ConnectionAborted);
     }
 
     #[tokio::test]
     async fn a_paired_phone_reaches_nothing_from_the_unix_socket() {
         let lan = Lan::start().await;
         let phone = Phone::mint();
-        lan.pairing.phones.admit(phone.fingerprint).unwrap();
+        pin(&lan.pairing.phones, &phone);
         let channel = lan.connect(&phone).await;
 
         let history = wire::history_service_client::HistoryServiceClient::new(channel.clone())
@@ -757,10 +797,11 @@ mod tests {
             })
             .await
             .expect_err("history must not be reachable over TCP");
-        let issued = wire::invite_service_client::InviteServiceClient::new(channel.clone())
-            .issue_invite(wire::IssueInviteRequest {})
-            .await
-            .expect_err("issuing codes must not be reachable over TCP");
+        let issued =
+            wire::pairing_admin_service_client::PairingAdminServiceClient::new(channel.clone())
+                .issue_invite(wire::IssueInviteRequest {})
+                .await
+                .expect_err("issuing codes must not be reachable over TCP");
         // The likeliest regression, and the worst: reflection would hand a
         // stranger the shape of every service the unix socket carries.
         let reflection =
@@ -776,10 +817,10 @@ mod tests {
         lan.stop().await;
     }
 
-    /// A taken port leaves the relay off, and with it the invite service: a
-    /// code issued then would be one no phone could redeem.
+    /// A taken port leaves the relay off, and with it PairingAdminService: a code
+    /// issued then would be one no phone could redeem.
     #[tokio::test]
-    async fn a_taken_port_leaves_invites_unregistered() {
+    async fn a_taken_port_leaves_pairing_admin_unregistered() {
         let directory = tempfile::tempdir().expect("a temporary directory should be created");
         let pairing = crate::daemon::relay::load_pairing(
             &directory.path().join("pairing.json"),
@@ -795,18 +836,16 @@ mod tests {
             .port();
         let (relay_health, _service) = tonic_health::server::health_reporter();
         let (health, _service) = tonic_health::server::health_reporter();
-        let codes = Arc::new(PairingCodes::default());
         let router = router(
             SilentRelay,
             SilentSettings,
-            Arc::clone(&codes),
             relay_health,
             Arc::clone(&pairing.phones),
         );
-        let handshake = tls::Handshake::new(&pairing, Arc::clone(&codes))
-            .expect("the minted certificate should be usable");
-        let invites = InviteRpc::new(
-            codes,
+        let handshake =
+            tls::Handshake::new(&pairing).expect("the minted certificate should be usable");
+        let admin = PairingAdminRpc::new(
+            Arc::clone(&pairing.phones),
             "Aria (test)".to_owned(),
             pairing.certificate_fingerprint,
         );
@@ -815,7 +854,7 @@ mod tests {
             router,
             handshake,
             port,
-            invites,
+            admin,
             &pairing.certificate_fingerprint,
             &health,
         )
@@ -823,6 +862,6 @@ mod tests {
 
         assert!(lan.bound.is_none(), "a taken port must not serve a relay");
         assert!(lan.advert.is_none());
-        assert!(lan.invites.is_none(), "no relay, no codes to issue for it");
+        assert!(lan.admin.is_none(), "no relay, no codes to issue for it");
     }
 }

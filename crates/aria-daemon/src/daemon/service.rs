@@ -31,7 +31,7 @@ pub(super) use history::{HistoryRpc, HistoryWorker};
 pub(super) use inference::{
     InferenceAdminRpc, InferencePairingRpc, InferenceRpc, authenticate as authenticate_inference,
 };
-pub(super) use pairing::{InviteRpc, PairingRpc};
+pub(super) use pairing::{PairingAdminRpc, PairingRpc};
 pub(super) use relay::RelayRpc;
 pub(super) use settings::SettingsRpc;
 pub(super) use speaker::SpeakerRpc;

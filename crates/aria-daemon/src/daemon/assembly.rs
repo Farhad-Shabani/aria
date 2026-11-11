@@ -251,7 +251,6 @@ fn compose(
             port,
             settings: settings_rpc.clone(),
             pairing,
-            codes: Arc::new(super::relay::PairingCodes::default()),
             instance,
         })
     });

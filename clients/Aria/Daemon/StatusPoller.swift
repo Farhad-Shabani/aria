@@ -140,10 +140,8 @@ final class StatusPoller: ObservableObject {
         }
     }
 
-    /// Stops, waits for the process to exit, runs `whileStopped`, then
-    /// starts. A daemon that won't exit is left running and `whileStopped`
-    /// never runs. An error from `whileStopped` is rethrown after the start.
-    func restart(whileStopped: () throws -> Void = {}) async throws {
+    /// A daemon that won't exit is left running.
+    func restart() async throws {
         guard state != .working else { throw RestartFailure.busy }
         state = .working
         failure = nil
@@ -160,7 +158,6 @@ final class StatusPoller: ObservableObject {
             state = await client.isRunning() ? .running : .stopped
             throw RestartFailure.stillRunning
         }
-        let stopped = Result { try whileStopped() }
         do {
             try await client.start()
             failure = nil
@@ -171,7 +168,6 @@ final class StatusPoller: ObservableObject {
             state = await client.isRunning() ? .running : .stopped
         }
         await explainFailedStart()
-        try stopped.get()
     }
 
     private func awaitExit() async -> Bool {

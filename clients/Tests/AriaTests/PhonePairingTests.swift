@@ -75,7 +75,7 @@ final class PhonePairingTests: XCTestCase {
                 return Self.issued("before", expiresAt: now + 60)
             },
             setPairing: { _ in },
-            removePairingFile: {}
+            revokePhones: {}
         )
         let control = FakeDaemonControl()
         control.running = true
@@ -108,15 +108,60 @@ final class PhonePairingTests: XCTestCase {
     }
 
     @MainActor
-    func testRevokeRemovesThePairingFileWhileAriaIsStopped() async {
+    func testRevokeAsksTheDaemonAndNeverStopsAria() async {
         let control = FakeDaemonControl()
         control.running = true
-        let pairing = Self.pairing(invites: [], control: control) { control.record("remove") }
+        let pairing = Self.pairing(invites: [], control: control) { control.record("revoke") }
 
         await pairing.revoke()
 
-        XCTAssertEqual(control.calls, ["stop", "remove", "start"])
+        XCTAssertEqual(control.calls, ["revoke"])
         XCTAssertNil(pairing.actionError)
+    }
+
+    /// The code a poll fetched before the revoke is no longer redeemable.
+    @MainActor
+    func testAPollStartedBeforeARevokeDoesNotShowTheRetiredCode() async {
+        let now = Date.now
+        let gate = Gate()
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let daemon = PairingDaemon(
+            issueInvite: {
+                let call = calls.withLock { calls in
+                    calls += 1
+                    return calls
+                }
+                guard call == 1 else { return Self.issued("after", expiresAt: now + 60) }
+                await gate.wait()
+                return Self.issued("before", expiresAt: now + 60)
+            },
+            setPairing: { _ in },
+            revokePhones: {}
+        )
+        let pairing = PhonePairing(
+            poller: StatusPoller(client: FakeDaemonControl(), probeInterval: .milliseconds(1)), daemon: daemon)
+        let stale = Task { await pairing.poll() }
+        await gate.reached()
+
+        await pairing.revoke()
+        gate.open()
+        _ = await stale.value
+
+        XCTAssertEqual(pairing.status, .live(Self.invite("after"), expiresAt: now + 60))
+    }
+
+    @MainActor
+    func testARevokeThatCouldNotBeSavedSaysItLastsUntilARestart() async {
+        let pairing = Self.pairing(invites: []) { throw DaemonFailure.refused(.durabilityUnconfirmed) }
+
+        await pairing.revoke()
+
+        XCTAssertEqual(pairing.actionError, "Your phones are revoked only until Aria restarts. Try again.")
+    }
+
+    func testAnyOtherRevokeFailureAsksToTryAgain() {
+        XCTAssertEqual(
+            PhonePairing.revokeFailure(for: DaemonFailure.unavailable), "Aria couldn’t revoke the phones. Try again.")
     }
 
     private static func invite(_ code: String) -> PairingInvite {
@@ -133,7 +178,7 @@ final class PhonePairingTests: XCTestCase {
         invites: [IssuedInvite],
         setPairingError: (any Error)? = nil,
         control: FakeDaemonControl = FakeDaemonControl(),
-        removePairingFile: @escaping @Sendable () throws -> Void = {}
+        revokePhones: @escaping @Sendable () async throws -> Void = {}
     ) -> PhonePairing {
         let queue = OSAllocatedUnfairLock(initialState: invites)
         let daemon = PairingDaemon(
@@ -146,7 +191,7 @@ final class PhonePairingTests: XCTestCase {
             setPairing: { _ in
                 if let setPairingError { throw setPairingError }
             },
-            removePairingFile: removePairingFile
+            revokePhones: revokePhones
         )
         return PhonePairing(poller: StatusPoller(client: control, probeInterval: .milliseconds(1)), daemon: daemon)
     }

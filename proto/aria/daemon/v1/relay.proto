@@ -45,10 +45,16 @@ service PairingService {
   rpc Pair(PairRequest) returns (PairResponse);
 }
 
-// The invite the Mac app draws as a QR. Served on the unix socket only.
-service InviteService {
+// What the Mac app does to phone pairing. Served on the unix socket only,
+// and only while the relay runs.
+service PairingAdminService {
   // Returns the live code while it is unused and unexpired, else a new one.
   rpc IssueInvite(IssueInviteRequest) returns (IssueInviteResponse);
+  // Unpins every phone, closes their connections, and ends the live code.
+  // The Mac keeps its certificate, so a phone pairs again with a new code.
+  //   DURABILITY_UNCONFIRMED - the phones are revoked, but the pairing
+  //     file may still pin them, so they can reconnect after a restart
+  rpc RevokePhones(RevokePhonesRequest) returns (RevokePhonesResponse);
 }
 
 message PairRequest {
@@ -71,6 +77,10 @@ message IssueInviteResponse {
   // phone paired. If it falls, the daemon restarted.
   uint64 pairing_count = 5;
 }
+
+message RevokePhonesRequest {}
+
+message RevokePhonesResponse {}
 
 message RelayRequest {
   oneof body {

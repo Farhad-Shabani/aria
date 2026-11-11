@@ -264,28 +264,14 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(poller.state, .running)
     }
 
-    /// Revoke All: the pairing file goes only once the process exits.
-    func testRestartRunsWhileStoppedOnlyOnceTheDaemonHasExited() async throws {
-        let fake = FakeDaemonControl()
-        fake.running = true
-        fake.exitLag = 2
-        let poller = self.poller(fake)
-        await poller.pollOnce()
-        try await poller.restart(whileStopped: {
-            XCTAssertEqual(fake.exitLag, 0, "the daemon had not exited")
-            fake.record("whileStopped")
-        })
-        XCTAssertEqual(fake.calls, ["stop", "whileStopped", "start"])
-    }
-
-    func testRestartOfADaemonThatWillNotExitSkipsWhileStoppedAndThrows() async {
+    func testRestartOfADaemonThatWillNotExitDoesNotStartAndThrows() async {
         let fake = FakeDaemonControl()
         fake.running = true
         fake.ignoresStop = true
         let poller = self.poller(fake)
         await poller.pollOnce()
         do {
-            try await poller.restart(whileStopped: { fake.record("whileStopped") })
+            try await poller.restart()
             XCTFail("a daemon that never exits must not be restarted around")
         } catch StatusPoller.RestartFailure.stillRunning {
         } catch {
@@ -294,22 +280,5 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertEqual(fake.calls, ["stop"])
         XCTAssertEqual(poller.state, .running)
         XCTAssertEqual(poller.failure, .stillRunning)
-    }
-
-    func testRestartStartsAgainEvenWhenWhileStoppedFails() async {
-        struct Failed: Error {}
-        let fake = FakeDaemonControl()
-        fake.running = true
-        let poller = self.poller(fake)
-        await poller.pollOnce()
-        do {
-            try await poller.restart(whileStopped: { throw Failed() })
-            XCTFail("the failure must surface")
-        } catch is Failed {
-        } catch {
-            XCTFail("unexpected \(error)")
-        }
-        XCTAssertEqual(fake.calls, ["stop", "start"])
-        XCTAssertEqual(poller.state, .running)
     }
 }
