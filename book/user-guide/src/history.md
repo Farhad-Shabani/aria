@@ -102,8 +102,8 @@ the chat after the text's first line and lists it under **Chats**. With
 nothing typed in the field, **Return** types the text into the app you came
 from.
 
-A transcript works only when Aria read all of it. The text can be at most
-128 KiB.
+A transcript works only when Aria has its whole text. The text can be at
+most 128 KiB.
 
 ## List entries in a terminal
 
