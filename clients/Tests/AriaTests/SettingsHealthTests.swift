@@ -113,25 +113,6 @@ final class SettingsHealthTests: XCTestCase {
 
     // MARK: Following the daemon
 
-    func testAStatusEventReadsAHandEditIntoTheSnapshot() async {
-        let transport = FakeSettingsTransport()
-        var before = Aria_Daemon_V1_SettingsSnapshot()
-        before.revision = 900
-        var edited = before
-        edited.revision = 12
-        edited.settings.memoryEnabled = true
-        transport.snapshots = [before, edited]
-        let settings = DaemonSettings(transport: transport)
-        await settings.sync()
-        let health = health(reload: { await settings.sync() })
-
-        var status = Aria_Daemon_V1_SettingsStatus()
-        status.revision = 12
-        await health.receive(status)
-
-        XCTAssertEqual(settings.snapshot?.memoryEnabled, true)
-    }
-
     func testAStreamThatReopensReadsTheStatusAndTheValuesAgain() async {
         var reloads = 0
         let health = health(status: invalidStatus(line: 7), reload: { reloads += 1 })

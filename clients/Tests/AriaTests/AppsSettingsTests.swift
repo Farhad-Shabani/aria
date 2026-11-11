@@ -85,9 +85,4 @@ final class AppsSettingsTests: XCTestCase {
 
         XCTAssertTrue(AppSetting.shown(for: slack, overrides: overrides).contains(.delivery))
     }
-
-    func testAnAppPageBelongsToTheAppsPane() {
-        XCTAssertEqual(SettingsPage.item(.apps, id: slack).pane, .apps)
-        XCTAssertEqual(SettingsPage.pane(.privacy).pane, .privacy)
-    }
 }

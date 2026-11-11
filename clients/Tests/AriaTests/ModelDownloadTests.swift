@@ -19,22 +19,6 @@ final class ModelDownloadTests: XCTestCase {
         return inspection
     }
 
-    private static func progress(received: UInt64, of total: UInt64) -> Aria_Setup_V1_SetupEvent {
-        var progress = Aria_Setup_V1_DownloadProgress()
-        progress.modelID = "parakeet"
-        progress.receivedBytes = received
-        progress.totalBytes = total
-        var event = Aria_Setup_V1_SetupEvent()
-        event.download = progress
-        return event
-    }
-
-    private static func started(_ step: Aria_Setup_V1_Step) -> Aria_Setup_V1_SetupEvent {
-        var event = Aria_Setup_V1_SetupEvent()
-        event.started = step
-        return event
-    }
-
     private func download(
         spy: Spy,
         inspection: Aria_Setup_V1_Inspection = appRunMac(),
@@ -61,9 +45,9 @@ final class ModelDownloadTests: XCTestCase {
         let inspection = Self.appRunMac()
         let download = download(spy: spy, inspection: inspection) { request, onEvent in
             await MainActor.run { spy.request = request }
-            onEvent(Self.progress(received: 50, of: 100))
+            onEvent(.download(received: 50, of: 100))
             await gate.wait()
-            onEvent(Self.started(.service))
+            onEvent(.started(.service))
             await gate.wait()
             return Aria_Setup_V1_Summary()
         }

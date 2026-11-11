@@ -84,6 +84,13 @@ final class HistoryStateTests: XCTestCase {
         XCTFail("State did not settle", file: file, line: line)
     }
 
+    private func refreshed(_ effects: HistoryState.Effects) async -> HistoryState {
+        let state = HistoryState(effects: effects)
+        state.refresh()
+        await waitUntil { state.detail != nil }
+        return state
+    }
+
     func testRenamingAChatMovesEachOfItsAsksAndAnEmptyOrTakenNameDoesNot() async {
         let harness = Harness()
         harness.entries = ([1, 2, 3] as [UInt64]).map { id in
@@ -121,9 +128,7 @@ final class HistoryStateTests: XCTestCase {
 
     func testRefreshPreservesSelectionAndFetchesFullText() async {
         let harness = Harness()
-        let state = HistoryState(effects: harness.effects)
-        state.refresh()
-        await waitUntil { state.detail?.id == 2 }
+        let state = await refreshed(harness.effects)
         state.select(1)
         await waitUntil { state.detail?.id == 1 }
         harness.entries[1].text = "Full updated text"
@@ -199,7 +204,7 @@ final class HistoryStateTests: XCTestCase {
         let state = HistoryState(effects: harness.effects)
         state.refresh()
         await waitUntil { !state.items.isEmpty }
-        XCTAssertEqual(state.days, HistoryDay.grouping(state.items))
+        XCTAssertEqual(state.days.map { $0.items.map(\.id) }, [[2, 1]])
         state.close()
     }
 
@@ -231,9 +236,7 @@ final class HistoryStateTests: XCTestCase {
                 ? HistoryPage(items: [harness.entries[0]], next: 2)
                 : HistoryPage(items: [harness.entries[1]])
         }
-        let state = HistoryState(effects: effects)
-        state.refresh()
-        await waitUntil { state.detail?.id == 2 }
+        let state = await refreshed(effects)
         state.loadMore(after: 2)
         await waitUntil { state.items.count == 2 }
         state.select(1)
@@ -289,9 +292,7 @@ final class HistoryStateTests: XCTestCase {
     func testFailedDeleteKeepsEntryAndReportsStorageFailure() async {
         let harness = Harness()
         harness.deletionFails = true
-        let state = HistoryState(effects: harness.effects)
-        state.refresh()
-        await waitUntil { state.detail != nil }
+        let state = await refreshed(harness.effects)
         state.delete(2)
         await waitUntil { state.error == .storage }
         XCTAssertEqual(state.items.map(\.id), [2, 1])
@@ -301,9 +302,7 @@ final class HistoryStateTests: XCTestCase {
 
     func testDeleteSelectsNeighborAfterAcknowledgement() async {
         let harness = Harness()
-        let state = HistoryState(effects: harness.effects)
-        state.refresh()
-        await waitUntil { state.detail != nil }
+        let state = await refreshed(harness.effects)
         state.delete(2)
         await waitUntil { state.detail?.id == 1 }
         XCTAssertEqual(state.items.map(\.id), [1])
@@ -314,9 +313,7 @@ final class HistoryStateTests: XCTestCase {
         let harness = Harness()
         harness.entries[0].canRegenerate = true
         harness.entries[0].isRegenerating = true
-        let state = HistoryState(effects: harness.effects)
-        state.refresh()
-        await waitUntil { state.detail != nil }
+        let state = await refreshed(harness.effects)
 
         state.regenerate()
 
@@ -329,9 +326,7 @@ final class HistoryStateTests: XCTestCase {
         let harness = Harness()
         harness.entries[0].canRegenerate = true
         harness.entries[0].status = .transcriptionFailed
-        let state = HistoryState(effects: harness.effects)
-        state.refresh()
-        await waitUntil { state.detail != nil }
+        let state = await refreshed(harness.effects)
         state.regenerate()
         await waitUntil { harness.regenerateContinuation != nil }
         state.clear()
@@ -364,9 +359,7 @@ final class HistoryStateTests: XCTestCase {
             }
             return Self.item(2)
         }
-        let state = HistoryState(effects: effects)
-        state.refresh()
-        await waitUntil { state.detail != nil }
+        let state = await refreshed(effects)
         state.regenerate()
         await Task.yield()
         state.close()
@@ -381,9 +374,7 @@ final class HistoryStateTests: XCTestCase {
         var effects = harness.effects
         var poll: CheckedContinuation<Void, Error>?
         effects.waitForRegenerate = { try await withCheckedThrowingContinuation { poll = $0 } }
-        let state = HistoryState(effects: effects)
-        state.refresh()
-        await waitUntil { state.detail != nil }
+        let state = await refreshed(effects)
         state.regenerate()
         await waitUntil { harness.regenerateContinuation != nil }
         harness.entries[0].isRegenerating = true
@@ -449,9 +440,7 @@ final class HistoryStateTests: XCTestCase {
         var ask = Self.item(3)
         ask.kind = .ask(reply: "The reply")
         harness.entries = [ask]
-        let state = HistoryState(effects: harness.effects)
-        state.refresh()
-        await waitUntil { state.detail != nil }
+        let state = await refreshed(harness.effects)
 
         state.copy()
 
@@ -520,9 +509,7 @@ final class HistoryStateTests: XCTestCase {
         var renames: [CheckedContinuation<HistoryItem, Error>] = []
         var effects = harness.effects
         effects.rename = { _, _ in try await withCheckedThrowingContinuation { renames.append($0) } }
-        let state = HistoryState(effects: effects)
-        state.refresh()
-        await waitUntil { state.detail?.id == 2 }
+        let state = await refreshed(effects)
 
         state.rename(2, to: "Old")
         await waitUntil { renames.count == 1 }
@@ -543,9 +530,7 @@ final class HistoryStateTests: XCTestCase {
 
     func testRenamingTrimsTheNameAndABlankNameRemovesTheTitle() async {
         let harness = Harness()
-        let state = HistoryState(effects: harness.effects)
-        state.refresh()
-        await waitUntil { state.detail?.id == 2 }
+        let state = await refreshed(harness.effects)
 
         state.rename(2, to: "  Standup notes ")
         await waitUntil { state.detail?.title != nil }
@@ -570,9 +555,7 @@ final class HistoryStateTests: XCTestCase {
     func testFailedClipboardWriteDoesNotClaimCopied() async {
         let harness = Harness()
         harness.copySucceeds = false
-        let state = HistoryState(effects: harness.effects)
-        state.refresh()
-        await waitUntil { state.detail != nil }
+        let state = await refreshed(harness.effects)
         state.copy()
         XCTAssertEqual(harness.copied, ["Text 2"])
         XCTAssertEqual(state.error, .copyFailed, "a failure shows as an error, not a notice")
@@ -678,9 +661,7 @@ final class HistoryStateTests: XCTestCase {
         for failure in [HistoryFailure.busy, .storage, .clearUncertain, .unsupported] {
             let harness = Harness()
             harness.clearFailure = failure
-            let state = HistoryState(effects: harness.effects)
-            state.refresh()
-            await waitUntil { state.detail != nil }
+            let state = await refreshed(harness.effects)
             harness.entries = [Self.item(1)]
             state.clear()
             await waitUntil {
@@ -696,9 +677,7 @@ final class HistoryStateTests: XCTestCase {
     func testClearIsBlockedByKnownRetry() async {
         let harness = Harness()
         harness.entries[1].isRegenerating = true
-        let state = HistoryState(effects: harness.effects)
-        state.refresh()
-        await waitUntil { state.detail != nil }
+        let state = await refreshed(harness.effects)
         XCTAssertFalse(state.canClear)
         state.clear()
         XCTAssertFalse(state.isClearing)
