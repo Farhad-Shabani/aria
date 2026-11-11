@@ -102,6 +102,11 @@ the chat after the text's first line and lists it under **Chats**. With
 nothing typed in the field, **Return** types the text into the app you came
 from.
 
+If you go back while your assistant replies, the entry shows a spinner. Click
+it to open the chat. A chat's own row shows the same spinner while a question
+you asked in Aria replies. Questions from `aria ask` or your iPhone don't show
+it. Select either row and press **⌘.** to stop the reply.
+
 A transcript works only when Aria has its whole text. The text can be at
 most 128 KiB.
 
