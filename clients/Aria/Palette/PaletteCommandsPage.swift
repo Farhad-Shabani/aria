@@ -159,7 +159,7 @@ struct PaletteCommandsPage: View {
         case .entry(let entry):
             PaletteEntryRow(
                 entry: entry, symbol: entry.kind.symbol, isSelected: isSelected,
-                replying: chats.isReplying(quoting: entry.id)
+                replying: chats.replying(quoting: entry.id) != nil
                     ? PaletteReplyingBadge { controller.openReplying(quoting: entry.id) } : nil,
                 thread: thread(for: entry)
             ) { controller.choose(item) }
@@ -172,7 +172,7 @@ struct PaletteCommandsPage: View {
                 origin: controller.assistantName(of: chat.key), name: chat.name,
                 titleField: isRenaming
                     ? PaletteTitleField(controller: controller, placeholder: chat.newest.name) : nil,
-                replying: chats.isReplying(chat.key) ? PaletteReplyingBadge { controller.choose(item) } : nil
+                replying: chats.replying(chat.key) != nil ? PaletteReplyingBadge { controller.choose(item) } : nil
             ) { controller.choose(item) }
         case .result(let result):
             PaletteResultRow(result: result, isSelected: isSelected) { controller.choose(item) }

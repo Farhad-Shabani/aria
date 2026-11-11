@@ -11,8 +11,8 @@ struct PaletteActions {
     var detail: HistoryItem?
     /// The chat the chat page shows.
     var chat: Chat?
-    /// Chats closed while they reply, which their rows can stop.
-    var offPage: [Chat] = []
+    /// The chat the selected row replies in, which it can stop.
+    var replying: Chat?
     var history = HistoryWork()
     /// Whether an app was in front when the palette opened, to type into.
     var hasFrontApp = false
@@ -24,9 +24,8 @@ struct PaletteActions {
             guard model.input == nil else { return [] }
             switch model.selected {
             case .entry(let entry):
-                return actions(for: entry, isOpen: false) + stop(offPage.first { $0.isReplying(quoting: entry.id) })
+                return actions(for: entry, isOpen: false) + stop(replying)
             case .chat(let chat):
-                let replying = offPage.first { $0.key == chat.key && $0.isReplying }
                 return actions(for: chat, isReplying: replying != nil) + stop(replying)
             case .command(let command) where command.action == .showLiveTranscript: return [stop]
             case .command(let command):

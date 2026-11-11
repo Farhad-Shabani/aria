@@ -487,9 +487,9 @@ final class ChatsTests: XCTestCase {
         chats.apply(Self.event(7, .working))
 
         XCTAssertNil(chats.shown)
-        XCTAssertEqual(chats.offPage.map(\.key), [Self.key])
+        XCTAssertEqual(chats.followed.map(\.key), [Self.key])
         chats.apply(Self.event(7, .replied, text: "Noon.", entry: 4))
-        XCTAssertTrue(chats.offPage.isEmpty, "it goes once nothing in it runs")
+        XCTAssertTrue(chats.followed.isEmpty, "it goes once nothing in it runs")
         XCTAssertEqual(chats.lastOutcome?.announcement, "Reply ready", "VoiceOver hears it on the list")
     }
 
@@ -500,10 +500,10 @@ final class ChatsTests: XCTestCase {
         chats.close()
         harness.starts[0].resume(returning: Self.named(7))
 
-        await waitUntil { chats.offPage.first?.asks.first?.ticket == 7 }
-        XCTAssertEqual(chats.offPage.first?.key, Self.key)
+        await waitUntil { chats.followed.first?.asks.first?.ticket == 7 }
+        XCTAssertEqual(chats.followed.first?.key, Self.key)
         chats.apply(Self.event(7, .failed))
-        XCTAssertTrue(chats.offPage.isEmpty, "its ticket's events reach it")
+        XCTAssertTrue(chats.followed.isEmpty, "its ticket's events reach it")
     }
 
     func testAQuotedChatClosedWhileItRepliesShowsOnTheEntryItQuotes() async {
@@ -514,11 +514,11 @@ final class ChatsTests: XCTestCase {
 
         chats.close()
 
-        XCTAssertTrue(chats.isReplying(quoting: 2))
-        XCTAssertFalse(chats.isReplying(quoting: 3))
-        XCTAssertTrue(chats.isReplying(Self.key))
+        XCTAssertNotNil(chats.replying(quoting: 2))
+        XCTAssertNil(chats.replying(quoting: 3))
+        XCTAssertNotNil(chats.replying(Self.key))
         chats.apply(Self.event(7, .failed))
-        XCTAssertFalse(chats.isReplying(quoting: 2), "a failed ask no longer replies")
+        XCTAssertNil(chats.replying(quoting: 2), "a failed ask no longer replies")
     }
 
     func testReopeningAQuotedChatBeforeItsNameComesShowsItsQuestion() async {
@@ -542,12 +542,12 @@ final class ChatsTests: XCTestCase {
         harness.holdsLists = true
 
         chats.apply(nil)
-        XCTAssertEqual(chats.offPage.map(\.key), [Self.key], "lost, not ended")
+        XCTAssertEqual(chats.followed.map(\.key), [Self.key], "lost, not ended")
         chats.reconnected()
         await waitUntil { harness.lists.count == 1 }
         harness.lists[0].resume(returning: [Self.pending(7, "When is lunch?", running: true)])
 
-        await waitUntil { chats.isReplying(Self.key) }
+        await waitUntil { chats.replying(Self.key) != nil }
     }
 
     func testAClosedChatWhoseLostAskEndedGoesOnceTheDaemonListsNothing() async {
@@ -561,7 +561,7 @@ final class ChatsTests: XCTestCase {
         await waitUntil { harness.lists.count == 1 }
         harness.lists[0].resume(returning: [])
 
-        await waitUntil { chats.offPage.isEmpty }
+        await waitUntil { chats.followed.isEmpty }
     }
 
     func testAStopThatFailsAfterItsPageClosedStillSaysSo() async {
@@ -594,11 +594,11 @@ final class ChatsTests: XCTestCase {
         let chats = await started(harness)
         chats.close()
         chats.apply(nil)
-        XCTAssertEqual(chats.offPage.map(\.key), [Self.key], "lost, waiting to be listed")
+        XCTAssertEqual(chats.followed.map(\.key), [Self.key], "lost, waiting to be listed")
 
         chats.deleted(Self.key)
 
-        XCTAssertTrue(chats.offPage.isEmpty)
+        XCTAssertTrue(chats.followed.isEmpty)
     }
 
     func testOnlyTheAskThatQuotedAnEntryShowsOnThatEntry() async {
@@ -611,8 +611,8 @@ final class ChatsTests: XCTestCase {
         XCTAssertTrue(chats.send("And the title?"))
         chats.close()
 
-        XCTAssertTrue(chats.isReplying(Self.key))
-        XCTAssertFalse(chats.isReplying(quoting: 2), "the follow-up quoted nothing")
+        XCTAssertNotNil(chats.replying(Self.key))
+        XCTAssertNil(chats.replying(quoting: 2), "the follow-up quoted nothing")
         harness.tickets.first?.resume(returning: 8)
     }
 
@@ -623,7 +623,7 @@ final class ChatsTests: XCTestCase {
 
         chats.open(Self.key, folder: "/code/aria")
 
-        XCTAssertTrue(chats.offPage.isEmpty)
+        XCTAssertEqual(chats.followed.count, 1, "followed once, not twice")
         XCTAssertEqual(chats.shown?.asks.map(\.question), ["When is lunch?"])
         XCTAssertEqual(chats.shown?.asks.first?.ticket, 7)
         XCTAssertEqual(chats.shown?.isReplying, true)

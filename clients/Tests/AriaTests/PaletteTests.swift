@@ -1018,11 +1018,11 @@ final class PaletteTests: XCTestCase {
         let stop = PaletteAction(kind: .stopAsk(Self.chatKey), isInFooter: true)
 
         model.select("entry-1")
-        XCTAssertTrue(PaletteActions(model: model, offPage: [quoting]).all.contains(stop), "the entry it quotes")
+        XCTAssertTrue(PaletteActions(model: model, replying: quoting).all.contains(stop), "the entry it quotes")
         XCTAssertFalse(PaletteActions(model: model).all.contains(stop), "nothing replying")
         let chatRow = try XCTUnwrap(model.items.first { if case .chat = $0 { true } else { false } })
         model.select(chatRow.id)
-        let onChatRow = PaletteActions(model: model, offPage: [quoting]).all
+        let onChatRow = PaletteActions(model: model, replying: quoting).all
         XCTAssertTrue(onChatRow.contains(stop), "its own row")
         XCTAssertEqual(onChatRow.first { $0.id == "delete-chat" }?.isEnabled, false, "it refuses a delete")
     }
