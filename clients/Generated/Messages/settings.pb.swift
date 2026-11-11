@@ -991,8 +991,10 @@ public nonisolated struct Aria_Daemon_V1_ApplicationOverrides: Sendable {
   public init() {}
 }
 
-/// A key held with at least one modifier. A chord is registered rather than
-/// watched, so unlike AriaKey it needs no Accessibility grant.
+/// A key held with Control, Option, or Shift, and maybe Command. Command alone
+/// is refused, since a registered chord would take ⌘Q and the like from the
+/// app in front. A chord is registered rather than watched, so unlike AriaKey
+/// it needs no Accessibility grant.
 public nonisolated struct Aria_Daemon_V1_Chord: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
