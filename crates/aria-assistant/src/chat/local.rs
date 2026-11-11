@@ -5,13 +5,13 @@ use std::time::{Duration, Instant};
 
 use aria_primitives::cancel::CancelToken;
 use aria_provider::{Client, ProviderError};
-use aria_settings::LocalProvider;
+use aria_settings::{LocalProvider, Quote};
 use serde_json::{Value, json};
 
 use super::prompt_run::{SCHEMA, answer_text};
 use super::{
     Assistant, AssistantError, AssistantModel, AssistantStatus, PromptRun, Session, SessionSpec,
-    StepSink,
+    StepSink, quoted,
 };
 
 /// How long a readiness check or a model list may take.
@@ -28,9 +28,17 @@ pub struct Ask {
     pub reply: String,
 }
 
+/// What an assistant session said before: its recent asks, oldest first, and
+/// the quote it started from. The quote leads them even when the ask that
+/// carried it no longer fits.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Recalled {
+    pub quote: Option<Quote>,
+    pub asks: Vec<Ask>,
+}
+
 pub trait SessionHistory: Send + Sync {
-    /// The earlier asks of the session `resume` names, oldest first.
-    fn recall(&self, resume: &str) -> Vec<Ask>;
+    fn recall(&self, resume: &str) -> Recalled;
 }
 
 pub struct LocalAssistant<H> {
@@ -101,16 +109,18 @@ impl<H: SessionHistory> Assistant for LocalAssistant<H> {
     }
 
     fn open(&self, spec: SessionSpec<'_>) -> LocalSession {
+        let Recalled { quote, asks } = spec
+            .resume
+            .map(|resume| self.history.recall(resume))
+            .unwrap_or_default();
         LocalSession {
             client: self.client.clone(),
             model: spec
                 .model_id
                 .map(str::to_owned)
                 .or_else(|| self.model.clone()),
-            earlier: spec
-                .resume
-                .map(|resume| self.history.recall(resume))
-                .unwrap_or_default(),
+            quote,
+            earlier: asks,
             resume: spec.resume.map(str::to_owned),
         }
     }
@@ -143,6 +153,7 @@ impl<H: SessionHistory> Assistant for LocalAssistant<H> {
 pub struct LocalSession {
     client: Option<Client>,
     model: Option<String>,
+    quote: Option<Quote>,
     earlier: Vec<Ask>,
     /// `None` until the first reply of a new session.
     resume: Option<String>,
@@ -165,11 +176,12 @@ impl Session for LocalSession {
             .as_deref()
             .ok_or(AssistantError::ModelUnset { fix: NO_MODEL })?;
         let mut messages = Vec::with_capacity(self.earlier.len() * 2 + 1);
+        let mut quote = self.quote.as_ref();
         for ask in &self.earlier {
-            messages.push(message("user", &ask.request));
+            messages.push(message("user", &quoted(quote.take(), &ask.request)));
             messages.push(message("assistant", &ask.reply));
         }
-        messages.push(message("user", text));
+        messages.push(message("user", &quoted(quote, text)));
         let reply = stream(client, &completion(model, messages), cancel, timeout)?;
         if reply.trim().is_empty() {
             return Err(AssistantError::Malformed("the reply is empty".to_owned()));
@@ -307,6 +319,7 @@ mod tests {
 
     struct ScriptedHistory {
         resume: &'static str,
+        quote: Option<Quote>,
         asks: Vec<Ask>,
     }
 
@@ -314,17 +327,21 @@ mod tests {
         fn empty() -> Self {
             Self {
                 resume: "",
+                quote: None,
                 asks: Vec::new(),
             }
         }
     }
 
     impl SessionHistory for ScriptedHistory {
-        fn recall(&self, resume: &str) -> Vec<Ask> {
+        fn recall(&self, resume: &str) -> Recalled {
             if resume == self.resume {
-                self.asks.clone()
+                Recalled {
+                    quote: self.quote.clone(),
+                    asks: self.asks.clone(),
+                }
             } else {
-                Vec::new()
+                Recalled::default()
             }
         }
     }
@@ -351,6 +368,7 @@ mod tests {
         let (provider, requests) = serve(|_path, _body| streamed("Tuesday."));
         let history = ScriptedHistory {
             resume: "c1",
+            quote: None,
             asks: vec![Ask {
                 request: "When is the review?".to_owned(),
                 reply: "Monday.".to_owned(),
@@ -374,6 +392,43 @@ mod tests {
             ])
         );
         assert_eq!(session.resume_id(), Some("c1"));
+    }
+
+    #[test]
+    fn a_resumed_session_puts_its_quote_ahead_of_its_earliest_ask_or_the_request() {
+        let notes = Quote::new("Launch notes".to_owned()).unwrap();
+        for (asks, expected) in [
+            (
+                vec![Ask {
+                    request: "Shorter?".to_owned(),
+                    reply: "Done.".to_owned(),
+                }],
+                json!([
+                    { "role": "user", "content": "<quote>\nLaunch notes\n</quote>\n\nShorter?" },
+                    { "role": "assistant", "content": "Done." },
+                    { "role": "user", "content": "And the date?" }
+                ]),
+            ),
+            (
+                Vec::new(),
+                json!([
+                    { "role": "user", "content": "<quote>\nLaunch notes\n</quote>\n\nAnd the date?" }
+                ]),
+            ),
+        ] {
+            let (provider, requests) = serve(|_path, _body| streamed("Friday."));
+            let history = ScriptedHistory {
+                resume: "c1",
+                quote: Some(notes.clone()),
+                asks,
+            };
+            let local = LocalAssistant::new(Some(&provider), Some("qwen".to_owned()), history);
+
+            let mut session = local.open(spec(Some("c1")));
+            ask(&mut session, "And the date?").unwrap();
+
+            assert_eq!(requests.recv().unwrap()["messages"], expected);
+        }
     }
 
     #[test]

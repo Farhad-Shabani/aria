@@ -42,6 +42,44 @@ pub enum ChatNameError {
     FolderPath,
 }
 
+/// Text an ask is about, such as a dictation or a prompt result: not blank,
+/// at most `MAX_BYTES`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Quote(String);
+
+impl Quote {
+    pub const MAX_BYTES: usize = 128 * 1024;
+
+    pub fn new(text: String) -> Result<Self, QuoteError> {
+        if text.trim().is_empty() {
+            return Err(QuoteError::Blank);
+        }
+        if text.len() > Self::MAX_BYTES {
+            return Err(QuoteError::TooLong);
+        }
+        Ok(Self(text))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Only the length, so a quote never reaches a log.
+impl std::fmt::Debug for Quote {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "Quote({} bytes)", self.0.len())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum QuoteError {
+    #[error("a quote can't be blank")]
+    Blank,
+    #[error("a quote can be at most {} bytes", Quote::MAX_BYTES)]
+    TooLong,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,6 +98,25 @@ mod tests {
                 "{name:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_quote_keeps_its_text_and_refuses_blank_or_overlong_text() {
+        let text = "  first line\nsecond line\n".to_owned();
+        assert_eq!(
+            Quote::new(text.clone()).map(|quote| quote.as_str().to_owned()),
+            Ok(text)
+        );
+        assert!(Quote::new("a".repeat(Quote::MAX_BYTES)).is_ok());
+        assert_eq!(Quote::new(" \n\t".to_owned()), Err(QuoteError::Blank));
+        assert_eq!(
+            Quote::new("a".repeat(Quote::MAX_BYTES + 1)),
+            Err(QuoteError::TooLong)
+        );
+        assert_eq!(
+            format!("{:?}", Quote::new("secret".to_owned())),
+            "Ok(Quote(6 bytes))"
+        );
     }
 
     #[test]

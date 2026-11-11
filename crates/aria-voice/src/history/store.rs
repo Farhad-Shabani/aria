@@ -23,7 +23,7 @@ use aria_kit::audio::RecordingReader;
 use aria_platform::delivery::Application;
 use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::{ChatKey, ChatName, MAX_PROMPT_NAME_BYTES};
+use aria_settings::{ChatKey, ChatName, MAX_PROMPT_NAME_BYTES, Quote};
 
 const MAX_ERROR_MESSAGE_BYTES: usize = 256;
 const MAX_STORED_ERROR_BYTES: usize = 2 * 1024;
@@ -44,14 +44,21 @@ const CLEANUP_WARNING: &str = "Some history files could not be removed. Cleanup 
 const AUDIO_WARNING: &str = "The recording could not be saved. Audio recovery is unavailable.";
 const UNREADABLE_WARNING: &str = "Some unreadable history entries were removed.";
 /// The version this daemon writes. It refuses a newer database.
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 1;
 const COLUMNS: &str = "id,created,source,app_name,bundle_id,duration,text,complete,status,error,expires,audio_present,deleting,language,own_voice,project,engine,section,title,transcript,reply,assistant,chat_name";
-/// What a chat's asks share. Each ask references its chat, so deleting a
-/// chat deletes its asks and their results, and renaming it renames theirs.
-const CHATS_SCHEMA: &str = "CREATE TABLE chats (
-        assistant TEXT NOT NULL CHECK(length(CAST(assistant AS BLOB)) BETWEEN 1 AND 64),
-        name TEXT NOT NULL CHECK(length(CAST(name AS BLOB)) BETWEEN 1 AND 128),
-        PRIMARY KEY(assistant, name)) WITHOUT ROWID";
+/// What a chat's asks share, such as the text the chat is about. Each ask
+/// references its chat, so deleting a chat deletes its asks and their results,
+/// and renaming it renames theirs.
+fn chats_schema() -> String {
+    format!(
+        "CREATE TABLE chats (
+            assistant TEXT NOT NULL CHECK(length(CAST(assistant AS BLOB)) BETWEEN 1 AND 64),
+            name TEXT NOT NULL CHECK(length(CAST(name AS BLOB)) BETWEEN 1 AND 128),
+            quote TEXT CHECK(quote IS NULL OR length(CAST(quote AS BLOB)) BETWEEN 1 AND {}),
+            PRIMARY KEY(assistant, name)) WITHOUT ROWID",
+        Quote::MAX_BYTES
+    )
+}
 /// Finds a chat's asks, for reads and for its delete's cascade.
 const CHAT_INDEX: &str = "CREATE INDEX entries_by_chat
      ON entries(assistant, chat_name) WHERE chat_name IS NOT NULL";
@@ -66,7 +73,7 @@ const VERSION_ONE_LATER_COLUMNS: &[(&[&str], &str, &str)] = &[
     (&["reply"], "reply", "NULL"),
     (&["resume", "conversation"], "resume", "NULL"),
     (&["assistant"], "assistant", "NULL"),
-    (&["session_name"], "chat_name", "NULL"),
+    (&["chat_name", "session_name"], "chat_name", "NULL"),
 ];
 /// The columns every version 1 table has.
 const VERSION_ONE_COLUMNS: &str = "id,created,source,app_name,bundle_id,duration,text,complete,status,error,expires,audio_present,deleting,language,own_voice,project,engine";
@@ -144,6 +151,8 @@ impl Drop for RetryLease {
 pub struct NewAsk<'a> {
     /// The request as asked, before any memory was added to it.
     pub request: &'a str,
+    /// The text the ask's chat is about, saved with the chat unless it has one.
+    pub quote: Option<&'a Quote>,
     pub reply: &'a str,
     pub workdir: &'a Path,
     /// The assistant session the ask continued, so a later ask in it can recall it.
@@ -175,7 +184,7 @@ impl Store {
         )?;
         match version {
             0 => create_schema(&connection)?,
-            1 => migrate_from_version_one(&connection)?,
+            _ if !is_current(&connection)? => migrate_from_version_one(&connection)?,
             _ => {}
         }
         connection.pragma_update(None, "foreign_keys", true)?;
@@ -200,14 +209,16 @@ impl Store {
         entry: HistoryEntry,
         audio: Option<&Path>,
     ) -> Result<HistoryEntry, HistoryError> {
-        self.insert_into(entry, audio, None)
+        self.insert_into(entry, audio, None, None)
     }
 
+    /// `quote` goes on the entry's chat, unless the chat has one already.
     fn insert_into(
         &self,
         mut entry: HistoryEntry,
         audio: Option<&Path>,
         resume: Option<&str>,
+        quote: Option<&Quote>,
     ) -> Result<HistoryEntry, HistoryError> {
         validate_entry(&entry)?;
         let mut state = self.lock();
@@ -229,13 +240,21 @@ impl Store {
                 }
             },
         };
+        let joining = entry.content.chat().cloned();
+        // Only a chat with no quote yet stores this one.
+        let quote = match (&joining, quote) {
+            (Some(chat), Some(quote)) if quote_of(&state, chat)?.is_none() => Some(quote),
+            _ => None,
+        };
+        let added = stored_bytes(&entry) + quote.map_or(0, |quote| quote.as_str().len());
         // Free the space before committing: a full database cannot evict anything.
         if let Err(error) = self.make_room(
             &mut state,
             entry.content.section(),
-            stored_bytes(&entry),
+            added,
             copied.as_ref().map_or(0, |(_, size)| *size),
             true,
+            joining.as_ref(),
         ) {
             if copied.is_none() {
                 return Err(error);
@@ -245,9 +264,10 @@ impl Store {
             self.make_room(
                 &mut state,
                 entry.content.section(),
-                stored_bytes(&entry),
+                added,
                 0,
                 true,
+                joining.as_ref(),
             )?;
         }
         let transaction = state.connection.unchecked_transaction()?;
@@ -260,8 +280,13 @@ impl Store {
         let chat = entry.content.chat();
         if let Some(chat) = chat {
             transaction.execute(
-                "INSERT OR IGNORE INTO chats(assistant,name) VALUES(?1,?2)",
-                params![chat.assistant_id.name(), chat.name.as_str()],
+                "INSERT INTO chats(assistant,name,quote) VALUES(?1,?2,?3)
+                 ON CONFLICT(assistant,name) DO UPDATE SET quote=COALESCE(quote,excluded.quote)",
+                params![
+                    chat.assistant_id.name(),
+                    chat.name.as_str(),
+                    quote.map(Quote::as_str)
+                ],
             )?;
         }
         transaction.execute(
@@ -313,6 +338,14 @@ impl Store {
         self.maintain(&mut state)?;
         let needle = query.query.to_lowercase();
         let (entries, _) = all(&state)?;
+        let quotes: HashMap<ChatKey, String> = if needle.is_empty() {
+            HashMap::new()
+        } else {
+            chat_quotes(&state)?
+                .into_iter()
+                .map(|(chat, quote)| (chat, quote.as_str().to_lowercase()))
+                .collect()
+        };
         let mut shown = HashSet::new();
         let mut entries = entries
             .into_iter()
@@ -325,6 +358,11 @@ impl Store {
                 entry.text.to_lowercase().contains(&needle)
                     || reply(&entry.content)
                         .is_some_and(|reply| reply.to_lowercase().contains(&needle))
+                    || entry
+                        .content
+                        .chat()
+                        .and_then(|chat| quotes.get(chat))
+                        .is_some_and(|quote| quote.contains(&needle))
                     || entry
                         .title
                         .as_ref()
@@ -406,6 +444,7 @@ impl Store {
     pub fn save_ask(&self, ask: NewAsk<'_>) -> Result<HistoryEntry, HistoryError> {
         let NewAsk {
             request,
+            quote,
             reply,
             workdir,
             resume,
@@ -437,13 +476,13 @@ impl Store {
             warning: None,
             deletion_pending: false,
         };
-        self.insert_into(entry, None, resume)
+        self.insert_into(entry, None, resume, quote)
     }
 
     /// The newest asks saved under the assistant session `resume` whose
     /// requests and replies fit in `max_bytes` together, oldest first. An ask
     /// too big to fit on its own is skipped, so it doesn't cost the ones
-    /// before it.
+    /// before it. The chat's quote doesn't count: `session_quote` reads it.
     pub fn recall(
         &self,
         resume: &str,
@@ -459,7 +498,7 @@ impl Store {
         let mut used = 0;
         while let Some(row) = rows.next()? {
             let ask = decode(row)?;
-            let bytes = stored_bytes(&ask);
+            let bytes = ask.text.len() + reply(&ask.content).map_or(0, str::len);
             if bytes > max_bytes {
                 continue;
             }
@@ -471,6 +510,37 @@ impl Store {
         }
         asks.reverse();
         Ok(asks)
+    }
+
+    /// The quote of the chat the assistant session `resume` ran in.
+    pub fn session_quote(&self, resume: &str) -> Result<Option<Quote>, HistoryError> {
+        self.first_quote(
+            "SELECT chats.quote FROM entries JOIN chats
+             ON chats.assistant=entries.assistant AND chats.name=entries.chat_name
+             WHERE entries.resume=?1 AND entries.deleting=0 AND chats.quote IS NOT NULL
+             LIMIT 1",
+            params![resume],
+        )
+    }
+
+    pub fn chat_quote(&self, chat: &ChatKey) -> Result<Option<Quote>, HistoryError> {
+        let mut state = self.lock();
+        self.maintain(&mut state)?;
+        quote_of(&state, chat)
+    }
+
+    fn first_quote(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Option<Quote>, HistoryError> {
+        let mut state = self.lock();
+        self.maintain(&mut state)?;
+        let quote: Option<String> = state
+            .connection
+            .query_row(sql, params, |row| row.get(0))
+            .optional()?;
+        Ok(quote.and_then(stored_quote))
     }
 
     /// Saves a prompt's reply under `entry`. An entry keeps its newest
@@ -634,6 +704,7 @@ impl Store {
         Ok(ChatPage {
             entries,
             next_before_id,
+            quote: quote_of(&state, &query.chat)?,
         })
     }
 
@@ -778,6 +849,7 @@ impl Store {
             &mut state,
             entry.content.section(),
             text.len().saturating_sub(entry.text.len()),
+            None,
         )?;
         state.connection.execute(
             "UPDATE entries SET text=?1,complete=1,status=3,error=NULL,engine=?3,language=?4,
@@ -863,7 +935,7 @@ impl Store {
             }
         }
         for section in HistorySection::ALL {
-            if self.make_room(state, section, 0, 0, false).is_err() {
+            if self.make_room(state, section, 0, 0, false, None).is_err() {
                 state.warning = Some(CLEANUP_WARNING.to_owned());
             }
         }
@@ -1006,8 +1078,9 @@ impl Store {
         text_bytes: usize,
         audio_bytes: u64,
         reserve_entry: bool,
+        joining: Option<&ChatKey>,
     ) -> Result<(), HistoryError> {
-        self.make_room_for_text(state, section, text_bytes)?;
+        self.make_room_for_text(state, section, text_bytes, joining)?;
         let (mut entries, _) = all(state)?;
         entries.retain(|entry| entry.content.section() == section);
         let budget = budget(section).entries;
@@ -1055,16 +1128,30 @@ impl Store {
         Ok(())
     }
 
+    /// `joining` is the chat an insert adds to, which keeps its quote even
+    /// when its last ask goes.
     fn make_room_for_text(
         &self,
         state: &mut State,
         section: HistorySection,
         added: usize,
+        joining: Option<&ChatKey>,
     ) -> Result<(), HistoryError> {
         let limit = budget(section).text_bytes;
         let (mut entries, _) = all(state)?;
         entries.retain(|entry| entry.content.section() == section);
-        let mut bytes = entries.iter().map(stored_bytes).sum::<usize>();
+        let quotes = chat_quotes(state)?;
+        let mut asks_left: HashMap<&ChatKey, usize> = HashMap::new();
+        for chat in entries.iter().filter_map(|entry| entry.content.chat()) {
+            *asks_left.entry(chat).or_default() += 1;
+        }
+        let quoted_bytes =
+            |chat: &ChatKey| quotes.get(chat).map_or(0, |quote| quote.as_str().len());
+        let mut bytes = entries.iter().map(stored_bytes).sum::<usize>()
+            + asks_left
+                .keys()
+                .map(|chat| quoted_bytes(chat))
+                .sum::<usize>();
         for entry in entries.iter().rev() {
             if bytes.saturating_add(added) <= limit {
                 break;
@@ -1075,6 +1162,15 @@ impl Store {
             self.mark_delete(state, entry.id)?;
             self.remove_entry(state, entry.id)?;
             bytes -= stored_bytes(entry);
+            // A chat's last ask takes the chat, and its quote, with it.
+            if let Some(chat) = entry.content.chat()
+                && let Some(left) = asks_left.get_mut(chat)
+            {
+                *left -= 1;
+                if *left == 0 && joining != Some(chat) {
+                    bytes -= quoted_bytes(chat);
+                }
+            }
         }
         if bytes.saturating_add(added) > limit {
             return Err(HistoryError::TooLarge);
@@ -1231,7 +1327,8 @@ fn reply(content: &HistoryContent) -> Option<&str> {
     }
 }
 
-/// What an entry counts against its section's text budget.
+/// What an entry counts against its section's text budget. Its chat's quote
+/// counts once per chat, apart.
 fn stored_bytes(entry: &HistoryEntry) -> usize {
     entry.text.len() + reply(&entry.content).map_or(0, str::len)
 }
@@ -1330,7 +1427,7 @@ fn entries_schema(table: &str) -> String {
 
 fn create_schema(connection: &Database) -> Result<(), HistoryError> {
     let transaction = connection.unchecked_transaction()?;
-    transaction.execute_batch(CHATS_SCHEMA)?;
+    transaction.execute_batch(&chats_schema())?;
     transaction.execute_batch(&entries_schema("entries"))?;
     transaction.execute_batch(CHAT_INDEX)?;
     transaction.execute_batch(RESULTS_SCHEMA)?;
@@ -1339,9 +1436,23 @@ fn create_schema(connection: &Database) -> Result<(), HistoryError> {
     Ok(())
 }
 
-/// Rebuilds a version 1 database with SQLite's steps for changing a table's
-/// schema. Version 1 entries gained columns over time and reference no chats
-/// table.
+/// Whether a version 1 database has every table and column this daemon
+/// reads. Version 1 tables gained columns over time without a version bump.
+fn is_current(connection: &Database) -> Result<bool, HistoryError> {
+    let columns = |table: &str| -> Result<HashSet<String>, HistoryError> {
+        Ok(connection
+            .prepare("SELECT name FROM pragma_table_info(?1)")?
+            .query_map([table], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    };
+    let entries = columns("entries")?;
+    Ok(COLUMNS.split(',').all(|column| entries.contains(column))
+        && columns("chats")?.contains("quote"))
+}
+
+/// Rebuilds an older version 1 database with SQLite's steps for changing a
+/// table's schema. Its entries may lack later columns, and its chats table,
+/// if any, its quote.
 fn migrate_from_version_one(connection: &Database) -> Result<(), HistoryError> {
     // Set outside the transaction, because inside one the pragma has no
     // effect. Left on, dropping the old table would delete every result
@@ -1375,7 +1486,8 @@ fn migrate_from_version_one(connection: &Database) -> Result<(), HistoryError> {
             |row| row.get(0),
         )
         .optional()?;
-    transaction.execute_batch(CHATS_SCHEMA)?;
+    transaction.execute_batch("DROP TABLE IF EXISTS chats")?;
+    transaction.execute_batch(&chats_schema())?;
     transaction.execute_batch(&entries_schema("new_entries"))?;
     transaction.execute_batch(&format!(
         "INSERT INTO new_entries({VERSION_ONE_COLUMNS},{})
@@ -1771,6 +1883,54 @@ fn load(state: &State, id: u64) -> Result<HistoryEntry, HistoryError> {
     Ok(entry)
 }
 
+/// Each chat's quote, for chats that have a readable one.
+fn chat_quotes(state: &State) -> Result<HashMap<ChatKey, Quote>, HistoryError> {
+    let mut statement = state
+        .connection
+        .prepare("SELECT assistant,name,quote FROM chats WHERE quote IS NOT NULL")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut quotes = HashMap::new();
+    for row in rows {
+        let (assistant, name, quote) = row?;
+        // A chat a newer daemon named, as `decode` reads its asks.
+        let (Ok(assistant_id), Ok(name)) = (assistant.parse(), ChatName::new(&name)) else {
+            continue;
+        };
+        if let Some(quote) = stored_quote(quote) {
+            quotes.insert(ChatKey { assistant_id, name }, quote);
+        }
+    }
+    Ok(quotes)
+}
+
+fn quote_of(state: &State, chat: &ChatKey) -> Result<Option<Quote>, HistoryError> {
+    let quote: Option<String> = state
+        .connection
+        .query_row(
+            "SELECT quote FROM chats WHERE assistant=?1 AND name=?2 AND quote IS NOT NULL",
+            params![chat.assistant_id.name(), chat.name.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(quote.and_then(stored_quote))
+}
+
+/// A quote this daemon refuses, such as a blank one a newer daemon wrote,
+/// reads as none, so its chat stays readable.
+fn stored_quote(quote: String) -> Option<Quote> {
+    Quote::new(quote)
+        .inspect_err(|_| {
+            tracing::warn!("a history chat's quote is unreadable; reading it without one");
+        })
+        .ok()
+}
+
 // Rows that fail to decode come back as ids, so one damaged row cannot hide
 // the rest of the history.
 fn all(state: &State) -> Result<(Vec<HistoryEntry>, Vec<u64>), HistoryError> {
@@ -1964,6 +2124,7 @@ mod tests {
         store
             .save_ask(NewAsk {
                 request: question,
+                quote: None,
                 reply: "reply",
                 workdir: Path::new("/project"),
                 resume: None,
@@ -2001,7 +2162,7 @@ mod tests {
     }
 
     #[test]
-    fn a_database_from_before_sections_keeps_its_rows_as_dictations_at_version_two() {
+    fn a_database_from_before_sections_keeps_its_rows_as_dictations_in_the_current_shape() {
         let directory = tempfile::tempdir().unwrap();
         version_one(directory.path(), SCHEMA_BEFORE_SECTIONS);
         let database = Connection::open(directory.path().join("history.db")).unwrap();
@@ -2016,7 +2177,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].text, "old row");
         assert!(matches!(entries[0].content, HistoryContent::Dictation(_)));
-        assert_eq!(user_version(&store), 2);
+        assert_eq!(user_version(&store), 1);
         drop(store);
         Store::open(directory.path()).unwrap();
     }
@@ -2097,7 +2258,7 @@ mod tests {
 
         let store = Store::open(directory.path()).unwrap();
 
-        assert_eq!(user_version(&store), 2);
+        assert_eq!(user_version(&store), 1);
         let entries = listed(&store)
             .into_iter()
             .map(|entry| (entry.text, entry.content.chat().cloned()))
@@ -2150,18 +2311,170 @@ mod tests {
     }
 
     #[test]
-    fn a_database_at_version_two_reopens_and_a_newer_one_is_refused() {
+    fn a_database_at_version_one_reopens_and_a_newer_one_is_refused() {
         let (directory, store) = opened();
-        assert_eq!(user_version(&store), 2);
+        assert_eq!(user_version(&store), 1);
         drop(store);
         let store = Store::open(directory.path()).unwrap();
-        tamper(&store, "PRAGMA user_version=3", []);
+        tamper(&store, "PRAGMA user_version=2", []);
         drop(store);
 
         assert!(matches!(
             Store::open(directory.path()),
             Err(HistoryError::Unavailable)
         ));
+    }
+
+    fn quoted_ask(store: &Store, question: &str, chat: ChatKey, quote: &Quote) -> HistoryEntry {
+        store
+            .save_ask(NewAsk {
+                request: question,
+                quote: Some(quote),
+                reply: "reply",
+                workdir: Path::new("/project"),
+                resume: None,
+                chat: Some(chat),
+                created_at_ms: now_ms(),
+                duration_ms: 1,
+                failure: None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_database_whose_chats_lack_quotes_is_rebuilt_and_keeps_its_rows() {
+        let (directory, store) = opened();
+        let earlier = ask(&store, "When?", Some(chat("plans")));
+        tamper(&store, "ALTER TABLE chats DROP COLUMN quote", []);
+        tamper(&store, "ALTER TABLE entries ADD COLUMN quote TEXT", []);
+        drop(store);
+
+        let store = Store::open(directory.path()).unwrap();
+        let quote = Quote::new("the notes".to_owned()).unwrap();
+        quoted_ask(&store, "Shorter?", chat("notes"), &quote);
+
+        assert_eq!(user_version(&store), 1);
+        assert_eq!(store.get(earlier.id).unwrap().content, earlier.content);
+        assert_eq!(store.chat_quote(&chat("notes")).unwrap(), Some(quote));
+    }
+
+    #[test]
+    fn a_chat_keeps_its_first_quote_and_its_sessions_recall_it_apart_from_the_budget() {
+        let (_directory, store) = opened();
+        let long = Quote::new("a".repeat(40 * 1024)).unwrap();
+        let later = Quote::new("later notes".to_owned()).unwrap();
+        for (question, quote, resume) in [("Shorter?", &long, "s1"), ("Again?", &later, "s2")] {
+            store
+                .save_ask(NewAsk {
+                    request: question,
+                    quote: Some(quote),
+                    reply: "reply",
+                    workdir: Path::new("/project"),
+                    resume: Some(resume),
+                    chat: Some(chat("notes")),
+                    created_at_ms: now_ms(),
+                    duration_ms: 1,
+                    failure: None,
+                })
+                .unwrap();
+        }
+
+        let recalled = store.recall("s1", 32 * 1024).unwrap();
+
+        assert_eq!(
+            questions(&recalled),
+            ["Shorter?"],
+            "the quote costs no recall budget"
+        );
+        assert_eq!(
+            store.chat_quote(&chat("notes")).unwrap(),
+            Some(long.clone())
+        );
+        assert_eq!(store.session_quote("s2").unwrap(), Some(long));
+        assert_eq!(store.session_quote("s3").unwrap(), None);
+    }
+
+    #[test]
+    fn a_chat_refuses_a_blank_quote() {
+        let (_directory, store) = opened();
+        ask(&store, "When?", Some(chat("notes")));
+
+        let refused = store
+            .lock()
+            .connection
+            .execute("UPDATE chats SET quote='' WHERE name='notes'", []);
+
+        assert!(refused.is_err());
+    }
+
+    #[test]
+    fn a_quote_this_daemon_refuses_reads_as_none_and_hides_nothing_else() {
+        let (_directory, store) = opened();
+        let quote = Quote::new("the notes".to_owned()).unwrap();
+        quoted_ask(&store, "Shorter?", chat("notes"), &quote);
+        tamper(&store, "UPDATE chats SET quote=' '", []);
+
+        let next = ask(&store, "Again?", Some(chat("notes")));
+
+        assert_eq!(store.chat_quote(&chat("notes")).unwrap(), None);
+        assert_eq!(
+            questions(&store.list(&query("again", None, 100)).unwrap().entries),
+            ["Again?"]
+        );
+        assert!(store.get(next.id).is_ok());
+    }
+
+    #[test]
+    fn a_quote_its_chat_has_already_makes_no_room() {
+        let (_directory, store) = opened();
+        let quote = Quote::new("a".repeat(Quote::MAX_BYTES)).unwrap();
+        quoted_ask(&store, "First?", chat("notes"), &quote);
+        let filler = "a".repeat(MAX_ENTRY_BYTES);
+        let fillers = budget(HistorySection::Chat).text_bytes / MAX_ENTRY_BYTES - 2;
+        let oldest = ask(&store, &filler, None);
+        for _ in 1..fillers {
+            ask(&store, &filler, None);
+        }
+
+        quoted_ask(&store, "Again?", chat("notes"), &quote);
+
+        assert!(store.get(oldest.id).is_ok(), "nothing was evicted");
+    }
+
+    #[test]
+    fn each_chats_quote_counts_once_against_the_chat_budget() {
+        let (_directory, store) = opened();
+        let quote = Quote::new("a".repeat(Quote::MAX_BYTES)).unwrap();
+        let chats = budget(HistorySection::Chat).text_bytes / Quote::MAX_BYTES;
+        let first = quoted_ask(&store, "First?", chat("chat 0"), &quote);
+        for number in 1..=chats {
+            quoted_ask(&store, "Next?", chat(&format!("chat {number}")), &quote);
+        }
+
+        assert!(
+            matches!(store.get(first.id), Err(HistoryError::Missing)),
+            "the oldest chat made room"
+        );
+    }
+
+    #[test]
+    fn search_finds_a_chat_by_its_quote() {
+        let (_directory, store) = opened();
+        ask(&store, "Unrelated?", None);
+        let quoted = quoted_ask(
+            &store,
+            "Shorter?",
+            chat("notes"),
+            &Quote::new("Launch plan for Friday".to_owned()).unwrap(),
+        );
+
+        let found = store
+            .list(&query("launch PLAN", None, 100))
+            .unwrap()
+            .entries;
+
+        let ids: Vec<u64> = found.iter().map(|entry| entry.id).collect();
+        assert_eq!(ids, [quoted.id]);
     }
 
     #[test]
@@ -2171,6 +2484,7 @@ mod tests {
             store
                 .save_ask(NewAsk {
                     request,
+                    quote: None,
                     reply: "ok",
                     workdir: Path::new("/p"),
                     resume,

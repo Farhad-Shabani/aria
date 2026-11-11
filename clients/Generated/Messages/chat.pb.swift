@@ -459,9 +459,23 @@ public nonisolated struct Aria_Daemon_V1_StartChat: Sendable {
   /// relative one is INVALID_REQUEST.
   public var workdir: String = String()
 
+  /// Text the chat is about, such as a dictation or a prompt result. The
+  /// assistant reads it ahead of the chat's questions, and the chat is named
+  /// after its first line. At most 128 KiB of UTF-8; blank is INVALID_REQUEST.
+  public var quote: String {
+    get {_quote ?? String()}
+    set {_quote = newValue}
+  }
+  /// Returns true if `quote` has been explicitly set.
+  public var hasQuote: Bool {self._quote != nil}
+  /// Clears the value of `quote`. Subsequent reads from it will return its default value.
+  public mutating func clearQuote() {self._quote = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _quote: String? = nil
 }
 
 public nonisolated struct Aria_Daemon_V1_AskResponse: Sendable {
@@ -1453,7 +1467,7 @@ nonisolated extension Aria_Daemon_V1_NamedChat: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Aria_Daemon_V1_StartChat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartChat"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workdir\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workdir\0\u{1}quote\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1462,20 +1476,29 @@ nonisolated extension Aria_Daemon_V1_StartChat: SwiftProtobuf.Message, SwiftProt
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.workdir) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._quote) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.workdir.isEmpty {
       try visitor.visitSingularStringField(value: self.workdir, fieldNumber: 1)
     }
+    try { if let v = self._quote {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_StartChat, rhs: Aria_Daemon_V1_StartChat) -> Bool {
     if lhs.workdir != rhs.workdir {return false}
+    if lhs._quote != rhs._quote {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

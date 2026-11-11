@@ -549,11 +549,22 @@ public nonisolated struct Aria_Daemon_V1_GetChatResponse: Sendable {
   /// Clears the value of `nextBeforeID`. Subsequent reads from it will return its default value.
   public mutating func clearNextBeforeID() {self._nextBeforeID = nil}
 
+  /// The text the chat is about, when it started from one.
+  public var quote: String {
+    get {_quote ?? String()}
+    set {_quote = newValue}
+  }
+  /// Returns true if `quote` has been explicitly set.
+  public var hasQuote: Bool {self._quote != nil}
+  /// Clears the value of `quote`. Subsequent reads from it will return its default value.
+  public mutating func clearQuote() {self._quote = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _nextBeforeID: UInt64? = nil
+  fileprivate var _quote: String? = nil
 }
 
 /// A prompt's reply, saved under the history entry it ran on. Results don't
@@ -1331,7 +1342,7 @@ nonisolated extension Aria_Daemon_V1_GetChatRequest: SwiftProtobuf.Message, Swif
 
 nonisolated extension Aria_Daemon_V1_GetChatResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetChatResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}entries\0\u{3}next_before_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}entries\0\u{3}next_before_id\0\u{1}quote\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1341,6 +1352,7 @@ nonisolated extension Aria_Daemon_V1_GetChatResponse: SwiftProtobuf.Message, Swi
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedMessageField(value: &self.entries) }()
       case 2: try { try decoder.decodeSingularUInt64Field(value: &self._nextBeforeID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self._quote) }()
       default: break
       }
     }
@@ -1357,12 +1369,16 @@ nonisolated extension Aria_Daemon_V1_GetChatResponse: SwiftProtobuf.Message, Swi
     try { if let v = self._nextBeforeID {
       try visitor.visitSingularUInt64Field(value: v, fieldNumber: 2)
     } }()
+    try { if let v = self._quote {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 3)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_GetChatResponse, rhs: Aria_Daemon_V1_GetChatResponse) -> Bool {
     if lhs.entries != rhs.entries {return false}
     if lhs._nextBeforeID != rhs._nextBeforeID {return false}
+    if lhs._quote != rhs._quote {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

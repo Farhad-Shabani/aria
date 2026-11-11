@@ -13,8 +13,8 @@ use aria_assistant::chat::{
     CODEX_BINARY, ChatChoice, ChatEventEmitter, ChatFolders, ChatReply, ChatRequest, ChatStage,
     ChatStageKind, ChatSubscribers, ChatTarget, ClaudeCodeAssistant, CodexAssistant, DeliverCall,
     LocalAssistant, Projects, PromptCall, PromptChoice, PromptInput, PromptInstructions,
-    PromptRequest, PromptRun, RenameError, Session, SessionHistory, SessionKey, SessionSpec,
-    SessionStore, Step, StepSink, Ticket, read_instructions,
+    PromptRequest, PromptRun, Recalled, RenameError, Session, SessionHistory, SessionKey,
+    SessionSpec, SessionStore, Step, StepSink, Ticket, quoted, read_instructions,
 };
 use aria_assistant::memory::MemoryConfig;
 use aria_assistant::memory::{DB_FILE, Store, load_profile_block};
@@ -29,11 +29,13 @@ use aria_provider::ProviderError;
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{
-    ApplicationId, ChatKey, ChatName, Prompt, PromptId, PromptKind, SettingsCache, SettingsStore,
+    ApplicationId, ChatKey, ChatName, Prompt, PromptId, PromptKind, Quote, SettingsCache,
+    SettingsStore,
 };
 use aria_voice::config::SpeakerConfig;
 use aria_voice::history::{HistoryContent, HistoryEntry, HistoryError, NewAsk};
 use aria_voice::speaker::{ProfileStore, Role};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -142,6 +144,7 @@ pub(in crate::daemon) struct ChatRuntime {
     sessions: SessionStore,
     /// The folder each named chat runs in, kept from its first ask.
     folders: ChatFolders,
+    held: HeldQuotes,
     #[cfg(test)]
     pub(in crate::daemon) assistant_overrides: Option<tests::AssistantOverrides>,
     /// Read per chat, so a reply never types into an app with Aria off.
@@ -173,6 +176,7 @@ impl ChatRuntime {
             codex_home: context.codex_home.clone(),
             sessions: SessionStore::open(context.settings_path.with_file_name(SESSION_FILE)),
             folders: ChatFolders::open(context.settings_path.with_file_name(CHAT_FOLDERS_FILE)),
+            held: HeldQuotes::default(),
             settings,
             cache,
             memory_wake,
@@ -291,12 +295,30 @@ impl ChatRuntime {
                 workdir,
                 new_session,
             } => (Place::Named { name, workdir }, new_session),
-            ChatChoice::Start { workdir } => {
+            ChatChoice::Start { workdir, quote } => {
                 require_directory(&workdir)?;
-                let name = Some(self.folders.start_new(assistant_id, &text, &workdir)?);
+                let named_after = quote.as_ref().map_or(text.as_str(), Quote::as_str);
+                let name = self
+                    .folders
+                    .start_new(assistant_id, named_after, &workdir)?;
+                let chat = ChatKey {
+                    assistant_id,
+                    name: name.clone(),
+                };
                 // A resume ID a deleted or dropped chat left under the name
                 // belongs to another chat.
-                (Place::Folder { workdir, name }, true)
+                let key = SessionKey::named(&chat);
+                if let Err(error) = self.sessions.forget(&key) {
+                    if let Err(error) = self.folders.forget(&key) {
+                        tracing::warn!(error = %error_chain(&error), "a chat that couldn't start kept its folder");
+                    }
+                    return Err(error.into());
+                }
+                if let Some(quote) = quote {
+                    self.held.hold(chat, quote);
+                }
+                let name = Some(name);
+                (Place::Folder { workdir, name }, false)
             }
         };
         Ok(AskJob {
@@ -548,6 +570,7 @@ impl ChatRuntime {
     /// continue. Answers whether the daemon knew the chat.
     pub(in crate::daemon) fn delete_chat(&self, chat: &ChatKey) -> Result<bool, ChatError> {
         let key = SessionKey::named(chat);
+        self.held.remove(chat);
         self.sessions.forget(&key)?;
         let had_folder = self.folders.forget(&key)?;
         let had_asks = self
@@ -602,6 +625,7 @@ impl ChatRuntime {
                 error => ChatError::RenameChat(error),
             });
         }
+        self.held.rename(chat, renamed.clone());
         Ok(renamed)
     }
 
@@ -677,12 +701,16 @@ impl ChatRuntime {
         };
 
         let memory = self.memory();
+        let chat = request.chat();
+        let held = chat.as_ref().and_then(|chat| self.held.get(chat));
+        let quote = self.ask_quote(&request, held.as_ref(), history)?;
+        let question = quoted(quote.as_ref(), &request.text);
         let prompt = match memory
             .as_ref()
             .and_then(|memory| load_profile_block(&memory.dir))
         {
-            Some(block) => format!("{block}\n\n{}", request.text),
-            None => request.text.clone(),
+            Some(block) => format!("{block}\n\n{question}"),
+            None => question,
         };
         let Reply { text, resume } =
             self.turn(assistant, steps, &request, &prompt, config.timeout, cancel)?;
@@ -705,10 +733,11 @@ impl ChatRuntime {
             let (created_at_ms, duration_ms) = elapsed_ms(started);
             history.save_ask(NewAsk {
                 request: &request.text,
+                quote: held.as_ref(),
                 reply: &text,
                 workdir: &request.workdir,
                 resume: resume.as_deref(),
-                chat: request.chat(),
+                chat: chat.clone(),
                 created_at_ms,
                 duration_ms,
                 failure,
@@ -870,6 +899,27 @@ impl ChatRuntime {
         Ok(Reply { text, resume })
     }
 
+    /// The chat's quote, for an ask that starts an assistant session: `held`,
+    /// else the one history keeps. A resumed session has read it already.
+    fn ask_quote(
+        &self,
+        request: &ChatRequest,
+        held: Option<&Quote>,
+        history: Option<&HistoryStore>,
+    ) -> Result<Option<Quote>, ChatError> {
+        let Some(chat) = request.chat() else {
+            return Ok(None);
+        };
+        if !request.new_session && self.sessions.recall(&request.key())?.is_some() {
+            return Ok(None);
+        }
+        match (held, history) {
+            (Some(held), _) => Ok(Some(held.clone())),
+            (None, Some(history)) => history.chat_quote(&chat).map_err(ChatError::History),
+            (None, None) => Ok(None),
+        }
+    }
+
     /// The memory section when it is on.
     fn memory(&self) -> Option<MemoryConfig> {
         let settings = self.cache.effective();
@@ -983,17 +1033,21 @@ struct SavedHistory<'a> {
 }
 
 impl SessionHistory for SavedHistory<'_> {
-    fn recall(&self, resume: &str) -> Vec<Ask> {
+    fn recall(&self, resume: &str) -> Recalled {
         let Some(history) = self.history else {
-            return Vec::new();
+            return Recalled::default();
         };
-        match history.recall(resume, RECALL_BYTES) {
-            Ok(entries) => entries.into_iter().filter_map(ask).collect(),
-            Err(error) => {
-                tracing::warn!(error = %error_chain(&error), "the assistant session could not be recalled");
-                Vec::new()
-            }
-        }
+        let recalled = history.session_quote(resume).and_then(|quote| {
+            let entries = history.recall(resume, RECALL_BYTES)?;
+            Ok(Recalled {
+                quote,
+                asks: entries.into_iter().filter_map(ask).collect(),
+            })
+        });
+        recalled.unwrap_or_else(|error| {
+            tracing::warn!(error = %error_chain(&error), "the assistant session could not be recalled");
+            Recalled::default()
+        })
     }
 }
 
@@ -1106,6 +1160,37 @@ impl TypingTurns {
     }
 }
 
+/// Each chat's quote from its start, while the daemon runs. History keeps
+/// the copy that outlives a restart, and only while history is on.
+#[derive(Default)]
+struct HeldQuotes(Mutex<HashMap<ChatKey, Quote>>);
+
+impl HeldQuotes {
+    fn hold(&self, chat: ChatKey, quote: Quote) {
+        self.quotes().insert(chat, quote);
+    }
+
+    fn get(&self, chat: &ChatKey) -> Option<Quote> {
+        self.quotes().get(chat).cloned()
+    }
+
+    fn remove(&self, chat: &ChatKey) {
+        self.quotes().remove(chat);
+    }
+
+    fn rename(&self, chat: &ChatKey, renamed: ChatKey) {
+        let mut quotes = self.quotes();
+        if let Some(quote) = quotes.remove(chat) {
+            quotes.insert(renamed, quote);
+        }
+    }
+
+    /// Each change is one insert or remove, so a panic leaves the map whole.
+    fn quotes(&self) -> MutexGuard<'_, HashMap<ChatKey, Quote>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 fn require_directory(workdir: &Path) -> Result<(), ChatError> {
     if workdir.is_dir() {
         return Ok(());
@@ -1183,6 +1268,8 @@ pub(super) mod tests {
     pub(in crate::daemon) struct Log {
         pub(in crate::daemon::chat) sessions: Vec<Option<String>>,
         pub(in crate::daemon::chat) prompts: Vec<String>,
+        /// How many of the next turns fail instead of replying.
+        pub(in crate::daemon::chat) failures: usize,
     }
 
     pub(in crate::daemon) struct FakeAssistant(pub(in crate::daemon::chat) Arc<Mutex<Log>>);
@@ -1282,6 +1369,10 @@ pub(super) mod tests {
             let mut log = self.log.lock().expect("the log is not poisoned");
             log.sessions.push(self.resume.clone());
             log.prompts.push(text.to_owned());
+            if log.failures > 0 {
+                log.failures -= 1;
+                return Err(AssistantError::Failed("down".to_owned()));
+            }
             let turn = log.sessions.len();
             self.resume = Some(format!("session-{turn}"));
             steps.step(Step::Thinking);
@@ -1339,6 +1430,7 @@ pub(super) mod tests {
             codex_home: directory.join(".codex"),
             sessions: SessionStore::open(directory.join(SESSION_FILE)),
             folders: ChatFolders::open(directory.join(CHAT_FOLDERS_FILE)),
+            held: HeldQuotes::default(),
             emitter: ChatEventEmitter::subscribed_by("aria-test-chat-events", move |stage| {
                 let _ = events.send(stage);
             }),
@@ -1991,6 +2083,227 @@ pub(super) mod tests {
         assert_eq!(reply.history_entry_id, Some(saved.id));
     }
 
+    fn launch_notes() -> Quote {
+        Quote::new("Launch notes\nShip Friday.".to_owned()).expect("a valid quote")
+    }
+
+    fn quoted_call(workdir: &Path) -> AskCall {
+        AskCall {
+            chat: ChatChoice::Start {
+                workdir: workdir.to_path_buf(),
+                quote: Some(launch_notes()),
+            },
+            ..call("make it shorter", workdir)
+        }
+    }
+
+    #[test]
+    fn a_chat_started_from_a_quote_is_named_after_it_asks_about_it_and_saves_it() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
+
+        let job = runtime
+            .prepare_ask(quoted_call(home.path()))
+            .expect("the chat starts");
+        let chat = job.chat().expect("a started ask names its chat");
+        let reply = replied(run(&runtime, &events, 1, job));
+
+        assert_eq!(chat.name.as_str(), "Launch notes");
+        assert_eq!(
+            log.lock().expect("the log is not poisoned").prompts,
+            ["<quote>\nLaunch notes\nShip Friday.\n</quote>\n\nmake it shorter"]
+        );
+        let saved = chats(&runtime);
+        let [saved] = saved.as_slice() else {
+            panic!("one chat, got {}", saved.len());
+        };
+        assert_eq!(saved.text, "make it shorter", "the question stays apart");
+        assert_eq!(
+            runtime.history.chat_quote(&chat).expect("history reads"),
+            Some(launch_notes()),
+            "the chat keeps the quote"
+        );
+        let recalled = SavedHistory {
+            history: Some(&runtime.history),
+        }
+        .recall("session-1");
+        assert_eq!(
+            recalled,
+            Recalled {
+                quote: Some(launch_notes()),
+                asks: vec![Ask {
+                    request: "make it shorter".to_owned(),
+                    reply,
+                }],
+            },
+            "the quote leads the asks, whatever the recall budget"
+        );
+    }
+
+    #[test]
+    fn a_started_chats_quote_leads_each_new_session_even_after_a_failed_first_ask_and_a_rename() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let log = Arc::new(Mutex::new(Log {
+            failures: 1,
+            ..Log::default()
+        }));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
+        let job = runtime
+            .prepare_ask(quoted_call(home.path()))
+            .expect("the chat starts");
+        let chat = job.chat().expect("a started ask names its chat");
+        assert!(matches!(
+            run(&runtime, &events, 1, job),
+            ChatStageKind::Failed { .. }
+        ));
+        let renamed = runtime
+            .rename_chat(&chat, ChatName::new("Trip").expect("a valid name"))
+            .expect("the chat is renamed");
+
+        replied(named_turn(
+            &runtime,
+            &events,
+            2,
+            &renamed,
+            home.path(),
+            false,
+        ));
+        named_turn(&runtime, &events, 3, &renamed, home.path(), false);
+
+        let quoted =
+            |question| format!("<quote>\nLaunch notes\nShip Friday.\n</quote>\n\n{question}");
+        assert_eq!(
+            log.lock().expect("the log is not poisoned").prompts,
+            [
+                quoted("make it shorter"),
+                quoted("again"),
+                "again".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_started_chat_never_resumes_a_session_a_dropped_chat_left_under_its_name() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
+        let left = ChatKey {
+            assistant_id: AssistantId::ClaudeCode,
+            name: ChatName::new("Launch notes").expect("a valid name"),
+        };
+        runtime
+            .sessions
+            .record(SessionKey::named(&left), "dropped")
+            .expect("records");
+        let job = runtime
+            .prepare_ask(quoted_call(home.path()))
+            .expect("the chat starts");
+        assert_eq!(job.chat(), Some(left.clone()));
+        drop(job); // Cancelled before its turn came.
+
+        named_turn(&runtime, &events, 2, &left, home.path(), false);
+
+        assert_eq!(
+            log.lock().expect("the log is not poisoned").sessions,
+            [None],
+            "the next ask doesn't resume the dropped chat's session"
+        );
+    }
+
+    #[test]
+    fn turning_history_off_after_a_saved_ask_keeps_the_quote_for_new_sessions() {
+        use aria_settings::SettingsPatch;
+        let home = tempfile::tempdir().expect("a temp home");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
+        let job = runtime
+            .prepare_ask(quoted_call(home.path()))
+            .expect("the chat starts");
+        let chat = job.chat().expect("a started ask names its chat");
+        replied(run(&runtime, &events, 1, job));
+        runtime
+            .settings
+            .modify(SettingsPatch {
+                history_enabled: Some(false),
+                ..Default::default()
+            })
+            .expect("history turns off");
+
+        named_turn(&runtime, &events, 2, &chat, home.path(), true);
+
+        assert_eq!(
+            log.lock().expect("the log is not poisoned").prompts[1],
+            "<quote>\nLaunch notes\nShip Friday.\n</quote>\n\nagain"
+        );
+    }
+
+    #[test]
+    fn a_chat_whose_session_record_cant_be_cleared_doesnt_start_or_keep_its_name() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+        // A folder where the record file goes, so reading it fails.
+        std::fs::create_dir(home.path().join(SESSION_FILE)).expect("a folder in the way");
+
+        assert!(runtime.prepare_ask(quoted_call(home.path())).is_err());
+
+        let name = ChatName::new("Launch notes").expect("a valid name");
+        assert!(matches!(
+            folder_of(&runtime, named_call(&name, None)),
+            Err(ChatError::UnknownChat)
+        ));
+    }
+
+    #[test]
+    fn with_history_off_a_new_session_in_a_quoted_chat_still_reads_the_quote() {
+        let home = home_without_history();
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
+        let job = runtime
+            .prepare_ask(quoted_call(home.path()))
+            .expect("the chat starts");
+        let chat = job.chat().expect("a started ask names its chat");
+        replied(run(&runtime, &events, 1, job));
+
+        named_turn(&runtime, &events, 2, &chat, home.path(), false);
+        named_turn(&runtime, &events, 3, &chat, home.path(), true);
+
+        let prompts = log.lock().expect("the log is not poisoned").prompts.clone();
+        assert_eq!(
+            prompts[1], "again",
+            "the resumed session read the quote already"
+        );
+        assert_eq!(
+            prompts[2],
+            "<quote>\nLaunch notes\nShip Friday.\n</quote>\n\nagain"
+        );
+    }
+
+    #[test]
+    fn a_new_session_in_a_quoted_chat_reads_the_quote_and_a_resumed_one_does_not() {
+        let home = tempfile::tempdir().expect("a temp home");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(home.path(), logging_assistants(&log));
+        let job = runtime
+            .prepare_ask(quoted_call(home.path()))
+            .expect("the chat starts");
+        let chat = job.chat().expect("a started ask names its chat");
+        replied(run(&runtime, &events, 1, job));
+
+        named_turn(&runtime, &events, 2, &chat, home.path(), false);
+        named_turn(&runtime, &events, 3, &chat, home.path(), true);
+
+        let prompts = log.lock().expect("the log is not poisoned").prompts.clone();
+        assert_eq!(
+            prompts[1], "again",
+            "the resumed session read the quote already"
+        );
+        assert_eq!(
+            prompts[2],
+            "<quote>\nLaunch notes\nShip Friday.\n</quote>\n\nagain"
+        );
+    }
+
     #[test]
     fn a_chat_with_history_off_or_that_failed_is_not_saved() {
         let home = home_without_history();
@@ -2025,6 +2338,7 @@ pub(super) mod tests {
     fn saved_entry(runtime: &ChatRuntime, home: &Path, reply: &str) -> u64 {
         runtime.history.save_ask(NewAsk {
             request: "When?",
+            quote: None,
             reply,
             workdir: home,
             resume: None,
@@ -2164,6 +2478,7 @@ pub(super) mod tests {
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
         runtime.history.save_ask(NewAsk {
             request: "When?",
+            quote: None,
             reply: " \n",
             workdir: home.path(),
             resume: None,
@@ -2480,6 +2795,7 @@ pub(super) mod tests {
             .prepare_ask(AskCall {
                 chat: ChatChoice::Start {
                     workdir: workdir.to_path_buf(),
+                    quote: None,
                 },
                 ..call("hello", workdir)
             })
@@ -2757,6 +3073,7 @@ pub(super) mod tests {
             .prepare_ask(AskCall {
                 chat: ChatChoice::Start {
                     workdir: home.path().to_path_buf(),
+                    quote: None,
                 },
                 ..call("hello", home.path())
             })
@@ -2777,6 +3094,7 @@ pub(super) mod tests {
         let ghost = named_key("ghost");
         runtime.history.save_ask(NewAsk {
             request: "kept by history alone",
+            quote: None,
             reply: "ok",
             workdir: home.path(),
             resume: None,

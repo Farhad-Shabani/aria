@@ -31,12 +31,12 @@ use aria_primitives::error_chain;
 use aria_settings::config::AssistantId;
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
-use aria_settings::{ChatKey, ChatName, PromptKind};
+use aria_settings::{ChatKey, ChatName, PromptKind, Quote};
 
 pub use assistants::{CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant};
 pub(crate) use assistants::{claude_command, parse_claude};
 pub use folders::{ChatFolders, RenameError, StartError};
-pub use local::{Ask, LocalAssistant, LocalSession, SessionHistory};
+pub use local::{Ask, LocalAssistant, LocalSession, Recalled, SessionHistory};
 pub(crate) use process::run_cli;
 pub use projects::{Ambiguous, DiscoverError, Focus, Mention, Project, Projects, ProjectsError};
 pub use prompt_run::{
@@ -103,8 +103,12 @@ pub enum ChatChoice {
         workdir: Option<PathBuf>,
         new_session: bool,
     },
-    /// A chat in `workdir` that the daemon names.
-    Start { workdir: PathBuf },
+    /// A chat in `workdir` that the daemon names, after `quote` when it
+    /// has one. Each ask in it reads `quote` until one gets a reply.
+    Start {
+        workdir: PathBuf,
+        quote: Option<Quote>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +130,15 @@ pub struct ChatRequest {
     pub own_voice: bool,
     /// A tap of the Aria key cancels this run while it is in flight.
     pub tap_cancels: bool,
+}
+
+/// An ask's question as the assistant reads it: the quote first, framed, so
+/// the question that follows reads as being about it.
+pub fn quoted(quote: Option<&Quote>, question: &str) -> String {
+    match quote {
+        Some(quote) => format!("<quote>\n{}\n</quote>\n\n{question}", quote.as_str()),
+        None => question.to_owned(),
+    }
 }
 
 impl ChatRequest {

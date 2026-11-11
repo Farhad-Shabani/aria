@@ -443,6 +443,7 @@ mod tests {
         let started = || {
             wire::ask_request::Chat::Start(wire::StartChat {
                 workdir: workdir.clone(),
+                quote: None,
             })
         };
 

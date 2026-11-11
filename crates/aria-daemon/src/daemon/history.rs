@@ -6,7 +6,7 @@ use aria_kit::audio::RecordingReader;
 use aria_platform::delivery::Caret;
 use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::{ChatKey, ChatName};
+use aria_settings::{ChatKey, ChatName, Quote};
 use aria_voice::dictation::{
     DictationError, DictationSettings, ExecutionControl, TranscriptSink, Utterance,
 };
@@ -64,6 +64,14 @@ impl HistoryStore {
         max_bytes: usize,
     ) -> Result<Vec<HistoryEntry>, HistoryError> {
         self.storage()?.recall(resume, max_bytes)
+    }
+
+    pub(super) fn session_quote(&self, resume: &str) -> Result<Option<Quote>, HistoryError> {
+        self.storage()?.session_quote(resume)
+    }
+
+    pub(super) fn chat_quote(&self, chat: &ChatKey) -> Result<Option<Quote>, HistoryError> {
+        self.storage()?.chat_quote(chat)
     }
 
     pub(super) fn list(&self, query: HistoryQuery) -> Result<HistoryPage, HistoryError> {
