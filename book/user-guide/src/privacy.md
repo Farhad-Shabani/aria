@@ -88,17 +88,24 @@ earlier records. Clearing Aria's history, or deleting a chat from it,
 doesn't delete the assistant's records. Deleting a chat also deletes the ID
 Aria uses to continue that chat with the assistant.
 
-Aria names a chat started on a Mac after its first question. Clearing
-history doesn't remove that name from `~/.aria`, and expiry doesn't either.
-Deleting the chat does.
+A chat you start from a history entry or a prompt result sends that text to
+the assistant with your first question. Aria sends it again whenever the chat
+starts a new assistant session, such as after a question that got no reply.
+With history on, Aria saves one copy with the chat. With history off, Aria
+keeps it in memory until you delete the chat or Aria restarts. Deleting the
+entry or the result doesn't delete the copy. Deleting the chat does.
+
+Aria names a chat started on a Mac after its first question, or after the
+first line of the text it quotes. Clearing history doesn't remove that name
+from `~/.aria`, and expiry doesn't either. Deleting the chat does.
 
 ## Prompts
 
 [Prompts](./prompts.md) send your spoken words as text, along with the prompt
-file's instructions, to Claude Code or Codex. A prompt you run on a history
-entry sends that entry's text instead: a chat's reply, or a transcript's
-whole text. The assistant may send that text to cloud
-services.
+file's instructions, to your assistant. A prompt you run on a history entry
+sends that entry's text instead: a chat's reply, or a transcript's whole
+text. Claude Code and Codex may send that text to cloud services. **Local
+Provider** sends it to the server that `provider.endpoint` names.
 
 With history on, Aria saves the result of a prompt you run on a history entry
 under that entry. Aria deletes it with the entry.
