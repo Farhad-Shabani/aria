@@ -96,6 +96,11 @@ impl PairingCodes {
         matches
     }
 
+    /// Ends the live code, so nothing shown until now can pair.
+    pub(in crate::daemon) fn retire(&self) {
+        *self.lock() = None;
+    }
+
     /// Call this once a phone is admitted. A redeemed code doesn't count if
     /// the phone was then refused.
     pub(in crate::daemon) fn record_pairing(&self) {
@@ -179,6 +184,20 @@ mod tests {
 
         assert!(codes.redeem(code.raw(), now));
         assert!(!codes.redeem(code.raw(), now));
+    }
+
+    #[test]
+    fn a_retired_code_does_not_redeem_and_the_next_one_is_new() {
+        let codes = PairingCodes::default();
+        let now = Instant::now();
+        let (code, _) = codes.issue(now).unwrap();
+
+        codes.retire();
+
+        assert!(!codes.is_live(now));
+        assert!(!codes.redeem(code.raw(), now));
+        let (next, _) = codes.issue(now).unwrap();
+        assert_ne!(next, code);
     }
 
     #[test]

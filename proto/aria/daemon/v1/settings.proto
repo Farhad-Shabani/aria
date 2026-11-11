@@ -320,8 +320,8 @@ enum ShortcutCombo {
   SHORTCUT_COMBO_COMMAND = 2;
 }
 
-// A key held with at least one modifier. A chord is registered rather than
-// watched, so unlike AriaKey it needs no Accessibility grant.
+// A key held with Control, Option, or Shift, and optionally Command. A chord
+// is registered, not watched, so it needs no Accessibility grant.
 message Chord {
   // The platform virtual key code.
   uint32 key_code = 1;

@@ -2020,6 +2020,24 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_command_only_chord_makes_the_file_invalid_at_its_line() {
+        let error = Loaded::parse(
+            "[shortcuts]\nask = { key_code = 12, command = true }\n",
+            Path::new(HOME),
+        )
+        .expect_err("Command alone is refused");
+        assert!(matches!(
+            error,
+            SettingsError::Invalid {
+                key: Key::ShortcutsAsk,
+                source: InvalidValue::Chord(crate::ChordError::CommandAlone),
+                ..
+            }
+        ));
+        assert_eq!(error.position().map(|position| position.line), Some(2));
+    }
+
+    #[test]
     fn keyed_entries_keep_file_order_and_a_reorder_is_a_new_revision() {
         let prompt = |id: &str| {
             format!("[prompts.{id}]\nname = \"P\"\nkind = \"rewrite\"\nfile = \"/{id}.md\"\n")

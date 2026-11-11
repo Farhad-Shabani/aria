@@ -3,7 +3,7 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures_util::{Stream, StreamExt, future};
 use rustls_pki_types::pem::PemObject;
@@ -23,7 +23,7 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tonic::transport::server::Connected;
 
 use super::connections::Admitted;
-use crate::daemon::relay::{Pairing, PairingCodes, Phones, fingerprint};
+use crate::daemon::relay::{Pairing, Phones, fingerprint};
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum Error {
@@ -41,12 +41,11 @@ pub(super) struct Handshake {
 }
 
 impl Handshake {
-    pub(super) fn new(pairing: &Pairing, codes: Arc<PairingCodes>) -> Result<Self, Error> {
+    pub(super) fn new(pairing: &Pairing) -> Result<Self, Error> {
         let certificate = CertificateDer::from_pem_slice(pairing.certificate_pem.as_bytes())?;
         let key = PrivateKeyDer::from_pem_slice(pairing.key_pem.as_bytes())?;
         let verifier = PhoneVerifier {
             phones: Arc::clone(&pairing.phones),
-            codes,
             algorithms: rustls::crypto::ring::default_provider().signature_verification_algorithms,
         };
         Ok(Self {
@@ -56,7 +55,8 @@ impl Handshake {
     }
 
     /// `admitted` connections past a handshake bounded by `timeout`,
-    /// `concurrent` at a time. A phone admitted on a code, not its pin, gets
+    /// `concurrent` at a time. A paired phone's connection lasts until the
+    /// phone is revoked. A phone admitted on a code, not its pin, gets
     /// `lease` to pair.
     pub(super) fn secured(
         self,
@@ -66,13 +66,18 @@ impl Handshake {
         concurrent: usize,
     ) -> impl Stream<Item = io::Result<Leased<TlsStream<Admitted>>>> {
         let Self { acceptor, phones } = self;
-        secured(acceptor, admitted, timeout, concurrent, move |pin| {
-            if pin.is_some_and(|pin| phones.contains(&pin)) {
-                Lease::Open
-            } else {
-                Lease::For(lease)
-            }
-        })
+        secured(
+            acceptor,
+            admitted,
+            timeout,
+            concurrent,
+            move |pin| match pin.and_then(|pin| phones.connection(&pin)) {
+                Some(revocation) => Lease::UntilCancelled(revocation),
+                // A phone can pair on this connection and keep using it, so
+                // a revoke ends it too.
+                None => Lease::ForOrUntilCancelled(lease, phones.revocation()),
+            },
+        )
     }
 }
 
@@ -122,7 +127,7 @@ pub(in crate::daemon) fn secured(
                             .and_then(<[_]>::first)
                             .map(|leaf| fingerprint(leaf));
                         let lease = lease(pin);
-                        if matches!(lease, Lease::For(_)) {
+                        if matches!(lease, Lease::For(_) | Lease::ForOrUntilCancelled(..)) {
                             tracing::debug!(peer, "admitted an unpaired peer to pair");
                         }
                         Some(Ok(Leased::new(stream, lease)))
@@ -147,7 +152,6 @@ pub(in crate::daemon) fn secured(
 #[derive(Debug)]
 struct PhoneVerifier {
     phones: Arc<Phones>,
-    codes: Arc<PairingCodes>,
     algorithms: WebPkiSupportedAlgorithms,
 }
 
@@ -162,7 +166,7 @@ impl ClientCertVerifier for PhoneVerifier {
         _intermediates: &[CertificateDer<'_>],
         _now: UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
-        if self.phones.contains(&fingerprint(end_entity)) || self.codes.is_live(Instant::now()) {
+        if self.phones.contains(&fingerprint(end_entity)) || self.phones.pairing_is_open() {
             Ok(ClientCertVerified::assertion())
         } else {
             Err(rustls::Error::InvalidCertificate(
@@ -196,35 +200,33 @@ impl ClientCertVerifier for PhoneVerifier {
 
 /// How long a connection may stay open past its handshake.
 pub(in crate::daemon) enum Lease {
-    Open,
     For(Duration),
     UntilCancelled(CancellationToken),
+    /// Whichever comes first.
+    ForOrUntilCancelled(Duration, CancellationToken),
 }
 
 /// A connection that closes when its lease ends.
 pub(in crate::daemon) struct Leased<IO> {
     inner: IO,
-    ends: Option<ConnectionEnd>,
+    deadline: Option<Pin<Box<Sleep>>>,
+    cancelled: Option<Pin<Box<WaitForCancellationFutureOwned>>>,
     ended: Option<io::ErrorKind>,
-}
-
-enum ConnectionEnd {
-    Lease(Pin<Box<Sleep>>),
-    Cancelled(Pin<Box<WaitForCancellationFutureOwned>>),
 }
 
 impl<IO> Leased<IO> {
     pub(in crate::daemon) fn new(inner: IO, lease: Lease) -> Self {
-        let ends = match lease {
-            Lease::Open => None,
-            Lease::For(lease) => Some(ConnectionEnd::Lease(Box::pin(tokio::time::sleep(lease)))),
-            Lease::UntilCancelled(cancel) => {
-                Some(ConnectionEnd::Cancelled(Box::pin(cancel.cancelled_owned())))
-            }
+        let deadline = |lease| Some(Box::pin(tokio::time::sleep(lease)));
+        let cancelled = |cancel: CancellationToken| Some(Box::pin(cancel.cancelled_owned()));
+        let (deadline, cancelled) = match lease {
+            Lease::For(lease) => (deadline(lease), None),
+            Lease::UntilCancelled(cancel) => (None, cancelled(cancel)),
+            Lease::ForOrUntilCancelled(lease, cancel) => (deadline(lease), cancelled(cancel)),
         };
         Self {
             inner,
-            ends,
+            deadline,
+            cancelled,
             ended: None,
         }
     }
@@ -233,24 +235,22 @@ impl<IO> Leased<IO> {
         if self.ended.is_some() {
             return self.ended;
         }
-        let error = match self.ends.as_mut()? {
-            ConnectionEnd::Lease(ends) => {
-                if ends.as_mut().poll(context).is_pending() {
-                    return None;
-                }
-                io::ErrorKind::TimedOut
-            }
-            ConnectionEnd::Cancelled(ends) => {
-                if ends.as_mut().poll(context).is_pending() {
-                    return None;
-                }
-                io::ErrorKind::ConnectionAborted
-            }
+        let error = if has_ended(&mut self.cancelled, context) {
+            io::ErrorKind::ConnectionAborted
+        } else if has_ended(&mut self.deadline, context) {
+            io::ErrorKind::TimedOut
+        } else {
+            return None;
         };
         tracing::debug!(?error, "closing an expired or cancelled connection");
         self.ended = Some(error);
         self.ended
     }
+}
+
+fn has_ended<F: Future>(end: &mut Option<Pin<Box<F>>>, context: &mut Context<'_>) -> bool {
+    end.as_mut()
+        .is_some_and(|end| end.as_mut().poll(context).is_ready())
 }
 
 impl<IO: Connected> Connected for Leased<IO> {

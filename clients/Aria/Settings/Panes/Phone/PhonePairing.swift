@@ -7,7 +7,7 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 final class PhonePairing: ObservableObject {
     nonisolated private static let pollInterval: Duration = .seconds(2)
 
-    /// Mirrors CODE_LIFETIME in crates/aria/src/daemon/relay/code.rs.
+    /// Mirrors CODE_LIFETIME in crates/aria-daemon/src/daemon/relay/code.rs.
     static let codeLifetime: TimeInterval = 60
 
     /// Near expiry the daemon can still serve the old code for a moment, so
@@ -31,8 +31,8 @@ final class PhonePairing: ObservableObject {
 
     private let poller: StatusPoller
     private let daemon: PairingDaemon
-    /// Goes up each time this object restarts the daemon. A poll that started
-    /// before the restart sees a different number and drops its answer.
+    /// Goes up each time this object restarts the daemon or revokes phones. A
+    /// poll that started before sees a different number and drops its answer.
     private var generation = 0
     /// The daemon's pairing count at the last poll. Nil until one answers.
     private var pairingCount: UInt64?
@@ -141,24 +141,25 @@ final class PhonePairing: ObservableObject {
         }
     }
 
-    /// Deleting the pairing file while Aria is stopped makes the daemon mint a
-    /// new certificate on start, which cuts off every paired phone.
+    /// The daemon also ends the code on screen, so polls already in flight
+    /// are dropped and the next one shows a new code.
     func revoke() async {
-        targetIsOn = true
-        defer { targetIsOn = nil }
-        beginRestart()
+        generation += 1
         do {
-            try await poller.restart(whileStopped: daemon.removePairingFile)
+            try await daemon.revokePhones()
             actionError = nil
-        } catch let failure as StatusPoller.RestartFailure {
-            log.error("Revoking phones failed: \(failure.localizedDescription, privacy: .private)")
-            actionError = "Aria couldn’t revoke the phones. \(failure.localizedDescription)"
         } catch {
-            log.error("Revoking phones failed: \(error.localizedDescription, privacy: .private)")
-            actionError = "Aria couldn’t revoke the phones. Try again."
+            log.error("Revoking phones failed: \(String(describing: error), privacy: .private)")
+            actionError = Self.revokeFailure(for: error)
         }
-        status = .loading
         await poll()
+    }
+
+    nonisolated static func revokeFailure(for error: any Error) -> String {
+        if error as? DaemonFailure == .refused(.durabilityUnconfirmed) {
+            return "Your phones are revoked only until Aria restarts. Try again."
+        }
+        return "Aria couldn’t revoke the phones. Try again."
     }
 
     /// The poller refuses a restart while it is already starting or stopping

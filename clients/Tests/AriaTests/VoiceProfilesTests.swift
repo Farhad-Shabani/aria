@@ -6,7 +6,6 @@ import XCTest
 final class VoiceProfilesTests: XCTestCase {
     private struct Enrolled: Equatable {
         let name: String
-        let role: SpeakerRole
         let replace: Bool
     }
 
@@ -32,8 +31,8 @@ final class VoiceProfilesTests: XCTestCase {
                     }
                     return speakers
                 },
-                enroll: { name, role, replace in
-                    self.enrolled.append(Enrolled(name: name, role: role, replace: replace))
+                enroll: { name, replace in
+                    self.enrolled.append(Enrolled(name: name, replace: replace))
                     if let error = self.enrollError { throw error }
                     if self.suspendsEnroll {
                         try await withCheckedThrowingContinuation { self.enrollContinuation = $0 }
@@ -73,19 +72,27 @@ final class VoiceProfilesTests: XCTestCase {
         XCTFail("State did not settle", file: file, line: line)
     }
 
-    func testANewVoiceIsTheOwnersUntilAnOwnerExists() async {
+    func testANewVoiceReadsAsTheOwnersUntilAnOwnerExists() async {
         let harness = Harness()
         harness.speakers = [Self.speaker("sam", .guest)]
         let voices = VoiceProfiles(effects: harness.effects)
         await voices.refresh()
 
         voices.beginAdding()
-        XCTAssertEqual(voices.enrollment?.role, .owner)
+        XCTAssertEqual(voices.enrollment?.isOwner, true)
 
         harness.speakers.append(Self.speaker("alex", .owner))
         await voices.refresh()
         voices.beginAdding()
-        XCTAssertEqual(voices.enrollment?.role, .guest)
+        XCTAssertEqual(voices.enrollment?.isOwner, false)
+    }
+
+    /// The list can be stale: another client may have set up an owner since.
+    func testEnrollingLeavesTheRoleToTheDaemon() {
+        let request = SpeakerClient.enrollRequest(name: "alex", replace: false)
+        XCTAssertEqual(request.role, .unspecified)
+        XCTAssertEqual(request.name, "alex")
+        XCTAssertFalse(request.replace)
     }
 
     func testTheOwnVoiceToggleExplainsItselfOnlyOnceAVoiceExists() async {
@@ -148,7 +155,7 @@ final class VoiceProfilesTests: XCTestCase {
         XCTAssertEqual(voices.failure, "Aria couldn’t change the owner.")
     }
 
-    func testReRecordingKeepsTheRoleAndReplaces() async {
+    func testReRecordingReplaces() async {
         let harness = Harness()
         let sam = Self.speaker("sam", .guest)
         harness.speakers = [sam]
@@ -159,7 +166,7 @@ final class VoiceProfilesTests: XCTestCase {
         voices.start()
         await waitUntil { voices.enrollment == nil }
 
-        XCTAssertEqual(harness.enrolled, [Enrolled(name: "sam", role: .guest, replace: true)])
+        XCTAssertEqual(harness.enrolled, [Enrolled(name: "sam", replace: true)])
     }
 
     func testProgressFollowsTheDaemonsSamples() {

@@ -6,7 +6,7 @@ import Foundation
 final class VoiceProfiles: ObservableObject {
     struct Effects {
         var list: () async throws -> [EnrolledSpeaker]
-        var enroll: (_ name: String, _ role: SpeakerRole, _ replace: Bool) async throws -> Void
+        var enroll: (_ name: String, _ replace: Bool) async throws -> Void
         var remove: (_ name: String) async throws -> Void
         var setOwner: (_ name: String) async throws -> Void
     }
@@ -17,7 +17,9 @@ final class VoiceProfiles: ObservableObject {
             case recording(taken: Int, listening: Bool)
         }
 
-        let role: SpeakerRole
+        /// Only for wording: the daemon makes a new voice the owner while
+        /// nobody is.
+        let isOwner: Bool
         let replacing: String?
         var phase = Phase.naming
         var failure: String?
@@ -77,15 +79,14 @@ final class VoiceProfiles: ObservableObject {
         }
     }
 
-    /// Asks for owner whenever none exists.
     func beginAdding() {
         name = ""
-        enrollment = Enrollment(role: hasOwner ? .guest : .owner, replacing: nil)
+        enrollment = Enrollment(isOwner: !hasOwner, replacing: nil)
     }
 
     func beginRerecording(_ speaker: EnrolledSpeaker) {
         name = speaker.name
-        enrollment = Enrollment(role: speaker.role, replacing: speaker.name)
+        enrollment = Enrollment(isOwner: speaker.role == .owner, replacing: speaker.name)
     }
 
     func start() {
@@ -97,7 +98,7 @@ final class VoiceProfiles: ObservableObject {
         self.enrollment = enrollment
         recording = Task {
             do {
-                try await effects.enroll(name, enrollment.role, enrollment.replacing != nil)
+                try await effects.enroll(name, enrollment.replacing != nil)
                 if !Task.isCancelled { self.enrollment = nil }
                 // The voice is saved even when Cancel came too late, so the
                 // list refreshes outside this possibly cancelled task.
@@ -155,7 +156,7 @@ extension VoiceProfiles.Effects {
     @MainActor static var live: Self {
         Self(
             list: { try await SpeakerClient.list() },
-            enroll: { name, role, replace in try await SpeakerClient.enroll(name: name, role: role, replace: replace) },
+            enroll: { name, replace in try await SpeakerClient.enroll(name: name, replace: replace) },
             remove: { name in try await SpeakerClient.remove(name: name) },
             setOwner: { name in try await SpeakerClient.setOwner(name: name) }
         )

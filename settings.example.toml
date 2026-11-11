@@ -122,7 +122,7 @@ aria_key = "right_option"
 ask = "shift"
 # Lists the prompts that are on: shift, command, a chord, or off.
 prompt_list = "command"
-# A chord is a key code with modifiers:
+# A chord is a key code with Control, Option, or Shift, and maybe Command:
 # ask = { key_code = 49, control = false, option = false, shift = true, command = true }
 
 [wake]

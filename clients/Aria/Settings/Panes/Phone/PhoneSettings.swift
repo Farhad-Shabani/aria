@@ -78,11 +78,11 @@ struct PhoneSettings: View {
         }
         .padding(.vertical, 8)
         .confirmationDialog("Revoke Every Paired Phone?", isPresented: $isConfirmingRevoke) {
-            Button("Revoke and Restart Aria", role: .destructive) {
+            Button("Revoke All", role: .destructive) {
                 Task { await pairing.revoke() }
             }
         } message: {
-            Text("Aria restarts with a new code. Each phone scans it again.")
+            Text("Each phone scans a new code to pair again.")
         }
     }
 
