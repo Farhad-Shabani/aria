@@ -370,7 +370,15 @@ final class PaletteController: ObservableObject {
             model: model, result: promptRun.result, isSystemTranscriptionRunning: systemTranscription.isRunning,
             isStopping: systemTranscription.isStopping,
             hasTranscript: !systemTranscription.transcript.lines.isEmpty, detail: history.detail,
-            chat: chats.shown, offPage: chats.offPage, history: history.work, hasFrontApp: frontApp != nil)
+            chat: chats.shown, replying: selectedReplying, history: history.work, hasFrontApp: frontApp != nil)
+    }
+
+    private var selectedReplying: Chat? {
+        switch model.selected {
+        case .entry(let entry): chats.replying(quoting: entry.id)
+        case .chat(let chat): chats.replying(chat.key)
+        default: nil
+        }
     }
 
     func perform(_ action: PaletteAction) {
