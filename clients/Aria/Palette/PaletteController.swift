@@ -50,6 +50,8 @@ final class PaletteController: ObservableObject {
     private var savingDraft: Task<Void, Never>?
     /// Fetches an entry's text to type. Closing the palette cancels it.
     private var typing: Task<Void, Never>?
+    /// The chat a follow-up on a text is starting. Closing the palette cancels it.
+    private var starting: Task<Void, Never>?
     private var namingAssistants: Task<Void, Never>?
     /// Counts the times the palette opened, so work that outlives one opening
     /// leaves the next alone.
@@ -234,23 +236,36 @@ final class PaletteController: ObservableObject {
         model.openChat()
     }
 
-    func returnOnChat() {
-        switch decisions.chatReturn {
+    var quoteFits: Bool? { decisions.quoteFits }
+
+    func returnOnFollowUp() {
+        switch decisions.followUpReturn {
         case .send?:
             guard chats.send(model.followUp) else { return }
             model.followUp = ""
             // Back to resting, so the selection follows the reply to this follow-up.
             model.messageSelection = MessageSelection()
-        case .type(let reply)?:
-            deliver(reply)
+        case .start(let quote)?:
+            guard starting == nil else { return }
+            let question = model.followUp
+            starting = Task {
+                defer { starting = nil }
+                await chats.startNew(question, quoting: quote)
+                // The palette closed while the folder resolved, so nothing was asked.
+                guard !Task.isCancelled else { return }
+                showChat()
+            }
+        case .type(let text)?:
+            deliver(text)
         case nil:
             break
         }
     }
 
-    var canReturnOnChat: Bool {
-        switch decisions.chatReturn {
+    var canReturnOnFollowUp: Bool {
+        switch decisions.followUpReturn {
         case .send?: chats.canSend(model.followUp)
+        case .start?: starting == nil
         case .type?: !history.isClearing
         case nil: false
         }
@@ -417,8 +432,13 @@ final class PaletteController: ObservableObject {
                 model.messageSelection.selectAll(in: asks)
                 return true
             }
-            // As in Messages: with something typed, ⌘⌫ deletes it rather than the chat.
-            if PaletteKey.delete.matches(event), !model.followUp.isEmpty { return false }
+        }
+        // As in Messages: with a follow-up typed, ⌘⌫ deletes it rather than the chat or the entry.
+        if PaletteKey.delete.matches(event), !model.followUp.isEmpty { return false }
+        // Return works on these pages wherever focus is, even in selected text.
+        if model.page == .entry || model.page == .result, !model.isRenaming, PaletteKey.return.matches(event) {
+            if canReturnOnFollowUp { returnOnFollowUp() }
+            return true
         }
         if model.page == .entry, let entry = history.detail?.id,
             let step = Self.step(for: event) ?? Self.arrowStep(for: event)
@@ -520,11 +540,6 @@ final class PaletteController: ObservableObject {
         promptRun.shows(ticket: ticket) || chats.shows(ticket: ticket)
     }
 
-    func deliverResult() {
-        guard case .replied(let text) = promptRun.result?.state else { return }
-        deliver(text)
-    }
-
     /// The palette holds the keys, so it closes before the text is typed. Text
     /// too long to type keeps it open, to say so where the user asked.
     private func deliver(_ text: String) {
@@ -620,6 +635,7 @@ final class PaletteController: ObservableObject {
 
     private func close() {
         typing?.cancel()
+        starting?.cancel()
         promptRun.release()
         model.closeMenu()
         deletion = nil

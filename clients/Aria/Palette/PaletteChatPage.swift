@@ -33,8 +33,8 @@ struct PaletteChatPage: View {
                             actions: actions, perform: controller.perform, toggleMenu: controller.toggleMenu)
                         if let title = controller.returnTitle {
                             if !actions.isEmpty { BarDivider() }
-                            PaletteFooterButton(title: title, key: .return) { controller.returnOnChat() }
-                                .disabled(!controller.canReturnOnChat)
+                            PaletteFooterButton(title: title, key: .return) { controller.returnOnFollowUp() }
+                                .disabled(!controller.canReturnOnFollowUp)
                         }
                     }
                 }
@@ -74,20 +74,11 @@ struct PaletteChatPage: View {
         return [controller.assistantName(of: shown?.key), folder].compactMap(\.self).joined(separator: " · ")
     }
 
-    /// Laid out as a row is, so the field starts where the asks' text does.
     private var followUp: some View {
-        HStack(spacing: Metrics.columnSpacing) {
-            Image(systemName: "arrow.turn.down.right")
-                .foregroundStyle(.secondary)
-                .frame(width: PaletteRowMetrics.symbolWidth)
-                .accessibilityHidden(true)
-            PaletteFollowUpField(
-                // Off while a name is edited, so the name field keeps the keys.
-                controller: controller, isEnabled: chats.takesFollowUp && !controller.model.isRenaming,
-                placeholder: chats.shown?.isReplying == true ? "Replying…" : "Ask a follow-up")
-        }
-        .padding(.horizontal, PaletteBarMetrics.leading)
-        .frame(minHeight: PaletteRowMetrics.height)
+        PaletteFollowUpRow(
+            // Off while a name is edited, so the name field keeps focus.
+            controller: controller, isEnabled: chats.takesFollowUp && !controller.model.isRenaming,
+            placeholder: chats.shown?.isReplying == true ? "Replying…" : "Ask a follow-up")
     }
 
     @ViewBuilder
@@ -107,9 +98,9 @@ struct PaletteChatPage: View {
 }
 
 private enum Metrics {
-    static let columnSpacing: CGFloat = 10
     /// The asks' text starts where a row's text does and ends as far from the right edge.
-    static let textInset = PaletteBarMetrics.leading + PaletteRowMetrics.symbolWidth + columnSpacing
+    static let textInset =
+        PaletteBarMetrics.leading + PaletteRowMetrics.symbolWidth + PaletteRowMetrics.columnSpacing
     /// Between one ask's highlight and the next's, so each reads as its own exchange.
     static let askGap: CGFloat = 14
     /// Between a question's highlight and its reply's, so neither covers the other.
@@ -119,6 +110,10 @@ private enum Metrics {
     static let bubbleIndent: CGFloat = 160
     static let bubbleRadius: CGFloat = 12
     static let bubblePadding = EdgeInsets(top: 7, leading: 12, bottom: 7, trailing: 12)
+    /// Enough to recognize the text. Its own page shows all of it.
+    static let quoteLines = 6
+    static let quoteIndent: CGFloat = 10
+    static let quoteBarWidth: CGFloat = 3
 }
 
 private struct PaletteChatDetail: View {
@@ -138,6 +133,10 @@ private struct PaletteChatDetail: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Metrics.askGap) {
+                    if let quote = chat.quote {
+                        PaletteQuoteView(quote: quote)
+                            .padding(.horizontal, Metrics.textInset - PaletteBarMetrics.listInset)
+                    }
                     if readFailed {
                         Button("Try Again", action: retryRead)
                             .frame(maxWidth: .infinity)
@@ -188,6 +187,24 @@ private struct PaletteChatDetail: View {
             .padding(.horizontal, Metrics.textInset - PaletteBarMetrics.listInset - PaletteBlockHighlight.inset)
             .modifier(PaletteBlockHighlight(isFocused: !selection.isResting && selected.contains(message)))
             .id(message)
+    }
+}
+
+/// A chat's quote, above its asks, as a quote shows in Mail.
+private struct PaletteQuoteView: View {
+    let quote: String
+
+    var body: some View {
+        Text(quote)
+            .foregroundStyle(.secondary)
+            .lineLimit(Metrics.quoteLines)
+            .padding(.leading, Metrics.quoteIndent)
+            .overlay(alignment: .leading) {
+                Capsule().fill(.tertiary).frame(width: Metrics.quoteBarWidth)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Quoted: \(quote)")
     }
 }
 

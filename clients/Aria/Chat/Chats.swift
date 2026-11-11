@@ -8,15 +8,18 @@ private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "
 @MainActor
 final class Chats: ObservableObject {
     struct Effects {
-        /// Sends the first question of a chat the daemon names, typing nothing.
-        var start: (_ text: String, _ target: ChatTarget, _ ownVoice: Bool) async throws -> StartedChat
+        /// The folder and assistant a chat started from the palette runs with.
+        var resolve: () async throws -> ChatTarget
+        /// Sends a new chat's first question, with any quote, typing nothing. The daemon names
+        /// the chat.
+        var start:
+            (_ text: String, _ quote: String?, _ target: ChatTarget, _ ownVoice: Bool) async throws ->
+                StartedChat
         /// Sends a question in a chat, typing nothing, and returns its ticket. The daemon
         /// runs it in the folder it recorded for the chat, or in `folder` when it has none.
         var ask:
-            (
-                _ text: String, _ chat: ChatKey, _ folder: String?, _ ownVoice: Bool,
-                _ tapCancels: Bool
-            ) async throws -> UInt64
+            (_ text: String, _ chat: ChatKey, _ folder: String?, _ ownVoice: Bool, _ tapCancels: Bool)
+                async throws -> UInt64
         /// Stops a chat's running ask and every one waiting behind it.
         var cancel: (ChatKey) async throws -> Void
         /// A chat's newest saved asks before a cursor.
@@ -49,18 +52,34 @@ final class Chats: ObservableObject {
     init(effects: Effects) { self.effects = effects }
 
     /// Shows the new chat at once. The chat takes its key from the daemon's reply.
-    func startNew(_ question: String, at target: ChatTarget, ownVoice: Bool) {
-        show(Chat(key: nil, folder: target.workdir))
+    func startNew(_ question: String, quoting quote: String? = nil, at target: ChatTarget, ownVoice: Bool) {
+        show(Chat(key: nil, folder: target.workdir, quote: quote))
         let id = append(question)
         Task {
             do {
-                let started = try await effects.start(question, target, ownVoice)
+                let started = try await effects.start(question, quote, target, ownVoice)
                 shown?.named(started.chat, by: id)
                 shown?.started(id, ticket: started.ticket)
             } catch {
                 fail(id, error)
             }
         }
+    }
+
+    /// Starts a chat quoting `quote`. It shows once the daemon picks a folder, or fails to.
+    func startNew(_ text: String, quoting quote: String) async {
+        let question = Self.question(text)
+        let target: ChatTarget
+        do {
+            target = try await effects.resolve()
+        } catch {
+            guard !Task.isCancelled else { return }
+            show(Chat(key: nil, folder: nil, quote: quote))
+            fail(append(question), error)
+            return
+        }
+        guard !Task.isCancelled else { return }
+        startNew(question, quoting: quote, at: target, ownVoice: false)
     }
 
     /// A spoken follow-up. The chat may have closed during recording, so it opens again.
@@ -260,7 +279,8 @@ final class Chats: ObservableObject {
 extension Chats.Effects {
     static var live: Self {
         .init(
-            start: { try await ChatClient.start(text: $0, at: $1, ownVoice: $2) },
+            resolve: { try await ChatClient.resolve() },
+            start: { try await ChatClient.start(text: $0, quoting: $1, at: $2, ownVoice: $3) },
             ask: { try await ChatClient.ask(text: $0, in: $1, folder: $2, ownVoice: $3, tapCancels: $4) },
             cancel: { try await ChatClient.cancel(chat: $0) },
             read: { try await HistoryClient.chat($0, before: $1) },

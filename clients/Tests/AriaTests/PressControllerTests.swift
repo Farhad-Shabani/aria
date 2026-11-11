@@ -11,7 +11,8 @@ final class PressControllerTests: XCTestCase {
     private static func chats() -> Chats {
         Chats(
             effects: .init(
-                start: { _, _, _ in StartedChat(ticket: 7, chat: minted) },
+                resolve: { Self.chat },
+                start: { _, _, _, _ in StartedChat(ticket: 7, chat: minted) },
                 ask: { _, _, _, _, _ in 7 },
                 cancel: { _ in },
                 read: { _, _ in ChatPage(asks: [], older: nil) },
@@ -83,7 +84,8 @@ final class PressControllerTests: XCTestCase {
         var askedIn: [ChatKey] = []
         let chats = Chats(
             effects: .init(
-                start: { _, _, _ in StartedChat(ticket: 7, chat: Self.minted) },
+                resolve: { Self.chat },
+                start: { _, _, _, _ in StartedChat(ticket: 7, chat: Self.minted) },
                 ask: { _, chat, _, _, _ in
                     askedIn.append(chat)
                     return 7

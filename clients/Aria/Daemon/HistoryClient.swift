@@ -82,7 +82,9 @@ enum HistoryClient {
                 let response = try $0.message
                 let asks = try response.entries.map { try HistoryItem($0) }
                 guard asks.allSatisfy({ $0.chat == chat }) else { throw DaemonFailure.invalidResponse }
-                return ChatPage(asks: asks, older: response.hasNextBeforeID ? response.nextBeforeID : nil)
+                return ChatPage(
+                    asks: asks, older: response.hasNextBeforeID ? response.nextBeforeID : nil,
+                    quote: response.hasQuote ? response.quote : nil)
             }
         }
     }

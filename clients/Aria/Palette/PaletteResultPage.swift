@@ -11,14 +11,17 @@ struct PaletteResultPage: View {
         } content: {
             content
         } bottom: {
-            PaletteFooter {
-                if let error = history.error {
-                    NoticeText(notice: error.message)
-                } else if let notice = history.notice {
-                    Text(notice)
+            VStack(spacing: 0) {
+                PaletteTextFollowUp(controller: controller)
+                PaletteFooter {
+                    if let error = history.error {
+                        NoticeText(notice: error.message)
+                    } else if let notice = history.notice {
+                        Text(notice)
+                    }
+                } actions: {
+                    actions
                 }
-            } actions: {
-                actions
             }
         }
         .announcingNotes(of: history)
@@ -72,10 +75,11 @@ struct PaletteResultPage: View {
         case .running?:
             PaletteFooterButton(title: "Cancel", key: .escape) { controller.escape() }
         case .replied?:
-            if let app = controller.frontApp?.localizedName {
+            // Return works here wherever focus is. With nothing typed, it types the result.
+            if let title = controller.returnTitle {
                 BarDivider()
-                PaletteFooterButton(title: "Type into \(app)", key: .return) { controller.deliverResult() }
-                    .keyboardShortcut(.defaultAction)
+                PaletteFooterButton(title: title, key: .return) { controller.returnOnFollowUp() }
+                    .disabled(!controller.canReturnOnFollowUp)
             }
         case .failed?, nil:
             EmptyView()
