@@ -42,7 +42,7 @@ struct PaletteFollowUpField: NSViewRepresentable {
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
-            controller.returnOnChat()
+            controller.returnOnFollowUp()
             return true
         }
     }

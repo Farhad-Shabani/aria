@@ -19,9 +19,9 @@ use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{
     ApplicationId, ApplicationOverride, ApplicationOverrides, ChatKey, ChatName, ChatNameError,
     Chord, ChordError, DeliveryMode, DictationOverrides, Modifiers, OverrideError, Position,
-    Prompt, PromptError, PromptId, PromptKind, Prompts, Settings, SettingsFault, SettingsPatch,
-    SettingsSnapshot, SettingsStatus, Shortcut, StreamingSupport, StreamingUnavailable,
-    StreamingUnavailableOutput, UpdateResult,
+    Prompt, PromptError, PromptId, PromptKind, Prompts, Quote, QuoteError, Settings, SettingsFault,
+    SettingsPatch, SettingsSnapshot, SettingsStatus, Shortcut, StreamingSupport,
+    StreamingUnavailable, StreamingUnavailableOutput, UpdateResult,
 };
 use aria_voice::dictation::{
     CaptionSnapshot, DeliveryOutcome, DictationEvent, DictationOutcome, DictationRequest,
@@ -750,8 +750,9 @@ impl From<AskCall> for wire::AskRequest {
                 workdir: workdir.map(path).unwrap_or_default(),
                 new_session,
             }),
-            ChatChoice::Start { workdir } => Chat::Start(wire::StartChat {
+            ChatChoice::Start { workdir, quote } => Chat::Start(wire::StartChat {
                 workdir: path(workdir),
+                quote: quote.map(|quote| quote.as_str().to_owned()),
             }),
         };
         Self {
@@ -828,6 +829,7 @@ fn chat_choice(chat: wire::ask_request::Chat) -> Result<ChatChoice, ProtocolErro
         },
         Chat::Start(start) => ChatChoice::Start {
             workdir: required_ask_workdir(start.workdir)?,
+            quote: start.quote.map(Quote::new).transpose()?,
         },
     })
 }
@@ -1751,6 +1753,7 @@ impl From<ChatPage> for wire::GetChatResponse {
         Self {
             entries: page.entries.into_iter().map(Into::into).collect(),
             next_before_id: page.next_before_id,
+            quote: page.quote.map(|quote| quote.as_str().to_owned()),
         }
     }
 }
@@ -1776,6 +1779,10 @@ impl TryFrom<wire::GetChatResponse> for ChatPage {
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
             next_before_id: history_cursor(page.next_before_id)?,
+            quote: page
+                .quote
+                .map(|quote| Quote::new(quote).map_err(|_| ProtocolError::InvalidHistory("quote")))
+                .transpose()?,
         })
     }
 }
@@ -3389,6 +3396,8 @@ pub enum ProtocolError {
 
     #[error(transparent)]
     InvalidChatName(#[from] ChatNameError),
+    #[error(transparent)]
+    InvalidQuote(#[from] QuoteError),
 }
 
 #[cfg(test)]
@@ -3989,6 +3998,7 @@ mod tests {
     fn started_ask() -> wire::AskRequest {
         wire::AskRequest::from(ask_call(ChatChoice::Start {
             workdir: "/tmp".into(),
+            quote: None,
         }))
     }
 
@@ -4015,6 +4025,11 @@ mod tests {
             },
             ChatChoice::Start {
                 workdir: "/tmp".into(),
+                quote: None,
+            },
+            ChatChoice::Start {
+                workdir: "/tmp".into(),
+                quote: Some(Quote::new("the notes".to_owned()).expect("a valid quote")),
             },
         ] {
             let call = ask_call(chat);
@@ -4023,6 +4038,22 @@ mod tests {
 
             assert_eq!(AskCall::try_from(sent).expect("decodes"), call);
         }
+    }
+
+    #[test]
+    fn a_started_chats_invalid_quote_is_refused() {
+        let request = wire::AskRequest {
+            chat: Some(wire::ask_request::Chat::Start(wire::StartChat {
+                workdir: "/tmp".to_owned(),
+                quote: Some(" \n".to_owned()),
+            })),
+            ..started_ask()
+        };
+
+        assert!(matches!(
+            AskCall::try_from(request),
+            Err(ProtocolError::InvalidQuote(_))
+        ));
     }
 
     #[test]
@@ -4101,6 +4132,7 @@ mod tests {
             })),
             ask(Chat::Start(wire::StartChat {
                 workdir: "proj".to_owned(),
+                quote: None,
             })),
         ] {
             let decoded = AskCall::try_from(relative);
@@ -5273,7 +5305,7 @@ mod history_tests {
     }
 
     #[test]
-    fn an_ask_entry_keeps_its_chat_across_the_wire_and_a_bad_one_is_refused() {
+    fn an_ask_entry_keeps_its_chat_across_the_wire_and_a_bad_chat_is_refused() {
         use aria_voice::history::HistoryContent;
         let mut ask = entry();
         ask.content = HistoryContent::Ask {
@@ -5377,9 +5409,19 @@ mod history_tests {
         let page = |next_before_id| wire::GetChatResponse {
             entries: vec![entry().into()],
             next_before_id,
+            quote: Some("the notes".to_owned()),
         };
         let read = ChatPage::try_from(page(Some(5))).unwrap();
         assert_eq!((read.entries.len(), read.next_before_id), (1, Some(5)));
+        assert_eq!(read.quote.as_ref().map(Quote::as_str), Some("the notes"));
+        assert!(
+            ChatPage::try_from(wire::GetChatResponse {
+                quote: Some(" ".to_owned()),
+                ..page(None)
+            })
+            .is_err(),
+            "a blank quote is refused"
+        );
         for cursor in [0, i64::MAX as u64 + 1] {
             assert!(ChatPage::try_from(page(Some(cursor))).is_err());
         }

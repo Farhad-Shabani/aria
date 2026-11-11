@@ -74,7 +74,16 @@ struct PaletteModel: Equatable {
     /// Escape goes back to the chat from a page opened on it, such as an ask's entry or
     /// the prompts to run on it.
     private(set) var returnsToChat = false
-    var followUp = ""
+    /// The follow-up field's text. The chat page keeps its own, so opening a text from a chat
+    /// keeps the chat's draft.
+    var followUp: String {
+        get { page == .chat ? chatFollowUp : textFollowUp }
+        set {
+            if page == .chat { chatFollowUp = newValue } else { textFollowUp = newValue }
+        }
+    }
+    private var chatFollowUp = ""
+    private var textFollowUp = ""
     var messageSelection = MessageSelection()
     /// The prompt being written or edited. Closing the palette keeps it, for
     /// New Prompt or Edit Prompt to bring back.
@@ -447,6 +456,7 @@ struct PaletteModel: Equatable {
     mutating func show(_ page: PalettePage) {
         self.page = page
         renaming = nil
+        textFollowUp = ""
     }
 
     /// Opens `entry`'s page on its own text, and asks for its thread, which
@@ -469,7 +479,7 @@ struct PaletteModel: Equatable {
         if returnsToChat { page = .commands }
         returnsToChat = false
         messageSelection = MessageSelection()
-        followUp = ""
+        chatFollowUp = ""
     }
 
     /// Where Ask sends its question: the chat on screen, or a new one from any other page.
@@ -503,6 +513,10 @@ struct PaletteModel: Equatable {
         }
         if page == .chat {
             if followUp.isEmpty { leaveChat() } else { followUp = "" }
+            return false
+        }
+        if !followUp.isEmpty {
+            followUp = ""
             return false
         }
         if page != .commands {

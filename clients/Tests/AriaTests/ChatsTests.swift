@@ -14,6 +14,7 @@ final class ChatsTests: XCTestCase {
 
     private struct Started: Equatable {
         let text: String
+        var quote: String? = nil
         let workdir: String
         let assistantID: Aria_Daemon_V1_AssistantId
         let ownVoice: Bool
@@ -30,21 +31,26 @@ final class ChatsTests: XCTestCase {
         var cancelFailure: DaemonFailure?
         var reads: [UInt64?] = []
         var holdsLists = false
+        var resolves: [CheckedContinuation<ChatTarget, Error>] = []
+        var holdsResolve = false
         var lists: [CheckedContinuation<[Aria_Daemon_V1_PendingAsk], Error>] = []
 
         var effects: Chats.Effects {
             .init(
-                start: { text, target, ownVoice in
+                resolve: {
+                    guard self.holdsResolve else { return ChatsTests.target }
+                    return try await withCheckedThrowingContinuation { self.resolves.append($0) }
+                },
+                start: { text, quote, target, ownVoice in
                     self.started.append(
                         Started(
-                            text: text, workdir: target.workdir, assistantID: target.assistantID, ownVoice: ownVoice))
+                            text: text, quote: quote, workdir: target.workdir, assistantID: target.assistantID,
+                            ownVoice: ownVoice))
                     return try await withCheckedThrowingContinuation { self.starts.append($0) }
                 },
                 ask: { text, chat, folder, ownVoice, tapCancels in
                     self.asked.append(
-                        Asked(
-                            text: text, chat: chat, folder: folder, ownVoice: ownVoice,
-                            tapCancels: tapCancels))
+                        Asked(text: text, chat: chat, folder: folder, ownVoice: ownVoice, tapCancels: tapCancels))
                     return try await withCheckedThrowingContinuation { self.tickets.append($0) }
                 },
                 cancel: {
@@ -316,12 +322,14 @@ final class ChatsTests: XCTestCase {
         await waitUntil { chats.shown?.asks.last?.ticket == 7 }
         chats.apply(Self.event(7, .replied, text: "Seven.", entry: 5))
 
-        harness.page?.resume(returning: ChatPage(asks: [Self.saved(4, at: 0), Self.saved(5, at: 1)], older: 4))
+        harness.page?.resume(
+            returning: ChatPage(asks: [Self.saved(4, at: 0), Self.saved(5, at: 1)], older: 4, quote: "Launch notes"))
 
         await waitUntil { chats.shown?.asks.count == 2 }
         XCTAssertEqual(chats.shown?.asks.map(\.question), ["Question 4", "And dinner?"])
         XCTAssertEqual(chats.shown?.asks.map(\.entryID), [4, 5])
         XCTAssertEqual(chats.shown?.older, 4)
+        XCTAssertEqual(chats.shown?.quote, "Launch notes", "the chat's quote comes with the read")
     }
 
     func testASavedCopyReadBeforeTheReplyGivesWayToTheAskAskedHere() async {
@@ -411,6 +419,41 @@ final class ChatsTests: XCTestCase {
         XCTAssertEqual(harness.asked.last?.ownVoice, false)
         XCTAssertEqual(harness.asked.last?.tapCancels, false)
         harness.tickets[0].resume(returning: 8)
+    }
+
+    func testAFollowUpOnATextStartsAChatThatShowsAndSendsItsQuote() async {
+        let harness = Harness()
+        let chats = Chats(effects: harness.effects)
+
+        await chats.startNew(" Make it shorter \n", quoting: "Launch notes")
+
+        XCTAssertEqual(chats.shown?.folder, "/code/aria", "the folder Resolve gave")
+        XCTAssertEqual(chats.shown?.asks.map(\.question), ["Make it shorter"])
+        XCTAssertEqual(chats.shown?.quote, "Launch notes")
+        await waitUntil { harness.started.count == 1 }
+        XCTAssertEqual(
+            harness.started,
+            [
+                Started(
+                    text: "Make it shorter", quote: "Launch notes", workdir: "/code/aria", assistantID: .claudeCode,
+                    ownVoice: false)
+            ])
+        harness.starts[0].resume(returning: Self.named(7))
+    }
+
+    func testAFollowUpOnATextCancelledWhileItsFolderResolvesAsksNothing() async {
+        let harness = Harness()
+        harness.holdsResolve = true
+        let chats = Chats(effects: harness.effects)
+        let start = Task { await chats.startNew("Make it shorter", quoting: "Launch notes") }
+        await waitUntil { harness.resolves.count == 1 }
+
+        start.cancel()
+        harness.resolves[0].resume(returning: Self.target)
+        await start.value
+
+        XCTAssertNil(chats.shown)
+        XCTAssertTrue(harness.started.isEmpty)
     }
 
     func testAPromptResultSavedOnAnAskCountsOnIt() {

@@ -78,7 +78,8 @@ final class ChatClientTests: XCTestCase {
 
     func testANewChatAsksTheDaemonToNameItInTheFolderInFront() {
         let request = ChatClient.startRequest(
-            text: "When is lunch?", at: ChatTarget(workdir: "/code/aria", assistantID: .codex), ownVoice: true)
+            text: "When is lunch?", quoting: nil, at: ChatTarget(workdir: "/code/aria", assistantID: .codex),
+            ownVoice: true)
 
         XCTAssertEqual(request.text, "When is lunch?")
         XCTAssertEqual(request.assistantID, .codex)
@@ -86,6 +87,11 @@ final class ChatClientTests: XCTestCase {
         XCTAssertTrue(request.ownVoice)
         XCTAssertTrue(request.tapCancels)
         XCTAssertFalse(request.hasOutputMode, "nothing is typed into the app in front")
+        XCTAssertEqual(
+            ChatClient.startRequest(
+                text: "Make it shorter", quoting: "Launch notes",
+                at: ChatTarget(workdir: "/code/aria", assistantID: .codex), ownVoice: false
+            ).start.quote, "Launch notes", "a chat started from a text sends it as its quote")
     }
 
     func testANewChatTakesItsKeyFromTheReply() throws {

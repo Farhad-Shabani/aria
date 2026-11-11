@@ -100,22 +100,70 @@ struct PaletteActions {
         hasFrontApp && item.isTypable && !history.isClearing
     }
 
-    enum ChatReturn: Equatable {
+    enum FollowUpReturn: Equatable {
+        /// Sends the follow-up in the chat on screen.
         case send
+        /// Starts a chat that quotes the text on screen.
+        case start(quote: String)
         case type(String)
     }
 
-    var chatReturn: ChatReturn? {
-        if !model.followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .send }
-        guard hasFrontApp, let asks = chat?.asks, let text = model.messageSelection.text(in: asks)
-        else { return nil }
-        return .type(text)
+    /// What Return does on a page with a follow-up field. With something typed it sends or starts
+    /// a chat. Otherwise it types the focused text.
+    var followUpReturn: FollowUpReturn? {
+        let isTyped = !model.followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        switch model.page {
+        case .chat:
+            if isTyped { return .send }
+            guard hasFrontApp, let asks = chat?.asks, let text = model.messageSelection.text(in: asks)
+            else { return nil }
+            return .type(text)
+        case .entry, .result:
+            // Too long to quote turns the field off, so Return does nothing.
+            guard let quote = followUpQuote, quote.utf8.count <= ChatAsk.quoteLimit else { return nil }
+            if isTyped { return .start(quote: quote) }
+            return hasFrontApp ? .type(quote) : nil
+        case .commands, .liveTranscript, .prompt:
+            return nil
+        }
+    }
+
+    /// What a follow-up on the entry or result page quotes: the focused result, else the entry.
+    /// A transcript counts only when read in full. A chat's reply has none, since its chat takes
+    /// follow-ups.
+    var followUpQuote: String? {
+        let text: String
+        switch model.page {
+        case .entry:
+            guard let detail, detail.status != .deletionPending else { return nil }
+            if let result = model.focusedResult(on: detail.id) {
+                text = result.text
+            } else {
+                switch detail.kind {
+                case .ask: return nil
+                case .systemTranscription(_, let read) where read != .whole: return nil
+                case .dictation, .systemTranscription: text = detail.copyText
+                }
+            }
+        case .result:
+            guard case .replied(let reply)? = result?.state else { return nil }
+            text = reply
+        case .commands, .chat, .liveTranscript, .prompt:
+            return nil
+        }
+        return text.contains { !$0.isWhitespace } ? text : nil
+    }
+
+    /// Whether the entry or result page's text fits in a chat's quote. `nil` with no text to quote.
+    var quoteFits: Bool? {
+        followUpQuote.map { $0.utf8.count <= ChatAsk.quoteLimit }
     }
 
     func returnTitle(typingInto app: String?) -> String? {
-        if model.page == .chat {
-            return switch chatReturn {
+        if model.page == .chat || model.page == .entry || model.page == .result {
+            return switch followUpReturn {
             case .send?: "Send"
+            case .start?: "Ask"
             case .type?: app.map { "Type into \($0)" }
             case nil: nil
             }

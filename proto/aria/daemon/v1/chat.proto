@@ -136,6 +136,10 @@ message StartChat {
   // Required: the absolute path of the directory the assistant works in. A
   // relative one is INVALID_REQUEST.
   string workdir = 1;
+  // Text the chat is about, such as a dictation or a prompt result. The
+  // assistant reads it ahead of the chat's questions, and the chat is named
+  // after its first line. At most 128 KiB of UTF-8; blank is INVALID_REQUEST.
+  optional string quote = 2;
 }
 
 message AskResponse {

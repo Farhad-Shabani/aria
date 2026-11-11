@@ -111,8 +111,10 @@ enum ChatClient {
     }
 
     /// The daemon names the chat. The reply comes back only as the ticket's REPLIED event.
-    static func start(text: String, at target: ChatTarget, ownVoice: Bool) async throws -> StartedChat {
-        let sent = startRequest(text: text, at: target, ownVoice: ownVoice)
+    static func start(text: String, quoting quote: String?, at target: ChatTarget, ownVoice: Bool) async throws
+        -> StartedChat
+    {
+        let sent = startRequest(text: text, quoting: quote, at: target, ownVoice: ownVoice)
         return try await DaemonTransport.call { client, options in
             try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
                 .ask(request: ClientRequest(message: sent), options: options) { try started($0.message) }
@@ -120,11 +122,16 @@ enum ChatClient {
     }
 
     /// With no output mode, the daemon types nothing.
-    static func startRequest(text: String, at target: ChatTarget, ownVoice: Bool) -> Aria_Daemon_V1_AskRequest {
+    static func startRequest(text: String, quoting quote: String?, at target: ChatTarget, ownVoice: Bool)
+        -> Aria_Daemon_V1_AskRequest
+    {
         var request = Aria_Daemon_V1_AskRequest()
         request.text = text
         request.assistantID = target.assistantID
-        request.start = .with { $0.workdir = target.workdir }
+        request.start = .with {
+            $0.workdir = target.workdir
+            if let quote { $0.quote = quote }
+        }
         request.ownVoice = ownVoice
         request.tapCancels = true
         return request
@@ -140,8 +147,7 @@ enum ChatClient {
     static func ask(
         text: String, in chat: ChatKey, folder: String?, ownVoice: Bool, tapCancels: Bool
     ) async throws -> UInt64 {
-        let sent = askRequest(
-            text: text, in: chat, folder: folder, ownVoice: ownVoice, tapCancels: tapCancels)
+        let sent = askRequest(text: text, in: chat, folder: folder, ownVoice: ownVoice, tapCancels: tapCancels)
         return try await DaemonTransport.call { client, options in
             try await Aria_Daemon_V1_ChatService.Client(wrapping: client)
                 .ask(request: ClientRequest(message: sent), options: options) { try $0.message.ticket }

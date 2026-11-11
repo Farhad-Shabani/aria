@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 
 use aria_daemon::{AssistantId, ClientError, DaemonSession};
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_settings::{ChatKey, ChatName};
+use aria_settings::{ChatKey, ChatName, Quote};
 use clap::{Args, Subcommand};
 
 use super::runtime_paths;
@@ -18,7 +18,7 @@ pub(super) enum HistoryCommand {
         /// List one section only
         #[arg(long, value_enum)]
         section: Option<Section>,
-        /// List only entries whose text, reply, title or app holds this, ignoring case
+        /// List only entries whose text, reply, quote, title, chat name or app holds this, ignoring case
         #[arg(long, value_name = "TEXT")]
         query: Option<String>,
     },
@@ -304,7 +304,7 @@ fn run_chat(session: &DaemonSession, command: ChatCommand) -> anyhow::Result<()>
     };
     match command {
         ChatCommand::Show { json, .. } => {
-            let asks = chat_asks(session, key).map_err(|error| match error {
+            let (asks, quote) = chat_asks(session, key).map_err(|error| match error {
                 ClientError::Rpc(RpcFailure {
                     code: RpcErrorCode::HistoryMissing,
                     ..
@@ -312,26 +312,19 @@ fn run_chat(session: &DaemonSession, command: ChatCommand) -> anyhow::Result<()>
                 error => error.into(),
             })?;
             if json {
-                let asks: Vec<serde_json::Value> = asks
-                    .iter()
-                    .map(|ask| {
-                        let mut object = entry_json(ask);
-                        object["reply"] = reply(ask).into();
-                        object
-                    })
-                    .collect();
-                println!("{}", serde_json::Value::Array(asks));
+                println!("{}", chat_json(&asks, quote.as_ref()));
             } else {
-                let blocks: Vec<String> = asks
+                let blocks: Vec<String> = quote
                     .iter()
-                    .map(|ask| {
+                    .map(|quote| quote.as_str().to_owned())
+                    .chain(asks.iter().map(|ask| {
                         format!(
                             "{}\t{}\n{}",
                             ask.id,
                             ask.text,
                             reply(ask).unwrap_or_default()
                         )
-                    })
+                    }))
                     .collect();
                 println!("{}", blocks.join("\n\n"));
             }
@@ -352,11 +345,11 @@ fn run_chat(session: &DaemonSession, command: ChatCommand) -> anyhow::Result<()>
     Ok(())
 }
 
-/// Every saved ask of the chat, oldest first.
+/// Every saved ask in `chat`, oldest first, and the chat's quote.
 fn chat_asks(
     session: &DaemonSession,
     chat: ChatKey,
-) -> Result<Vec<aria_voice::history::HistoryEntry>, ClientError> {
+) -> Result<(Vec<aria_voice::history::HistoryEntry>, Option<Quote>), ClientError> {
     use aria_voice::history::ChatQuery;
 
     let mut asks = Vec::new();
@@ -370,7 +363,7 @@ fn chat_asks(
         // Pages run newest to oldest, and each one is oldest first.
         asks.splice(0..0, page.entries);
         let Some(next) = page.next_before_id else {
-            return Ok(asks);
+            return Ok((asks, page.quote));
         };
         if before_id.is_some_and(|previous| next >= previous) {
             return Err(ClientError::MalformedResponse(
@@ -513,6 +506,21 @@ fn clear_error(error: aria_daemon::ClientError) -> anyhow::Error {
         _ => return error.into(),
     };
     anyhow::Error::new(error).context(context)
+}
+
+fn chat_json(
+    asks: &[aria_voice::history::HistoryEntry],
+    quote: Option<&Quote>,
+) -> serde_json::Value {
+    let asks: Vec<serde_json::Value> = asks
+        .iter()
+        .map(|ask| {
+            let mut object = entry_json(ask);
+            object["reply"] = reply(ask).into();
+            object
+        })
+        .collect();
+    serde_json::json!({ "quote": quote.map(Quote::as_str), "asks": asks })
 }
 
 fn entry_json(entry: &aria_voice::history::HistoryEntry) -> serde_json::Value {
@@ -776,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn an_ask_in_a_named_chat_lists_under_its_name() {
+    fn an_ask_in_a_named_chat_lists_under_its_name_and_its_chats_json_carries_the_quote() {
         use aria_voice::history::{HistoryContent, HistoryEntry, HistoryStatus};
         let ask = |name: Option<&str>| HistoryEntry {
             id: 7,
@@ -809,6 +817,11 @@ mod tests {
             serde_json::json!({"assistant": "codex", "name": "Trip"})
         );
         assert!(entry_json(&ask(None))["chat"].is_null());
+        let quote = Quote::new("the notes".to_owned()).unwrap();
+        let shown = chat_json(&[ask(Some("Trip"))], Some(&quote));
+        assert_eq!(shown["quote"], "the notes");
+        assert_eq!(shown["asks"][0]["reply"], "Friday.");
+        assert!(chat_json(&[], None)["quote"].is_null());
     }
 
     #[test]

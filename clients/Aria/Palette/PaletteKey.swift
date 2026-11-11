@@ -28,7 +28,8 @@ struct PaletteKey: Equatable {
     static let nextSection = PaletteKey(character: "\t", modifiers: .control, label: "⌃⇥")
     static let previousSection = PaletteKey(character: "\u{19}", modifiers: [.control, .shift], label: "⌃⇧⇥")
     static let escape = PaletteKey(character: "\u{1B}", modifiers: [], label: "⎋")
-    /// Labels only: the search and title fields take Return themselves.
+    /// The search, title, and follow-up fields handle Return themselves. The entry and result
+    /// pages match it too, so Return works wherever focus is.
     static let `return` = PaletteKey(character: "\r", modifiers: [], label: "↩")
 
     /// Caps Lock is held state, not part of the chord.

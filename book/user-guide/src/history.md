@@ -47,7 +47,8 @@ again.
 
 Questions you send with the Ask shortcut stay together as a chat. Aria
 names a new chat after its first question. History lists each chat once,
-under its name. Search finds it by any question, reply, or its name.
+under its name. Search finds it by any question, reply, quoted text, or its
+name.
 
 1. Select a chat and press **⌘↩**. Aria shows its questions and
    replies, oldest first.
@@ -77,14 +78,34 @@ and names the result after their first line. To keep them as a prompt, press
 Press **Esc** on the result to cancel the run. If you close Aria instead, the
 run goes on. While **Save history** is on, Aria still saves its result.
 
-With history on, Aria saves each result under its entry. The entry's row
-shows how many it has, such as **+3**. Click the count, or press **→**, to
-show the results under the entry. Press **←** or **Esc** to hide them. Select
-a result and press **Return** to type it, or **⌘↩** to read it.
+With history on, Aria saves each result under its entry. An entry with
+results shows a chevron. Click it, or press **→**, to show the results under
+the entry. Press **←** or **Esc** to hide them. Select a result and press
+**Return** to type it, or **⌘↩** to read it.
 
 An entry keeps its 20 newest results, and all results share 8 MiB of text.
 Search doesn't cover results. Deleting an entry, or clearing history, deletes
 its results too.
+
+## Ask about an entry or a result
+
+You can ask your assistant about a dictation, a transcript, or a prompt
+result. Aria starts a new chat that quotes the text.
+
+1. Select an entry or a result, then press **⌘↩**.
+2. On an entry's page, press **↑** or **↓** to choose its text or one of its
+   results.
+3. Type a question in the field at the bottom, then press **Return**.
+
+Aria shows the new chat with the quoted text above your question. It names
+the chat after the text's first line and lists it under **Chats**. With
+nothing typed in the field, **Return** types the text into the app you came
+from.
+
+A transcript works only when Aria has its whole text. The text can be at
+most 128 KiB.
+
+## List entries in a terminal
 
 From a terminal, run:
 
@@ -97,9 +118,9 @@ The list shows each entry's ID, section, status, recording availability
 lists each chat once, under its newest question, with the chat's name in
 brackets. To list one section, add `--section dictation`,
 `--section transcription`, or `--section chat`. To list only entries that
-mention something, add `--query TEXT`. It matches the text, a chat's reply,
-the entry's name, and the app's name, ignoring case. For scripts, add `--json`
-to print one JSON array.
+mention something, add `--query TEXT`. It matches the text, the entry's name,
+the app's name, and a chat's reply, quoted text, and name, ignoring case. For
+scripts, add `--json` to print one JSON array.
 Each entry's `section` is `dictation`, `transcription`, or `chat`. Each entry
 also carries `created_at_ms`, `application`, and the `chat` it belongs to.
 
@@ -119,6 +140,8 @@ aria history chat delete NAME
 ```
 
 Add `--assistant` for a chat with an assistant other than your usual one.
+`chat show` prints the chat's quoted text first. With `--json`, it prints one
+object with the chat's `quote` and its `asks`.
 
 ## Dictate into history
 

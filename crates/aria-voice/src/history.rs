@@ -6,8 +6,8 @@ use aria_primitives::Cause;
 use std::path::PathBuf;
 
 use aria_platform::delivery::Application;
-use aria_settings::ChatKey;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_settings::{ChatKey, Quote};
 
 #[derive(Clone)]
 pub struct HistoryEntry {
@@ -263,6 +263,8 @@ pub struct ChatPage {
     pub entries: Vec<HistoryEntry>,
     /// Where the next, older page starts. `None` when no older ask is left.
     pub next_before_id: Option<u64>,
+    /// The text the chat is about, when it started from one.
+    pub quote: Option<Quote>,
 }
 
 pub struct HistoryPage {

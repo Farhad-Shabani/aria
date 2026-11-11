@@ -7,17 +7,15 @@ struct PaletteThreadBadge: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 3) {
-                Text("+\(count)").monospacedDigit()
-                Image(systemName: isOpen ? "chevron.up" : "chevron.down")
-                    .imageScale(.small)
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(.quinary, in: Capsule())
-            .contentShape(Capsule())
+            // VoiceOver reads the count. On screen, the chevron shows there are results.
+            Image(systemName: isOpen ? "chevron.down" : "chevron.forward")
+                .imageScale(.small)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(.quinary, in: Capsule())
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .help(isOpen ? "Hide Results (←)" : "Show Results (→)")

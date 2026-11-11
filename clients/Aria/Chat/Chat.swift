@@ -18,10 +18,13 @@ struct Chat: Equatable {
     private(set) var asks: [ChatAsk] = []
     /// The cursor for the saved asks older than these. `nil` once none are left.
     private(set) var older: UInt64?
+    /// The text the chat is about, which the assistant reads ahead of a new session's question.
+    private(set) var quote: String?
 
-    init(key: ChatKey?, folder: String?) {
+    init(key: ChatKey?, folder: String?, quote: String? = nil) {
         self.key = key
         self.folder = folder
+        self.quote = quote
     }
 
     var isReplying: Bool { asks.last?.isRunning == true }
@@ -44,6 +47,7 @@ struct Chat: Equatable {
     mutating func merge(_ page: ChatPage) {
         add(page.asks)
         older = page.older
+        quote = page.quote ?? quote
     }
 
     mutating func rename(to key: ChatKey) {
@@ -162,6 +166,8 @@ struct ChatAsk: Identifiable, Equatable {
     }
 
     static let lost = "Aria lost track of this question. Ask again."
+    /// The daemon's limit on a quote, in UTF-8 bytes.
+    static let quoteLimit = 128 * 1024
     private static let starting = "Starting…"
     static let failed = "Aria couldn’t get a reply. Ask again."
 

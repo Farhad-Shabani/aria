@@ -249,6 +249,74 @@ final class PaletteTests: XCTestCase {
         XCTAssertNil(model.focusedResult(on: 2))
     }
 
+    func testOnAnEntrysPageReturnTypesTheFocusedTextUntilAFollowUpQuotesIt() {
+        var model = modelWithThread()
+        model.open(entry: 2)
+        let detail = Self.threaded(2, at: 200, results: 2)
+
+        let resting = PaletteActions(model: model, detail: detail, hasFrontApp: true)
+        XCTAssertEqual(resting.followUpReturn, .type("Text 2"))
+        XCTAssertEqual(resting.returnTitle(typingInto: "Notes"), "Type into Notes")
+
+        model.followUp = "Make it shorter"
+        XCTAssertEqual(
+            PaletteActions(model: model, detail: detail, hasFrontApp: true).followUpReturn,
+            .start(quote: "Text 2"))
+        model.moveDetailFocus(by: 1, on: 2)
+        let onResult = PaletteActions(model: model, detail: detail, hasFrontApp: false)
+        XCTAssertEqual(onResult.followUpReturn, .start(quote: "Short."), "the focused result, with no app in front")
+        XCTAssertEqual(onResult.returnTitle(typingInto: nil), "Ask")
+    }
+
+    func testAChatsDraftWaitsWhileATextOpenedFromItTakesItsOwn() {
+        var model = modelOnChatPage()
+        model.followUp = "And the budget?"
+
+        model.open(entry: 2)
+        XCTAssertEqual(model.followUp, "", "the entry's field starts empty")
+        model.followUp = "Shorter?"
+        XCTAssertFalse(model.escape(), "Esc clears the entry's draft first")
+        XCTAssertFalse(model.escape())
+
+        XCTAssertEqual(model.page, .chat)
+        XCTAssertEqual(model.followUp, "And the budget?")
+    }
+
+    func testAChatsReplyTakesNoFollowUpOnItsEntryButItsResultsDo() {
+        var model = modelWithThread()
+        model.open(entry: 2)
+        model.followUp = "Shorter?"
+        var ask = Self.threaded(2, at: 200, results: 2)
+        ask.kind = .ask(reply: "Noon.")
+
+        XCTAssertNil(PaletteActions(model: model, detail: ask, hasFrontApp: true).followUpQuote)
+        model.moveDetailFocus(by: 1, on: 2)
+        XCTAssertEqual(
+            PaletteActions(model: model, detail: ask, hasFrontApp: true).followUpReturn, .start(quote: "Short."))
+    }
+
+    func testATooLongOrPartlyReadTextTakesNoFollowUp() {
+        var model = openModel(history: [])
+        model.open(entry: 2)
+        model.followUp = "Shorter?"
+        var long = Self.entry(2, at: 200)
+        long.text = String(repeating: "a", count: ChatAsk.quoteLimit + 1)
+        var partial = Self.entry(2, at: 200)
+        partial.kind = .systemTranscription(transcript: "/t.txt", read: .truncated)
+
+        let tooLong = PaletteActions(model: model, detail: long, hasFrontApp: true)
+        let partlyRead = PaletteActions(model: model, detail: partial, hasFrontApp: true)
+
+        XCTAssertEqual(tooLong.quoteFits, false)
+        XCTAssertNil(tooLong.followUpReturn)
+        model.followUp = ""
+        XCTAssertNil(
+            PaletteActions(model: model, detail: long, hasFrontApp: true).followUpReturn,
+            "too long to type, so Return offers nothing")
+        XCTAssertNil(partlyRead.quoteFits)
+        XCTAssertNil(partlyRead.followUpReturn)
+    }
+
     func testOpeningAnEntrysPageReadsItsThreadWithoutOpeningItInTheList() {
         var model = openModel(history: [Self.threaded(2, at: 200, results: 2), Self.entry(1, at: 100)])
 
@@ -840,11 +908,11 @@ final class PaletteTests: XCTestCase {
 
         let actions = PaletteActions(model: model, chat: chat, hasFrontApp: true)
 
-        XCTAssertEqual(actions.chatReturn, .type("Noon."))
+        XCTAssertEqual(actions.followUpReturn, .type("Noon."))
         XCTAssertEqual(actions.returnTitle(typingInto: "Notes"), "Type into Notes")
         XCTAssertEqual(actions.all.filter(\.isInFooter).map(\.kind), [.copyText("Noon.")], "Return names typing")
         XCTAssertNil(
-            PaletteActions(model: model, chat: chat, hasFrontApp: false).chatReturn,
+            PaletteActions(model: model, chat: chat, hasFrontApp: false).followUpReturn,
             "no app to type into")
         XCTAssertEqual(actions.all.first { $0.kind == .typeText("Noon.") }?.key, .typeText)
         XCTAssertEqual(actions.all.first { $0.kind == .copyText("Noon.") }?.key, .copy)
@@ -852,7 +920,7 @@ final class PaletteTests: XCTestCase {
 
         model.followUp = "And dinner?"
         let typed = PaletteActions(model: model, chat: chat, hasFrontApp: true)
-        XCTAssertEqual(typed.chatReturn, .send)
+        XCTAssertEqual(typed.followUpReturn, .send)
         XCTAssertEqual(typed.returnTitle(typingInto: "Notes"), "Send")
 
         model.followUp = ""
@@ -928,7 +996,7 @@ final class PaletteTests: XCTestCase {
         let actions = PaletteActions(model: model, chat: chat, hasFrontApp: true)
 
         XCTAssertEqual(actions.all.first?.kind, .copyText("Text 2"))
-        XCTAssertEqual(actions.chatReturn, .type("Text 2"))
+        XCTAssertEqual(actions.followUpReturn, .type("Text 2"))
     }
 
     func testStopShowsOnlyWhileAChatTheDaemonNamedReplies() {

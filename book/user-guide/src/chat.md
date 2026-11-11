@@ -66,8 +66,11 @@ one. If that works, the problem is the recording.
 
 The Ask shortcut opens Aria on a chat with your assistant. To set it up,
 follow [Ask or pick a prompt](./macos.md#ask-or-pick-a-prompt). To follow up
-later, see [Continue a chat](./history.md#continue-a-chat). A chat started on
-a Mac is separate from the one `aria ask` continues in the same folder.
+later, see [Continue a chat](./history.md#continue-a-chat). To ask about a
+saved text, see
+[Ask about an entry or a result](./history.md#ask-about-an-entry-or-a-result).
+A chat started on a Mac is separate from the one `aria ask` continues in the
+same folder.
 
 ## Cancel
 

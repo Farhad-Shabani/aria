@@ -197,6 +197,8 @@ struct HistoryPage: Sendable {
 struct ChatPage: Sendable {
     var asks: [HistoryItem]
     var older: UInt64?
+    /// The text the chat is about, when it started from one.
+    var quote: String? = nil
 }
 
 struct HistoryClearResult: Sendable {

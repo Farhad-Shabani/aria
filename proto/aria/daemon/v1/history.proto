@@ -121,6 +121,8 @@ message GetChatResponse {
   repeated HistoryEntry entries = 1;
   // The cursor for the next, older page. Absent when no older ask is left.
   optional uint64 next_before_id = 2;
+  // The text the chat is about, when it started from one.
+  optional string quote = 3;
 }
 
 // A prompt's reply, saved under the history entry it ran on. Results don't

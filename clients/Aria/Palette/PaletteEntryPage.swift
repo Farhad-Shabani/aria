@@ -10,10 +10,13 @@ struct PaletteEntryPage: View {
         } content: {
             content.disabled(history.isClearing)
         } bottom: {
-            PaletteFooter {
-                footerNote
-            } actions: {
-                actions
+            VStack(spacing: 0) {
+                PaletteTextFollowUp(controller: controller)
+                PaletteFooter {
+                    footerNote
+                } actions: {
+                    actions
+                }
             }
         }
         .onChange(of: history.selectedID) { _, id in
@@ -68,8 +71,13 @@ struct PaletteEntryPage: View {
         if controller.model.isRenaming {
             PaletteTitleActions(controller: controller)
         } else {
-            PaletteFooterActions(
-                actions: controller.actions, perform: controller.perform, toggleMenu: controller.toggleMenu)
+            let actions = controller.actions
+            PaletteFooterActions(actions: actions, perform: controller.perform, toggleMenu: controller.toggleMenu)
+            if let title = controller.returnTitle {
+                if !actions.isEmpty { BarDivider() }
+                PaletteFooterButton(title: title, key: .return) { controller.returnOnFollowUp() }
+                    .disabled(!controller.canReturnOnFollowUp)
+            }
         }
     }
 }

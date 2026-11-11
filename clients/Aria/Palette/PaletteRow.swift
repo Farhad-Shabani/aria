@@ -14,7 +14,7 @@ struct PaletteRow<Content: View, Accessory: View>: View {
 
     var body: some View {
         // Side by side, since a button's label can't hold another button.
-        HStack(spacing: 10) {
+        HStack(spacing: PaletteRowMetrics.columnSpacing) {
             Group {
                 if let action {
                     Button(action: action) { label }
@@ -33,7 +33,7 @@ struct PaletteRow<Content: View, Accessory: View>: View {
     }
 
     private var label: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: PaletteRowMetrics.columnSpacing) {
             Image(systemName: symbol)
                 .symbolEffect(
                     .variableColor.iterative, options: .repeating, isActive: isSymbolAnimating && !reduceMotion
@@ -78,6 +78,8 @@ extension View {
 
 enum PaletteRowMetrics {
     static let symbolWidth: CGFloat = 20
+    /// Between the symbol and the text.
+    static let columnSpacing: CGFloat = 10
     /// Between the highlight's edges and what the row holds.
     static let padding: CGFloat = 10
     static let height: CGFloat = 36
