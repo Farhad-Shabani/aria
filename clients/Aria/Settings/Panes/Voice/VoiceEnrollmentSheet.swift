@@ -35,7 +35,7 @@ struct VoiceEnrollmentSheet: View {
 
     private var title: String {
         if let replacing = enrollment.replacing { return "Set Up \(replacing)’s Voice" }
-        return enrollment.role == .owner ? "Set Up Your Voice" : "Add Voice"
+        return enrollment.isOwner ? "Set Up Your Voice" : "Add Voice"
     }
 
     @ViewBuilder

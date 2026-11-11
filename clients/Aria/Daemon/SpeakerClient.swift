@@ -65,26 +65,24 @@ enum SpeakerClient {
         }
     }
 
-    /// No role lets the daemon choose: a replaced voice keeps its role, and
-    /// a new one owns the machine only while nobody does.
-    static func enroll(name: String, role: SpeakerRole? = nil, replace: Bool = false) async throws {
-        var request = Aria_Daemon_V1_EnrollSpeakerRequest()
-        request.name = name
-        request.role =
-            switch role {
-            case .owner: .owner
-            case .guest: .guest
-            case nil: .unspecified
-            }
-        request.samples = samples
-        request.replace = replace
-        let sent = request
+    static func enroll(name: String, replace: Bool = false) async throws {
+        let sent = enrollRequest(name: name, replace: replace)
         try await failing("Aria couldn’t save the voice. Try again.") {
             try await DaemonTransport.call(timeout: .seconds(180)) { client, options in
                 _ = try await Aria_Daemon_V1_SpeakerService.Client(wrapping: client)
                     .enroll(request: ClientRequest(message: sent), options: options) { try $0.message }
             }
         }
+    }
+
+    /// No role, so the daemon chooses from the voices it holds: a replaced
+    /// voice keeps its role, and a new one owns the Mac only while nobody does.
+    static func enrollRequest(name: String, replace: Bool) -> Aria_Daemon_V1_EnrollSpeakerRequest {
+        var request = Aria_Daemon_V1_EnrollSpeakerRequest()
+        request.name = name
+        request.samples = samples
+        request.replace = replace
+        return request
     }
 
     static func remove(name: String) async throws {
