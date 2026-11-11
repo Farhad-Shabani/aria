@@ -127,10 +127,12 @@ jobs:
         with:
           tool: just@1.58.0
       # Sparkle's binary comes from a GitHub release download, which times out
-      # now and then.
+      # now and then. An older cache still holds it when Package.resolved
+      # changes.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: clients/build/SourcePackages
           key: swift-packages-${{ hashFiles('clients/Aria.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: swift-packages-
       - name: just swift-check
         run: just swift_settings=ARIA_WARNINGS_AS_ERRORS=YES swift-check
