@@ -67,11 +67,6 @@ enum RibbonTuning {
     /// Share of each lap the wave takes to grow back after the line, so a
     /// new lap never snaps from flat to full.
     static let sweepRegrow = 0.25
-
-    // Reduce Motion: the ribbon holds still.
-
-    /// Share of the full height the still ribbon is drawn at.
-    static let stillShare = 0.5
 }
 
 /// Where a ribbon is drawn: the pill's small slot, or the logo's ring.
