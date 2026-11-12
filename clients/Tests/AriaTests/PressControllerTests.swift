@@ -26,7 +26,7 @@ final class PressControllerTests: XCTestCase {
     ) -> PressController.Effects {
         .init(
             transcribe: { folder, opened in
-                await opened(5)
+                opened(5)
                 folders(folder)
                 during()
                 return heard.map { DictationClient.Transcript(text: $0, ownVoice: true) }
