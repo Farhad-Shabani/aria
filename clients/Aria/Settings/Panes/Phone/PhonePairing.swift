@@ -10,8 +10,8 @@ final class PhonePairing: ObservableObject {
     /// Mirrors CODE_LIFETIME in crates/aria-daemon/src/daemon/relay/code.rs.
     static let codeLifetime: TimeInterval = 60
 
-    /// Near expiry the daemon can still serve the old code for a moment, so
-    /// polls never come closer together than this.
+    /// Near expiry the wait shrinks toward zero, so polls never come closer
+    /// together than this.
     nonisolated private static let minimumPoll: Duration = .milliseconds(250)
 
     enum Status: Equatable {
@@ -25,7 +25,7 @@ final class PhonePairing: ObservableObject {
 
     @Published private(set) var status: Status = .loading
     @Published private(set) var phonePairedAt: Date?
-    /// The switch position shown while Aria restarts. Nil otherwise.
+    /// The switch position shown while pairing turns on or off. Nil otherwise.
     @Published private(set) var targetIsOn: Bool?
     @Published private(set) var actionError: String?
 
