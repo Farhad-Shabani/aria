@@ -114,6 +114,7 @@ mod tests {
                 DictationStage::Recording {
                     id: crate::dictation::RecordingId(1),
                     delivery: aria_settings::DeliveryMode::Complete,
+                    route: crate::dictation::TranscriptRoute::Deliver,
                 },
                 Cue::Start,
             ),

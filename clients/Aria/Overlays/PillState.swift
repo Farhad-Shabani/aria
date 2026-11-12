@@ -87,6 +87,13 @@ enum PillState: Equatable {
         }
     }
 
+    /// Text only handed back ends with its caller, which shows what comes
+    /// next: an ask, a prompt, or setup's try-out.
+    func pill(for route: Aria_Daemon_V1_TranscriptRoute) -> PillState? {
+        if case .delivered = self, route == .transcriptOnly { return nil }
+        return self
+    }
+
     /// How long the pill stays once the press is over. A live press has no
     /// life of its own: the next event ends it.
     var life: Duration? {

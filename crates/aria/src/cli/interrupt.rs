@@ -296,7 +296,7 @@ impl Phase<'_> {
     /// nothing left to stop. The line stays, minus its key.
     pub(crate) fn follow(&mut self, stage: &DictationStage) {
         match stage {
-            DictationStage::Recording { id, delivery } => {
+            DictationStage::Recording { id, delivery, .. } => {
                 *lock(&self.interrupt.router.pending) = Some(Interruption::StopRecording(*id));
                 if Keyboard::from(*delivery) == Keyboard::Ours && self.keys.is_none() {
                     self.keys = self.interrupt.watch_keys();

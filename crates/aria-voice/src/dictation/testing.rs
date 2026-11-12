@@ -356,11 +356,15 @@ impl RecordsUntilStopped {
 impl DictationExecutor for RecordsUntilStopped {
     fn execute(
         &self,
-        _settings: DictationSettings,
+        settings: DictationSettings,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
     ) -> Result<DictationResult, DictationError> {
-        let recording = control.start_recording(aria_settings::DeliveryMode::Complete, events)?;
+        let recording = control.start_recording(
+            aria_settings::DeliveryMode::Complete,
+            settings.route,
+            events,
+        )?;
         self.report(Edge::Recording(control.recording_id()));
         while !recording.should_stop() {
             std::thread::sleep(Duration::from_millis(5));
@@ -471,6 +475,7 @@ impl ActiveDictationBuilder {
             control
                 .start_recording(
                     DeliveryMode::Streaming,
+                    super::TranscriptRoute::Deliver,
                     &DictationEventEmitter::unsubscribed(),
                 )
                 .expect("recording starts")

@@ -9,18 +9,20 @@ use aria_settings::DeliveryMode;
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::RpcErrorCode;
 
-use super::RecordingId;
 use super::transcripts::{Delivered, DeliveryOutcome};
+use super::{RecordingId, TranscriptRoute};
 
 /// Where a press has got to. A failure names its category from the same
 /// vocabulary the transport and the logs use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DictationStage {
-    /// The recording scope is open. The id is what a stop names, and
-    /// `delivery` is how the press delivers: Complete where it can't stream.
+    /// The recording scope is open. The id is what a stop names,
+    /// `delivery` is how the press delivers: Complete where it can't stream,
+    /// and `route` is where its text goes.
     Recording {
         id: RecordingId,
         delivery: DeliveryMode,
+        route: TranscriptRoute,
     },
     Transcribing,
     Delivering,

@@ -22,6 +22,49 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+/// The route a press was started with, as its events report it.
+public nonisolated enum Aria_Daemon_V1_TranscriptRoute: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case deliver // = 1
+  case transcriptOnly // = 2
+  case historyOnly // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .deliver
+    case 2: self = .transcriptOnly
+    case 3: self = .historyOnly
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .deliver: return 1
+    case .transcriptOnly: return 2
+    case .historyOnly: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_TranscriptRoute] = [
+    .unspecified,
+    .deliver,
+    .transcriptOnly,
+    .historyOnly,
+  ]
+
+}
+
 /// What a press does with the current speaker's words.
 public nonisolated enum Aria_Daemon_V1_HeardSpeaker: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
@@ -583,6 +626,10 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   /// lists its output.
   public var deliveryMode: Aria_Daemon_V1_DeliveryMode = .unspecified
 
+  /// Set on DICTATION_STAGE_RECORDING: where the text goes besides back to
+  /// the caller.
+  public var route: Aria_Daemon_V1_TranscriptRoute = .unspecified
+
   /// The press ends at delivered, cancelled, or failed.
   public var stage: Aria_Daemon_V1_DictationStage = .unspecified
 
@@ -740,6 +787,10 @@ public nonisolated struct Aria_Daemon_V1_MicLevel: Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
+
+nonisolated extension Aria_Daemon_V1_TranscriptRoute: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0TRANSCRIPT_ROUTE_UNSPECIFIED\0\u{1}TRANSCRIPT_ROUTE_DELIVER\0\u{1}TRANSCRIPT_ROUTE_TRANSCRIPT_ONLY\0\u{1}TRANSCRIPT_ROUTE_HISTORY_ONLY\0")
+}
 
 nonisolated extension Aria_Daemon_V1_HeardSpeaker: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0HEARD_SPEAKER_UNSPECIFIED\0\u{1}HEARD_SPEAKER_UNDECIDED\0\u{1}HEARD_SPEAKER_TYPED\0\u{1}HEARD_SPEAKER_KEPT_OUT\0")
@@ -1183,7 +1234,7 @@ nonisolated extension Aria_Daemon_V1_StopDictationResponse: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DictationEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{3}speaker_name\0\u{1}heard\0\u{3}delivery_mode\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{3}speaker_name\0\u{1}heard\0\u{3}delivery_mode\0\u{1}route\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1200,6 +1251,7 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
       case 7: try { try decoder.decodeSingularStringField(value: &self.speakerName) }()
       case 8: try { try decoder.decodeSingularEnumField(value: &self.heard) }()
       case 9: try { try decoder.decodeSingularEnumField(value: &self.deliveryMode) }()
+      case 10: try { try decoder.decodeSingularEnumField(value: &self.route) }()
       default: break
       }
     }
@@ -1233,12 +1285,16 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
     if self.deliveryMode != .unspecified {
       try visitor.visitSingularEnumField(value: self.deliveryMode, fieldNumber: 9)
     }
+    if self.route != .unspecified {
+      try visitor.visitSingularEnumField(value: self.route, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_DictationEvent, rhs: Aria_Daemon_V1_DictationEvent) -> Bool {
     if lhs.recordingID != rhs.recordingID {return false}
     if lhs.deliveryMode != rhs.deliveryMode {return false}
+    if lhs.route != rhs.route {return false}
     if lhs.stage != rhs.stage {return false}
     if lhs.text != rhs.text {return false}
     if lhs.speakerName != rhs.speakerName {return false}
