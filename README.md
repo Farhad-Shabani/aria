@@ -88,8 +88,8 @@ has no telemetry or crash reporting.
 
 - **Chat and prompts:** your words go to the assistant you choose, with the
   prompt if you run one. In a chat, some assistants may also read files in your
-  project and send them to their provider. A local model gets your words
-  through a server on your computer, which decides where they go next.
+  project and send them to their service. **Local Provider** sends your words
+  to a model server on your computer. That server decides where they go next.
   Prompts read no files.
 - **Memory (off by default):** spoken chats go to Claude Code,
   which picks out facts you mention. Aria saves them in `~/.aria/memory`.
