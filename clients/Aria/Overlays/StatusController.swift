@@ -23,6 +23,8 @@ final class StatusController: ObservableObject {
     private var lastRecording: UInt64?
     /// The app in front when that recording opened: where its words go.
     private var startApp = StartApp(bundleID: nil)
+    /// That recording's route, which also only its opening event names.
+    private var route = Aria_Daemon_V1_TranscriptRoute.unspecified
     private var asks = AsksInFlight()
     /// The last recording a chat press started. Its events carry no sign of
     /// the chat, so the press reports it.
@@ -57,6 +59,7 @@ final class StatusController: ObservableObject {
             }
             if event.stage == .recording {
                 self.lastRecording = event.recordingID
+                self.route = event.route
                 self.startApp = StartApp(bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
             }
             self.hear(event)
@@ -70,7 +73,7 @@ final class StatusController: ObservableObject {
                 return
             }
             guard let state = PillState(event) else { return }
-            self.show(state, run: self.lastRecording.map(RunID.recording))
+            self.show(state.pill(for: self.route), run: self.lastRecording.map(RunID.recording))
         }
         events.onChat { [weak self] chat in
             guard let self else { return }

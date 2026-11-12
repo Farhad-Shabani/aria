@@ -46,6 +46,14 @@ final class PillStateTests: XCTestCase {
             PillState.failed(PillState.unreadablePrompt).label(prompt: name))
     }
 
+    func testTextOnlyHandedBackShowsNoFinishOfItsOwn() {
+        let delivered = PillState.delivered(.unknown, words: 12)
+        XCTAssertNil(delivered.pill(for: .transcriptOnly))
+        XCTAssertEqual(delivered.pill(for: .deliver), delivered)
+        XCTAssertEqual(delivered.pill(for: .historyOnly), delivered)
+        XCTAssertEqual(PillState.failed("no speech").pill(for: .transcriptOnly), .failed("no speech"))
+    }
+
     func testNoAsksNoPill() {
         XCTAssertNil(PillState(asks: AsksInFlight()))
     }
