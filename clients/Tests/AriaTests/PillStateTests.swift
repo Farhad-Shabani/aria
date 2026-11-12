@@ -42,8 +42,19 @@ final class PillStateTests: XCTestCase {
     func testARefusedPromptReadsAsItsFailedRun() {
         let name = "Formal email to the leadership team"
         XCTAssertEqual(
-            PillState.refused(prompt: name).label(),
+            PillState.refused(prompt: name, failure: .refused(.promptUnreadable)).label(),
             PillState.failed(PillState.unreadablePrompt).label(prompt: name))
+    }
+
+    func testARefusedPromptSaysWhyInAFewWords() {
+        func label(_ failure: DaemonFailure) -> String? {
+            PillState.refused(prompt: "Polish", failure: failure).label()
+        }
+        XCTAssertEqual(label(.refused(.promptMissing)), "Polish · prompt not found")
+        XCTAssertEqual(label(.refused(.assistantSignedOut)), "Polish · assistant signed out")
+        XCTAssertEqual(label(.refused(.busy)), "Polish · couldn’t run")
+        XCTAssertEqual(label(.unavailable), "Polish · couldn’t run")
+        XCTAssertEqual(PillState.refused(prompt: nil, failure: .unavailable).label(), "couldn’t run")
     }
 
     func testTextOnlyHandedBackShowsNoFinishOfItsOwn() {

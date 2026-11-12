@@ -73,7 +73,14 @@ final class StatusController: ObservableObject {
                 return
             }
             guard let state = PillState(event) else { return }
-            self.show(state.pill(for: self.route), run: self.lastRecording.map(RunID.recording))
+            let run = self.lastRecording.map(RunID.recording)
+            guard let shown = state.pill(for: self.route) else {
+                // Text handed back ends only its own recording's pill, never a
+                // refusal that beat its last event here.
+                if self.foregroundRun == run { self.show(nil) }
+                return
+            }
+            self.show(shown, run: run)
         }
         events.onChat { [weak self] chat in
             guard let self else { return }
@@ -99,8 +106,8 @@ final class StatusController: ObservableObject {
         runsChange = prompts.$runs.receive(on: DispatchQueue.main).sink { [weak self] _ in
             MainActor.assumeIsolated { self?.render() }
         }
-        refusalsChange = prompts.refusals.sink { [weak self] name in
-            MainActor.assumeIsolated { self?.show(.refused(prompt: name)) }
+        refusalsChange = prompts.refusals.sink { [weak self] refusal in
+            MainActor.assumeIsolated { self?.show(.refused(prompt: refusal.prompt, failure: refusal.failure)) }
         }
         NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,

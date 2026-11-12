@@ -52,9 +52,9 @@ enum PillState: Equatable {
     /// After a prompt's name, before or after its recording.
     static let unreadablePrompt = "file unavailable"
 
-    /// A prompt turned down before its recording, named as its run would be.
-    static func refused(prompt name: String) -> PillState {
-        .failed([shortened(name), unreadablePrompt].joined(separator: " · "))
+    /// A prompt that ran nothing, named as its run would be.
+    static func refused(prompt name: String?, failure: DaemonFailure) -> PillState {
+        .failed([name.map(shortened), failure.promptMessage].compactMap { $0 }.joined(separator: " · "))
     }
 
     /// The pill for a chat that just ended, or nothing for one under way.
@@ -226,6 +226,13 @@ enum DeliveryOutcome: Equatable {
 
 }
 
+extension DaemonFailure {
+    fileprivate var promptMessage: String {
+        guard case .refused(let code) = self else { return "couldn’t run" }
+        return code.askMessage ?? "couldn’t run"
+    }
+}
+
 extension Aria_Daemon_V1_ErrorCode {
     /// What a failed press says. The daemon logs a code; a person reads this.
     fileprivate var dictationMessage: String {
@@ -245,6 +252,7 @@ extension Aria_Daemon_V1_ErrorCode {
         case .assistantSignedOut: return "assistant signed out"
         case .assistantUnavailable: return "assistant not installed"
         case .promptUnreadable: return PillState.unreadablePrompt
+        case .promptMissing: return "prompt not found"
         default: return nil
         }
     }

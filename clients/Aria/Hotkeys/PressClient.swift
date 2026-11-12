@@ -1,8 +1,8 @@
 /// The calls a press makes.
 ///
-/// A failure is logged by the transport, never surfaced. There is nowhere to
-/// show an error from a global key press, and every outcome that matters to
-/// the user is already on the event stream.
+/// Once a run starts, the event stream carries its outcome. Only a prompt
+/// run's call reports its failure, since a run that never started sends no
+/// event.
 enum PressClient {
     /// Reads one press to its text. Nil for a stop-accepted and for a
     /// recording that failed.
@@ -24,7 +24,7 @@ enum PressClient {
         try? await ChatClient.resolve()
     }
 
-    static func runPrompt(text: String, promptID: String, application: String?) async -> UInt64? {
-        try? await ChatClient.runPrompt(text: text, promptID: promptID, application: application)
+    static func runPrompt(text: String, promptID: String, application: String?) async throws -> UInt64 {
+        try await ChatClient.runPrompt(text: text, promptID: promptID, application: application)
     }
 }
