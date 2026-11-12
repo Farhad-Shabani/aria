@@ -33,8 +33,8 @@ own projects, even in the browser through WebAssembly.
 - **Ask** an AI assistant by voice, and keep the chat going.
 - **Rewrite** what you say with your own prompts, such as polishing or
   translating it.
-- **Read** text aloud.
 - **Transcribe** audio playing on your Mac, labeled by speaker.
+- **Read** text aloud.
 - **Personalize** dictation to type only your voice, spell your project's
   names, and follow rules for each app.
 
