@@ -654,7 +654,7 @@ where
         events: &DictationEventEmitter,
         stage_started: Instant,
     ) -> Result<RecordingReader, DictationError> {
-        let guard = control.start_recording(settings.delivery_mode, events)?;
+        let guard = control.start_recording(settings.delivery_mode, settings.route, events)?;
         let mode = match settings.stop_mode {
             StopMode::OnSilence => RecordingMode::StopOnSilence {
                 trailing_silence: settings.silence_duration,
@@ -2569,6 +2569,38 @@ mod tests {
     }
 
     #[test]
+    fn a_press_announces_its_route_as_its_recording_opens() {
+        use crate::dictation::TranscriptRoute;
+        for route in [
+            TranscriptRoute::Deliver,
+            TranscriptRoute::TranscriptOnly,
+            TranscriptRoute::HistoryOnly,
+        ] {
+            let (events, stages) = stage_events();
+            let (_directory, capture) = capture();
+            let log = CallLog::default();
+            let pipeline = DictationPipeline::new(
+                capture,
+                Transcription::complete_samples(Answering("hello")),
+                (log.history(), log.cursor()),
+            );
+            let mut settings = settings(DeliveryMode::Complete, OutputMode::Insert);
+            settings.route = route;
+
+            pipeline
+                .run_observed(settings, &events)
+                .expect("the press completes");
+            drop(events);
+
+            let first = stages.iter().next();
+            assert!(
+                matches!(first, Some(DictationStage::Recording { route: announced, .. }) if announced == route),
+                "{route:?}: {first:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_transcript_only_press_cannot_stream() {
         let (_directory, capture) = capture();
         let log = CallLog::default();
@@ -3351,7 +3383,7 @@ mod tests {
             );
             sinks.dictation_started(&settings, &control).unwrap();
             let capture = control
-                .start_recording(settings.delivery_mode, &events)
+                .start_recording(settings.delivery_mode, settings.route, &events)
                 .unwrap();
             let whole = Transcript::new("db2 run db2").unwrap();
             for (text, corrected) in [
@@ -5246,7 +5278,8 @@ mod tests {
             stages.first(),
             Some(&DictationStage::Recording {
                 id: RecordingId(0),
-                delivery: DeliveryMode::Streaming
+                delivery: DeliveryMode::Streaming,
+                route: crate::dictation::TranscriptRoute::Deliver
             })
         );
         assert_eq!(

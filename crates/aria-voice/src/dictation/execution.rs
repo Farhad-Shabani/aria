@@ -31,7 +31,7 @@ struct OutputSlot {
 
 use super::{
     Cleanup, DictationEventEmitter, DictationOutcome, DictationResult, DictationSettings,
-    DictationStage, RecordingId, SoundMuting, StopMode,
+    DictationStage, RecordingId, SoundMuting, StopMode, TranscriptRoute,
 };
 
 /// What a recording said, and the engine that heard it.
@@ -437,6 +437,7 @@ impl ExecutionControl {
     pub(crate) fn start_recording(
         self: &Arc<Self>,
         delivery: DeliveryMode,
+        route: TranscriptRoute,
         events: &DictationEventEmitter,
     ) -> Result<RecordingGuard, DictationError> {
         self.recording_state
@@ -458,6 +459,7 @@ impl ExecutionControl {
         events.emit(DictationStage::Recording {
             id: self.id,
             delivery,
+            route,
         });
         Ok(guard)
     }
@@ -1205,13 +1207,18 @@ mod tests {
         let control = ExecutionControl::for_test(StopMode::Manual);
 
         let guard = control
-            .start_recording(aria_settings::DeliveryMode::Complete, &events)
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                crate::dictation::TranscriptRoute::Deliver,
+                &events,
+            )
             .expect("recording starts");
         assert_eq!(
             stages.recv().expect("recording is announced"),
             DictationStage::Recording {
                 id: RecordingId(0),
-                delivery: DeliveryMode::Complete
+                delivery: DeliveryMode::Complete,
+                route: crate::dictation::TranscriptRoute::Deliver
             }
         );
         assert!(!guard.should_stop(), "capture polls, as a live one does");
@@ -1237,7 +1244,11 @@ mod tests {
         ));
 
         let guard = control
-            .start_recording(aria_settings::DeliveryMode::Complete, &events)
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                crate::dictation::TranscriptRoute::Deliver,
+                &events,
+            )
             .expect("recording starts");
         stages.recv().expect("recording is announced");
         cancel.cancel();
@@ -1259,7 +1270,11 @@ mod tests {
         let control = ExecutionControl::for_test(StopMode::Manual);
 
         let guard = control
-            .start_recording(aria_settings::DeliveryMode::Complete, &events)
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                crate::dictation::TranscriptRoute::Deliver,
+                &events,
+            )
             .expect("recording starts");
         stages.recv().expect("recording is announced");
         drop(guard);
@@ -1288,6 +1303,7 @@ mod tests {
         let stuck = control
             .start_recording(
                 aria_settings::DeliveryMode::Complete,
+                crate::dictation::TranscriptRoute::Deliver,
                 &DictationEventEmitter::unsubscribed(),
             )
             .unwrap();
@@ -1332,7 +1348,11 @@ mod tests {
         });
 
         let _guard = control
-            .start_recording(aria_settings::DeliveryMode::Complete, &events)
+            .start_recording(
+                aria_settings::DeliveryMode::Complete,
+                crate::dictation::TranscriptRoute::Deliver,
+                &events,
+            )
             .unwrap();
 
         assert!(quiet_at_start.recv().unwrap());
@@ -1363,6 +1383,7 @@ mod tests {
         thread::spawn(move || {
             let _ = sender.send(starting.start_recording(
                 aria_settings::DeliveryMode::Complete,
+                crate::dictation::TranscriptRoute::Deliver,
                 &DictationEventEmitter::unsubscribed(),
             ));
         });
@@ -1434,7 +1455,11 @@ mod tests {
             let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
             control.output().mute = Some(fake_output(&writes));
             let guard = control
-                .start_recording(aria_settings::DeliveryMode::Complete, &events)
+                .start_recording(
+                    aria_settings::DeliveryMode::Complete,
+                    crate::dictation::TranscriptRoute::Deliver,
+                    &events,
+                )
                 .unwrap();
             match ending {
                 "stop" => assert!(control.request_recording_stop()),
@@ -1475,8 +1500,11 @@ mod tests {
                 events: &DictationEventEmitter,
             ) -> Result<DictationResult, DictationError> {
                 control.output().mute = Some(fake_output(&self.writes));
-                let guard =
-                    control.start_recording(aria_settings::DeliveryMode::Complete, events)?;
+                let guard = control.start_recording(
+                    aria_settings::DeliveryMode::Complete,
+                    crate::dictation::TranscriptRoute::Deliver,
+                    events,
+                )?;
                 assert!(!guard.should_stop());
                 *self.retained.lock().unwrap() = Some(guard);
                 panic!("executor failed while capture still owns its guard");
@@ -1533,6 +1561,7 @@ mod tests {
         let next_recording = next
             .start_recording(
                 aria_settings::DeliveryMode::Complete,
+                crate::dictation::TranscriptRoute::Deliver,
                 &DictationEventEmitter::unsubscribed(),
             )
             .unwrap();
@@ -1545,7 +1574,8 @@ mod tests {
             stages.iter().collect::<Vec<_>>(),
             [DictationStage::Recording {
                 id: RecordingId(1),
-                delivery: DeliveryMode::Complete
+                delivery: DeliveryMode::Complete,
+                route: crate::dictation::TranscriptRoute::Deliver
             }]
         );
     }

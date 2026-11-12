@@ -171,6 +171,7 @@ mod tests {
             subscriptions.broadcast(DictationStage::Recording {
                 id: RecordingId(1),
                 delivery: aria_settings::DeliveryMode::Complete,
+                route: aria_voice::dictation::TranscriptRoute::Deliver,
             });
         }
 

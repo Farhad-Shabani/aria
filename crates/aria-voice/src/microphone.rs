@@ -330,6 +330,7 @@ mod tests {
                 control
                     .start_recording(
                         aria_settings::DeliveryMode::Complete,
+                        crate::dictation::TranscriptRoute::Deliver,
                         &DictationEventEmitter::unsubscribed(),
                     )
                     .unwrap()
@@ -448,6 +449,7 @@ mod tests {
         let _recording = running
             .start_recording(
                 aria_settings::DeliveryMode::Complete,
+                crate::dictation::TranscriptRoute::Deliver,
                 &DictationEventEmitter::unsubscribed(),
             )
             .expect("recording starts");
@@ -464,6 +466,7 @@ mod tests {
         let recording = dictation
             .start_recording(
                 aria_settings::DeliveryMode::Streaming,
+                crate::dictation::TranscriptRoute::Deliver,
                 &DictationEventEmitter::unsubscribed(),
             )
             .expect("recording starts");
@@ -604,6 +607,7 @@ mod tests {
         let _recording = running
             .start_recording(
                 aria_settings::DeliveryMode::Complete,
+                crate::dictation::TranscriptRoute::Deliver,
                 &DictationEventEmitter::unsubscribed(),
             )
             .expect("recording starts");

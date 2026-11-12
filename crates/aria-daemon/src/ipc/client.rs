@@ -963,11 +963,13 @@ mod tests {
         assert!(matches!(
             decode_event(wire::Event::from(DictationStage::Recording {
                 id: RecordingId(1),
-                delivery: aria_settings::DeliveryMode::Complete
+                delivery: aria_settings::DeliveryMode::Complete,
+                route: aria_voice::dictation::TranscriptRoute::Deliver
             })),
             Some(Ok(DaemonEvent::Dictation(DictationStage::Recording {
                 id: RecordingId(1),
                 delivery: aria_settings::DeliveryMode::Complete,
+                route: aria_voice::dictation::TranscriptRoute::Deliver
             })))
         ));
         assert!(matches!(
@@ -1001,6 +1003,7 @@ mod tests {
                 DictationStage::Recording {
                     id: RecordingId(3),
                     delivery: aria_settings::DeliveryMode::Complete,
+                    route: aria_voice::dictation::TranscriptRoute::Deliver,
                 },
             )),
             Ok(wire::StartDictationResponse::from(
@@ -1028,7 +1031,8 @@ mod tests {
             [
                 DictationStage::Recording {
                     id: RecordingId(3),
-                    delivery: aria_settings::DeliveryMode::Complete
+                    delivery: aria_settings::DeliveryMode::Complete,
+                    route: aria_voice::dictation::TranscriptRoute::Deliver
                 },
                 DictationStage::Transcribing
             ]
@@ -1069,6 +1073,7 @@ mod tests {
             DictationStage::Recording {
                 id: RecordingId(3),
                 delivery: aria_settings::DeliveryMode::Complete,
+                route: aria_voice::dictation::TranscriptRoute::Deliver,
             },
         ))];
 
@@ -1085,6 +1090,7 @@ mod tests {
                 DictationStage::Recording {
                     id: RecordingId(3),
                     delivery: aria_settings::DeliveryMode::Complete,
+                    route: aria_voice::dictation::TranscriptRoute::Deliver,
                 },
             )),
             Err(ClientError::NotServing),

@@ -26,7 +26,7 @@ use aria_settings::{
 use aria_voice::dictation::{
     CaptionSnapshot, DeliveryOutcome, DictationEvent, DictationOutcome, DictationRequest,
     DictationResult, DictationRoute, DictationStage, GhostSnapshot, HeardSpeaker, MicLevel,
-    RecordingId, StopMode,
+    RecordingId, StopMode, TranscriptRoute,
 };
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
@@ -2339,6 +2339,29 @@ impl WireEnum for wire::StreamingUnavailable {
     }
 }
 
+impl From<TranscriptRoute> for wire::TranscriptRoute {
+    fn from(route: TranscriptRoute) -> Self {
+        match route {
+            TranscriptRoute::Deliver => Self::Deliver,
+            TranscriptRoute::TranscriptOnly => Self::TranscriptOnly,
+            TranscriptRoute::HistoryOnly => Self::HistoryOnly,
+        }
+    }
+}
+
+impl WireEnum for wire::TranscriptRoute {
+    type Domain = TranscriptRoute;
+
+    fn into_domain(self) -> Option<Self::Domain> {
+        match self {
+            Self::Deliver => Some(TranscriptRoute::Deliver),
+            Self::TranscriptOnly => Some(TranscriptRoute::TranscriptOnly),
+            Self::HistoryOnly => Some(TranscriptRoute::HistoryOnly),
+            Self::Unspecified => None,
+        }
+    }
+}
+
 impl WireEnum for wire::DeliveryMode {
     type Domain = DeliveryMode;
 
@@ -3073,10 +3096,16 @@ impl From<DictationStage> for wire::DictationEvent {
         let mut speaker = String::new();
         let mut heard = wire::HeardSpeaker::Unspecified;
         let mut delivery_mode = wire::DeliveryMode::Unspecified;
+        let mut transcript_route = wire::TranscriptRoute::Unspecified;
         let (code, error) = match stage {
-            DictationStage::Recording { id, delivery } => {
+            DictationStage::Recording {
+                id,
+                delivery,
+                route,
+            } => {
                 recording = id.0;
                 delivery_mode = wire::DeliveryMode::from(delivery);
+                transcript_route = wire::TranscriptRoute::from(route);
                 (wire::DictationStage::Recording, 0)
             }
             DictationStage::Transcribing => (wire::DictationStage::Transcribing, 0),
@@ -3126,6 +3155,7 @@ impl From<DictationStage> for wire::DictationEvent {
             speaker_name: speaker,
             heard: heard as i32,
             delivery_mode: delivery_mode as i32,
+            route: transcript_route as i32,
         }
     }
 }
@@ -3138,6 +3168,7 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
             Ok(wire::DictationStage::Recording) => Ok(Self::Recording {
                 id: RecordingId(event.recording_id),
                 delivery: decode_enum::<wire::DeliveryMode>(event.delivery_mode, "delivery mode")?,
+                route: decode_enum::<wire::TranscriptRoute>(event.route, "transcript route")?,
             }),
             Ok(wire::DictationStage::Transcribing) => Ok(Self::Transcribing),
             Ok(wire::DictationStage::Delivering) => Ok(Self::Delivering),
@@ -3828,6 +3859,17 @@ mod tests {
             DictationStage::Recording {
                 id: RecordingId(7),
                 delivery: DeliveryMode::Complete,
+                route: aria_voice::dictation::TranscriptRoute::Deliver,
+            },
+            DictationStage::Recording {
+                id: RecordingId(8),
+                delivery: DeliveryMode::Complete,
+                route: aria_voice::dictation::TranscriptRoute::TranscriptOnly,
+            },
+            DictationStage::Recording {
+                id: RecordingId(9),
+                delivery: DeliveryMode::Complete,
+                route: aria_voice::dictation::TranscriptRoute::HistoryOnly,
             },
             DictationStage::Transcribing,
             DictationStage::Delivering,

@@ -706,6 +706,7 @@ mod event_tests {
         emitter.emit(DictationStage::Recording {
             id: RecordingId(1),
             delivery: aria_settings::DeliveryMode::Complete,
+            route: aria_voice::dictation::TranscriptRoute::Deliver,
         });
         waiting.recv_timeout(Duration::from_secs(2)).unwrap();
         let voice = DictationStage::SpeakerChanged(aria_voice::dictation::HeardSpeaker::KeptOut);
@@ -791,6 +792,7 @@ mod event_tests {
         let recording = DictationStage::Recording {
             id: RecordingId(2),
             delivery: aria_settings::DeliveryMode::Complete,
+            route: aria_voice::dictation::TranscriptRoute::Deliver,
         };
         first.emit(delivered.clone());
         second.emit(recording.clone());
