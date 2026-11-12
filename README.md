@@ -17,10 +17,10 @@
 </p>
 
 Aria is a voice assistant for macOS and Linux. Press a hotkey and speak, and
-Aria types your words into the Mac app you're using. Ask Claude Code or Codex a
-question, or run one of your prompts, and the answer lands there too. Speech
-runs on your computer by default, so your assistant gets your words as text,
-never your audio.
+Aria types your words into the Mac app you're using. Run one of your prompts,
+and the result lands there too. Ask an AI assistant a question, and keep the
+chat going. Speech runs on your computer by default, so your assistant gets
+your words as text, never your audio.
 
 A menu bar app for macOS brings setup, settings, history, and hotkeys together.
 The `aria` command does most of this in a terminal, on macOS and Linux. [Rust
@@ -30,7 +30,7 @@ own projects, even in the browser through WebAssembly.
 ## What it does
 
 - **Dictate** into the app you're working in, on a Mac or a Linux desktop.
-- **Ask** Claude Code or Codex by voice, and keep the conversation going.
+- **Ask** an AI assistant by voice, and keep the chat going.
 - **Rewrite** what you say with your own prompts, such as polishing or
   translating it.
 - **Read** text aloud.
@@ -86,9 +86,11 @@ has no telemetry or crash reporting.
 
 **Text and files**, only when you use these features
 
-- **Chat and prompts:** your words go to Claude Code or Codex, with the
-  prompt if you run one. In a chat, the assistant may also read files in your
-  project and send them to its provider. Prompts read no files.
+- **Chat and prompts:** your words go to the assistant you choose, with the
+  prompt if you run one. In a chat, some assistants may also read files in your
+  project and send them to their provider. A local model gets your words
+  through a server on your computer, which decides where they go next.
+  Prompts read no files.
 - **Memory (off by default):** spoken chats go to Claude Code,
   which picks out facts you mention. Aria saves them in `~/.aria/memory`.
 
