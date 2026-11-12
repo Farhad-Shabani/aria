@@ -22,9 +22,8 @@ final class PromptHotkeys: ObservableObject {
     /// Prompts whose chord Carbon turned down.
     @Published private(set) var refused: Set<String> = []
     @Published private(set) var runs = PromptRuns()
-    /// The name of each prompt a press turned down because its file can't
-    /// be read.
-    let refusals = PassthroughSubject<String, Never>()
+    /// Each prompt a press ran nothing for, by name when known, and why.
+    let refusals = PassthroughSubject<(prompt: String?, failure: DaemonFailure), Never>()
 
     private let events: DaemonEvents
     // A controller dropped with its prompt leaves its chat subscription
@@ -76,7 +75,10 @@ final class PromptHotkeys: ObservableObject {
                 controllers[id]
                 ?? PressController(
                     events: events,
-                    operation: .prompt(id: id, canRun: { [weak self] in self?.canRun(id) ?? false })
+                    operation: .prompt(
+                        id: id,
+                        canRun: { [weak self] in self?.canRun(id) ?? false },
+                        refused: { [weak self] run, failure in self?.refuse(id, run: run, failure) })
                 ) { [weak self] started in
                     self?.note(started, prompt: id)
                 }
@@ -86,18 +88,28 @@ final class PromptHotkeys: ObservableObject {
         refused = Set(controllers.filter { $0.value.chord.wasRefused }.keys)
     }
 
+    private func entry(_ id: String) -> Aria_Daemon_V1_Prompt? {
+        entries.first { $0.id == id }
+    }
+
     private func canRun(_ id: String) -> Bool {
-        guard let entry = entries.first(where: { $0.id == id }) else { return false }
+        guard let entry = entry(id) else { return false }
         guard FileManager.default.isReadableFile(atPath: entry.file) else {
-            refusals.send(entry.name)
+            refusals.send((entry.name, .refused(.promptUnreadable)))
             return false
         }
         return true
     }
 
+    /// Named as its run was, since a missing prompt may be gone from the
+    /// entries already.
+    private func refuse(_ id: String, run: RunID?, _ failure: DaemonFailure) {
+        refusals.send((run.flatMap(runs.prompt(of:)) ?? entry(id)?.name, failure))
+    }
+
     /// Named as the prompt is called now, so the pill matches Settings.
     private func note(_ run: RunID, prompt id: String) {
-        guard let name = entries.first(where: { $0.id == id })?.name else { return }
+        guard let name = entry(id)?.name else { return }
         runs.add(run, prompt: name)
     }
 }

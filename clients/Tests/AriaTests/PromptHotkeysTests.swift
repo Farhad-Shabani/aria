@@ -23,9 +23,11 @@ final class PromptHotkeysTests: XCTestCase {
         let hotkeys = PromptHotkeys(events: DaemonEvents())
         hotkeys.track(settings)
         let refused = expectation(description: "refused")
-        var names: [String] = []
-        let refusals = hotkeys.refusals.sink { name in
-            names.append(name)
+        var names: [String?] = []
+        var failures: [DaemonFailure] = []
+        let refusals = hotkeys.refusals.sink { refusal in
+            names.append(refusal.prompt)
+            failures.append(refusal.failure)
             refused.fulfill()
         }
 
@@ -42,6 +44,7 @@ final class PromptHotkeysTests: XCTestCase {
         }
 
         XCTAssertEqual(names, ["Draft"])
+        XCTAssertEqual(failures, [.refused(.promptUnreadable)])
         XCTAssertFalse(hotkeys.isBusy("draft"))
         refusals.cancel()
     }

@@ -11,8 +11,9 @@ final class PressController {
         /// the question is heard.
         case ask(Chats, target: @MainActor () -> AskTarget?, show: @MainActor () -> Void)
         /// `canRun` is asked before recording, so a prompt that can't run
-        /// records nothing.
-        case prompt(id: String, canRun: @MainActor () -> Bool)
+        /// records nothing. `refused` hears a run that surely never started,
+        /// and the recording it was heard from: no chat event reports it.
+        case prompt(id: String, canRun: @MainActor () -> Bool, refused: @MainActor (RunID?, DaemonFailure) -> Void)
     }
 
     struct Effects {
@@ -21,7 +22,7 @@ final class PressController {
             (_ projectDirectory: String?, _ onRecording: @escaping @MainActor (UInt64) -> Void) async ->
                 DictationClient.Transcript?
         var resolve: () async -> ChatTarget?
-        var runPrompt: (_ text: String, _ promptID: String, _ application: String?) async -> UInt64?
+        var runPrompt: (_ text: String, _ promptID: String, _ application: String?) async throws -> UInt64
 
         static var live: Self {
             .init(
@@ -33,7 +34,7 @@ final class PressController {
 
     private enum Run {
         case ask(AskTarget, Chats, show: @MainActor () -> Void)
-        case prompt(id: String, canRun: @MainActor () -> Bool)
+        case prompt(id: String, canRun: @MainActor () -> Bool, refused: @MainActor (RunID?, DaemonFailure) -> Void)
     }
 
     private let operation: Operation
@@ -45,6 +46,8 @@ final class PressController {
     /// The app in front at the first press: a prompt's result is typed only
     /// there.
     private var pressedIn: String?
+    /// The recording the last press opened, which a refusal names.
+    private var recording: RunID?
 
     /// A chat ends on the event stream, not on the call that started it: a
     /// reply, a failure, or the daemon's own cancel.
@@ -88,8 +91,8 @@ final class PressController {
         switch operation {
         case .ask(let chats, let target, let show):
             target().map { .ask($0, chats, show: show) }
-        case .prompt(let id, let canRun):
-            .prompt(id: id, canRun: canRun)
+        case .prompt(let id, let canRun, let refused):
+            .prompt(id: id, canRun: canRun, refused: refused)
         }
     }
 
@@ -106,19 +109,30 @@ final class PressController {
             if await ask(target, in: chats) { show() }
             // The chat follows the ask from here, so the next press can start another.
             gesture.abandon()
-        case .prompt(let id, let canRun):
-            await runPrompt(id: id, canRun: canRun)
+        case .prompt(let id, let canRun, let refused):
+            await runPrompt(id: id, canRun: canRun, refused: refused)
         }
     }
 
-    private func runPrompt(id: String, canRun: @MainActor () -> Bool) async {
-        let ticket = await prompt(id: id, canRun: canRun)
-        guard let ticket else {
+    /// A prompt names no project, so the daemon picks the vocabulary.
+    private func runPrompt(
+        id: String, canRun: @MainActor () -> Bool, refused: @MainActor (RunID?, DaemonFailure) -> Void
+    ) async {
+        guard canRun(), let heard = await record(projectDirectory: nil) else {
             gesture.abandon()
             return
         }
-        started(.ticket(ticket))
-        gesture.issued(ticket: ticket)
+        do {
+            let ticket = try await effects.runPrompt(heard.text, id, pressedIn)
+            started(.ticket(ticket))
+            gesture.issued(ticket: ticket)
+        } catch {
+            gesture.abandon()
+            // A run whose call timed out may still start, so only a sure
+            // refusal is reported.
+            let failure = error as? DaemonFailure ?? DaemonFailure(error)
+            if failure.tookNoEffect { refused(recording, failure) }
+        }
     }
 
     /// A recording uses the vocabulary of the folder its chat runs in. Returns whether a
@@ -141,15 +155,11 @@ final class PressController {
         return true
     }
 
-    /// A prompt names no project, so the daemon picks the vocabulary.
-    private func prompt(id: String, canRun: @MainActor () -> Bool) async -> UInt64? {
-        guard canRun(), let heard = await record(projectDirectory: nil) else { return nil }
-        return await effects.runPrompt(heard.text, id, pressedIn)
-    }
-
     /// Nil for silence as well as for a recording that failed.
     private func record(projectDirectory: String?) async -> DictationClient.Transcript? {
+        recording = nil
         let heard = await effects.transcribe(projectDirectory) { [weak self] id in
+            self?.recording = .recording(id)
             self?.started(.recording(id))
         }
         guard let heard, !heard.text.isEmpty else { return nil }

@@ -18,6 +18,15 @@ enum DaemonFailure: Error, Equatable {
     /// Any other status without a detail. The code is in the transport's log.
     case other
 
+    /// The call never took effect: the daemon answered no, or nothing heard
+    /// it. Any other failure leaves the outcome unknown.
+    var tookNoEffect: Bool {
+        switch self {
+        case .refused, .unavailable, .unimplemented: true
+        case .timeout, .cancelled, .invalidResponse, .other: false
+        }
+    }
+
     private static let detailTypeURL = "type.googleapis.com/aria.daemon.v1.RpcError"
 
     init(_ error: any Error) {

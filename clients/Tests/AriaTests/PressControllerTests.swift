@@ -21,21 +21,56 @@ final class PressControllerTests: XCTestCase {
 
     private static func effects(
         hearing heard: String?, during: @escaping @MainActor () -> Void = {},
+        promptFailing failure: DaemonFailure = .refused(.promptMissing),
         folders: @escaping @MainActor (String?) -> Void
     ) -> PressController.Effects {
         .init(
-            transcribe: { folder, _ in
+            transcribe: { folder, opened in
+                await opened(5)
                 folders(folder)
                 during()
                 return heard.map { DictationClient.Transcript(text: $0, ownVoice: true) }
             },
             resolve: { chat },
-            runPrompt: { _, _, _ in nil })
+            runPrompt: { _, _, _ in throw failure })
     }
 
     private func waitUntil(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
         for _ in 0..<200 where !condition() { await Task.yield() }
         XCTAssertTrue(condition(), file: file, line: line)
+    }
+
+    func testAPromptRunTheDaemonTurnsDownIsReportedWithItsRecording() async {
+        var refusals: [DaemonFailure] = []
+        var runs: [RunID?] = []
+        let controller = PressController(
+            events: DaemonEvents(),
+            operation: .prompt(
+                id: "polish", canRun: { true },
+                refused: {
+                    runs.append($0)
+                    refusals.append($1)
+                }),
+            effects: Self.effects(hearing: "tidy this up", promptFailing: .refused(.promptMissing)) { _ in })
+
+        controller.press()
+
+        await waitUntil { !refusals.isEmpty && !controller.isBusy }
+        XCTAssertEqual(refusals, [.refused(.promptMissing)])
+        XCTAssertEqual(runs, [.recording(5)])
+    }
+
+    func testAPromptRunThatMayStillStartIsNotReported() async {
+        var refusals = 0
+        let controller = PressController(
+            events: DaemonEvents(),
+            operation: .prompt(id: "polish", canRun: { true }, refused: { _, _ in refusals += 1 }),
+            effects: Self.effects(hearing: "tidy this up", promptFailing: .timeout) { _ in })
+
+        controller.press()
+
+        await waitUntil { !controller.isBusy }
+        XCTAssertEqual(refusals, 0, "a timed-out call may still have started the run")
     }
 
     func testAnAskPressWithNowhereToAskRecordsNothing() {
