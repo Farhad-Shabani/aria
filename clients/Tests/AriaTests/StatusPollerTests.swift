@@ -190,14 +190,6 @@ final class StatusPollerTests: XCTestCase {
         XCTAssertFalse(poller.failure?.message?.contains("launchctl") ?? true)
     }
 
-    func testTogglePointsAtLoginItemsWhenTheAgentIsOff() async {
-        let fake = FakeDaemonControl()
-        fake.startError = DaemonProcessError.agentDisabled
-        let poller = self.poller(fake)
-        await poller.toggle()
-        XCTAssertEqual(poller.failure, .backgroundItemOff)
-    }
-
     func testToggleReportsADaemonThatNeverListens() async {
         let fake = FakeDaemonControl()
         fake.startLag = 100

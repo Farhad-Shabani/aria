@@ -96,13 +96,10 @@ final class ServerSttTests: XCTestCase {
         XCTAssertNil(server.failure)
     }
 
-    private static func downloadEvents() -> [Aria_Setup_V1_SetupEvent] {
-        var started = Aria_Setup_V1_SetupEvent()
-        started.started = .models
-        var download = Aria_Setup_V1_SetupEvent()
-        download.download.receivedBytes = 5
-        download.download.totalBytes = 10
-        return [started, download]
+    private func shown(_ spy: Spy) -> (ServerStt, SetupStatus) {
+        let setup = SetupStatus()
+        setup.show(spy.inspection)
+        return (ServerStt(effects: spy.effects, setup: setup, runner: SetupRunner()), setup)
     }
 
     private func waitUntil(_ condition: () -> Bool) async {
@@ -114,10 +111,8 @@ final class ServerSttTests: XCTestCase {
 
     func testComingBackShowsTheDownloadAndCancelEndsItQuietly() async {
         let spy = Spy(Self.mac(on: .server))
-        spy.downloadEvents = Self.downloadEvents()
-        let setup = SetupStatus()
-        setup.show(spy.inspection)
-        let server = ServerStt(effects: spy.effects, setup: setup, runner: SetupRunner())
+        spy.downloadEvents = [.started(.models), .download(received: 5, of: 10)]
+        let (server, setup) = shown(spy)
 
         let switching = Task { await server.use(.local) }
         await waitUntil { server.progress == .downloading(ModelTransfer(received: 5, total: 10)) }
@@ -132,9 +127,7 @@ final class ServerSttTests: XCTestCase {
     func testAFailedSwitchSaysWhyAndKeepsTheShownRunsOn() async {
         let spy = Spy(Self.mac(on: .local))
         spy.setFails = true
-        let setup = SetupStatus()
-        setup.show(spy.inspection)
-        let server = ServerStt(effects: spy.effects, setup: setup, runner: SetupRunner())
+        let (server, setup) = shown(spy)
 
         await server.use(.server)
 
@@ -246,17 +239,13 @@ final class ServerSttTests: XCTestCase {
 
     func testOnlyAServerNotInUseCanBeForgotten() async {
         let remote = Spy(Self.mac(on: .server))
-        let setupOnServer = SetupStatus()
-        setupOnServer.show(remote.inspection)
-        let onServer = ServerStt(effects: remote.effects, setup: setupOnServer, runner: SetupRunner())
+        let (onServer, _) = shown(remote)
         XCTAssertFalse(onServer.canForget)
         await onServer.forget()
         XCTAssertEqual(remote.forgotten, 0)
 
         let local = Spy(Self.mac(on: .local))
-        let setup = SetupStatus()
-        setup.show(local.inspection)
-        let server = ServerStt(effects: local.effects, setup: setup, runner: SetupRunner())
+        let (server, setup) = shown(local)
         XCTAssertTrue(server.canForget)
         await server.forget()
         XCTAssertEqual(local.forgotten, 1)
@@ -267,9 +256,7 @@ final class ServerSttTests: XCTestCase {
     func testAFailedForgetKeepsTheServerAndSaysWhy() async {
         let spy = Spy(Self.mac(on: .local))
         spy.forgetFails = true
-        let setup = SetupStatus()
-        setup.show(spy.inspection)
-        let server = ServerStt(effects: spy.effects, setup: setup, runner: SetupRunner())
+        let (server, setup) = shown(spy)
 
         await server.forget()
 

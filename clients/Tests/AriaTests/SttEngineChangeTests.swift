@@ -4,22 +4,6 @@ import XCTest
 
 @MainActor
 final class SttEngineChangeTests: XCTestCase {
-    private static func event(_ step: Aria_Setup_V1_Step) -> Aria_Setup_V1_SetupEvent {
-        var event = Aria_Setup_V1_SetupEvent()
-        event.started = step
-        return event
-    }
-
-    private static func progress(received: UInt64, of total: UInt64) -> Aria_Setup_V1_SetupEvent {
-        var progress = Aria_Setup_V1_DownloadProgress()
-        progress.modelID = "moonshine"
-        progress.receivedBytes = received
-        progress.totalBytes = total
-        var event = Aria_Setup_V1_SetupEvent()
-        event.download = progress
-        return event
-    }
-
     private func eventually(_ condition: () -> Bool) async {
         for _ in 0..<1000 where !condition() { await Task.yield() }
     }
@@ -31,10 +15,10 @@ final class SttEngineChangeTests: XCTestCase {
         let model = SttEngineChange(
             effects: .init(run: { request, onEvent in
                 await MainActor.run { requested = request }
-                onEvent(Self.event(.models))
-                onEvent(Self.progress(received: 50, of: 100))
+                onEvent(.started(.models))
+                onEvent(.download(received: 50, of: 100))
                 await gate.wait()
-                onEvent(Self.event(.settings))
+                onEvent(.started(.settings))
                 await gate.wait()
                 return Aria_Setup_V1_SetSttEngineSummary()
             }), runner: SetupRunner())

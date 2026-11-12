@@ -12,18 +12,11 @@ final class DaemonProcessTests: XCTestCase {
         XCTAssertEqual(DaemonProcess.cliFailure(stderr: Data(), fallback: "Failed."), "Failed.")
     }
 
-    func testLockedPidParsesPlainPid() {
-        XCTAssertEqual(DaemonProcess.lockedPid("4258"), 4258)
-    }
-
-    func testLockedPidToleratesSurroundingWhitespace() {
-        XCTAssertEqual(DaemonProcess.lockedPid("4258\n"), 4258)
-    }
-
-    func testLockedPidRejectsMissingEmptyOrGarbage() {
-        XCTAssertNil(DaemonProcess.lockedPid(nil))
-        XCTAssertNil(DaemonProcess.lockedPid(""))
-        XCTAssertNil(DaemonProcess.lockedPid("not a pid"))
+    func testLockedPidReadsAPidAndRejectsMissingEmptyOrGarbage() {
+        let cases: [(String?, pid_t?)] = [("4258", 4258), ("4258\n", 4258), (nil, nil), ("", nil), ("not a pid", nil)]
+        for (contents, pid) in cases {
+            XCTAssertEqual(DaemonProcess.lockedPid(contents), pid, "\(String(describing: contents))")
+        }
     }
 
     func testDaemonBinaryCandidatesOverrideWinsAndExpandsTilde() {
