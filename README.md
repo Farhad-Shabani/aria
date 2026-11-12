@@ -43,21 +43,11 @@ app.
 
 ## How it works on a Mac
 
-Aria sits in the menu bar. You reach it with the Aria key, which is right
-Option unless you choose Fn.
+Aria sits in the menu bar. The Aria key, right Option by default, runs it:
 
-Say you're writing an email. Tap the Aria key, say a sentence, and tap it
-again. Aria types your words into the email. You can also hold the key while
-you speak, and let go to stop.
-
-To polish that sentence, hold the Aria key and tap Command. Aria opens a
-command palette where you search commands, prompts, and history. Choose your
-dictation, run one of your prompts on it, and press Return. Aria types the
-result where you were.
-
-To ask a question, hold the Aria key and tap Shift, then speak. Tap the Aria
-key to send it. Aria opens on the chat and shows the reply. While the chat is
-open, your next ask follows up in it.
+- **Tap it**, speak, and tap again to type into the app you're in.
+- **Hold it and tap Command** to search prompts and history.
+- **Hold it and tap Shift** to ask your assistant.
 
 ## Get started
 
