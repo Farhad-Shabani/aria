@@ -37,7 +37,7 @@ enum MarkTuning {
     /// Seconds for the resting wave to grow back out of the line.
     static let regrow = 0.4
 
-    // Rest: the ribbon sways a little, as the website's mark does, so the button looks alive.
+    // Rest: the ribbon sways a little, so the button looks alive.
 
     /// Radians the crests drift either way, and how fast, in radians a second.
     static let sway = (reach: 0.6, rate: 0.9)
@@ -73,7 +73,6 @@ enum MarkStage: Equatable, Sendable {
 }
 
 enum MarkFigure {
-    /// The two currents, which the logo fills as one band.
     case ribbon(upper: [CGPoint], lower: [CGPoint])
     /// The ribbon pulled into a stroked line: flat, a check, or between.
     case line([CGPoint], width: Double)

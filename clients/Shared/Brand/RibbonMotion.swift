@@ -199,7 +199,6 @@ struct RibbonMotion: Equatable, Sendable {
         return band(upper: upper, lower: lower)
     }
 
-    /// The closed band between two currents.
     static func band(upper: [CGPoint], lower: [CGPoint]) -> Path {
         Path { path in
             path.addLines(upper + lower.reversed())
