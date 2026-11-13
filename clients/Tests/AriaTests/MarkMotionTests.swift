@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 
 @testable import Aria
@@ -13,6 +14,22 @@ final class MarkMotionTests: XCTestCase {
             motion.advance(stage, level: level, dt: frame)
         }
         return motion
+    }
+
+    private func ribbon(_ figure: MarkFigure) -> Path? {
+        if case .ribbon(let upper, let lower) = figure { RibbonMotion.band(upper: upper, lower: lower) } else { nil }
+    }
+
+    func testRestingMarkSwaysAndComesBack() {
+        let start = ribbon(advanced(MarkMotion(), .rest, for: frame).figure)
+        let swayed = ribbon(advanced(MarkMotion(), .rest, for: 1.7).figure)
+        let back = ribbon(advanced(MarkMotion(), .rest, for: 2 * .pi / MarkTuning.sway.rate).figure)
+        XCTAssertNotEqual(start, swayed)
+        XCTAssertEqual(back?.boundingRect.minY ?? 0, start?.boundingRect.minY ?? 1, accuracy: 0.05)
+    }
+
+    func testStillMarkDoesNotSway() {
+        XCTAssertEqual(ribbon(MarkMotion.still(.rest)), ribbon(MarkMotion.resting))
     }
 
     func testRestingRibbonSpansTheRingsChord() {
@@ -88,18 +105,21 @@ final class MarkMotionTests: XCTestCase {
             XCTAssertLessThan(abs(point.y - flat.y), abs(check.y - flat.y) / 4)
         }
         let rested = advanced(delivered, .rest, for: MarkTuning.unbend + MarkTuning.regrow + 0.1)
-        guard case .ribbon(let band) = rested.figure, case .ribbon(let logo) = MarkMotion.resting else {
+        guard let band = ribbon(rested.figure), let logo = ribbon(MarkMotion.resting) else {
             return XCTFail("the mark returns to its ribbon")
         }
-        XCTAssertEqual(band.boundingRect, logo.boundingRect)
+        // Swaying, but at the logo's size.
+        XCTAssertEqual(band.boundingRect.width, logo.boundingRect.width, accuracy: 0.5)
+        XCTAssertEqual(band.boundingRect.height, logo.boundingRect.height, accuracy: 1)
     }
 
-    func testRestWithoutDeliveryIsTheLogo() {
+    func testRestWithoutDeliveryStartsAsTheLogo() {
         let cancelled = advanced(advanced(MarkMotion(), .listening, for: 0.5, level: 1), .rest, for: frame)
-        guard case .ribbon(let band) = cancelled.figure, case .ribbon(let logo) = MarkMotion.resting else {
+        guard let band = ribbon(cancelled.figure), let logo = ribbon(MarkMotion.resting) else {
             return XCTFail("a mark at rest draws the logo")
         }
-        XCTAssertEqual(band.boundingRect, logo.boundingRect)
+        XCTAssertEqual(band.boundingRect.minY, logo.boundingRect.minY, accuracy: 0.1)
+        XCTAssertEqual(band.boundingRect.maxY, logo.boundingRect.maxY, accuracy: 0.1)
     }
 
     func testReduceMotionShowsTheLogoOrTheCheck() {
