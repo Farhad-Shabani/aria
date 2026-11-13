@@ -42,8 +42,9 @@ struct PaletteActionsMenu: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!action.isEnabled)
-                .onHover { isHovering in
-                    if isHovering { controller.model.selectMenu(at: index) }
+                .onContinuousHover { phase in
+                    guard case .active = phase, controller.model.hoverSelectsMenu(at: index) else { return }
+                    controller.model.selectMenu(at: index)
                 }
                 .accessibilityAddTraits(index == selected ? .isSelected : [])
             }

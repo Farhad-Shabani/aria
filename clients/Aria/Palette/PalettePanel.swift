@@ -22,8 +22,14 @@ final class PalettePanel {
     ///     but not when a sheet does.
     ///   - pressed: Every key, before the view in focus sees it, unless an
     ///     input method is composing. Returns whether it was taken.
-    init(resignedKey: @escaping @MainActor () -> Void, pressed: @escaping @MainActor (NSEvent) -> Bool) {
-        panel = KeyPanel(resignedKey: resignedKey, pressed: pressed)
+    ///   - followsPointer: `true` on a pointer move and `false` on a key press or a left or
+    ///     right click, before the views see the event.
+    init(
+        resignedKey: @escaping @MainActor () -> Void,
+        pressed: @escaping @MainActor (NSEvent) -> Bool,
+        followsPointer: @escaping @MainActor (Bool) -> Void
+    ) {
+        panel = KeyPanel(resignedKey: resignedKey, pressed: pressed, followsPointer: followsPointer)
         configure()
     }
 
@@ -54,6 +60,7 @@ final class PalettePanel {
         panel.level = .floating
         panel.isMovableByWindowBackground = false
         panel.hidesOnDeactivate = false
+        panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
 
         let blur = NSVisualEffectView(frame: NSRect(origin: .zero, size: Self.size))
@@ -95,10 +102,16 @@ final class PalettePanel {
 private final class KeyPanel: NSPanel {
     private let resignedKey: @MainActor () -> Void
     private let pressed: @MainActor (NSEvent) -> Bool
+    private let followsPointer: @MainActor (Bool) -> Void
 
-    init(resignedKey: @escaping @MainActor () -> Void, pressed: @escaping @MainActor (NSEvent) -> Bool) {
+    init(
+        resignedKey: @escaping @MainActor () -> Void,
+        pressed: @escaping @MainActor (NSEvent) -> Bool,
+        followsPointer: @escaping @MainActor (Bool) -> Void
+    ) {
         self.resignedKey = resignedKey
         self.pressed = pressed
+        self.followsPointer = followsPointer
         super.init(
             contentRect: NSRect(origin: .zero, size: PalettePanel.size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -111,6 +124,11 @@ private final class KeyPanel: NSPanel {
     /// otherwise take ⌃N, ⌃P and Esc. A key composing text in an input
     /// method stays with it.
     override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .mouseMoved: followsPointer(true)
+        case .keyDown, .leftMouseDown, .rightMouseDown: followsPointer(false)
+        default: break
+        }
         if event.type == .keyDown, !isComposing {
             if pressed(event) { return }
             if let action = Self.editAction(for: event), NSApp.sendAction(action, to: nil, from: self) { return }
