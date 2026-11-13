@@ -792,20 +792,14 @@ where
             }
             Ok::<_, DictationError>(ended)
         });
-        // The held word goes through the same correction as every other word.
-        let close = |published: &mut Published<'_>, sinks: &mut S| {
-            published
-                .close_last_sentence(|held| self.rewrites.correct(held, "", vocabulary), sinks);
-        };
         // A press that ends early still owes the last segment its mark.
         let ended = match ended {
             Ok(ended) => ended,
             Err(error) => {
-                close(&mut published, sinks);
+                published.close_last_sentence(sinks);
                 return Err(error);
             }
         };
-        close(&mut published, sinks);
         let transcript = match settings.delivery_mode {
             DeliveryMode::Complete => self
                 .rewrites
@@ -898,10 +892,9 @@ impl SegmentEnds {
     }
 
     /// What the last segment still owes: its mark, then the held word.
-    fn finish(&mut self, correct: impl FnOnce(&mut String)) -> String {
+    fn finish(&mut self) -> String {
         let mut closing = self.sentences.finish().unwrap_or_default();
-        if let Some(mut held) = self.symbols.finish() {
-            correct(&mut held);
+        if let Some(held) = self.symbols.finish() {
             if !closing.is_empty() {
                 closing.push(' ');
             }
@@ -1088,12 +1081,12 @@ impl<'a> Published<'a> {
     /// Types the mark the last segment owes. A failure is only logged,
     /// unless queued words were still waiting: they can't land then, so the
     /// press fails.
-    fn close_last_sentence<S>(&mut self, correct: impl FnOnce(&mut String), sinks: &mut S)
+    fn close_last_sentence<S>(&mut self, sinks: &mut S)
     where
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let closing = self.ends.finish(correct);
+        let closing = self.ends.finish();
         if closing.is_empty() {
             return;
         }
@@ -1170,7 +1163,7 @@ impl<'a> Published<'a> {
                 own_voice,
             });
         }
-        self.close_last_sentence(|_| {}, sinks);
+        self.close_last_sentence(sinks);
         let transcript = Transcript::new(std::mem::take(&mut self.written))
             .map_err(|error| log_transcription_error(error, self.control, self.started_at))?;
         let completed = self.completion.publish(Some(&transcript), sinks);
