@@ -70,12 +70,25 @@ impl<L: Layer> Rewrites<L> {
     }
 
     /// Calls each layer directly rather than through `Layered`, whose 64 KiB
-    /// bound would stop deterministic cleanup on a long transcript.
+    /// bound would stop deterministic cleanup on a long transcript. `typed`
+    /// is what the press typed before `text`, which no rewrite changes.
     pub(crate) fn segment(
         &self,
         text: &mut String,
+        typed: &str,
         cleanup: Cleanup,
         vocabulary: Option<&Vocabulary>,
+        cancel: &CancelToken,
+    ) -> Result<(), TranscriptionError> {
+        self.clean(text, cleanup, cancel)?;
+        self.correct(text, typed, vocabulary);
+        check_cancelled(cancel)
+    }
+
+    pub(crate) fn clean(
+        &self,
+        text: &mut String,
+        cleanup: Cleanup,
         cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
         check_cancelled(cancel)?;
@@ -83,10 +96,15 @@ impl<L: Layer> Rewrites<L> {
             RemoveHesitations.apply(text, cancel)?;
             RemoveRepeats.apply(text, cancel)?;
         }
-        if let Some(corrected) = vocabulary.and_then(|vocabulary| vocabulary.correct(text)) {
+        Ok(())
+    }
+
+    pub(crate) fn correct(&self, text: &mut String, typed: &str, vocabulary: Option<&Vocabulary>) {
+        // Spoken symbols join even when the press has no vocabulary.
+        let no_terms = Vocabulary::default();
+        if let Some(corrected) = vocabulary.unwrap_or(&no_terms).correct_spoken(text, typed) {
             *text = corrected;
         }
-        check_cancelled(cancel)
     }
 
     /// Whether a transcript delivered whole goes to the cleanup model.
@@ -106,7 +124,7 @@ impl<L: Layer> Rewrites<L> {
         if cleanup.enabled && cleanup.backtrack {
             Backtrack.apply(&mut text, cancel)?;
         }
-        self.segment(&mut text, cleanup, vocabulary, cancel)?;
+        self.segment(&mut text, "", cleanup, vocabulary, cancel)?;
         // Cleanup can leave nothing, and then this fails as `NoSpeech`.
         let transcript = Transcript::new(text)?;
         if !self.reaches_model(cleanup) {
@@ -132,5 +150,38 @@ impl<L: Layer> Rewrites<L> {
             "dictation cleanup model applied"
         );
         Transcript::new(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn segment(heard: &str, vocabulary: Option<&Vocabulary>) -> String {
+        let mut text = heard.to_owned();
+        Rewrites::new()
+            .segment(
+                &mut text,
+                "",
+                Cleanup::default(),
+                vocabulary,
+                &CancelToken::never(),
+            )
+            .unwrap();
+        text
+    }
+
+    #[test]
+    fn a_segment_joins_spoken_symbols_without_a_vocabulary() {
+        assert_eq!(segment("call user underscore id.", None), "call user_id.");
+    }
+
+    #[test]
+    fn a_segment_joins_a_hyphen_after_its_vocabulary() {
+        let vocabulary = Vocabulary::new(["aria-stt"]).unwrap();
+        assert_eq!(
+            segment("aria dash stt hyphen test", Some(&vocabulary)),
+            "aria-stt-test"
+        );
     }
 }
