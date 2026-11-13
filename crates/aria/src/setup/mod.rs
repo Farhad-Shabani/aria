@@ -323,7 +323,7 @@ pub fn inspect() -> Result<Inspection, SetupError> {
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
         pairing,
         stt_runs_on: file.choices().stt_runs_on,
-        key_remapped: PlatformHotkeyListener::is_remapped(file.aria_key()),
+        key_remapped: PlatformHotkeyListener::remap(file.aria_key()).is_some(),
         existing,
         service,
         grant,
