@@ -36,6 +36,11 @@ enum MarkTuning {
     static let unbend = 0.3
     /// Seconds for the resting wave to grow back out of the line.
     static let regrow = 0.4
+
+    // Rest: the ribbon sways a little, so the button looks alive.
+
+    /// Radians the crests drift either way, and how fast, in radians a second.
+    static let sway = (reach: 0.6, rate: 0.9)
     /// The line and the check, as left end, corner and right end.
     static let line = [CGPoint(x: 32.1, y: 71), CGPoint(x: 57.9, y: 71), CGPoint(x: 95.9, y: 71)]
     static let check = [CGPoint(x: 42.7, y: 65.2), CGPoint(x: 56.7, y: 78), CGPoint(x: 86.8, y: 50)]
@@ -68,8 +73,7 @@ enum MarkStage: Equatable, Sendable {
 }
 
 enum MarkFigure {
-    /// The two currents as one filled band.
-    case ribbon(Path)
+    case ribbon(upper: [CGPoint], lower: [CGPoint])
     /// The ribbon pulled into a stroked line: flat, a check, or between.
     case line([CGPoint], width: Double)
 }
@@ -122,13 +126,23 @@ struct MarkMotion: Equatable, Sendable {
             }
             return Self.bent(easeOutCubic((elapsed - MarkTuning.settle) / MarkTuning.bend))
         case .rest:
-            guard isReturning else { return Self.resting }
+            guard isReturning else { return Self.swaying(for: elapsed) }
             if elapsed < MarkTuning.unbend {
                 return Self.bent(easeOutCubic(1 - elapsed / MarkTuning.unbend))
             }
-            let grown = easeOutCubic((elapsed - MarkTuning.unbend) / MarkTuning.regrow)
-            return Self.ribbonFigure(phase: 0) { _ in Self.restShare * grown }
+            // The sway starts as the wave grows back out of the line, so it never jumps.
+            let since = elapsed - MarkTuning.unbend
+            let grown = easeOutCubic(since / MarkTuning.regrow)
+            return Self.ribbonFigure(phase: Self.sway(since)) { _ in Self.restShare * grown }
         }
+    }
+
+    private static func sway(_ seconds: Double) -> Double {
+        MarkTuning.sway.reach * sin(MarkTuning.sway.rate * seconds)
+    }
+
+    private static func swaying(for seconds: Double) -> MarkFigure {
+        ribbonFigure(phase: sway(seconds)) { _ in restShare }
     }
 
     static var resting: MarkFigure {
@@ -141,7 +155,8 @@ struct MarkMotion: Equatable, Sendable {
     }
 
     private static func ribbonFigure(phase: Double, share: (Double) -> Double) -> MarkFigure {
-        .ribbon(RibbonMotion.outline(phase: phase, share: share, geometry: .mark))
+        let (upper, lower) = RibbonMotion.currents(phase: phase, share: share, geometry: .mark)
+        return .ribbon(upper: upper, lower: lower)
     }
 
     /// The line bent `k` of the way into the check: points and stroke both move.
@@ -172,7 +187,8 @@ struct LogoMark: View {
             )
             context.stroke(ring, with: .foreground, lineWidth: MarkTuning.ring)
             switch figure {
-            case .ribbon(let band):
+            case .ribbon(let upper, let lower):
+                let band = RibbonMotion.band(upper: upper, lower: lower)
                 context.fill(band, with: .foreground)
                 context.stroke(
                     band, with: .foreground, style: StrokeStyle(lineWidth: MarkTuning.edge, lineJoin: .round))

@@ -196,7 +196,11 @@ struct RibbonMotion: Equatable, Sendable {
     /// The ribbon as one closed band between its two currents.
     static func outline(phase: Double, share: (Double) -> Double, geometry: RibbonGeometry = .pill) -> Path {
         let (upper, lower) = currents(phase: phase, share: share, geometry: geometry)
-        return Path { path in
+        return band(upper: upper, lower: lower)
+    }
+
+    static func band(upper: [CGPoint], lower: [CGPoint]) -> Path {
+        Path { path in
             path.addLines(upper + lower.reversed())
             path.closeSubpath()
         }
