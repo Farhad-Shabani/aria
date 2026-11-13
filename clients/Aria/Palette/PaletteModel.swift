@@ -65,6 +65,10 @@ struct PaletteModel: Equatable {
     }
     /// The row of the ⌘K list that Return runs. `nil` while the list is closed.
     private(set) var menuIndex: Int?
+    /// Whether hovering selects a row. A pointer move turns it on. A key press or a left or right
+    /// click turns it off. So a row that scrolls under the pointer after a key press leaves the
+    /// selection be.
+    var followsPointer = false
     /// The one thread held. A search, a section or a prompt input drops it.
     private(set) var thread: Thread?
     /// The thread still being read. Results that don't match it came too late.
@@ -111,6 +115,7 @@ struct PaletteModel: Equatable {
     /// Starts afresh each time the palette opens.
     mutating func reset(prompts: [Aria_Daemon_V1_Prompt], isSystemTranscriptionRunning: Bool) {
         self.prompts = Self.commands(for: prompts)
+        followsPointer = false
         self.isSystemTranscriptionRunning = isSystemTranscriptionRunning
         page = .commands
         query = ""
@@ -399,6 +404,16 @@ struct PaletteModel: Equatable {
     mutating func moveMenu(by step: Int, count: Int) {
         guard let index = menuIndex else { return }
         menuIndex = min(max(index + step, 0), max(count - 1, 0))
+    }
+
+    /// Read-only, since hover runs on every pointer move and each write to the model redraws the
+    /// palette.
+    func hoverSelects(_ id: PaletteItem.ID) -> Bool {
+        followsPointer && selected?.id != id
+    }
+
+    func hoverSelectsMenu(at index: Int) -> Bool {
+        followsPointer && menuIndex != nil && menuIndex != index
     }
 
     mutating func selectMenu(at index: Int) {

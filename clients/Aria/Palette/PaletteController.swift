@@ -31,7 +31,8 @@ final class PaletteController: ObservableObject {
     private let delivered: @MainActor (Result<Aria_Daemon_V1_DeliveryOutcome, any Error>) -> Void
     private lazy var panel = PalettePanel(
         resignedKey: { [weak self] in self?.close() },
-        pressed: { [weak self] event in self?.press(event) ?? false })
+        pressed: { [weak self] event in self?.press(event) ?? false },
+        followsPointer: { [weak self] follows in self?.followPointer(follows) })
     private var gesture = PaletteGesture()
     private var chordChange: AnyCancellable?
     private var historySettingChange: AnyCancellable?
@@ -414,6 +415,11 @@ final class PaletteController: ObservableObject {
         model.closeMenu()
         guard actions.indices.contains(index), actions[index].isEnabled else { return }
         perform(actions[index])
+    }
+
+    /// Every pointer move calls this, and each write to the model redraws the palette.
+    private func followPointer(_ follows: Bool) {
+        if model.followsPointer != follows { model.followsPointer = follows }
     }
 
     private func press(_ event: NSEvent) -> Bool {

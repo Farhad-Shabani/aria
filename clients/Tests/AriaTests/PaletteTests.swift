@@ -376,6 +376,24 @@ final class PaletteTests: XCTestCase {
         XCTAssertNil(model.menuIndex)
     }
 
+    func testHoverSelectsOnlyFromAPointerMoveUntilTheNextKeyOrOpen() {
+        var model = openModel()
+        let third = model.items[2].id
+        XCTAssertFalse(model.hoverSelects(third))
+
+        model.followsPointer = true
+        XCTAssertTrue(model.hoverSelects(third))
+        model.select(third)
+        XCTAssertFalse(model.hoverSelects(third))
+
+        model.toggleMenu(count: 3)
+        XCTAssertTrue(model.hoverSelectsMenu(at: 2))
+        XCTAssertFalse(model.hoverSelectsMenu(at: 0))
+
+        model.reset(prompts: prompts, isSystemTranscriptionRunning: false)
+        XCTAssertFalse(model.hoverSelects(third))
+    }
+
     func testTheActionsListClosesWhenTheSelectionPageOrSearchChanges() {
         var model = openModel()
         model.toggleMenu(count: 3)

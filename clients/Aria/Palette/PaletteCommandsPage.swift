@@ -107,8 +107,9 @@ struct PaletteCommandsPage: View {
                             }
                             row(item, isSelected: item == selected)
                                 .id(item.id)
-                                .onHover { isHovering in
-                                    if isHovering { controller.model.select(item.id) }
+                                .onContinuousHover { phase in
+                                    guard case .active = phase, controller.model.hoverSelects(item.id) else { return }
+                                    controller.model.select(item.id)
                                 }
                                 .onAppear {
                                     if let entry = item.historyItem { history.loadMore(after: entry.id) }
