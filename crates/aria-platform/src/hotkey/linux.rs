@@ -20,7 +20,7 @@ use rustix::fs::{Access, Mode, OFlags, access, open};
 use rustix::ioctl::{Getter, Setter, ioctl, opcode};
 use rustix::time::{ClockId, clock_gettime};
 
-use super::{AriaKey, KeyEvent, ListenerEvent, Modifiers, Press, PressDetector};
+use super::{AriaKey, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press, PressDetector};
 
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("`EVENT_SIZE` assumes the kernel's 64-bit `struct input_event`");
@@ -91,8 +91,8 @@ impl LinuxHotkeyListener {
     pub const PERMISSION: &str = "access to your keyboard";
 
     /// A remapper's output is read from its own virtual device.
-    pub fn is_remapped(_key: AriaKey) -> bool {
-        false
+    pub fn remap(_key: AriaKey) -> Option<KeyRemap> {
+        None
     }
 
     pub fn unarmed_reason(key: AriaKey) -> String {

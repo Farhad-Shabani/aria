@@ -24,7 +24,7 @@ use objc2_core_graphics::{
 };
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults};
 
-use super::{AriaKey, KeyEvent, ListenerEvent, Modifiers, Press, PressDetector};
+use super::{AriaKey, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press, PressDetector};
 use crate::accessibility::{self, Trust};
 use crate::delivery::RETURN_VIRTUAL_KEY;
 
@@ -293,8 +293,8 @@ impl MacOsHotkeyListener {
     }
 
     /// Modifier Keys turns the key into another one before any tap sees it.
-    pub fn is_remapped(key: AriaKey) -> bool {
-        remaps_away(&modifier_remaps(), key)
+    pub fn remap(key: AriaKey) -> Option<KeyRemap> {
+        remap_of(&modifier_remaps(), key)
     }
 
     /// `take_return` runs inside the tap callback for each bare Return the
@@ -338,35 +338,71 @@ impl MacOsHotkeyListener {
     }
 }
 
-/// A keyboard still sends the Aria key when it maps the key onto itself, or
-/// maps another key onto it, as an Option and Command swap does.
+/// A keyboard remaps the Aria key when it sends the key away, even if it maps
+/// another key onto it. The keyboard may lack that other key, as a MacBook
+/// lacks Right Control. HID descriptors don't say which keys a keyboard has.
+/// Of several such keyboards, the one with the fewest senders is the likeliest
+/// to have a dead Aria key.
 // ponytail: a list left by an unplugged keyboard still counts; match it
 // against connected keyboards if that misleads anyone.
-fn remaps_away(keyboards: &[Vec<(i64, i64)>], key: AriaKey) -> bool {
+fn remap_of(keyboards: &[Vec<(i64, i64)>], key: AriaKey) -> Option<KeyRemap> {
     let aria = key.hid_usage();
-    keyboards.iter().any(|remaps| {
-        let sends_it_away = remaps
-            .iter()
-            .any(|&(source, destination)| source == aria && destination != aria);
-        let another_sends_it = remaps
-            .iter()
-            .any(|&(source, destination)| source != aria && destination == aria);
-        sends_it_away && !another_sends_it
-    })
+    keyboards
+        .iter()
+        .filter_map(|remaps| {
+            let &(_, destination) = remaps
+                .iter()
+                .find(|&&(source, destination)| source == aria && destination != aria)?;
+            let senders = remaps
+                .iter()
+                .filter(|&&(source, destination)| source != aria && destination == aria)
+                .map(|&(source, _)| key_name(source))
+                .collect();
+            Some(KeyRemap {
+                key: key_name(aria),
+                destination: key_name(destination),
+                senders,
+            })
+        })
+        .min_by_key(|remap| remap.senders.len())
+}
+
+fn key_name(usage: i64) -> &'static str {
+    match usage {
+        0x7_0000_0029 => "Escape",
+        0x7_0000_0039 => "Caps Lock",
+        0x7_0000_00E0 => "Left Control",
+        0x7_0000_00E1 => "Left Shift",
+        0x7_0000_00E2 => "Left Option",
+        0x7_0000_00E3 => "Left Command",
+        0x7_0000_00E4 => "Right Control",
+        0x7_0000_00E5 => "Right Shift",
+        0x7_0000_00E6 => "Right Option",
+        0x7_0000_00E7 => "Right Command",
+        0xFF_0000_0003 => "Fn",
+        _ => "another key",
+    }
 }
 
 /// Each keyboard's Modifier Keys remaps, as (source, destination) usages.
-/// Empty when no keyboard has any. The standard search list includes the
-/// current host's global domain, where the remaps live.
+/// The standard search list includes the current host's global domain, where
+/// the remaps live. Sorted by defaults key, so the order stays the same
+/// between runs. The dictionary itself has no fixed order.
 fn modifier_remaps() -> Vec<Vec<(i64, i64)>> {
     let (keys, values) = NSUserDefaults::standardUserDefaults()
         .dictionaryRepresentation()
         .to_vecs();
-    keys.iter()
+    let mut keyboards: Vec<_> = keys
+        .iter()
+        .map(|key| key.to_string())
         .zip(values)
-        .filter(|(key, _)| key.to_string().starts_with(MODIFIER_MAPPING_PREFIX))
-        .filter_map(|(_, remaps)| remaps.downcast::<NSArray>().ok())
-        .map(|remaps| remaps.to_vec().into_iter().filter_map(remap).collect())
+        .filter(|(key, _)| key.starts_with(MODIFIER_MAPPING_PREFIX))
+        .filter_map(|(key, remaps)| Some((key, remaps.downcast::<NSArray>().ok()?)))
+        .collect();
+    keyboards.sort_by(|(left, _), (right, _)| left.cmp(right));
+    keyboards
+        .into_iter()
+        .map(|(_, remaps)| remaps.to_vec().into_iter().filter_map(remap).collect())
         .collect()
 }
 
@@ -891,8 +927,8 @@ mod tests {
 
     #[test]
     fn a_keyboard_with_no_remaps_keeps_both_keys() {
-        assert!(!remaps_away(&[], AriaKey::RightOption));
-        assert!(!remaps_away(&[], AriaKey::Fn));
+        assert_eq!(remap_of(&[], AriaKey::RightOption), None);
+        assert_eq!(remap_of(&[], AriaKey::Fn), None);
     }
 
     #[test]
@@ -904,16 +940,51 @@ mod tests {
             (LEFT_CONTROL, LEFT_OPTION_USAGE),
             (LEFT_OPTION_USAGE, LEFT_OPTION_USAGE),
         ]];
-        assert!(!remaps_away(&keyboards, AriaKey::RightOption));
+        assert_eq!(remap_of(&keyboards, AriaKey::RightOption), None);
+    }
+
+    fn key_remap(
+        key: &'static str,
+        destination: &'static str,
+        senders: &[&'static str],
+    ) -> KeyRemap {
+        KeyRemap {
+            key,
+            destination,
+            senders: senders.to_vec(),
+        }
     }
 
     #[test]
-    fn an_option_and_command_swap_still_sends_right_option() {
+    fn option_sent_away_counts_though_a_missing_key_sends_it() {
+        // A MacBook has no Right Control, so no key on it sends Right Option.
+        let keyboards = [vec![
+            (LEFT_CONTROL, LEFT_OPTION_USAGE),
+            (LEFT_OPTION_USAGE, CAPS_LOCK),
+            (RIGHT_CONTROL, RIGHT_OPTION_USAGE),
+            (RIGHT_OPTION_USAGE, CAPS_LOCK),
+            (CAPS_LOCK, RIGHT_CONTROL),
+        ]];
+        assert_eq!(
+            remap_of(&keyboards, AriaKey::RightOption),
+            Some(key_remap("Right Option", "Caps Lock", &["Right Control"]))
+        );
+    }
+
+    #[test]
+    fn an_option_and_command_swap_names_command_as_the_way_in() {
         let keyboards = [vec![
             (RIGHT_OPTION_USAGE, RIGHT_COMMAND),
             (RIGHT_COMMAND, RIGHT_OPTION_USAGE),
         ]];
-        assert!(!remaps_away(&keyboards, AriaKey::RightOption));
+        assert_eq!(
+            remap_of(&keyboards, AriaKey::RightOption),
+            Some(key_remap(
+                "Right Option",
+                "Right Command",
+                &["Right Command"]
+            ))
+        );
     }
 
     #[test]
@@ -922,24 +993,35 @@ mod tests {
             vec![(RIGHT_OPTION_USAGE, RIGHT_OPTION_USAGE)],
             vec![(RIGHT_OPTION_USAGE, CAPS_LOCK)],
         ];
-        assert!(remaps_away(&keyboards, AriaKey::RightOption));
+        assert_eq!(
+            remap_of(&keyboards, AriaKey::RightOption),
+            Some(key_remap("Right Option", "Caps Lock", &[]))
+        );
     }
 
     #[test]
-    fn option_turned_into_caps_lock_takes_right_option_away() {
-        let keyboards = [vec![
-            (LEFT_OPTION_USAGE, CAPS_LOCK),
-            (RIGHT_OPTION_USAGE, CAPS_LOCK),
-        ]];
-        assert!(remaps_away(&keyboards, AriaKey::RightOption));
-        assert!(!remaps_away(&keyboards, AriaKey::Fn));
+    fn the_keyboard_with_no_sender_is_reported_over_a_swap() {
+        let keyboards = [
+            vec![
+                (RIGHT_OPTION_USAGE, RIGHT_COMMAND),
+                (RIGHT_COMMAND, RIGHT_OPTION_USAGE),
+            ],
+            vec![(RIGHT_OPTION_USAGE, CAPS_LOCK)],
+        ];
+        assert_eq!(
+            remap_of(&keyboards, AriaKey::RightOption),
+            Some(key_remap("Right Option", "Caps Lock", &[]))
+        );
     }
 
     #[test]
     fn fn_turned_into_control_takes_fn_away() {
         let keyboards = [vec![(AriaKey::Fn.hid_usage(), LEFT_CONTROL)]];
-        assert!(remaps_away(&keyboards, AriaKey::Fn));
-        assert!(!remaps_away(&keyboards, AriaKey::RightOption));
+        assert_eq!(
+            remap_of(&keyboards, AriaKey::Fn),
+            Some(key_remap("Fn", "Left Control", &[]))
+        );
+        assert_eq!(remap_of(&keyboards, AriaKey::RightOption), None);
     }
 
     #[test]

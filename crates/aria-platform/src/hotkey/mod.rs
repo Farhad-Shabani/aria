@@ -31,6 +31,29 @@ pub enum AriaKey {
     Fn,
 }
 
+/// How Modifier Keys sends the Aria key away, by key name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyRemap {
+    key: &'static str,
+    destination: &'static str,
+    senders: Vec<&'static str>,
+}
+
+impl KeyRemap {
+    pub fn key(&self) -> &'static str {
+        self.key
+    }
+
+    pub fn destination(&self) -> &'static str {
+        self.destination
+    }
+
+    /// The keyboard may lack some of these keys.
+    pub fn senders(&self) -> &[&'static str] {
+        &self.senders
+    }
+}
+
 /// The modifiers that can join a press, as held at one instant. Control
 /// makes no combo; it is watched so that it voids one. Option and Fn are
 /// not watched, so they neither join nor void.

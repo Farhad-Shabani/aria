@@ -448,18 +448,34 @@ fn not_running(socket: &Path, wake: Option<&WakeConfig>) -> Check {
     )
 }
 
-/// Modifier Keys acts before any app sees a key, so a remapped Aria key
-/// leaves an armed hotkey that never fires.
+/// Modifier Keys acts before any app sees a key. Pressing a remapped Aria
+/// key never fires the hotkey. Only a key remapped onto the Aria key can.
 fn aria_key() -> Check {
     match loaded(|settings, _home| Ok(settings.aria_key())) {
-        Ok(key) if PlatformHotkeyListener::is_remapped(key) => Check::warning(
-            ARIA_KEY,
-            "Modifier Keys turns it into another key, so Aria never sees it; restore it in \
-             System Settings → Keyboard → Keyboard Shortcuts → Modifier Keys",
-        ),
-        Ok(_) => Check::ok(ARIA_KEY, "reaches Aria unchanged"),
+        Ok(key) => match PlatformHotkeyListener::remap(key) {
+            Some(remap) => Check::warning(
+                ARIA_KEY,
+                remap_detail(remap.key(), remap.destination(), remap.senders()),
+            ),
+            None => Check::ok(ARIA_KEY, "reaches Aria unchanged"),
+        },
         Err(_) => Check::warning(ARIA_KEY, SETTINGS_FAILED),
     }
+}
+
+fn remap_detail(key: &str, destination: &str, senders: &[&str]) -> String {
+    let sent_by = match senders {
+        [] => format!("no key sends {key};"),
+        [only] => format!("only {only} sends {key}, if this keyboard has one; otherwise"),
+        [rest @ .., last] => format!(
+            "{} and {last} send {key}, where this keyboard has them; otherwise",
+            rest.join(", ")
+        ),
+    };
+    format!(
+        "Modifier Keys remaps it: {key} now sends {destination}, and {sent_by} restore it \
+         in System Settings → Keyboard → Keyboard Shortcuts → Modifier Keys"
+    )
 }
 
 /// The model is optional, and every warning still types the rule-cleaned
@@ -550,6 +566,24 @@ mod tests {
     use super::*;
 
     const RECORDING_TIMEOUT: Duration = Duration::from_secs(300);
+
+    #[test]
+    fn a_remap_names_every_key_that_sends_the_aria_key() {
+        let detail = |senders: &[&str]| remap_detail("Right Option", "Caps Lock", senders);
+        assert!(detail(&[]).contains(
+            "Right Option now sends Caps Lock, and no key sends Right Option; restore it"
+        ));
+        assert!(detail(&["Right Control"]).contains(
+            ", and only Right Control sends Right Option, if this keyboard has one; otherwise \
+                 restore it"
+        ));
+        assert!(
+            detail(&["Left Control", "Right Control", "Right Command"]).contains(
+                ", and Left Control, Right Control and Right Command send Right Option, \
+                     where this keyboard has them; otherwise restore it"
+            )
+        );
+    }
 
     #[test]
     fn the_cleanup_model_warns_when_it_would_never_run_or_cannot_be_reached() {
