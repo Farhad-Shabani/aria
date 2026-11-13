@@ -1,3 +1,5 @@
+import Foundation
+
 /// Something to do on the page or with its selected row, and the key that does it from anywhere on
 /// the page. The footer shows the everyday ones. ⌘K lists all.
 struct PaletteAction: Identifiable, Equatable {
@@ -22,6 +24,8 @@ struct PaletteAction: Identifiable, Equatable {
         case stopAsk(ChatKey)
         case deleteChat(ChatKey)
         case renameChat(ChatKey)
+        case copyPairingCode(PairingInvite, expiresAt: Date)
+        case turnOnPhonePairing
     }
 
     let kind: Kind
@@ -30,7 +34,7 @@ struct PaletteAction: Identifiable, Equatable {
 
     var id: String {
         switch kind {
-        case .copyEntry, .copyDetail, .copyText, .copyTranscript: "copy"
+        case .copyEntry, .copyDetail, .copyText, .copyTranscript, .copyPairingCode: "copy"
         case .runPrompt: "run-prompt"
         case .transcribeAgain: "transcribe-again"
         case .rename, .renameChat: "rename"
@@ -42,6 +46,7 @@ struct PaletteAction: Identifiable, Equatable {
         case .stop, .stopAsk: "stop"
         case .typeText: "type"
         case .deleteChat: "delete-chat"
+        case .turnOnPhonePairing: "turn-on-phone-pairing"
         }
     }
 
@@ -59,12 +64,14 @@ struct PaletteAction: Identifiable, Equatable {
         case .stop, .stopAsk: "Stop"
         case .typeText: "Type"
         case .deleteChat: "Delete Chat…"
+        case .copyPairingCode: "Copy Code"
+        case .turnOnPhonePairing: "Turn On"
         }
     }
 
     var key: PaletteKey {
         switch kind {
-        case .copyEntry, .copyDetail, .copyText, .copyTranscript: .copy
+        case .copyEntry, .copyDetail, .copyText, .copyTranscript, .copyPairingCode: .copy
         case .runPrompt: .runPrompt
         case .transcribeAgain: .transcribeAgain
         case .rename, .renameChat: .rename
@@ -76,6 +83,7 @@ struct PaletteAction: Identifiable, Equatable {
         case .stop, .stopAsk: .stop
         case .typeText: .typeText
         case .deleteChat: .delete
+        case .turnOnPhonePairing: .turnOn
         }
     }
 }

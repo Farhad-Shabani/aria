@@ -49,6 +49,28 @@ final class PaletteTests: XCTestCase {
         XCTAssertEqual(model.commands.last?.action, .clearHistory)
     }
 
+    func testSearchingForAQRCodeFindsPhonePairing() {
+        var model = openModel()
+        model.query = "qr"
+
+        XCTAssertEqual(model.commands.map(\.action), [.showPhonePairing])
+    }
+
+    func testThePhonePairingPageCopiesALiveCodeAndTurnsPairingOnWhileItIsOff() {
+        var model = openModel()
+        model.show(.phonePairing)
+        let invite = PairingInvite(instanceName: "mac", code: "code", fingerprint: Data())
+        let expiresAt = Date(timeIntervalSinceReferenceDate: 60)
+
+        let live = PaletteActions(model: model, phonePairingStatus: .live(invite, expiresAt: expiresAt))
+        XCTAssertEqual(
+            live.all, [PaletteAction(kind: .copyPairingCode(invite, expiresAt: expiresAt), isInFooter: true)])
+        let off = PaletteActions(model: model, phonePairingStatus: .relayOff, canSwitchPhonePairing: false)
+        XCTAssertEqual(off.all, [PaletteAction(kind: .turnOnPhonePairing, isInFooter: true, isEnabled: false)])
+        XCTAssertNotEqual(off.all.first?.key, .return, "the Return that opened the page can’t turn pairing on")
+        XCTAssertEqual(PaletteActions(model: model, phonePairingStatus: .restarting).all, [])
+    }
+
     func testASectionShowsOnlyItsEntriesAndEscapeWidensItBeforeClosing() {
         var model = openModel(isSystemTranscriptionRunning: true, history: [Self.entry(1, at: 100)])
         model.show(section: .dictation)

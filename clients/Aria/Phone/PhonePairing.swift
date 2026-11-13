@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "PhonePairing")
@@ -23,6 +24,8 @@ final class PhonePairing: ObservableObject {
         case restarting
     }
 
+    static let codeFailure = "Aria couldn’t make a pairing code. Run `aria doctor` in Terminal to see why."
+
     @Published private(set) var status: Status = .loading
     @Published private(set) var phonePairedAt: Date?
     /// The switch position shown while pairing turns on or off. Nil otherwise.
@@ -36,10 +39,16 @@ final class PhonePairing: ObservableObject {
     private var generation = 0
     /// The daemon's pairing count at the last poll. Nil until one answers.
     private var pairingCount: UInt64?
+    /// The views showing pairing now. They share one poll loop.
+    private var viewers = 0
+    private var polling: Task<Void, Never>?
+    private var pollerChange: AnyCancellable?
 
     init(poller: StatusPoller, daemon: PairingDaemon = .live) {
         self.poller = poller
         self.daemon = daemon
+        // `canSwitch` and `canRevoke` read the poller's state.
+        pollerChange = poller.$state.sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     private var isLive: Bool {
@@ -59,11 +68,34 @@ final class PhonePairing: ObservableObject {
         targetIsOn == nil && poller.state != .working
     }
 
+    /// Polls until the calling task is cancelled. Views showing pairing at
+    /// once share one loop, and the first starts afresh: nothing seen while
+    /// no view showed it counts as just now.
     func run() async {
+        viewers += 1
+        if viewers == 1 { startPolling() }
         while !Task.isCancelled {
-            // A restart in progress would read as the daemon being off.
-            let next = status == .restarting ? Self.pollInterval : await poll()
-            try? await Task.sleep(for: next)
+            try? await Task.sleep(for: .seconds(3600))
+        }
+        viewers -= 1
+        if viewers == 0 {
+            polling?.cancel()
+            polling = nil
+        }
+    }
+
+    private func startPolling() {
+        pairingCount = nil
+        phonePairedAt = nil
+        actionError = nil
+        // A restart in progress still owns the status.
+        if status != .restarting { status = .loading }
+        polling = Task { [weak self] in
+            while !Task.isCancelled, let self {
+                // A restart in progress would read as the daemon being off.
+                let next = status == .restarting ? Self.pollInterval : await poll()
+                try? await Task.sleep(for: next)
+            }
         }
     }
 

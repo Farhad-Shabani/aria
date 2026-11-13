@@ -247,7 +247,8 @@ struct PaletteModel: Equatable {
     private var pageCommands: [PaletteCommand] {
         [isSystemTranscriptionRunning ? .liveTranscript : .newTranscription, .newDictation, .ask(assistantName)]
             + prompts
-            + (canAddPrompt ? [.newPrompt] : []) + [.setUp, .settings] + (setupSteps > 0 ? [.finishSetup] : [])
+            + (canAddPrompt ? [.newPrompt] : []) + [.pairPhone, .setUp, .settings]
+            + (setupSteps > 0 ? [.finishSetup] : [])
             + (keepsHistory ? HistorySection.allCases.map(PaletteCommand.history) + [.clearHistory] : [])
     }
 

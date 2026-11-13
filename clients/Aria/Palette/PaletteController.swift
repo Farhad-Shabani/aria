@@ -20,6 +20,8 @@ final class PaletteController: ObservableObject {
     let systemTranscription: SystemTranscriptionStatus
     let history: HistoryState
     let chats: Chats
+    /// `nil` until the app tracks it.
+    private(set) var phonePairing: PhonePairing?
 
     private let prompts: PromptHotkeys
     private let ask: PressController
@@ -142,8 +144,9 @@ final class PaletteController: ObservableObject {
             .sink { [weak self] name in self?.model.assistantName = name }
     }
 
-    /// The app scene owns the poller, so it arrives after init.
-    func track(_ poller: StatusPoller) {
+    /// The app scene owns the poller and phone pairing, so they arrive after init.
+    func track(_ poller: StatusPoller, phonePairing: PhonePairing) {
+        self.phonePairing = phonePairing
         setupChange = Publishers.CombineLatest3(setup.$items, settingsHealth.$status, poller.$failure)
             .map { SetupItem.all(inspected: $0, settingsStatus: $1, startFailure: $2).count }
             .removeDuplicates()
@@ -195,6 +198,8 @@ final class PaletteController: ObservableObject {
         case .openSetup:
             closeForWindow()
             openSetup()
+        case .showPhonePairing:
+            model.show(.phonePairing)
         }
     }
 
@@ -371,7 +376,9 @@ final class PaletteController: ObservableObject {
             model: model, result: promptRun.result, isSystemTranscriptionRunning: systemTranscription.isRunning,
             isStopping: systemTranscription.isStopping,
             hasTranscript: !systemTranscription.transcript.lines.isEmpty, detail: history.detail,
-            chat: chats.shown, replying: selectedReplying, history: history.work, hasFrontApp: frontApp != nil)
+            chat: chats.shown, replying: selectedReplying, history: history.work, hasFrontApp: frontApp != nil,
+            phonePairingStatus: phonePairing?.status ?? .loading,
+            canSwitchPhonePairing: phonePairing?.canSwitch ?? false)
     }
 
     private var selectedReplying: Chat? {
@@ -403,6 +410,10 @@ final class PaletteController: ObservableObject {
         case .typeText(let text): deliver(text)
         case .stopAsk(let key): chats.stop(key)
         case .deleteChat(let chat): chatDeletion = chat
+        case .copyPairingCode(let invite, let expiresAt): phonePairing?.copy(invite, until: expiresAt)
+        case .turnOnPhonePairing:
+            guard let phonePairing else { return }
+            Task { await phonePairing.turn(on: true) }
         }
     }
 

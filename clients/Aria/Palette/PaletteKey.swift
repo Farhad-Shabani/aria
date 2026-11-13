@@ -20,6 +20,8 @@ struct PaletteKey: Equatable {
     static let actions = PaletteKey(character: "k", modifiers: .command, label: "⌘K")
     static let stop = PaletteKey(character: ".", modifiers: .command, label: "⌘.")
     static let retry = PaletteKey(character: "r", modifiers: .command, label: "⌘R")
+    /// Not Return, which opened the page: a held or doubled Return would turn it on unasked.
+    static let turnOn = PaletteKey(character: "\r", modifiers: .command, label: "⌘↩")
     static let settings = PaletteKey(character: ",", modifiers: .command, label: "⌘,")
     /// ⌃N and ⌃P move through a list, as in other pickers on macOS.
     static let next = PaletteKey(character: "n", modifiers: .control, label: "⌃N")
