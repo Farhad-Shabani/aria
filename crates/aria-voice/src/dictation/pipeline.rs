@@ -7,7 +7,7 @@ use aria_kit::speaker::Embedder;
 use aria_kit::speaker::{Admission, Gate, Released, Speaker, Timeline, TurnFeed};
 use aria_kit::transcription::Heard;
 use aria_kit::transcription::layer::Layer;
-use aria_kit::transcription::{Punctuated, SentenceEnds, check_cancelled};
+use aria_kit::transcription::{DeferredSymbols, Punctuated, SentenceEnds, check_cancelled};
 use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector};
 
 use crate::hearing::{
@@ -734,8 +734,16 @@ where
         let deliver = |published: &mut Published<'_>, sinks: &mut S, released: Released| {
             let Released { heard, speaker, .. } = released;
             let mut text = heard.segment.as_str().to_owned();
-            self.rewrites
-                .segment(&mut text, settings.cleanup, vocabulary, &cancel)
+            let rewritten = self
+                .rewrites
+                .clean(&mut text, settings.cleanup, &cancel)
+                .and_then(|()| {
+                    let mut text = published.hold(&text, &heard);
+                    self.rewrites
+                        .correct(&mut text, published.context(&heard), vocabulary);
+                    check_cancelled(&cancel).map(|()| text)
+                });
+            let text = rewritten
                 .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
             let speaker = speaker.as_ref().and_then(Label::enrolled).cloned();
             published.segment(heard, &text, speaker, sinks)
@@ -852,11 +860,47 @@ where
             .cloned();
             let mut text = heard.segment.as_str().to_owned();
             self.rewrites
-                .segment(&mut text, settings.cleanup, vocabulary, cancel)
+                .segment(&mut text, "", settings.cleanup, vocabulary, cancel)
                 .map_err(started)?;
             published.segment(heard, &text, speaker, sinks)?;
         }
         published.finish(transcript, timeline.admitted_is_owner(), sinks)
+    }
+}
+
+/// What a stream holds back at each segment's end: the closing mark, and a
+/// symbol word the next segment may join.
+#[derive(Default)]
+struct SegmentEnds {
+    sentences: SentenceEnds,
+    symbols: DeferredSymbols,
+}
+
+impl SegmentEnds {
+    /// The typed text a symbol opening `heard` may join. A sentence end or a
+    /// line break between them leaves none.
+    fn context<'a>(&self, heard: &Heard, typed: &'a str) -> &'a str {
+        let continues = match heard.segment.sentence_ended_before() {
+            Some(ended) => !ended,
+            None => !self.sentences.is_deferring(),
+        };
+        let line_break = typed[typed.trim_end().len()..].contains('\n');
+        if !continues || line_break {
+            return "";
+        }
+        typed
+    }
+
+    /// What the last segment still owes: its mark, then the held word.
+    fn finish(&mut self) -> String {
+        let mut closing = self.sentences.finish().unwrap_or_default();
+        if let Some(held) = self.symbols.finish() {
+            if !closing.is_empty() {
+                closing.push(' ');
+            }
+            closing.push_str(&held);
+        }
+        closing
     }
 }
 
@@ -872,7 +916,7 @@ struct Published<'a> {
     written: String,
     /// The ghost text shown, until the next segment lands.
     ghost: Option<Arc<str>>,
-    sentences: SentenceEnds,
+    ends: SegmentEnds,
     /// Where the last segment was decoded through: where its held mark
     /// lands.
     heard_to: u64,
@@ -898,7 +942,7 @@ impl<'a> Published<'a> {
             streaming: settings.delivery_mode == DeliveryMode::Streaming,
             written: String::new(),
             ghost: None,
-            sentences: SentenceEnds::default(),
+            ends: SegmentEnds::default(),
             heard_to: 0,
             failure: None,
             retried: None,
@@ -911,6 +955,23 @@ impl<'a> Published<'a> {
             events,
             started_at,
         }
+    }
+
+    /// Complete delivery types the whole transcript, so only streaming holds.
+    fn hold(&mut self, text: &str, heard: &Heard) -> String {
+        if !self.streaming {
+            return text.to_owned();
+        }
+        self.ends
+            .symbols
+            .hold(text, heard.segment.sentence_ended_before())
+    }
+
+    fn context(&self, heard: &Heard) -> &str {
+        if !self.streaming {
+            return "";
+        }
+        self.ends.context(heard, &self.written)
     }
 
     /// `speaker` is the enrolled voice of the press so far, which clients
@@ -930,6 +991,7 @@ impl<'a> Published<'a> {
             caption.provisional = Arc::from("");
         }
         self.ghost = None;
+        self.heard_to = heard.window.end;
         // A streamed segment of only fillers is nothing to type.
         if corrected.is_empty() {
             return Ok(());
@@ -938,7 +1000,8 @@ impl<'a> Published<'a> {
         // Complete delivery types the decoder's own transcript, so joining
         // here would only make the caption disagree with it.
         let punctuated = if self.streaming {
-            self.sentences
+            self.ends
+                .sentences
                 .punctuate(corrected, heard.segment.sentence_ended_before())
         } else {
             Punctuated {
@@ -946,7 +1009,6 @@ impl<'a> Published<'a> {
                 defers_ending: false,
             }
         };
-        self.heard_to = heard.window.end;
         self.keep(&punctuated.text);
         if self.failure.is_some() {
             return Ok(());
@@ -1024,9 +1086,10 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let Some(closing) = self.sentences.finish() else {
+        let closing = self.ends.finish();
+        if closing.is_empty() {
             return;
-        };
+        }
         self.keep(&closing);
         if self.failure.is_some() {
             return;
@@ -2799,6 +2862,62 @@ mod tests {
             "measurement": "production streaming pipeline and owned sink; immediate WAV replay, deterministic recognizer; not real-ASR or platform insertion latency",
             "rows": rows,
         })).unwrap();
+    }
+
+    fn streamed_parts(
+        parts: &'static [&'static str],
+        settings: DictationSettings,
+    ) -> (String, Vec<String>) {
+        let (_directory, capture) = capture();
+        let log = CallLog::default();
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::stream(Stream::Native, Parts(parts)),
+            (log.history(), log.cursor()),
+        );
+        let result = pipeline
+            .execute(
+                settings,
+                &ExecutionControl::for_test(StopMode::Manual),
+                &DictationEventEmitter::unsubscribed(),
+                None,
+            )
+            .unwrap();
+        (result.text, log.entries())
+    }
+
+    fn streaming() -> DictationSettings {
+        settings(DeliveryMode::Streaming, OutputMode::Insert)
+    }
+
+    #[test]
+    fn a_symbol_split_across_segments_joins_without_touching_typed_text() {
+        let (text, log) = streamed_parts(&["User underscore", "ID."], streaming());
+        assert_eq!(text, "User_ID.");
+        assert_eq!(delivered(&log), "User_ID.");
+    }
+
+    #[test]
+    fn a_press_ending_on_a_symbol_word_still_types_it() {
+        let (text, log) = streamed_parts(&["call the", "underscore"], streaming());
+        assert_eq!(text, "call the underscore");
+        assert_eq!(delivered(&log), "call the underscore");
+    }
+
+    #[test]
+    fn a_filler_after_a_symbol_word_still_lets_it_join() {
+        let (text, _) = streamed_parts(
+            &["user underscore um", "id."],
+            with_cleanup(streaming(), true, false),
+        );
+        assert_eq!(text, "user_id.");
+    }
+
+    #[test]
+    fn a_symbol_never_joins_across_a_held_sentence_end() {
+        let (text, log) = streamed_parts(&["I like it.", "dot com is great."], streaming());
+        assert_eq!(text, "I like it. dot com is great.");
+        assert_eq!(delivered(&log), "I like it. dot com is great.");
     }
 
     #[test]

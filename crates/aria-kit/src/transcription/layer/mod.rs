@@ -9,6 +9,8 @@ mod backtrack;
 pub use backtrack::Backtrack;
 mod disfluencies;
 pub use disfluencies::{RemoveHesitations, RemoveRepeats};
+mod symbols;
+pub use symbols::{DeferredSymbols, JoinSymbols};
 pub mod vocabulary;
 pub use vocabulary::Vocabulary;
 
