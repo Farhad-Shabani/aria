@@ -2,7 +2,7 @@ import SwiftUI
 
 struct DaemonWaitingView: View {
     let isLoading: Bool
-    var description: LocalizedStringKey = "These settings load once Aria is running."
+    let description: LocalizedStringKey
 
     var body: some View {
         ContentUnavailableView {

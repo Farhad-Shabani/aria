@@ -7,7 +7,7 @@ struct PhoneSettings: View {
     var body: some View {
         Group {
             if pairing.status == .daemonOff {
-                DaemonWaitingView(isLoading: false)
+                DaemonWaitingView(isLoading: false, description: "These settings load once Aria is running.")
             } else {
                 form
             }

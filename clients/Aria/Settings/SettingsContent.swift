@@ -17,7 +17,8 @@ struct SettingsContent<Content: View>: View {
             }
         } else {
             // No error yet means the first load is still out.
-            DaemonWaitingView(isLoading: settings.lastError == nil)
+            DaemonWaitingView(
+                isLoading: settings.lastError == nil, description: "These settings load once Aria is running.")
         }
     }
 }
