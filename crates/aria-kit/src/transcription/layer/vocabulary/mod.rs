@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::Range;
 
 use crate::cancel::CancelToken;
 
@@ -36,6 +37,20 @@ struct Candidate {
 struct Bucket {
     aliases: HashMap<String, Candidate>,
     max_chars: usize,
+}
+
+/// Plain text between spaces or matches, or a vocabulary match of any length.
+pub(super) struct Word<'a> {
+    pub(super) span: Range<usize>,
+    /// What a vocabulary match types: its declared spelling, or the heard
+    /// bytes when it keeps them.
+    pub(super) term: Option<&'a str>,
+}
+
+impl<'a> Word<'a> {
+    pub(super) fn typed(&self, text: &'a str) -> &'a str {
+        self.term.unwrap_or(&text[self.span.clone()])
+    }
 }
 
 #[derive(Default)]
@@ -186,17 +201,91 @@ impl Vocabulary {
         text: &str,
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Option<String>, E> {
-        check(text.len())?;
         if self.index.is_empty() {
+            check(text.len())?;
             let (corrected, _) = self.personal.apply_checked(text, check)?;
             return Ok((corrected != text).then_some(corrected));
         }
+        self.correct_with(text, "", |_, words, _| vec![None; words.len()], check)
+    }
+
+    /// `joins` returns, per word, the character it becomes when it joins its
+    /// two neighbors. A vocabulary match is one word. A join on the first
+    /// word attaches to `before`, text already typed. Personal rules get the
+    /// spans nothing claimed.
+    pub(super) fn correct_with<E>(
+        &self,
+        text: &str,
+        before: &str,
+        joins: impl Fn(&str, &[Word<'_>], Option<&str>) -> Vec<Option<char>>,
+        check: &impl Fn(usize) -> Result<(), E>,
+    ) -> Result<Option<String>, E> {
+        check(text.len())?;
+        let words = self.words(text, check)?;
+        let joins = joins(text, &words, before.split_whitespace().next_back());
         let mut output = String::with_capacity(text.len());
+        let mut unclaimed = 0;
+        let mut index = 0;
+        if let Some(Some(symbol)) = joins.first() {
+            check(symbol.len_utf8())?;
+            output.push(*symbol);
+            unclaimed = words[1].span.start;
+            index = 1;
+        }
+        while index < words.len() {
+            let mut last = index;
+            while joins.get(last + 1).is_some_and(Option::is_some) {
+                last += 2;
+            }
+            if last == index && words[index].term.is_none() {
+                index += 1;
+                continue;
+            }
+            let (personal, _) = self
+                .personal
+                .apply_checked(&text[unclaimed..words[index].span.start], &|bytes| {
+                    check(output.len().saturating_add(bytes))
+                })?;
+            output.push_str(&personal);
+            let typed = words[index].typed(text);
+            check(output.len().saturating_add(typed.len()))?;
+            output.push_str(typed);
+            for link in (index + 1..last).step_by(2) {
+                output.extend(joins[link]);
+                let typed = words[link + 1].typed(text);
+                check(output.len().saturating_add(typed.len()))?;
+                output.push_str(typed);
+            }
+            unclaimed = words[last].span.end;
+            index = last + 1;
+        }
+        let (personal, _) = self.personal.apply_checked(&text[unclaimed..], &|bytes| {
+            check(output.len().saturating_add(bytes))
+        })?;
+        output.push_str(&personal);
+        Ok((output != text).then_some(output))
+    }
+
+    fn words<'a, E>(
+        &'a self,
+        text: &'a str,
+        check: &impl Fn(usize) -> Result<(), E>,
+    ) -> Result<Vec<Word<'a>>, E> {
+        let plain = |span: Range<usize>| Word { span, term: None };
+        let mut words = Vec::new();
+        let mut word_start = None;
         let mut position = 0;
-        let mut unmatched = 0;
         while position < text.len() {
-            check(output.len())?;
+            check(0)?;
             let rest = &text[position..];
+            let character = rest.chars().next().unwrap();
+            if character.is_whitespace() {
+                if let Some(start) = word_start.take() {
+                    words.push(plain(start..position));
+                }
+                position += character.len_utf8();
+                continue;
+            }
             let matched = if !text[..position].chars().next_back().is_some_and(is_word) {
                 match first_word(rest).and_then(|first| self.index.get(&first)) {
                     Some(bucket) => self.find(text, position, bucket, check)?,
@@ -205,31 +294,29 @@ impl Vocabulary {
             } else {
                 None
             };
-            if let Some((end, candidate)) = matched {
-                let (personal, _) = self
-                    .personal
-                    .apply_checked(&text[unmatched..position], &|bytes| {
-                        check(output.len().saturating_add(bytes))
-                    })?;
-                output.push_str(&personal);
-                let replacement = if candidate.protected || candidate.canonical.is_none() {
-                    &text[position..end]
-                } else {
-                    candidate.canonical.as_deref().unwrap()
-                };
-                check(output.len().saturating_add(replacement.len()))?;
-                output.push_str(replacement);
-                position = end;
-                unmatched = end;
-            } else {
-                position += rest.chars().next().unwrap().len_utf8();
+            let Some((end, candidate)) = matched else {
+                word_start.get_or_insert(position);
+                position += character.len_utf8();
+                continue;
+            };
+            if let Some(start) = word_start.take() {
+                words.push(plain(start..position));
             }
+            let term = if candidate.protected || candidate.canonical.is_none() {
+                &text[position..end]
+            } else {
+                candidate.canonical.as_deref().unwrap()
+            };
+            words.push(Word {
+                span: position..end,
+                term: Some(term),
+            });
+            position = end;
         }
-        let (personal, _) = self.personal.apply_checked(&text[unmatched..], &|bytes| {
-            check(output.len().saturating_add(bytes))
-        })?;
-        output.push_str(&personal);
-        Ok((output != text).then_some(output))
+        if let Some(start) = word_start {
+            words.push(plain(start..text.len()));
+        }
+        Ok(words)
     }
 
     fn find<'a, E>(

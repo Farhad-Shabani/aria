@@ -67,6 +67,10 @@ impl SentenceEnds {
         }
     }
 
+    pub fn is_deferring(&self) -> bool {
+        self.deferred.is_some()
+    }
+
     /// The mark the last segment owes, once nothing follows it.
     pub fn finish(&mut self) -> Option<String> {
         self.deferred.take().map(char::into)

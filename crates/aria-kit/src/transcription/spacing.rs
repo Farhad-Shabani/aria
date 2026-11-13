@@ -114,12 +114,16 @@ const OPENERS: [char; 9] = ['(', '[', '{', '/', '-', '@', '#', '“', '‘'];
 const CONTRACTION_TAILS: [&str; 7] = ["s", "t", "d", "m", "re", "ll", "ve"];
 
 /// Whether `text` begins with something that attaches to the text before it:
-/// closing punctuation, or an apostrophe that starts a contraction ending.
+/// closing punctuation, an identifier's next part, or an apostrophe that
+/// starts a contraction ending.
 /// An apostrophe before anything else opens a word, as in `'90s` or `'cause`.
 fn attaches_before(text: &str) -> bool {
     let mut chars = text.chars();
     match chars.next() {
         Some('.' | ',' | '!' | '?' | ':' | ';' | ')' | ']' | '}' | '%' | '”') => true,
+        // "-5" stays a number of its own.
+        Some('_') => chars.next().is_some_and(char::is_alphanumeric),
+        Some('-') => chars.next().is_some_and(char::is_alphabetic),
         Some('\'' | '’') => {
             let rest = chars.as_str();
             CONTRACTION_TAILS.iter().any(|tail| {
@@ -154,6 +158,14 @@ mod tests {
 
     fn spaced(before: &str, text: &str, after: &str) -> String {
         Caret::between(before, after).insert(text)
+    }
+
+    #[test]
+    fn an_identifiers_next_part_attaches_and_a_negative_number_does_not() {
+        assert_eq!(Caret::between("user", "").insert("_id"), "_id");
+        assert_eq!(Caret::between("aria", "").insert("-kit"), "-kit");
+        assert_eq!(Caret::between("is", "").insert("-5"), " -5");
+        assert_eq!(Caret::between("a", "").insert("- b"), " - b");
     }
 
     #[test]

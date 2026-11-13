@@ -9,7 +9,10 @@ mod session;
 mod spacing;
 
 pub use heard::{Heard, HeardUpdate, next_heard, next_heard_update};
-pub use layer::{Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats, Vocabulary};
+pub use layer::{
+    Backtrack, DeferredSymbols, JoinSymbols, Layer, Layered, RemoveHesitations, RemoveRepeats,
+    Vocabulary,
+};
 pub use sentences::{Punctuated, SentenceEnds};
 pub use spacing::Caret;
 
@@ -29,8 +32,9 @@ pub use session::Session;
 /// dependency.
 pub mod prelude {
     pub use super::{
-        Backtrack, Caret, Language, Layer, RemoveHesitations, RemoveRepeats, Session, Streaming,
-        Transcript, TranscriptSegment, Transcription, TranscriptionError, Vocabulary, Whole,
+        Backtrack, Caret, JoinSymbols, Language, Layer, RemoveHesitations, RemoveRepeats, Session,
+        Streaming, Transcript, TranscriptSegment, Transcription, TranscriptionError, Vocabulary,
+        Whole,
     };
     pub use crate::audio::RecordingReader;
     #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
