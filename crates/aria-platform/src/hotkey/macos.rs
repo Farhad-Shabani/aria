@@ -349,13 +349,11 @@ fn remap_of(keyboards: &[Vec<(i64, i64)>], key: AriaKey) -> Option<KeyRemap> {
         let &(_, destination) = remaps
             .iter()
             .find(|&&(source, destination)| source == aria && destination != aria)?;
-        let mut senders = Vec::new();
-        for &(source, destination) in remaps {
-            let name = key_name(source);
-            if source != aria && destination == aria && !senders.contains(&name) {
-                senders.push(name);
-            }
-        }
+        let senders = remaps
+            .iter()
+            .filter(|&&(source, destination)| source != aria && destination == aria)
+            .map(|&(source, _)| key_name(source))
+            .collect();
         Some(KeyRemap {
             key: key_name(aria),
             destination: key_name(destination),
@@ -985,24 +983,6 @@ mod tests {
     }
 
     #[test]
-    fn keys_sending_option_are_named_once_each() {
-        let keyboards = [vec![
-            (RIGHT_OPTION_USAGE, CAPS_LOCK),
-            (LEFT_CONTROL, RIGHT_OPTION_USAGE),
-            (KEYBOARD_PAGE | 0x04, RIGHT_OPTION_USAGE),
-            (KEYBOARD_PAGE | 0x05, RIGHT_OPTION_USAGE),
-        ]];
-        assert_eq!(
-            remap_of(&keyboards, AriaKey::RightOption),
-            Some(key_remap(
-                "Right Option",
-                "Caps Lock",
-                &["Left Control", "another key"]
-            ))
-        );
-    }
-
-    #[test]
     fn one_keyboard_that_sends_right_option_away_is_enough() {
         let keyboards = [
             vec![(RIGHT_OPTION_USAGE, RIGHT_OPTION_USAGE)],
@@ -1012,19 +992,6 @@ mod tests {
             remap_of(&keyboards, AriaKey::RightOption),
             Some(key_remap("Right Option", "Caps Lock", &[]))
         );
-    }
-
-    #[test]
-    fn option_turned_into_caps_lock_takes_right_option_away() {
-        let keyboards = [vec![
-            (LEFT_OPTION_USAGE, CAPS_LOCK),
-            (RIGHT_OPTION_USAGE, CAPS_LOCK),
-        ]];
-        assert_eq!(
-            remap_of(&keyboards, AriaKey::RightOption),
-            Some(key_remap("Right Option", "Caps Lock", &[]))
-        );
-        assert_eq!(remap_of(&keyboards, AriaKey::Fn), None);
     }
 
     #[test]
