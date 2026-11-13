@@ -45,17 +45,11 @@ struct Ribbon: View {
     let voice: VoiceEmphasis?
 
     @State private var model = RibbonModel()
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    // Moves under Reduce Motion too: it is the only sign the mic hears you.
     var body: some View {
-        Group {
-            if reduceMotion {
-                draw(RibbonMotion.outline(phase: 0, share: { _ in RibbonTuning.stillShare }))
-            } else {
-                TimelineView(.animation) { context in
-                    draw(model.outline(at: context.date, state: state, level: level.value))
-                }
-            }
+        TimelineView(.animation) { context in
+            draw(model.outline(at: context.date, state: state, level: level.value))
         }
         .frame(width: RibbonTuning.width, height: RibbonTuning.height)
         .animation(.easeInOut(duration: 0.3), value: voice)
