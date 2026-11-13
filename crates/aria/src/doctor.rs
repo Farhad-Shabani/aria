@@ -465,15 +465,15 @@ fn aria_key() -> Check {
 
 fn remap_detail(key: &str, destination: &str, senders: &[&str]) -> String {
     let sent_by = match senders {
-        [] => format!("no key sends {key}"),
-        [only] => format!("only {only} sends {key}, if this keyboard has one"),
+        [] => format!("no key sends {key};"),
+        [only] => format!("only {only} sends {key}, if this keyboard has one; otherwise"),
         [rest @ .., last] => format!(
-            "{} and {last} send {key}, where this keyboard has them",
+            "{} and {last} send {key}, where this keyboard has them; otherwise",
             rest.join(", ")
         ),
     };
     format!(
-        "Modifier Keys remaps it: {key} now sends {destination}, and {sent_by}; restore it \
+        "Modifier Keys remaps it: {key} now sends {destination}, and {sent_by} restore it \
          in System Settings → Keyboard → Keyboard Shortcuts → Modifier Keys"
     )
 }
@@ -570,18 +570,17 @@ mod tests {
     #[test]
     fn a_remap_names_every_key_that_sends_the_aria_key() {
         let detail = |senders: &[&str]| remap_detail("Right Option", "Caps Lock", senders);
-        assert!(
-            detail(&[])
-                .contains("Right Option now sends Caps Lock, and no key sends Right Option;")
-        );
-        assert!(
-            detail(&["Right Control"])
-                .contains(", and only Right Control sends Right Option, if this keyboard has one;")
-        );
+        assert!(detail(&[]).contains(
+            "Right Option now sends Caps Lock, and no key sends Right Option; restore it"
+        ));
+        assert!(detail(&["Right Control"]).contains(
+            ", and only Right Control sends Right Option, if this keyboard has one; otherwise \
+                 restore it"
+        ));
         assert!(
             detail(&["Left Control", "Right Control", "Right Command"]).contains(
                 ", and Left Control, Right Control and Right Command send Right Option, \
-                     where this keyboard has them;"
+                     where this keyboard has them; otherwise restore it"
             )
         );
     }

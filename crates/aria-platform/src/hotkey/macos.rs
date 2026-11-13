@@ -341,25 +341,30 @@ impl MacOsHotkeyListener {
 /// A keyboard remaps the Aria key when it sends the key away, even if it maps
 /// another key onto it. The keyboard may lack that other key, as a MacBook
 /// lacks Right Control. HID descriptors don't say which keys a keyboard has.
+/// Of several such keyboards, the one with the fewest senders is the likeliest
+/// to have a dead Aria key.
 // ponytail: a list left by an unplugged keyboard still counts; match it
 // against connected keyboards if that misleads anyone.
 fn remap_of(keyboards: &[Vec<(i64, i64)>], key: AriaKey) -> Option<KeyRemap> {
     let aria = key.hid_usage();
-    keyboards.iter().find_map(|remaps| {
-        let &(_, destination) = remaps
-            .iter()
-            .find(|&&(source, destination)| source == aria && destination != aria)?;
-        let senders = remaps
-            .iter()
-            .filter(|&&(source, destination)| source != aria && destination == aria)
-            .map(|&(source, _)| key_name(source))
-            .collect();
-        Some(KeyRemap {
-            key: key_name(aria),
-            destination: key_name(destination),
-            senders,
+    keyboards
+        .iter()
+        .filter_map(|remaps| {
+            let &(_, destination) = remaps
+                .iter()
+                .find(|&&(source, destination)| source == aria && destination != aria)?;
+            let senders = remaps
+                .iter()
+                .filter(|&&(source, destination)| source != aria && destination == aria)
+                .map(|&(source, _)| key_name(source))
+                .collect();
+            Some(KeyRemap {
+                key: key_name(aria),
+                destination: key_name(destination),
+                senders,
+            })
         })
-    })
+        .min_by_key(|remap| remap.senders.len())
 }
 
 fn key_name(usage: i64) -> &'static str {
@@ -986,6 +991,21 @@ mod tests {
     fn one_keyboard_that_sends_right_option_away_is_enough() {
         let keyboards = [
             vec![(RIGHT_OPTION_USAGE, RIGHT_OPTION_USAGE)],
+            vec![(RIGHT_OPTION_USAGE, CAPS_LOCK)],
+        ];
+        assert_eq!(
+            remap_of(&keyboards, AriaKey::RightOption),
+            Some(key_remap("Right Option", "Caps Lock", &[]))
+        );
+    }
+
+    #[test]
+    fn the_keyboard_with_no_sender_is_reported_over_a_swap() {
+        let keyboards = [
+            vec![
+                (RIGHT_OPTION_USAGE, RIGHT_COMMAND),
+                (RIGHT_COMMAND, RIGHT_OPTION_USAGE),
+            ],
             vec![(RIGHT_OPTION_USAGE, CAPS_LOCK)],
         ];
         assert_eq!(

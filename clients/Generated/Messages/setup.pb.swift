@@ -714,8 +714,8 @@ public nonisolated struct Aria_Setup_V1_Missing: Sendable {
     /// A stopped daemon reports no grant state.
     case grant // = 5
 
-    /// Modifier Keys in Keyboard settings turns the Aria key into another key
-    /// on a keyboard. Pressing it there doesn't reach the hotkey listener.
+    /// Modifier Keys in Keyboard settings turns the Aria key into another key,
+    /// so the hotkey listener never sees it.
     case keyRemapped // = 7
     case UNRECOGNIZED(Int)
 

@@ -79,7 +79,7 @@ enum SetupItem: Hashable {
         case .ariaKey:
             "Lets Aria hear the Aria key and type for you."
         case .ariaKeyRemapped:
-            "Modifier Keys turns the Aria key into another key, so pressing it doesn’t reach Aria. Restore it in Keyboard settings."
+            "Modifier Keys turns the Aria key into another key, so Aria can’t hear it. Restore it in Keyboard settings."
         }
     }
 }

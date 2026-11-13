@@ -323,7 +323,10 @@ pub fn inspect() -> Result<Inspection, SetupError> {
         wakeword_bundled: bundled_wakeword_dir(&exe).is_some(),
         pairing,
         stt_runs_on: file.choices().stt_runs_on,
-        key_remapped: PlatformHotkeyListener::remap(file.aria_key()).is_some(),
+        // A key that another key still sends may work, as after an Option
+        // and Command swap, so only a key nothing sends counts as missing.
+        key_remapped: PlatformHotkeyListener::remap(file.aria_key())
+            .is_some_and(|remap| remap.senders().is_empty()),
         existing,
         service,
         grant,
