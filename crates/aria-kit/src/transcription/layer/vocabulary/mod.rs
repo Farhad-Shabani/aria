@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -40,16 +41,17 @@ struct Bucket {
 }
 
 /// Plain text between spaces or matches, or a vocabulary match of any length.
+#[derive(Clone)]
 pub(super) struct Word<'a> {
     pub(super) span: Range<usize>,
-    /// What a vocabulary match types: its declared spelling, or the heard
-    /// bytes when it keeps them.
-    pub(super) term: Option<&'a str>,
+    /// What a claimed span types instead of personal rules' output: a term's
+    /// spelling, or the words a spoken symbol joined.
+    pub(super) claim: Option<Cow<'a, str>>,
 }
 
-impl<'a> Word<'a> {
-    pub(super) fn typed(&self, text: &'a str) -> &'a str {
-        self.term.unwrap_or(&text[self.span.clone()])
+impl Word<'_> {
+    pub(super) fn typed<'s>(&'s self, text: &'s str) -> &'s str {
+        self.claim.as_deref().unwrap_or(&text[self.span.clone()])
     }
 }
 
@@ -206,58 +208,34 @@ impl Vocabulary {
             let (corrected, _) = self.personal.apply_checked(text, check)?;
             return Ok((corrected != text).then_some(corrected));
         }
-        self.correct_with(text, "", |_, words, _| vec![None; words.len()], check)
+        self.correct_with(text, |_, words| words, check)
     }
 
-    /// `joins` returns, per word, the character it becomes when it joins its
-    /// two neighbors. A vocabulary match is one word. A join on the first
-    /// word attaches to `before`, text already typed. Personal rules get the
-    /// spans nothing claimed.
-    pub(super) fn correct_with<E>(
-        &self,
-        text: &str,
-        before: &str,
-        joins: impl Fn(&str, &[Word<'_>], Option<&str>) -> Vec<Option<char>>,
+    /// `claim` may claim more spans, as when spoken symbols join words.
+    /// Personal rules get the spans nothing claimed.
+    pub(super) fn correct_with<'a, E>(
+        &'a self,
+        text: &'a str,
+        claim: impl FnOnce(&'a str, Vec<Word<'a>>) -> Vec<Word<'a>>,
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Option<String>, E> {
         check(text.len())?;
-        let words = self.words(text, check)?;
-        let joins = joins(text, &words, before.split_whitespace().next_back());
+        let words = claim(text, self.words(text, check)?);
         let mut output = String::with_capacity(text.len());
         let mut unclaimed = 0;
-        let mut index = 0;
-        if let Some(Some(symbol)) = joins.first() {
-            check(symbol.len_utf8())?;
-            output.push(*symbol);
-            unclaimed = words[1].span.start;
-            index = 1;
-        }
-        while index < words.len() {
-            let mut last = index;
-            while joins.get(last + 1).is_some_and(Option::is_some) {
-                last += 2;
-            }
-            if last == index && words[index].term.is_none() {
-                index += 1;
+        for word in &words {
+            let Some(typed) = &word.claim else {
                 continue;
-            }
+            };
             let (personal, _) = self
                 .personal
-                .apply_checked(&text[unclaimed..words[index].span.start], &|bytes| {
+                .apply_checked(&text[unclaimed..word.span.start], &|bytes| {
                     check(output.len().saturating_add(bytes))
                 })?;
             output.push_str(&personal);
-            let typed = words[index].typed(text);
             check(output.len().saturating_add(typed.len()))?;
             output.push_str(typed);
-            for link in (index + 1..last).step_by(2) {
-                output.extend(joins[link]);
-                let typed = words[link + 1].typed(text);
-                check(output.len().saturating_add(typed.len()))?;
-                output.push_str(typed);
-            }
-            unclaimed = words[last].span.end;
-            index = last + 1;
+            unclaimed = word.span.end;
         }
         let (personal, _) = self.personal.apply_checked(&text[unclaimed..], &|bytes| {
             check(output.len().saturating_add(bytes))
@@ -271,7 +249,7 @@ impl Vocabulary {
         text: &'a str,
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Vec<Word<'a>>, E> {
-        let plain = |span: Range<usize>| Word { span, term: None };
+        let plain = |span: Range<usize>| Word { span, claim: None };
         let mut words = Vec::new();
         let mut word_start = None;
         let mut position = 0;
@@ -309,7 +287,7 @@ impl Vocabulary {
             };
             words.push(Word {
                 span: position..end,
-                term: Some(term),
+                claim: Some(Cow::Borrowed(term)),
             });
             position = end;
         }

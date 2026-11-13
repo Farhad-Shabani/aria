@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::cancel::CancelToken;
 
 use super::super::Caret;
@@ -39,7 +41,8 @@ impl Vocabulary {
         before: &str,
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Option<String>, E> {
-        self.correct_with(text, before, joins, check)
+        let before = before.split_whitespace().next_back();
+        self.correct_with(text, |text, words| join_runs(text, &words, before), check)
     }
 }
 
@@ -111,12 +114,48 @@ fn symbol(word: &str) -> Option<char> {
     }
 }
 
-/// `before` is the last word already typed, the left neighbor of a symbol
-/// that opens `text`.
-fn joins(text: &str, words: &[Word<'_>], before: Option<&str>) -> Vec<Option<char>> {
+/// Claims each run of words that spoken symbols join as one word, as in
+/// "user underscore id" → `user_id`. A symbol opening `text` joins `before`,
+/// the last word already typed, so its run types from the symbol on.
+fn join_runs<'a>(text: &str, words: &[Word<'a>], before: Option<&str>) -> Vec<Word<'a>> {
+    let links = links(text, words, before);
+    let mut joined = Vec::with_capacity(words.len());
+    let mut index = 0;
+    while index < words.len() {
+        let first = index;
+        let mut typed = String::new();
+        if let (0, Some(symbol)) = (index, links[0]) {
+            typed.push(symbol);
+            index = 1;
+        }
+        let mut last = index;
+        while links.get(last + 1).is_some_and(Option::is_some) {
+            last += 2;
+        }
+        if typed.is_empty() && last == index {
+            joined.push(words[index].clone());
+            index += 1;
+            continue;
+        }
+        typed.push_str(words[index].typed(text));
+        for link in (index + 1..last).step_by(2) {
+            typed.extend(links[link]);
+            typed.push_str(words[link + 1].typed(text));
+        }
+        joined.push(Word {
+            span: words[first].span.start..words[last].span.end,
+            claim: Some(Cow::Owned(typed)),
+        });
+        index = last + 1;
+    }
+    joined
+}
+
+/// The symbol each word becomes when it links its two neighbors.
+fn links(text: &str, words: &[Word<'_>], before: Option<&str>) -> Vec<Option<char>> {
     let mut joins = vec![None; words.len()];
     for index in 0..words.len().saturating_sub(1) {
-        if words[index].term.is_some() {
+        if words[index].claim.is_some() {
             continue;
         }
         let Some(character) = symbol(words[index].typed(text)) else {
