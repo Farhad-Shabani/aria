@@ -47,6 +47,27 @@ final class PhonePairingTests: XCTestCase {
     }
 
     @MainActor
+    func testAShowingStartsAfreshSoAPairingWhileNothingShowedIsNotJustNow() async {
+        let now = Date.now
+        let pairing = Self.pairing(invites: [
+            Self.issued("a", expiresAt: now + 60), Self.issued("b", expiresAt: now + 60, pairingCount: 1),
+        ])
+        await pairing.poll()
+        let shown = expectation(description: "the next showing polls")
+        let change = pairing.$status.sink { status in
+            if status == .live(Self.invite("b"), expiresAt: now + 60) { shown.fulfill() }
+        }
+
+        let viewer = Task { await pairing.run() }
+        await fulfillment(of: [shown], timeout: 5)
+        viewer.cancel()
+        await viewer.value
+        change.cancel()
+
+        XCTAssertNil(pairing.phonePairedAt)
+    }
+
+    @MainActor
     func testARestartedDaemonDoesNotCountAsAPairing() async {
         let now = Date.now
         let pairing = Self.pairing(invites: [

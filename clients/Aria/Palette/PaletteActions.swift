@@ -16,6 +16,8 @@ struct PaletteActions {
     var history = HistoryWork()
     /// Whether an app was in front when the palette opened, to type into.
     var hasFrontApp = false
+    var phonePairingStatus = PhonePairing.Status.loading
+    var canSwitchPhonePairing = false
 
     var all: [PaletteAction] {
         guard !model.isRenaming else { return [] }
@@ -44,6 +46,15 @@ struct PaletteActions {
         case .liveTranscript:
             let copy = PaletteAction(kind: .copyTranscript, isInFooter: true, isEnabled: hasTranscript)
             return isSystemTranscriptionRunning ? [copy, stop] : [copy]
+        case .phonePairing:
+            switch phonePairingStatus {
+            case .live(let invite, let expiresAt):
+                return [PaletteAction(kind: .copyPairingCode(invite, expiresAt: expiresAt), isInFooter: true)]
+            case .relayOff:
+                return [PaletteAction(kind: .turnOnPhonePairing, isInFooter: true, isEnabled: canSwitchPhonePairing)]
+            case .loading, .daemonOff, .failed, .restarting:
+                return []
+            }
         case .result:
             switch result?.state {
             case .replied(let text)?:
@@ -136,7 +147,7 @@ struct PaletteActions {
             else { return nil }
             if isTyped { return .start(quote: quote, entry: entry) }
             return hasFrontApp ? .type(quote) : nil
-        case .commands, .liveTranscript, .prompt:
+        case .commands, .liveTranscript, .phonePairing, .prompt:
             return nil
         }
     }
@@ -161,7 +172,7 @@ struct PaletteActions {
         case .result:
             guard case .replied(let reply)? = result?.state else { return nil }
             text = reply
-        case .commands, .chat, .liveTranscript, .prompt:
+        case .commands, .chat, .liveTranscript, .phonePairing, .prompt:
             return nil
         }
         return text.contains { !$0.isWhitespace } ? text : nil
@@ -189,7 +200,7 @@ struct PaletteActions {
             case .runPrompt, .runOneOff: "Run Prompt"
             case .openSettings, .openSetup, .newPrompt: "Open"
             case .clearHistory: "Clear…"
-            case .showHistory: "Show"
+            case .showHistory, .showPhonePairing: "Show"
             }
         case .some(let item):
             if typesOnReturn(item), let app { "Type into \(app)" } else { "Open" }

@@ -5,6 +5,7 @@ struct SettingsView: View {
 
     @ObservedObject var settings: DaemonSettings
     @ObservedObject var poller: StatusPoller
+    let phonePairing: PhonePairing
     let updates: UpdateController
     let promptHotkeys: PromptHotkeys
     let askChord: ChordBinding
@@ -148,7 +149,7 @@ struct SettingsView: View {
                 history.open(.item(.apps, id: $0))
             }
         case .privacy: PrivacySettings(settings: settings)
-        case .phone: PhoneSettings(poller: poller)
+        case .phone: PhoneSettings(pairing: phonePairing)
         case .about: AboutSettings(updates: updates)
         }
     }

@@ -4,11 +4,16 @@ import SwiftUI
 struct AriaApp: App {
     private static let userGuide = "https://ariacue.pages.dev/user-guide/"
 
-    @StateObject private var poller = StatusPoller(
-        client: DaemonProcess()
-    )
+    @StateObject private var poller: StatusPoller
+    @StateObject private var phonePairing: PhonePairing
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var settings = DaemonSettings(transport: SettingsClient())
+
+    init() {
+        let poller = StatusPoller(client: DaemonProcess())
+        _poller = StateObject(wrappedValue: poller)
+        _phonePairing = StateObject(wrappedValue: PhonePairing(poller: poller))
+    }
 
     var body: some Scene {
         MenuBarExtra {
@@ -79,6 +84,7 @@ struct AriaApp: App {
         } label: {
             MenuBarLabel(
                 poller: poller,
+                phonePairing: phonePairing,
                 status: appDelegate.status,
                 systemTranscriptionStatus: appDelegate.systemTranscriptionStatus,
                 updates: appDelegate.updates,
@@ -127,6 +133,7 @@ struct AriaApp: App {
             SettingsView(
                 settings: settings,
                 poller: poller,
+                phonePairing: phonePairing,
                 updates: appDelegate.updates,
                 promptHotkeys: appDelegate.promptHotkeys,
                 askChord: appDelegate.askShortcut.chord,
@@ -157,6 +164,7 @@ struct AriaApp: App {
 private struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var poller: StatusPoller
+    let phonePairing: PhonePairing
     @ObservedObject var status: StatusController
     @ObservedObject var systemTranscriptionStatus: SystemTranscriptionStatus
     @ObservedObject var updates: UpdateController
@@ -181,7 +189,7 @@ private struct MenuBarLabel: View {
                 }
                 poller.startPolling()
                 controller.trackHotkeys(settings)
-                controller.palette.track(poller)
+                controller.palette.track(poller, phonePairing: phonePairing)
                 Task { await settings.sync() }
                 let health = controller.settingsHealth
                 Task { await health.refresh() }

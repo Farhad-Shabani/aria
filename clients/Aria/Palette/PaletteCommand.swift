@@ -9,6 +9,7 @@ struct PaletteCommand: Equatable, Identifiable {
         /// `nil` opens the pane Settings last showed.
         case openSettings(SettingsPane?)
         case openSetup
+        case showPhonePairing
         case showHistory(HistorySection)
         case clearHistory
         case newPrompt
@@ -66,6 +67,9 @@ struct PaletteCommand: Equatable, Identifiable {
     static let finishSetup = PaletteCommand(
         id: "finish-setup", title: "\(SettingsPane.finishSetup.title)…", symbol: SettingsPane.finishSetup.symbol,
         number: nil, chord: nil, keywords: ["setup"], action: .openSettings(.finishSetup))
+    static let pairPhone = PaletteCommand(
+        id: "pair-phone", title: "Pair Your iPhone", symbol: SettingsPane.phone.symbol, number: nil, chord: nil,
+        keywords: ["phone", "pairing", "qr code"], action: .showPhonePairing)
     static let setUp = PaletteCommand(
         id: "set-up", title: "Set Up Aria…", symbol: "wand.and.stars", number: nil, chord: nil,
         keywords: ["setup"], action: .openSetup)

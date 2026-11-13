@@ -5,6 +5,8 @@ enum PalettePage: Equatable {
     /// The chat `Chats.shown`.
     case chat
     case liveTranscript
+    /// Pairs your iPhone.
+    case phonePairing
     /// The history entry selected.
     case entry
     /// A prompt's result on a history entry.

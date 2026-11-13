@@ -14,6 +14,10 @@ struct PaletteView: View {
                     chats: controller.chats)
             case .liveTranscript:
                 PaletteLivePage(controller: controller, systemTranscription: systemTranscription, history: history)
+            case .phonePairing:
+                if let pairing = controller.phonePairing {
+                    PalettePhonePage(controller: controller, pairing: pairing)
+                }
             case .chat:
                 PaletteChatPage(
                     controller: controller, chats: controller.chats, history: history)
