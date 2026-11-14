@@ -30,6 +30,8 @@ struct DictationSettings: View {
                 Text("Text")
             }
             Section("Recording") {
+                MicrophonePicker(editor: editor)
+                    .settingsRow(.microphone)
                 Toggle(isOn: editor.binding(\.muteSound, \.muteSound)) {
                     Text(SettingsRow.muteWhileRecording.title)
                     Text("Mutes other apps. Their sound comes back when recording stops.")

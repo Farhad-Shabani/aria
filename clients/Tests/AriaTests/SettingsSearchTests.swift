@@ -33,7 +33,8 @@ final class SettingsSearchTests: XCTestCase {
         XCTAssertEqual(
             SettingsSearch.results(for: "Recording"),
             [
-                SettingsSearch.Result(pane: .dictation, rows: [.muteWhileRecording, .returnSends, .autoStop]),
+                SettingsSearch.Result(
+                    pane: .dictation, rows: [.microphone, .muteWhileRecording, .returnSends, .autoStop]),
                 SettingsSearch.Result(pane: .privacy, rows: [.keepAudio]),
             ])
     }
