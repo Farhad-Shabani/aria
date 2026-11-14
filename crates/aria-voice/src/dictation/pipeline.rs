@@ -29,7 +29,7 @@ use aria_speaker::wespeaker::WeSpeaker;
 use super::{
     CaptionSnapshot, Delivered, DeliveryMode, DictationError, DictationEventEmitter,
     DictationResult, DictationSettings, DictationStage, ExecutionControl, GhostSnapshot,
-    HeardSpeaker, StopMode, Transcribed, TranscriptSink, Utterance,
+    HeardSpeaker, Spacing, StopMode, Transcribed, TranscriptSink, Utterance,
 };
 use super::{Cleanup, Meter, Rewrites, rewrites};
 
@@ -942,16 +942,6 @@ impl SegmentEnds {
     }
 }
 
-/// Spaces `text` after `caret`, with no space before it when
-/// `joins_before`.
-fn spaced(mut caret: Caret, text: &str, joins_before: bool) -> String {
-    if joins_before {
-        caret.attach(text)
-    } else {
-        caret.insert(text)
-    }
-}
-
 /// The least time between two tries of queued text.
 const QUEUE_RETRY: Duration = Duration::from_millis(250);
 
@@ -1146,7 +1136,11 @@ impl<'a> Published<'a> {
                 defers_ending: false,
             }
         };
-        self.keep(&punctuated.text, segment.joins_before);
+        let spacing = Spacing {
+            joins_before: segment.joins_before,
+            defers_ending: punctuated.defers_ending,
+        };
+        self.keep(&punctuated.text, spacing);
         if self.failure.is_some() {
             return Ok(());
         }
@@ -1156,8 +1150,7 @@ impl<'a> Published<'a> {
             speaker: None,
             at,
             span,
-            defers_ending: punctuated.defers_ending,
-            joins_before: segment.joins_before,
+            spacing,
         };
         if let Err(error) = sinks.segment(utterance) {
             let error = stopped_partway(map_sink_error(error, self.control), sinks);
@@ -1170,7 +1163,7 @@ impl<'a> Published<'a> {
                 "dictation first segment transcribed"
             );
         }
-        self.announce(&punctuated.text, segment.joins_before, speaker, sinks);
+        self.announce(&punctuated.text, spacing, speaker, sinks);
         Ok(())
     }
 
@@ -1222,7 +1215,7 @@ impl<'a> Published<'a> {
         let Some(closing) = self.ends.sentences.finish() else {
             return;
         };
-        self.keep(&closing, false);
+        self.keep(&closing, Spacing::default());
         if self.failure.is_some() {
             return;
         }
@@ -1231,8 +1224,7 @@ impl<'a> Published<'a> {
             speaker: None,
             at: self.heard_to,
             span: None,
-            defers_ending: false,
-            joins_before: false,
+            spacing: Spacing::default(),
         };
         let words_waited = sinks.is_queueing();
         if let Err(error) = sinks.segment(utterance) {
@@ -1248,11 +1240,11 @@ impl<'a> Published<'a> {
             );
             return;
         }
-        self.announce(&closing, false, None, sinks);
+        self.announce(&closing, Spacing::default(), None, sinks);
     }
 
-    fn keep(&mut self, text: &str, joins_before: bool) {
-        let spaced = spaced(Caret::between(&self.written, ""), text, joins_before);
+    fn keep(&mut self, text: &str, spacing: Spacing) {
+        let spaced = spacing.insert(text, &mut Caret::between(&self.written, ""));
         self.written.push_str(&spaced);
     }
 
@@ -1261,12 +1253,12 @@ impl<'a> Published<'a> {
     fn announce<S: TranscriptSink>(
         &mut self,
         text: &str,
-        joins_before: bool,
+        spacing: Spacing,
         speaker: Option<SpeakerName>,
         sinks: &S,
     ) {
         if let Some(caption) = &mut self.caption {
-            let spaced = spaced(Caret::between(&caption.finalized, ""), text, joins_before);
+            let spaced = spacing.insert(text, &mut Caret::between(&caption.finalized, ""));
             caption.finalized = caption_suffix(&format!("{}{spaced}", caption.finalized));
             self.events.emit(caption.clone());
         }

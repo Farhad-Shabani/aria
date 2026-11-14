@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::{DictationSettings, ExecutionControl};
 use crate::speaker::Label;
-use aria_platform::delivery::Placement;
+use aria_platform::delivery::{Caret, Placement};
 
 /// What the pipeline heard in one stretch of speech.
 ///
@@ -17,18 +17,38 @@ use aria_platform::delivery::Placement;
 /// times its words can say — without it a sink has text to write but nothing
 /// to attribute a voice by.
 ///
-/// `defers_ending` holds `text`'s closing mark back for the next
-/// utterance, so a sink that types must leave `text`'s end open.
+/// A sink that types `text` spaces it with `spacing`.
 #[derive(Clone)]
 pub struct Utterance<'a> {
     pub text: &'a str,
     pub(crate) speaker: Option<&'a Label>,
     pub(crate) at: u64,
     pub(crate) span: Option<Range<u64>>,
-    pub(crate) defers_ending: bool,
-    /// `text` opens with a spoken symbol that joins the last word typed,
-    /// so it attaches with no space.
+    pub spacing: Spacing,
+}
+
+/// How an utterance's text meets the text typed around it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Spacing {
+    /// The text opens with a spoken symbol that joins the last word typed,
+    /// so no space comes before it.
     pub joins_before: bool,
+    /// The text's closing mark is held back for the next utterance, so its
+    /// end stays open.
+    pub defers_ending: bool,
+}
+
+impl Spacing {
+    /// Returns `text` as typed at `caret`, which moves past it.
+    #[must_use = "the caret has moved past text that must be typed"]
+    pub fn insert(self, text: &str, caret: &mut Caret) -> String {
+        match (self.joins_before, self.defers_ending) {
+            (true, true) => caret.attach_open(text),
+            (true, false) => caret.attach(text),
+            (false, true) => caret.insert_open(text),
+            (false, false) => caret.insert(text),
+        }
+    }
 }
 
 impl<'a> Utterance<'a> {
@@ -40,8 +60,7 @@ impl<'a> Utterance<'a> {
             speaker: None,
             at: 0,
             span: None,
-            defers_ending: false,
-            joins_before: false,
+            spacing: Spacing::default(),
         }
     }
 }

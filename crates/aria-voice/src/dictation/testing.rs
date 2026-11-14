@@ -63,7 +63,7 @@ impl TranscriptSink for RecordingSink {
     type Error = DictationError;
 
     fn segment(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
-        let kind = if utterance.joins_before {
+        let kind = if utterance.spacing.joins_before {
             "joined"
         } else {
             "segment"

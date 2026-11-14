@@ -310,11 +310,7 @@ impl TranscriptSink for History {
             && !self.oversized
         {
             let mut caret = Caret::between(&entry.text, "");
-            let spaced = if utterance.joins_before {
-                caret.attach(utterance.text)
-            } else {
-                caret.insert(utterance.text)
-            };
+            let spaced = utterance.spacing.insert(utterance.text, &mut caret);
             if entry.text.len() + spaced.len() > MAX_ENTRY_BYTES {
                 self.oversized = true;
             } else {
@@ -532,7 +528,7 @@ mod tests {
         }
         sink.segment(Utterance::anonymous("open src")).unwrap();
         let mut joined = Utterance::anonymous("/main");
-        joined.joins_before = true;
+        joined.spacing.joins_before = true;
         sink.segment(joined).unwrap();
         sink.segment(Utterance::anonymous("/compact")).unwrap();
         sink.recording_finished(&mut recording, Err(&DictationError::DeliveryTargetChanged));

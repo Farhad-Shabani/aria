@@ -21,7 +21,7 @@ use aria_kit::audio::RecordingReader;
 use super::event::{SystemTranscriptionEventEmitter, SystemTranscriptionStage};
 use super::{SystemAudioCapture, SystemTranscriptionError, TranscriptFile};
 
-use crate::dictation::Utterance;
+use crate::dictation::{Spacing, Utterance};
 use crate::speaker::{self, Diarizer, Label, VoiceTrack, VoiceprintTracker};
 use aria_speaker::wespeaker::WeSpeaker;
 
@@ -304,8 +304,7 @@ impl Session<'_> {
                 speaker: label.as_ref(),
                 at: heard.window.start,
                 span: heard.span,
-                defers_ending: false,
-                joins_before: false,
+                spacing: Spacing::default(),
             },
             released.embedding.as_deref(),
         )
