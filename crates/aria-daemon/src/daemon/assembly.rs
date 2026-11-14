@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+use super::capture::MicrophoneFollower;
 use super::chat;
 use super::chat::ChatRuntime;
 use super::context::Context;
@@ -28,8 +29,8 @@ use super::hotkey::HotkeyTrigger;
 use super::memory::{self, MemoryBacklog};
 use super::server::{Actors, Relay, Server, ServerError, Services};
 use super::service::{
-    ChatRpc, DictationRpc, EventsService, HistoryRpc, RelayRpc, SettingsRpc, SpeakerRpc, SpeechRpc,
-    SystemTranscriptionRpc, VocabularyRpc,
+    ChatRpc, DictationRpc, EventsService, HistoryRpc, MicrophoneRpc, RelayRpc, SettingsRpc,
+    SpeakerRpc, SpeechRpc, SystemTranscriptionRpc, VocabularyRpc,
 };
 use super::settings;
 use super::shutdown::ShutdownError;
@@ -188,6 +189,7 @@ fn compose(
         speaker: speaker_runtime,
         monitor,
         engine,
+        microphone: microphone_follower,
         hotkey,
         relay_port,
     } = workers;
@@ -271,6 +273,7 @@ fn compose(
         settings: settings_rpc,
         vocabulary: VocabularyRpc::new(Arc::clone(&vocabulary)),
         speaker: SpeakerRpc::new(speaker),
+        microphone: MicrophoneRpc::new(Arc::clone(&cache)),
         events: EventsService::new(Arc::clone(&subscriptions)),
         relay,
         health,
@@ -289,6 +292,7 @@ fn compose(
         vocabulary: vocabulary_worker,
         settings_poll,
         engine,
+        microphone: microphone_follower,
     };
     Ok(Server::new(
         socket,
@@ -330,6 +334,8 @@ struct Workers {
     /// `None` for an on-demand daemon, which serves one press and follows
     /// nothing.
     engine: Option<super::dictation::EngineFollower>,
+    /// `None` for an on-demand daemon, as for `engine`.
+    microphone: Option<MicrophoneFollower>,
     hotkey: HotkeyConfig,
     /// The relay's delivery adapter and its port, read from the
     /// settings a persistent daemon loads. An on-demand one — which
@@ -432,6 +438,10 @@ fn eager_workers(
         );
     }
     let speaker_config = SpeakerConfig::load(&startup.speaker, &context.home);
+    // Subscribed before the capture reads its first device, so no change
+    // falls between the two.
+    let mut chosen_microphone = cache.microphone();
+    let input = super::capture::input(&chosen_microphone.borrow_and_update());
     let (dictation, monitor, recorder, engine) = DictationRuntime::eager(
         context,
         Arc::clone(subscriptions),
@@ -444,10 +454,13 @@ fn eager_workers(
             speaker: speaker_config.clone(),
             vocabulary,
             delivery: context.delivery.clone(),
+            input,
         },
         Arc::clone(&microphone),
     )
     .map_err(DaemonError::Dictation)?;
+    let microphone_follower =
+        MicrophoneFollower::new(Arc::clone(&recorder.capture), chosen_microphone);
     let speakers = Arc::new(Speakers::open(&speaker_config));
     let enroller = Enroller::new(
         recorder.capture,
@@ -475,6 +488,7 @@ fn eager_workers(
         )),
         monitor,
         engine: Some(engine),
+        microphone: Some(microphone_follower),
         hotkey: context.hotkey(),
         relay_port,
     })
@@ -538,6 +552,7 @@ fn deferred_workers(
         // the wake word and the relay, needs a persistent daemon.
         hotkey: HotkeyConfig::Disabled,
         engine: None,
+        microphone: None,
         relay_port: None,
     }
 }

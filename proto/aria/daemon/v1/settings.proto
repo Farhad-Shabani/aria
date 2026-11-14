@@ -113,6 +113,11 @@ message Settings {
   // A held key records until release. Whole milliseconds, 3000 to 60000
   // inclusive. Absent is off.
   optional uint64 auto_stop_ms = 18;
+  // The input device to record on: "automatic" for the system default, or a
+  // `Microphone.id` from `MicrophoneService.List`. A device that isn't
+  // connected falls back to the system default; the value stays. Empty when
+  // a phone reads it: a device id can name a person's headset.
+  string microphone = 26;
   // Mutes the Mac's sound while recording.
   bool mute_sound = 2;
   // Return in the app being dictated into ends recording, then is pressed
@@ -190,6 +195,8 @@ message SettingsPatch {
   // Whole milliseconds, 3000 to 60000 inclusive. 0 turns auto-stop off;
   // absent leaves it unchanged.
   optional uint64 auto_stop_ms = 18;
+  // "automatic" or a `Microphone.id`; see `Settings.microphone`.
+  optional string microphone = 26;
   optional bool mute_sound = 2;
   optional bool return_sends = 25;
   optional bool cleanup_enabled = 22;

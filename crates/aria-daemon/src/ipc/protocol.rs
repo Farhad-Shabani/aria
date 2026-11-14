@@ -8,7 +8,9 @@ use aria_assistant::chat::{
     Ticket,
 };
 use aria_assistant::prompts::{NewSource, PromptContents, PromptDraft, PromptSource};
-use aria_kit::audio::{AutoStop, AutoStopError, SilenceDuration, SilenceDurationError};
+use aria_kit::audio::{
+    AutoStop, AutoStopError, InputDevice, SilenceDuration, SilenceDurationError,
+};
 use aria_kit::synthesis::{
     SpeakingRate, SpeakingRateError, SpeechText, SpeechTextError, Voice, VoiceError,
 };
@@ -2486,6 +2488,7 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                     .auto_stop_ms
                     .map(|milliseconds| AutoStop::new(Duration::from_millis(milliseconds)))
                     .transpose()?,
+                microphone: settings.microphone.parse()?,
                 mute_sound: settings.mute_sound,
                 return_sends: settings.return_sends,
                 cleanup_enabled: settings.cleanup_enabled,
@@ -2635,6 +2638,10 @@ impl From<SettingsPatch> for wire::SettingsPatch {
             auto_stop_ms: patch.auto_stop.map(|auto_stop| {
                 auto_stop.map_or(0, |auto_stop| auto_stop.get().as_millis() as u64)
             }),
+            microphone: patch
+                .microphone
+                .as_ref()
+                .map(|microphone| microphone.as_str().to_owned()),
             mute_sound: patch.mute_sound,
             return_sends: patch.return_sends,
             cleanup_enabled: patch.cleanup_enabled,
@@ -2669,6 +2676,24 @@ impl From<SettingsPatch> for wire::SettingsPatch {
     }
 }
 
+/// The devices a press can record on, and the one it would use now.
+pub(crate) fn microphones(
+    devices: &[InputDevice],
+    current: Option<&InputDevice>,
+) -> wire::ListMicrophonesResponse {
+    wire::ListMicrophonesResponse {
+        microphones: devices
+            .iter()
+            .map(|device| wire::Microphone {
+                id: device.id.to_string(),
+                label: device.name.clone(),
+                system_default: device.system_default,
+            })
+            .collect(),
+        current_id: current.map(|device| device.id.to_string()),
+    }
+}
+
 impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
     fn from(snapshot: &SettingsSnapshot) -> Self {
         Self {
@@ -2681,6 +2706,7 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
                     .settings
                     .auto_stop
                     .map(|auto_stop| auto_stop.get().as_millis() as u64),
+                microphone: snapshot.settings.microphone.as_str().to_owned(),
                 mute_sound: snapshot.settings.mute_sound,
                 return_sends: snapshot.settings.return_sends,
                 cleanup_enabled: snapshot.settings.cleanup_enabled,
@@ -2773,6 +2799,7 @@ impl TryFrom<wire::SettingsPatch> for SettingsPatch {
                     _ => AutoStop::new(Duration::from_millis(milliseconds)).map(Some),
                 })
                 .transpose()?,
+            microphone: patch.microphone.as_deref().map(str::parse).transpose()?,
             mute_sound: patch.mute_sound,
             return_sends: patch.return_sends,
             cleanup_enabled: patch.cleanup_enabled,
@@ -3398,6 +3425,9 @@ pub enum ProtocolError {
     #[error(transparent)]
     InvalidLanguage(#[from] LanguageCodeError),
 
+    #[error("microphone {0}")]
+    InvalidMicrophone(#[from] aria_settings::MicrophoneIdError),
+
     #[error(transparent)]
     InvalidSilenceDuration(#[from] SilenceDurationError),
 
@@ -3469,6 +3499,37 @@ mod tests {
             ..SettingsSnapshot::default()
         };
         assert_eq!(wire::SettingsSnapshot::from(&unchosen).assistant_name, "");
+    }
+
+    #[test]
+    fn a_microphone_round_trips_and_a_malformed_one_is_refused() {
+        let device: aria_settings::Microphone =
+            "coreaudio:BuiltInMicrophoneDevice".parse().unwrap();
+        for microphone in [aria_settings::Microphone::Automatic, device] {
+            let snapshot = SettingsSnapshot {
+                settings: Settings {
+                    microphone: microphone.clone(),
+                    ..Settings::default()
+                },
+                ..SettingsSnapshot::default()
+            };
+            let decoded =
+                SettingsSnapshot::try_from(wire::SettingsSnapshot::from(&snapshot)).unwrap();
+            assert_eq!(decoded.settings.microphone, microphone);
+            let patch = SettingsPatch {
+                microphone: Some(microphone),
+                ..SettingsPatch::default()
+            };
+            assert_eq!(
+                SettingsPatch::try_from(wire::SettingsPatch::from(patch.clone())).unwrap(),
+                patch
+            );
+        }
+        let refused = wire::SettingsPatch {
+            microphone: Some("built-in".to_owned()),
+            ..Default::default()
+        };
+        assert!(SettingsPatch::try_from(refused).is_err());
     }
 
     #[test]

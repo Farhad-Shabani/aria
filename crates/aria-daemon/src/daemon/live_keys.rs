@@ -153,6 +153,8 @@ impl LiveHarness {
             | Key::ShortcutsPromptList
             | Key::Prompts => self.next_setting_read(),
             Key::ShortcutsAriaKey => format!("{:?}", *self.cache.aria_key().borrow()),
+            // The capture takes it from the watch, between recordings.
+            Key::DictationMicrophone => format!("{:?}", *self.cache.microphone().borrow()),
             Key::AssistantWorkdir | Key::AssistantProjectRoots | Key::AssistantTimeoutSecs => {
                 self.next_chat()
             }
@@ -228,6 +230,7 @@ fn change(key: Key) -> Patch {
         Key::DictationDeliveryMode => set(key, "complete"),
         Key::DictationSilenceDurationMs => set(key, 2000),
         Key::DictationAutoStopMs => set(key, 20000),
+        Key::DictationMicrophone => set(key, "coreaudio:usb"),
         Key::SttLanguage => set(key, "de"),
         Key::DictationMuteSound | Key::DictationVocabularyEnabled | Key::HistoryEnabled => {
             set(key, false)

@@ -11,7 +11,7 @@ use super::assembly::{
 use super::follower::EngineFollower;
 use crate::daemon::config::WakeConfig;
 use crate::daemon::inference::pairing_id;
-use aria_kit::audio::{RecordingReader, WakeWordMonitor};
+use aria_kit::audio::{InputDeviceId, RecordingReader, WakeWordMonitor};
 use aria_kit::cancel::{CancelToken, Deadline};
 use aria_platform::delivery::DeliveryFactory;
 use aria_primitives::lazy::Lazy;
@@ -44,6 +44,8 @@ pub(in crate::daemon) struct DictationSetup {
     pub(in crate::daemon) speaker: SpeakerConfig,
     pub(in crate::daemon) vocabulary: Arc<VocabularyRuntime>,
     pub(in crate::daemon) delivery: DeliveryFactory,
+    /// The device the capture opens first. `None` is the system default.
+    pub(in crate::daemon) input: Option<InputDeviceId>,
 }
 
 /// The microphone parts every other recording operation borrows: the one
@@ -140,6 +142,7 @@ impl DictationRuntime {
                     let settings = cache.effective();
                     let config = DictationConfig::load(&settings, &home, pairing_id(&home));
                     let speaker = SpeakerConfig::load(&settings.speaker, &home);
+                    let input = super::super::capture::input(&cache.microphone().borrow());
                     // Only a daemon that deferred its build reaches here, and
                     // one of those lives for a single press. A wake-word monitor
                     // would have nothing to serve, so none is built whatever
@@ -151,6 +154,7 @@ impl DictationRuntime {
                             speaker,
                             vocabulary: Arc::clone(&vocabulary),
                             delivery: delivery.clone(),
+                            input,
                         },
                         &spool_dir,
                         &home,
@@ -1292,6 +1296,7 @@ mod history_tests {
                     vocabulary: Arc::clone(&vocabulary),
                     wake: WakeConfig::Disabled,
                     delivery: DeliveryFactory::detect(&home),
+                    input: None,
                 },
                 &home,
                 &home,

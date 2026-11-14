@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aria.daemon.v1;
+
+service MicrophoneService {
+  // Every connected input device, and the one a press records on now.
+  // Opens no device, so it shows no microphone indicator.
+  //   CAPTURE_FAILED - the audio system couldn't list the devices
+  rpc List(ListMicrophonesRequest) returns (ListMicrophonesResponse);
+}
+
+message ListMicrophonesRequest {}
+
+message ListMicrophonesResponse {
+  // In the audio system's order.
+  repeated Microphone microphones = 1;
+  // The `id` a press records on: the chosen device while it's connected,
+  // else the system default. Absent when no device can record.
+  optional string current_id = 2;
+}
+
+message Microphone {
+  // What `Settings.microphone` takes to choose this device. Stable while
+  // the device stays connected.
+  string id = 1;
+  // The device's name, such as "MacBook Pro Microphone".
+  string label = 2;
+  bool system_default = 3;
+}

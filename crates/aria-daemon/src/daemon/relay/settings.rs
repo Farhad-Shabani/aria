@@ -98,10 +98,11 @@ impl wire::settings_service_server::SettingsService for LanSettings {
     }
 }
 
-/// Paths and app bundle IDs can identify a person.
+/// Paths, app bundle IDs and device ids can identify a person.
 /// Keep the folder field present so the phone can offer to clear it.
 fn without_mac_choices(snapshot: &mut wire::SettingsSnapshot) {
     if let Some(settings) = &mut snapshot.settings {
+        settings.microphone = String::new();
         if settings.vocabulary_dir.is_some() {
             settings.vocabulary_dir = Some(String::new());
         }
@@ -121,6 +122,7 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
         delivery_mode,
         silence_duration_ms,
         auto_stop_ms,
+        microphone,
         mute_sound,
         return_sends,
         cleanup_enabled,
@@ -151,6 +153,7 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
             silence_duration_ms.is_some(),
         ),
         (Key::DictationAutoStopMs, auto_stop_ms.is_some()),
+        (Key::DictationMicrophone, microphone.is_some()),
         (Key::DictationMuteSound, mute_sound.is_some()),
         (Key::DictationReturnSends, return_sends.is_some()),
         (Key::DictationCleanupEnabled, cleanup_enabled.is_some()),
@@ -390,6 +393,7 @@ mod tests {
                     }],
                 }),
                 vocabulary_dir: Some("/Users/you/project".to_owned()),
+                microphone: "coreaudio:00-11-22-33-44-55:input".to_owned(),
                 ..Default::default()
             }),
         };
@@ -397,6 +401,7 @@ mod tests {
         without_mac_choices(&mut snapshot);
 
         let settings = snapshot.settings.unwrap();
+        assert_eq!(settings.microphone, "");
         assert_eq!(settings.prompts, Some(wire::Prompts::default()));
         assert_eq!(settings.vocabulary_dir.as_deref(), Some(""));
         assert_eq!(
@@ -461,6 +466,10 @@ mod tests {
             },
             wire::SettingsPatch {
                 auto_stop_ms: Some(0),
+                ..Default::default()
+            },
+            wire::SettingsPatch {
+                microphone: Some("coreaudio:BuiltInMicrophoneDevice".to_owned()),
                 ..Default::default()
             },
             wire::SettingsPatch {
