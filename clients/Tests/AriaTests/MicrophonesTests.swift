@@ -26,6 +26,20 @@ final class MicrophonesTests: XCTestCase {
         XCTAssertEqual(choices.last, Microphones.Choice(id: airPods.id, title: "AirPods Pro (Not Connected)"))
     }
 
+    func testAChosenDeviceNeverSeenIsAnUnknownMicrophone() {
+        let choices = Microphones.choices(listed: list([builtIn], current: builtIn.id), chosen: airPods.id, names: [:])
+
+        XCTAssertEqual(choices.last?.title, "Unknown Microphone (Not Connected)")
+    }
+
+    func testAFailureSaysWhatWentWrongAndWhatToDo() {
+        XCTAssertEqual(Microphones.failureMessage(DaemonFailure.unavailable), DaemonFailure.offlineMessage)
+        XCTAssertEqual(
+            Microphones.failureMessage(DaemonFailure.refused(.captureFailed)),
+            "Aria couldn’t list your microphones. Check them in System Settings > Sound.")
+        XCTAssertEqual(Microphones.failureMessage(DaemonFailure.timeout), "Something went wrong. Try again.")
+    }
+
     func testBeforeTheFirstListTheChoiceShowsWithoutAState() {
         let choices = Microphones.choices(listed: nil, chosen: airPods.id, names: [airPods.id: "AirPods Pro"])
 

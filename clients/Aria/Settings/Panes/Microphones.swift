@@ -59,7 +59,7 @@ final class Microphones: ObservableObject {
             if failure == nil {
                 Self.log.error("Listing microphones failed: \(String(describing: error), privacy: .private)")
             }
-            failure = "Aria couldn’t list your microphones. Make sure Aria is running."
+            failure = Self.failureMessage(error)
         }
     }
 
@@ -77,11 +77,21 @@ final class Microphones: ObservableObject {
         let microphones = listed?.microphones ?? []
         choices += microphones.map { Choice(id: $0.id, title: $0.label) }
         if chosen != automatic, !microphones.contains(where: { $0.id == chosen }) {
-            let name = names[chosen] ?? "Unknown microphone"
+            let name = names[chosen] ?? "Unknown Microphone"
             // Before the first list, whether it's connected is unknown.
             choices.append(Choice(id: chosen, title: listed == nil ? name : "\(name) (Not Connected)"))
         }
         return choices
+    }
+
+    /// What went wrong, then what to do. The daemon's own text stays in the log.
+    static func failureMessage(_ error: any Error) -> String {
+        let failure = error as? DaemonFailure ?? DaemonFailure(error)
+        if failure.isOffline { return DaemonFailure.offlineMessage }
+        if failure == .refused(.captureFailed) {
+            return "Aria couldn’t list your microphones. Check them in System Settings > Sound."
+        }
+        return "Something went wrong. Try again."
     }
 
     /// Which device records, when the choice alone doesn't say.
