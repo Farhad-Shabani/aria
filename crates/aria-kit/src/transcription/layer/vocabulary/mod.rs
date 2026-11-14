@@ -395,7 +395,7 @@ fn normalize(text: &str) -> String {
 }
 
 /// How a recognizer writes `character` in a term, as "dash" in "aria dash
-/// stt". Not the symbol words dictation joins: those say "hyphen".
+/// stt". Dictation's symbol words say "hyphen" for `-` instead.
 fn spoken_symbol(character: char) -> Option<&'static str> {
     match character {
         '-' => Some("dash"),

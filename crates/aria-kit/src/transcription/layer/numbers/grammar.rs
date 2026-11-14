@@ -5,8 +5,11 @@
 //! whole    := "zero" | group (scale [["and"] group])*  scales descending
 //! group    := under100 | under100 "hundred" [["and"] under100]
 //! under100 := digit | teen | tens [digit]               digit is 1 to 9
-//! fraction := (digit | "o" | teen | tens [digit])+      each as its digits
+//! fraction := ("zero" | "o" | under100)+                each as its digits
 //! ```
+//!
+//! A scale counts fewer than a thousand, and so does the group after the
+//! last scale. No multiple of ten comes before "hundred".
 
 use std::fmt;
 
