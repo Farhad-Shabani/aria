@@ -451,6 +451,15 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
   /// Clears the value of `autoStopMs`. Subsequent reads from it will return its default value.
   public mutating func clearAutoStopMs() {_uniqueStorage()._autoStopMs = nil}
 
+  /// The input device to record on: "automatic" for the system default, or a
+  /// `Microphone.id` from `MicrophoneService.List`. A device that isn't
+  /// connected falls back to the system default; the value stays. Empty when
+  /// a phone reads it: a device id can name a person's headset.
+  public var microphone: String {
+    get {_storage._microphone}
+    set {_uniqueStorage()._microphone = newValue}
+  }
+
   /// Mutes the Mac's sound while recording.
   public var muteSound: Bool {
     get {_storage._muteSound}
@@ -650,6 +659,16 @@ public nonisolated struct Aria_Daemon_V1_SettingsPatch: @unchecked Sendable {
   public var hasAutoStopMs: Bool {_storage._autoStopMs != nil}
   /// Clears the value of `autoStopMs`. Subsequent reads from it will return its default value.
   public mutating func clearAutoStopMs() {_uniqueStorage()._autoStopMs = nil}
+
+  /// "automatic" or a `Microphone.id`; see `Settings.microphone`.
+  public var microphone: String {
+    get {_storage._microphone ?? String()}
+    set {_uniqueStorage()._microphone = newValue}
+  }
+  /// Returns true if `microphone` has been explicitly set.
+  public var hasMicrophone: Bool {_storage._microphone != nil}
+  /// Clears the value of `microphone`. Subsequent reads from it will return its default value.
+  public mutating func clearMicrophone() {_uniqueStorage()._microphone = nil}
 
   public var muteSound: Bool {
     get {_storage._muteSound ?? false}
@@ -1510,13 +1529,14 @@ nonisolated extension Aria_Daemon_V1_AssistantModelSetting: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Settings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0\u{3}return_sends\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0\u{3}return_sends\0\u{1}microphone\0")
 
   fileprivate class _StorageClass {
     var _outputMode: Aria_Daemon_V1_OutputMode = .unspecified
     var _deliveryMode: Aria_Daemon_V1_DeliveryMode = .unspecified
     var _silenceDurationMs: UInt64 = 0
     var _autoStopMs: UInt64? = nil
+    var _microphone: String = String()
     var _muteSound: Bool = false
     var _returnSends: Bool = false
     var _cleanupEnabled: Bool = false
@@ -1552,6 +1572,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
       _deliveryMode = source._deliveryMode
       _silenceDurationMs = source._silenceDurationMs
       _autoStopMs = source._autoStopMs
+      _microphone = source._microphone
       _muteSound = source._muteSound
       _returnSends = source._returnSends
       _cleanupEnabled = source._cleanupEnabled
@@ -1616,6 +1637,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
         case 23: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupFillers) }()
         case 24: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupLlmEnabled) }()
         case 25: try { try decoder.decodeSingularBoolField(value: &_storage._returnSends) }()
+        case 26: try { try decoder.decodeSingularStringField(value: &_storage._microphone) }()
         default: break
         }
       }
@@ -1703,6 +1725,9 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
       if _storage._returnSends != false {
         try visitor.visitSingularBoolField(value: _storage._returnSends, fieldNumber: 25)
       }
+      if !_storage._microphone.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._microphone, fieldNumber: 26)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1716,6 +1741,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
         if _storage._deliveryMode != rhs_storage._deliveryMode {return false}
         if _storage._silenceDurationMs != rhs_storage._silenceDurationMs {return false}
         if _storage._autoStopMs != rhs_storage._autoStopMs {return false}
+        if _storage._microphone != rhs_storage._microphone {return false}
         if _storage._muteSound != rhs_storage._muteSound {return false}
         if _storage._returnSends != rhs_storage._returnSends {return false}
         if _storage._cleanupEnabled != rhs_storage._cleanupEnabled {return false}
@@ -1748,13 +1774,14 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
 
 nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SettingsPatch"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0\u{3}return_sends\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0\u{3}return_sends\0\u{1}microphone\0")
 
   fileprivate class _StorageClass {
     var _outputMode: Aria_Daemon_V1_OutputMode? = nil
     var _deliveryMode: Aria_Daemon_V1_DeliveryMode? = nil
     var _silenceDurationMs: UInt64? = nil
     var _autoStopMs: UInt64? = nil
+    var _microphone: String? = nil
     var _muteSound: Bool? = nil
     var _returnSends: Bool? = nil
     var _cleanupEnabled: Bool? = nil
@@ -1790,6 +1817,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
       _deliveryMode = source._deliveryMode
       _silenceDurationMs = source._silenceDurationMs
       _autoStopMs = source._autoStopMs
+      _microphone = source._microphone
       _muteSound = source._muteSound
       _returnSends = source._returnSends
       _cleanupEnabled = source._cleanupEnabled
@@ -1854,6 +1882,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
         case 23: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupFillers) }()
         case 24: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupLlmEnabled) }()
         case 25: try { try decoder.decodeSingularBoolField(value: &_storage._returnSends) }()
+        case 26: try { try decoder.decodeSingularStringField(value: &_storage._microphone) }()
         default: break
         }
       }
@@ -1941,6 +1970,9 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
       try { if let v = _storage._returnSends {
         try visitor.visitSingularBoolField(value: v, fieldNumber: 25)
       } }()
+      try { if let v = _storage._microphone {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 26)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1954,6 +1986,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
         if _storage._deliveryMode != rhs_storage._deliveryMode {return false}
         if _storage._silenceDurationMs != rhs_storage._silenceDurationMs {return false}
         if _storage._autoStopMs != rhs_storage._autoStopMs {return false}
+        if _storage._microphone != rhs_storage._microphone {return false}
         if _storage._muteSound != rhs_storage._muteSound {return false}
         if _storage._returnSends != rhs_storage._returnSends {return false}
         if _storage._cleanupEnabled != rhs_storage._cleanupEnabled {return false}

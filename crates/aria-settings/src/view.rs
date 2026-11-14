@@ -51,6 +51,12 @@ impl Settings {
                 })?),
                 None => defaults.auto_stop,
             },
+            microphone: match &dictation.microphone {
+                Some(value) => value.parse().map_err(|source| {
+                    invalid(Key::DictationMicrophone, InvalidValue::Microphone(source))
+                })?,
+                None => defaults.microphone,
+            },
             mute_sound: dictation.mute_sound.unwrap_or(defaults.mute_sound),
             return_sends: dictation.return_sends.unwrap_or(defaults.return_sends),
             own_voice_only: dictation.own_voice_only.unwrap_or(defaults.own_voice_only),
@@ -130,6 +136,7 @@ pub(super) fn patch(current: &Settings, next: &Settings) -> Result<Patch, Settin
         delivery_mode,
         silence_duration,
         auto_stop,
+        microphone,
         mute_sound,
         return_sends,
         own_voice_only,
@@ -174,6 +181,9 @@ pub(super) fn patch(current: &Settings, next: &Settings) -> Result<Patch, Settin
     if *auto_stop != current.auto_stop {
         let ms = auto_stop.map_or(0, |auto_stop| milliseconds(auto_stop.get()));
         patch.set(Key::DictationAutoStopMs, ms);
+    }
+    if *microphone != current.microphone {
+        patch.set(Key::DictationMicrophone, microphone.as_str());
     }
     if *mute_sound != current.mute_sound {
         patch.set(Key::DictationMuteSound, *mute_sound);
@@ -372,6 +382,34 @@ mod tests {
     }
 
     #[test]
+    fn a_microphone_is_automatic_or_a_host_and_device() {
+        let home = std::path::Path::new("/Users/you");
+        let file = |value: &str| format!("[dictation]\nmicrophone = \"{value}\"\n");
+        for value in [
+            "automatic",
+            "coreaudio:BuiltInMicrophoneDevice",
+            "alsa:hw:0,0",
+        ] {
+            let loaded = crate::Loaded::parse(&file(value), home).expect(value);
+            assert_eq!(loaded.settings.microphone().as_str(), value);
+        }
+        for value in ["", "built-in", ":device", "coreaudio:"] {
+            let error = crate::Loaded::parse(&file(value), home).expect_err(value);
+            assert!(
+                matches!(
+                    error,
+                    SettingsError::Invalid {
+                        key: Key::DictationMicrophone,
+                        source: InvalidValue::Microphone(_),
+                        ..
+                    }
+                ),
+                "{value:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn every_setting_round_trips_through_its_key() {
         let chord = Chord::new(
             15,
@@ -399,6 +437,7 @@ mod tests {
             delivery_mode: crate::DeliveryMode::Complete,
             silence_duration: SilenceDuration::new(Duration::from_millis(2000)).expect("valid"),
             auto_stop: None,
+            microphone: "coreaudio:BuiltInMicrophoneDevice".parse().expect("an id"),
             own_voice_only: true,
             aria_key: AriaKey::Fn,
             ask_shortcut: Some(Shortcut::Chord(chord)),

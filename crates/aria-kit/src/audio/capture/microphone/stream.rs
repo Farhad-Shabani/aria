@@ -1,5 +1,5 @@
-//! The default input device's stream, and the ring that carries its samples
-//! off the real-time callback.
+//! An input device's stream, and the ring that carries its samples off the
+//! real-time callback.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -13,6 +13,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::audio::samples_at;
 
+use super::devices::{InputDeviceId, open_target};
 use super::resampling::SampleRateConverter;
 use super::worker::IdleObservation;
 use super::{MicrophoneError, Result};
@@ -26,7 +27,7 @@ const STREAM_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(2);
 /// A playing microphone stream and the state that decodes it.
 pub(super) struct LiveStream {
     /// A macOS input stream stays on this device when the default moves.
-    device: cpal::DeviceId,
+    device: InputDeviceId,
     /// Held only to keep the input stream playing.
     _stream: cpal::Stream,
     consumer: Consumer<i16>,
@@ -52,14 +53,10 @@ pub fn check_default_input_device() -> Result<String> {
 }
 
 impl LiveStream {
-    pub(super) fn open() -> Result<Self> {
-        let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or(MicrophoneError::NoInputDevice)?;
-        let id = device
-            .id()
-            .map_err(|source| MicrophoneError::DeviceDescription(Box::new(source)))?;
+    /// Opens the device `wanted` names while it's connected, else the
+    /// system default.
+    pub(super) fn open(wanted: Option<&InputDeviceId>) -> Result<Self> {
+        let (device, id) = open_target(wanted)?;
         let config = select_input_config(&device)?;
         let sample_rate = config.sample_rate();
         let (producer, consumer, status) = sample_ring(sample_rate, config.channels())?;
@@ -80,11 +77,8 @@ impl LiveStream {
         })
     }
 
-    pub(super) fn is_default_input(&self) -> bool {
-        cpal::default_host()
-            .default_input_device()
-            .and_then(|device| device.id().ok())
-            .is_some_and(|default| default == self.device)
+    pub(super) fn device(&self) -> &InputDeviceId {
+        &self.device
     }
 
     pub(super) fn pop<'samples>(

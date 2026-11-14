@@ -40,8 +40,8 @@ pub use checked::{
     Voices, WakeEngine,
 };
 pub use choices::{
-    DeliveryMode, Settings, Shortcut, StoreError, StreamingSupport, StreamingUnavailable,
-    StreamingUnavailableOutput,
+    DeliveryMode, Microphone, MicrophoneId, MicrophoneIdError, Settings, Shortcut, StoreError,
+    StreamingSupport, StreamingUnavailable, StreamingUnavailableOutput,
 };
 pub use chord::{Chord, ChordError, Modifiers};
 pub use directory::{Directory, DirectoryError};
@@ -370,6 +370,9 @@ pub enum InvalidValue {
 
     #[error("is not usable: {0}")]
     Language(#[source] LanguageCodeError),
+
+    #[error("{0}")]
+    Microphone(#[source] MicrophoneIdError),
 
     #[error("is not usable: {0}")]
     SilenceDuration(#[source] SilenceDurationError),

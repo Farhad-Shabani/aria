@@ -27,9 +27,13 @@ reuses models you already downloaded.
 
 ## No recording
 
-Run `aria doctor` for model-path and input-device problems. It does not record
-to prove microphone access. Make sure the intended microphone is connected
-and selected as the system's default input.
+Run `aria doctor` for model-path and input-device problems. It doesn't record
+to prove microphone access, and it checks only the system's default input.
+
+Make sure the intended microphone is connected. On a Mac, check
+**Settings → Dictation → Microphone**. With **Automatic**, Aria records with
+the system's default input. Elsewhere, `dictation.microphone` in
+`~/.aria/settings.toml` holds the same choice.
 
 On a Mac, check **System Settings → Privacy & Security → Microphone** for the
 app or executable requesting access. Grant permission, then retry. A model

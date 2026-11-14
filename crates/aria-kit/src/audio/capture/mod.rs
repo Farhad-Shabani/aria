@@ -12,8 +12,9 @@ use crate::voice_activity::VoiceActivityError;
 
 #[cfg(feature = "microphone")]
 pub use microphone::{
-    Microphone, MicrophoneBuilder, PreparedMicrophone, WakeWordControl, WakeWordEvent,
-    WakeWordFailure, WakeWordMonitor, WakeWordSuspension, check_default_input_device,
+    InputDevice, InputDeviceId, Microphone, MicrophoneBuilder, PreparedMicrophone, WakeWordControl,
+    WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
+    check_default_input_device, input_devices, resolve_input,
 };
 pub use wav_replay::{ReplayPace, WavReplayCapture, WavReplayError};
 
@@ -151,13 +152,16 @@ pub enum MicrophoneError {
     #[error("failed to prepare the recording spool directory")]
     SpoolDirectory(#[source] crate::primitives::private_fs::PrivateDirectoryError),
 
-    #[error("no default microphone is available")]
+    #[error("no microphone is available")]
     NoInputDevice,
 
-    #[error("failed to read the default microphone configuration")]
+    #[error("failed to list the microphones")]
+    ListDevices(#[source] Cause),
+
+    #[error("failed to read the microphone configuration")]
     DefaultConfiguration(#[source] Cause),
 
-    #[error("failed to read the default microphone description")]
+    #[error("failed to read the microphone description")]
     DeviceDescription(#[source] Cause),
 
     #[error("microphone input configuration has no channels")]

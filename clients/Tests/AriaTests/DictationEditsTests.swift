@@ -35,6 +35,7 @@ final class DictationEditsTests: XCTestCase {
         patch.deliveryMode = .complete
         patch.silenceDurationMs = 2500
         patch.autoStopMs = 15000
+        patch.microphone = "coreaudio:BuiltInMicrophoneDevice"
         patch.ownVoiceOnly = true
         patch.ariaKey = .fn
         patch.askShortcut.chord.keyCode = 7

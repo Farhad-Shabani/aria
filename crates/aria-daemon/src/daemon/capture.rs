@@ -1,22 +1,107 @@
 //! The capture source the daemon's settings select.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::daemon::config::WakeConfig;
 use aria_kit::audio::{
-    AudioCapture, CaptureError, Microphone, PreparedMicrophone, RecordingMode, RecordingReader,
-    StopSignal, WakeWordMonitor, WavReplayCapture,
+    AudioCapture, CaptureError, InputDevice, InputDeviceId, Microphone, PreparedMicrophone,
+    RecordingMode, RecordingReader, StopSignal, WakeWordMonitor, WavReplayCapture,
 };
+use aria_primitives::error_chain;
 use aria_settings::config::ConfigError;
+use aria_settings::rpc::RpcErrorCode;
 use aria_voice::config::CaptureConfig;
+use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
 use super::DictationInitializationError;
+use super::tasks::Supervised;
 use super::wake::WakeDetector;
 
 pub(in crate::daemon) enum CaptureBackend {
     Microphone(Microphone),
     WavReplay(WavReplayCapture),
+}
+
+impl CaptureBackend {
+    /// The next recording uses `input`. A replay has no device to choose.
+    pub(in crate::daemon) fn use_input(
+        &self,
+        input: Option<InputDeviceId>,
+    ) -> Result<(), CaptureError> {
+        match self {
+            Self::Microphone(capture) => capture.use_input(input),
+            Self::WavReplay(_) => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("couldn't list the microphones")]
+pub(in crate::daemon) struct ListMicrophonesError(#[source] CaptureError);
+
+impl From<&ListMicrophonesError> for RpcErrorCode {
+    fn from(_error: &ListMicrophonesError) -> Self {
+        Self::CaptureFailed
+    }
+}
+
+/// Every connected input device. Opens none of them.
+pub(in crate::daemon) fn list_microphones() -> Result<Vec<InputDevice>, ListMicrophonesError> {
+    aria_kit::audio::input_devices().map_err(ListMicrophonesError)
+}
+
+/// The device `dictation.microphone` names, or `None` for the system default.
+pub(in crate::daemon) fn input(microphone: &aria_settings::Microphone) -> Option<InputDeviceId> {
+    match microphone {
+        aria_settings::Microphone::Automatic => None,
+        aria_settings::Microphone::Device(id) => Some(InputDeviceId::new(id.as_str())),
+    }
+}
+
+/// Hands each change of `dictation.microphone` to the capture, which applies
+/// it before the next recording.
+pub(in crate::daemon) struct MicrophoneFollower {
+    capture: Arc<CaptureBackend>,
+    /// Marked seen where the capture took its first device.
+    microphone: watch::Receiver<aria_settings::Microphone>,
+}
+
+impl MicrophoneFollower {
+    pub(in crate::daemon) fn new(
+        capture: Arc<CaptureBackend>,
+        microphone: watch::Receiver<aria_settings::Microphone>,
+    ) -> Self {
+        Self {
+            capture,
+            microphone,
+        }
+    }
+}
+
+impl Supervised for MicrophoneFollower {
+    async fn run(mut self, shutdown: CancellationToken) {
+        loop {
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                changed = self.microphone.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    let input = input(&self.microphone.borrow_and_update());
+                    if let Err(error) = self.capture.use_input(input) {
+                        tracing::error!(
+                            error = %error_chain(&error),
+                            "the capture stopped; microphone changes no longer apply"
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl AudioCapture for CaptureBackend {
@@ -46,6 +131,7 @@ impl PreparedCapture {
     pub(in crate::daemon) fn load(
         capture: CaptureConfig,
         wake: WakeConfig,
+        input: Option<InputDeviceId>,
         spool_dir: &Path,
         recording_timeout: Duration,
     ) -> Result<Self, DictationInitializationError> {
@@ -73,6 +159,7 @@ impl PreparedCapture {
                 let microphone = Microphone::builder()
                     .spool_dir(spool_dir)
                     .maximum_duration(recording_timeout)
+                    .input(input)
                     .load()
                     .map_err(DictationInitializationError::Capture)?;
                 tracing::info!(
@@ -127,7 +214,8 @@ mod tests {
             pace: ReplayPace::Immediate,
         };
 
-        let outcome = PreparedCapture::load(replay, wake, home.path(), Duration::from_secs(60));
+        let outcome =
+            PreparedCapture::load(replay, wake, None, home.path(), Duration::from_secs(60));
 
         assert!(matches!(
             outcome,

@@ -10,6 +10,7 @@ mod dictation;
 mod events;
 mod history;
 mod inference;
+mod microphone;
 mod pairing;
 mod relay;
 mod settings;
@@ -31,6 +32,7 @@ pub(super) use history::{HistoryRpc, HistoryWorker};
 pub(super) use inference::{
     InferenceAdminRpc, InferencePairingRpc, InferenceRpc, authenticate as authenticate_inference,
 };
+pub(super) use microphone::MicrophoneRpc;
 pub(super) use pairing::{PairingAdminRpc, PairingRpc};
 pub(super) use relay::RelayRpc;
 pub(super) use settings::SettingsRpc;

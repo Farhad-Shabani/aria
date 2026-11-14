@@ -31,8 +31,8 @@ use super::host::DaemonLifetime;
 use super::hotkey::HotkeyTrigger;
 use super::memory::MemoryBacklog;
 use super::service::{
-    ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, PairingAdminRpc, SettingsRpc,
-    SpeakerRpc, SpeechRpc, SystemTranscriptionRpc, VocabularyRpc,
+    ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, MicrophoneRpc,
+    PairingAdminRpc, SettingsRpc, SpeakerRpc, SpeechRpc, SystemTranscriptionRpc, VocabularyRpc,
 };
 use super::settings::SettingsActor;
 use super::shutdown::ShutdownSignal;
@@ -91,6 +91,7 @@ pub(super) struct Actors {
     >,
     pub(super) settings_poll: aria_settings::SettingsPoll,
     pub(super) engine: Option<super::dictation::EngineFollower>,
+    pub(super) microphone: Option<super::capture::MicrophoneFollower>,
 }
 
 impl Server {
@@ -172,6 +173,9 @@ impl Server {
         }
         if let Some(engine) = actors.engine {
             tasks.supervise(engine);
+        }
+        if let Some(microphone) = actors.microphone {
+            tasks.supervise(microphone);
         }
         // Each trigger owns its health lifecycle. Announced before the
         // listener accepts, so a health check never finds an enabled
@@ -291,6 +295,7 @@ pub(super) struct Services {
     pub(super) settings: SettingsRpc,
     pub(super) vocabulary: VocabularyRpc,
     pub(super) speaker: SpeakerRpc,
+    pub(super) microphone: MicrophoneRpc,
     pub(super) events: EventsService,
     /// None when the relay is switched off, or on a daemon too short-lived
     /// to serve one. It is never added to the unix router.
@@ -323,6 +328,9 @@ async fn build_router(
         .await;
     health_reporter
         .set_serving::<wire::speaker_service_server::SpeakerServiceServer<SpeakerRpc>>()
+        .await;
+    health_reporter
+        .set_serving::<wire::microphone_service_server::MicrophoneServiceServer<MicrophoneRpc>>()
         .await;
     health_reporter
         .set_serving::<wire::events_service_server::EventsServiceServer<EventsService>>()
@@ -375,6 +383,9 @@ async fn build_router(
         .add_service(wire::speaker_service_server::SpeakerServiceServer::new(
             services.speaker,
         ))
+        .add_service(
+            wire::microphone_service_server::MicrophoneServiceServer::new(services.microphone),
+        )
         .add_service(wire::events_service_server::EventsServiceServer::new(
             services.events,
         ))
@@ -701,6 +712,7 @@ mod tests {
                     SystemTranscriptionRpc,
                 >::NAME,
                 wire::speaker_service_server::SpeakerServiceServer::<SpeakerRpc>::NAME,
+                wire::microphone_service_server::MicrophoneServiceServer::<MicrophoneRpc>::NAME,
                 wire::events_service_server::EventsServiceServer::<EventsService>::NAME,
             ] {
                 let response = health

@@ -6,7 +6,7 @@ use aria_kit::transcription::Language;
 use tokio::sync::watch;
 
 use super::{ApplicationOverrides, Prompts, Settings, Shortcut, StoreError, view};
-use super::{DeliveryMode, StreamingSupport};
+use super::{DeliveryMode, Microphone, StreamingSupport};
 use super::{Loaded, Patch, Refusal, Revision, SettingsCache, SettingsError, Written};
 use crate::config::AssistantId;
 use aria_kit::audio::{AutoStop, SilenceDuration};
@@ -28,6 +28,7 @@ pub struct SettingsPatch {
     pub delivery_mode: Option<DeliveryMode>,
     pub silence_duration: Option<SilenceDuration>,
     pub auto_stop: Option<Option<AutoStop>>,
+    pub microphone: Option<Microphone>,
     pub mute_sound: Option<bool>,
     pub return_sends: Option<bool>,
     pub own_voice_only: Option<bool>,
@@ -233,6 +234,9 @@ impl SettingsPatch {
             delivery_mode,
             silence_duration: self.silence_duration.unwrap_or(current.silence_duration),
             auto_stop: self.auto_stop.unwrap_or(current.auto_stop),
+            microphone: self
+                .microphone
+                .unwrap_or_else(|| current.microphone.clone()),
             mute_sound: self.mute_sound.unwrap_or(current.mute_sound),
             return_sends: self.return_sends.unwrap_or(current.return_sends),
             own_voice_only: self.own_voice_only.unwrap_or(current.own_voice_only),

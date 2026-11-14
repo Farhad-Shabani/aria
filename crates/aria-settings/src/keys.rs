@@ -150,6 +150,8 @@ keys! {
         "The longest one recording may run.";
     DictationTimeoutSecs: "dictation.timeout_secs", Restart, Mac, [], Kind::Number, Some("660.0"),
         "The longest a whole dictation may take, recording included.";
+    DictationMicrophone: "dictation.microphone", Live, Mac, [], Kind::Text, Some("\"automatic\""),
+        "The input device to record on: automatic for the system default, or a device id from the Mac app. A missing device falls back to the system default.";
     DictationMuteSound: "dictation.mute_sound", Live, Mac, [], Kind::Bool, Some("true"),
         "Mutes other apps while recording.";
     DictationReturnSends: "dictation.return_sends", Live, Mac, [], Kind::Bool, Some("true"),
