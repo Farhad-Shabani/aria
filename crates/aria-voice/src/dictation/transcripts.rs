@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use super::{DictationSettings, ExecutionControl};
 use crate::speaker::Label;
-use aria_platform::delivery::{Caret, Placement};
+use aria_kit::transcription::Spacing;
+use aria_platform::delivery::Placement;
 
 /// What the pipeline heard in one stretch of speech.
 ///
@@ -25,30 +26,6 @@ pub struct Utterance<'a> {
     pub(crate) at: u64,
     pub(crate) span: Option<Range<u64>>,
     pub spacing: Spacing,
-}
-
-/// How an utterance's text meets the text typed around it.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Spacing {
-    /// The text opens with a spoken symbol that joins the last word typed,
-    /// so no space comes before it.
-    pub joins_before: bool,
-    /// The text's closing mark is held back for the next utterance, so its
-    /// end stays open.
-    pub defers_ending: bool,
-}
-
-impl Spacing {
-    /// Returns `text` as typed at `caret`, which moves past it.
-    #[must_use = "the caret has moved past text that must be typed"]
-    pub fn insert(self, text: &str, caret: &mut Caret) -> String {
-        match (self.joins_before, self.defers_ending) {
-            (true, true) => caret.attach_open(text),
-            (true, false) => caret.attach(text),
-            (false, true) => caret.insert_open(text),
-            (false, false) => caret.insert(text),
-        }
-    }
 }
 
 impl<'a> Utterance<'a> {

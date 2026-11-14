@@ -36,7 +36,7 @@ const MAX_HELD_WORDS: usize = 8;
 /// assert_eq!(next, "underscore id");
 /// let corrected = vocabulary.correct_spoken(&next, "user").unwrap();
 /// assert_eq!(corrected.text, "_id");
-/// // Type it joined to "user", as `Caret::attach` does.
+/// // Type it with no space after "user".
 /// assert!(corrected.joins_before);
 /// assert!(words.finish().is_none());
 /// ```
@@ -145,6 +145,7 @@ fn joined(held: &str, text: &str) -> String {
 mod tests {
     use rstest::rstest;
 
+    use super::super::super::Spacing;
     use super::super::vocabulary::{PersonalRules, Term};
     use super::*;
 
@@ -154,11 +155,15 @@ mod tests {
         let mut typed = String::new();
         let put = |text: &str, typed: &mut String| {
             let mut caret = Caret::between(typed, "");
-            let spaced = match vocabulary.correct_spoken(text, typed) {
-                Some(corrected) if corrected.joins_before => caret.attach_open(&corrected.text),
-                Some(corrected) => caret.insert_open(&corrected.text),
-                None => caret.insert_open(text),
+            let (text, joins_before) = match vocabulary.correct_spoken(text, typed) {
+                Some(corrected) => (corrected.text, corrected.joins_before),
+                None => (text.to_owned(), false),
             };
+            let spacing = Spacing {
+                joins_before,
+                defers_ending: true,
+            };
+            let spaced = caret.insert_with(&text, spacing);
             typed.push_str(&spaced);
         };
         for (piece, sentence_ended_before) in pieces {

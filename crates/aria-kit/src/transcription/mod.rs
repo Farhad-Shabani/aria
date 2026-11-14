@@ -14,7 +14,7 @@ pub use layer::{
     RemoveRepeats, Unheld, Vocabulary,
 };
 pub use sentences::{Punctuated, SentenceEnds};
-pub use spacing::Caret;
+pub use spacing::{Caret, Spacing};
 
 use std::path::PathBuf;
 

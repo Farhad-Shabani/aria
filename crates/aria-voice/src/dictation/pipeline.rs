@@ -7,7 +7,9 @@ use aria_kit::speaker::Embedder;
 use aria_kit::speaker::{Admission, Gate, Released, Speaker, Timeline, TurnFeed};
 use aria_kit::transcription::Heard;
 use aria_kit::transcription::layer::Layer;
-use aria_kit::transcription::{DeferredWords, Punctuated, SentenceEnds, Unheld, check_cancelled};
+use aria_kit::transcription::{
+    Corrected, DeferredWords, Punctuated, SentenceEnds, Spacing, Unheld, check_cancelled,
+};
 use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector};
 
 use crate::hearing::{
@@ -29,7 +31,7 @@ use aria_speaker::wespeaker::WeSpeaker;
 use super::{
     CaptionSnapshot, Delivered, DeliveryMode, DictationError, DictationEventEmitter,
     DictationResult, DictationSettings, DictationStage, ExecutionControl, GhostSnapshot,
-    HeardSpeaker, Spacing, StopMode, Transcribed, TranscriptSink, Utterance,
+    HeardSpeaker, StopMode, Transcribed, TranscriptSink, Utterance,
 };
 use super::{Cleanup, Meter, Rewrites, rewrites};
 
@@ -889,10 +891,8 @@ where
 
 /// A segment's text once corrected, ready to punctuate and type.
 struct CorrectedSegment {
-    text: String,
+    corrected: Corrected,
     sentence_ended_before: Option<bool>,
-    /// `text` opens with a spoken symbol that joins the last word typed.
-    joins_before: bool,
 }
 
 /// What a stream holds back at each segment's end: the closing mark, and
@@ -1019,14 +1019,16 @@ impl<'a> Published<'a> {
         let before = self
             .ends
             .context(unheld.sentence_ended_before, &self.written);
-        let (text, joins_before) = match self.vocabulary.correct_spoken(&unheld.text, before) {
-            Some(corrected) => (corrected.text, corrected.joins_before),
-            None => (unheld.text, false),
-        };
+        let corrected = self
+            .vocabulary
+            .correct_spoken(&unheld.text, before)
+            .unwrap_or(Corrected {
+                text: unheld.text,
+                joins_before: false,
+            });
         CorrectedSegment {
-            text,
+            corrected,
             sentence_ended_before: unheld.sentence_ended_before,
-            joins_before,
         }
     }
 
@@ -1051,7 +1053,7 @@ impl<'a> Published<'a> {
         self.ghost = None;
         self.heard_to = heard.window.end;
         // A streamed segment of only fillers or held words has nothing to type.
-        if segment.text.is_empty() {
+        if segment.corrected.text.is_empty() {
             return Ok(());
         }
         self.type_text(segment, heard.window.start, heard.span, speaker, sinks)
@@ -1129,15 +1131,15 @@ impl<'a> Published<'a> {
         let punctuated = if self.streaming {
             self.ends
                 .sentences
-                .punctuate(&segment.text, segment.sentence_ended_before)
+                .punctuate(&segment.corrected.text, segment.sentence_ended_before)
         } else {
             Punctuated {
-                text: segment.text.clone(),
+                text: segment.corrected.text.clone(),
                 defers_ending: false,
             }
         };
         let spacing = Spacing {
-            joins_before: segment.joins_before,
+            joins_before: segment.corrected.joins_before,
             defers_ending: punctuated.defers_ending,
         };
         self.keep(&punctuated.text, spacing);
@@ -1244,7 +1246,7 @@ impl<'a> Published<'a> {
     }
 
     fn keep(&mut self, text: &str, spacing: Spacing) {
-        let spaced = spacing.insert(text, &mut Caret::between(&self.written, ""));
+        let spaced = Caret::between(&self.written, "").insert_with(text, spacing);
         self.written.push_str(&spaced);
     }
 
@@ -1258,7 +1260,7 @@ impl<'a> Published<'a> {
         sinks: &S,
     ) {
         if let Some(caption) = &mut self.caption {
-            let spaced = spacing.insert(text, &mut Caret::between(&caption.finalized, ""));
+            let spaced = Caret::between(&caption.finalized, "").insert_with(text, spacing);
             caption.finalized = caption_suffix(&format!("{}{spaced}", caption.finalized));
             self.events.emit(caption.clone());
         }
@@ -3007,9 +3009,11 @@ mod tests {
         S::Error: Into<DictationError>,
     {
         let segment = CorrectedSegment {
-            text: text.to_owned(),
+            corrected: Corrected {
+                text: text.to_owned(),
+                joins_before: false,
+            },
             sentence_ended_before: heard.segment.sentence_ended_before(),
-            joins_before: false,
         };
         published.publish(heard, &segment, None, sinks)
     }
@@ -3111,7 +3115,11 @@ mod tests {
                 let spaced = if let Some(segment) = entry.strip_prefix("segment:") {
                     caret.insert(segment)
                 } else if let Some(joined) = entry.strip_prefix("joined:") {
-                    caret.attach(joined)
+                    let joins = Spacing {
+                        joins_before: true,
+                        ..Spacing::default()
+                    };
+                    caret.insert_with(joined, joins)
                 } else {
                     continue;
                 };

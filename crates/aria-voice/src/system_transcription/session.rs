@@ -9,6 +9,7 @@ use std::thread;
 use aria_kit::audio::canonical_duration;
 use aria_kit::cancel::CancelToken;
 use aria_kit::speaker::{Admission, Released, TurnFeed};
+use aria_kit::transcription::Spacing;
 use aria_kit::voice_activity::{SpeechDetector, VoiceActivityDetector};
 use aria_stt::EngineConfig;
 
@@ -21,7 +22,7 @@ use aria_kit::audio::RecordingReader;
 use super::event::{SystemTranscriptionEventEmitter, SystemTranscriptionStage};
 use super::{SystemAudioCapture, SystemTranscriptionError, TranscriptFile};
 
-use crate::dictation::{Spacing, Utterance};
+use crate::dictation::Utterance;
 use crate::speaker::{self, Diarizer, Label, VoiceTrack, VoiceprintTracker};
 use aria_speaker::wespeaker::WeSpeaker;
 

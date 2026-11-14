@@ -24,6 +24,17 @@ pub struct Caret {
     after: Option<char>,
 }
 
+/// How inserted text meets the text around the caret.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Spacing {
+    /// The text opens with a spoken symbol that joins the last word typed,
+    /// as "src" then "slash main" types `src/main`. No space comes before it.
+    pub joins_before: bool,
+    /// The text's closing mark is held back for the next text, so its end
+    /// stays open, as [`Caret::insert_open`] leaves it.
+    pub defers_ending: bool,
+}
+
 impl Caret {
     /// A caret with `before` to its left and `after` to its right. Pass the
     /// whole field split at the cursor; only the characters next to it count.
@@ -40,35 +51,25 @@ impl Caret {
     /// To retry a failed typing, insert again from a copy taken before.
     #[must_use = "the caret has moved past text that must be typed"]
     pub fn insert(&mut self, text: &str) -> String {
-        let leading = self.needs_leading_space(text);
-        self.typed(text, leading, true)
+        self.insert_with(text, Spacing::default())
     }
 
     /// Like [`Caret::insert`], but leaves `text`'s end open so the next
     /// insertion can attach to it. A later insert supplies the space.
     #[must_use = "the caret has moved past text that must be typed"]
     pub fn insert_open(&mut self, text: &str) -> String {
-        let leading = self.needs_leading_space(text);
-        self.typed(text, leading, false)
+        let spacing = Spacing {
+            defers_ending: true,
+            ..Spacing::default()
+        };
+        self.insert_with(text, spacing)
     }
 
-    /// Like [`Caret::insert`], but `text` joins the text before the caret
-    /// with no space, as a spoken symbol joins the word before it: "src",
-    /// then "slash main", types `src/main`.
+    /// Like [`Caret::insert`], with the spaces `spacing` leaves out.
     #[must_use = "the caret has moved past text that must be typed"]
-    pub fn attach(&mut self, text: &str) -> String {
-        self.typed(text, false, true)
-    }
-
-    /// Like [`Caret::attach`], but leaves `text`'s end open, as
-    /// [`Caret::insert_open`] does.
-    #[must_use = "the caret has moved past text that must be typed"]
-    pub fn attach_open(&mut self, text: &str) -> String {
-        self.typed(text, false, false)
-    }
-
-    fn typed(&mut self, text: &str, leading: bool, closed: bool) -> String {
-        let trailing = closed && self.needs_trailing_space(text);
+    pub fn insert_with(&mut self, text: &str, spacing: Spacing) -> String {
+        let leading = !spacing.joins_before && self.needs_leading_space(text);
+        let trailing = !spacing.defers_ending && self.needs_trailing_space(text);
         let mut spaced = String::with_capacity(text.len() + 2);
         if leading {
             spaced.push(' ');
@@ -177,11 +178,28 @@ mod tests {
     }
 
     #[test]
-    fn only_attached_text_joins_the_word_before() {
-        assert_eq!(Caret::between("src", "").attach("/main"), "/main");
-        assert_eq!(Caret::between("user", "").attach("_id"), "_id");
-        assert_eq!(Caret::between("src", "x").attach("/main"), "/main ");
-        assert_eq!(Caret::between("src", "x").attach_open("/main"), "/main");
+    fn only_joined_text_attaches_to_the_word_before() {
+        let joins = Spacing {
+            joins_before: true,
+            ..Spacing::default()
+        };
+        let joins_open = Spacing {
+            defers_ending: true,
+            ..joins
+        };
+        assert_eq!(
+            Caret::between("src", "").insert_with("/main", joins),
+            "/main"
+        );
+        assert_eq!(Caret::between("user", "").insert_with("_id", joins), "_id");
+        assert_eq!(
+            Caret::between("src", "x").insert_with("/main", joins),
+            "/main "
+        );
+        assert_eq!(
+            Caret::between("src", "x").insert_with("/main", joins_open),
+            "/main"
+        );
         assert_eq!(Caret::between("run", "").insert("/compact"), " /compact");
         assert_eq!(Caret::between("user", "").insert("_id"), " _id");
         assert_eq!(Caret::between("aria", "").insert("-kit"), " -kit");

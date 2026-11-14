@@ -1,8 +1,9 @@
 use super::execution::{ArmedReturn, TakenReturn};
 use super::{
     Delivered, DeliveryMode, DeliveryOutcome, DictationError, DictationSettings, ExecutionControl,
-    Spacing, TranscriptSink, Utterance,
+    TranscriptSink, Utterance,
 };
+use aria_kit::transcription::Spacing;
 use aria_platform::delivery::{
     Caret, DeliveryError, Finished, OutputMode, Placement, TextDelivery,
 };
@@ -226,7 +227,7 @@ fn without_owed_mark(text: &str) -> &str {
 fn spaced(queue: &[Queued], caret: &mut Caret) -> String {
     queue
         .iter()
-        .map(|queued| queued.spacing.insert(&queued.text, caret))
+        .map(|queued| caret.insert_with(&queued.text, queued.spacing))
         .collect()
 }
 

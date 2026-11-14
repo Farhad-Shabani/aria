@@ -310,7 +310,7 @@ impl TranscriptSink for History {
             && !self.oversized
         {
             let mut caret = Caret::between(&entry.text, "");
-            let spaced = utterance.spacing.insert(utterance.text, &mut caret);
+            let spaced = caret.insert_with(utterance.text, utterance.spacing);
             if entry.text.len() + spaced.len() > MAX_ENTRY_BYTES {
                 self.oversized = true;
             } else {
