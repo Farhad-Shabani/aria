@@ -120,9 +120,13 @@ impl Vocabulary {
     /// Corrects dictated `text` in one pass: terms, spoken forms, numbers,
     /// symbols, then personal rules on what nothing claimed.
     /// `before` is text already typed: a symbol `text` opens with joins its
-    /// last word.
+    /// last word, unless whitespace ends it.
     pub fn correct_spoken(&self, text: &str, before: &str) -> Option<Corrected> {
-        let Some(typed) = before.split_whitespace().next_back() else {
+        let typed = before
+            .rsplit(char::is_whitespace)
+            .next()
+            .filter(|word| !word.is_empty());
+        let Some(typed) = typed else {
             let text = self.spoken(text, 0)?;
             return Some(Corrected {
                 text,

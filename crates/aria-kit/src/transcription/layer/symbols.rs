@@ -216,6 +216,8 @@ mod tests {
     #[case::hyphen_before_a_long_number("version", "hyphen twenty five", Some(("-25", true)))]
     #[case::hyphen_after_a_symbol_word("the end, underscore", "hyphen twenty", Some(("hyphen 20", false)))]
     #[case::digits_after_an_opening_symbol("python", "underscore three dot twelve", Some(("_3.12", true)))]
+    #[case::space_typed_after("src ", "slash main", None)]
+    #[case::line_break_typed_after("src\n", "slash main", None)]
     #[case::nothing_typed("", "underscore id", None)]
     #[case::punctuation_typed("user,", "underscore id", None)]
     fn opens_onto_the_word_typed_before(

@@ -932,10 +932,9 @@ impl SegmentEnds {
     }
 
     /// The typed text a symbol opening the next text may join. A sentence
-    /// end or a line break between them leaves none.
+    /// end between them leaves none.
     fn context<'a>(&self, sentence_ended_before: Option<bool>, typed: &'a str) -> &'a str {
-        let line_break = typed[typed.trim_end().len()..].contains('\n');
-        if !self.sentences.reads_on(sentence_ended_before) || line_break {
+        if !self.sentences.reads_on(sentence_ended_before) {
             return "";
         }
         typed
