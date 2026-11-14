@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-/// A span of the text: plain text between spaces or claims, or a claim of
-/// any length.
+/// A span of the text: plain text between spaces or claims, a run of words
+/// a step kept whole, or a claim of any length.
 #[derive(Clone)]
 pub(super) struct Word<'a> {
     pub(super) span: Range<usize>,

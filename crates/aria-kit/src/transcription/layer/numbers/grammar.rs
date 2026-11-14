@@ -78,8 +78,8 @@ enum Token {
     Oh,
 }
 
-/// Reads `words`, in lowercase, as digits said one at a time, the way the
-/// words after "point" are: "one zero zero" is `100`.
+/// Reads `words`, in lowercase, the way the words after "point" are: "one
+/// zero zero" is `100`, "fifty fifty" is `5050`.
 pub(super) fn digits(words: &[&str]) -> Option<String> {
     let tokens = Token::parse_all(words)?;
     let mut parser = Parser {
