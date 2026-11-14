@@ -394,13 +394,26 @@ fn normalize(text: &str) -> String {
         .to_lowercase()
 }
 
+/// How a recognizer writes `character` in a term, as "dash" in "aria dash
+/// stt". Not the symbol words dictation joins: those say "hyphen".
+fn spoken_symbol(character: char) -> Option<&'static str> {
+    match character {
+        '-' => Some("dash"),
+        '_' => Some("underscore"),
+        '.' => Some("dot"),
+        '/' => Some("slash"),
+        '\\' => Some("backslash"),
+        _ => None,
+    }
+}
+
 fn aliases(canonical: &str) -> Vec<String> {
     let mut aliases = Vec::new();
     for punctuation in [true, false] {
         for spell_letters in [false, true] {
             if !punctuation
                 && (!spell_letters
-                    || !canonical.split(['-', '_', '.']).any(|part| {
+                    || !canonical.split(|c| spoken_symbol(c).is_some()).any(|part| {
                         !part.is_empty()
                             && part.len() <= 3
                             && part.chars().all(|c| c.is_ascii_alphabetic())
@@ -423,14 +436,7 @@ fn aliases(canonical: &str) -> Vec<String> {
                 word.clear();
             };
             for character in canonical.chars() {
-                if let Some(spoken) = match character {
-                    '-' => Some("dash"),
-                    '_' => Some("underscore"),
-                    '.' => Some("dot"),
-                    '/' => Some("slash"),
-                    '\\' => Some("backslash"),
-                    _ => None,
-                } {
+                if let Some(spoken) = spoken_symbol(character) {
                     push_word(&mut word, &mut parts);
                     if punctuation {
                         parts.push(spoken.to_owned());
@@ -561,6 +567,8 @@ mod tests {
             Some("écho-stt 😊".to_owned())
         );
         assert_eq!(matcher.correct("aria dot stt"), None);
+        let matcher = compile(&["CI/CD"], PersonalRules::default());
+        assert_eq!(matcher.correct("run c i c d"), Some("run CI/CD".to_owned()));
         assert_eq!(matcher.correct("xaria dash stt aria dash sttx"), None);
     }
 
