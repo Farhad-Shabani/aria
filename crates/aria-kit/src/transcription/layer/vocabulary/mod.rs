@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::convert::Infallible;
 
 use crate::cancel::CancelToken;
 
@@ -7,6 +8,7 @@ mod personal;
 pub use personal::PersonalRules;
 
 use super::claim::{Claimed, Word};
+use super::symbol_words;
 
 const MAX_TERMS: usize = 100_000;
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
@@ -206,46 +208,61 @@ impl Vocabulary {
         claim: impl FnOnce(&mut Claimed<'a>),
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Option<String>, E> {
-        self.correct_after(text, 0, claim, check)
-    }
-
-    /// Like [`Self::correct_with`], for `text` that opens with a word
-    /// already typed, up to `typed`. That word types as it stands: no term
-    /// reads across it, and no step changes it.
-    pub(super) fn correct_after<'a, E>(
-        &'a self,
-        text: &'a str,
-        typed: usize,
-        claim: impl FnOnce(&mut Claimed<'a>),
-        check: &impl Fn(usize) -> Result<(), E>,
-    ) -> Result<Option<String>, E> {
-        let claimed = self.claimed(text, typed, claim, check)?;
+        let claimed = self.claimed(text, claim, check)?;
         self.typed(text, claimed.words(), check)
     }
 
     pub(super) fn claimed<'a, E>(
         &'a self,
         text: &'a str,
-        typed: usize,
         claim: impl FnOnce(&mut Claimed<'a>),
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Claimed<'a>, E> {
         check(text.len())?;
-        let mut words = Vec::new();
-        if typed > 0 {
-            words.push(Word::claimed(0..typed, Cow::Borrowed(&text[..typed])));
-        }
-        words.extend(
-            self.words(&text[typed..], check)?
-                .into_iter()
-                .map(|word| Word {
-                    span: word.span.start + typed..word.span.end + typed,
-                    ..word
-                }),
-        );
-        let mut claimed = Claimed::new(words, text.len());
+        let mut claimed = Claimed::new(self.words(text, check)?, text.len());
         claim(&mut claimed);
         Ok(claimed)
+    }
+
+    /// Like [`Self::correct_with`], for dictated text, which nothing
+    /// cancels. See [`Self::claimed_spoken`] for `typed_len`.
+    pub(super) fn correct_spoken_with<'a>(
+        &'a self,
+        text: &'a str,
+        typed_len: usize,
+        claim: impl FnOnce(&mut Claimed<'a>),
+    ) -> Option<String> {
+        let claimed = self.claimed_spoken(text, typed_len, claim);
+        self.typed(text, claimed.words(), &no_check)
+            .unwrap_or_else(|never| match never {})
+    }
+
+    /// Like [`Self::claimed`], for dictated text, which nothing cancels.
+    /// Its first `typed_len` bytes are a word already typed. That word types
+    /// as it stands: no term reads across it, and no step changes it.
+    pub(super) fn claimed_spoken<'a>(
+        &'a self,
+        text: &'a str,
+        typed_len: usize,
+        claim: impl FnOnce(&mut Claimed<'a>),
+    ) -> Claimed<'a> {
+        let mut words = Vec::new();
+        if typed_len > 0 {
+            words.push(Word::claimed(
+                0..typed_len,
+                Cow::Borrowed(&text[..typed_len]),
+            ));
+        }
+        let heard = self
+            .words(&text[typed_len..], &no_check)
+            .unwrap_or_else(|never| match never {});
+        words.extend(heard.into_iter().map(|word| Word {
+            span: word.span.start + typed_len..word.span.end + typed_len,
+            ..word
+        }));
+        let mut claimed = Claimed::new(words, text.len());
+        claim(&mut claimed);
+        claimed
     }
 
     pub(super) fn claim_forms<'a>(&'a self, text: &str, claimed: &mut Claimed<'a>) {
@@ -425,12 +442,12 @@ fn normalize(text: &str) -> String {
 fn spoken_symbol(character: char) -> Option<&'static str> {
     match character {
         '-' => Some("dash"),
-        '_' => Some("underscore"),
-        '.' => Some("dot"),
-        '/' => Some("slash"),
-        '\\' => Some("backslash"),
-        _ => None,
+        _ => symbol_words::word(character),
     }
+}
+
+fn no_check(_: usize) -> Result<(), Infallible> {
+    Ok(())
 }
 
 fn aliases(canonical: &str) -> Vec<String> {

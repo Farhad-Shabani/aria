@@ -1,5 +1,3 @@
-use std::convert::Infallible;
-
 use crate::cancel::CancelToken;
 
 use super::claim::Claimed;
@@ -113,8 +111,8 @@ fn claim_each<'a>(
 pub struct Corrected {
     pub text: String,
     /// `text` opens with a spoken symbol that joins the last word typed
-    /// before it. Type it with no space between, as
-    /// [`Caret::attach`](crate::transcription::Caret::attach) does.
+    /// before it, so no space comes between them. This is
+    /// [`Spacing::joins_before`](crate::transcription::Spacing::joins_before).
     pub joins_before: bool,
 }
 
@@ -147,15 +145,12 @@ impl Vocabulary {
         })
     }
 
-    /// `text` corrected by every step, after the word typed up to `typed`.
-    fn spoken(&self, text: &str, typed: usize) -> Option<String> {
-        self.correct_after(
-            text,
-            typed,
-            |claimed| claim_each(&SPOKEN, text, self, claimed),
-            &|_| Ok::<_, Infallible>(()),
-        )
-        .unwrap_or_else(|never| match never {})
+    /// `text` corrected by every step, after its first `typed_len` bytes,
+    /// a word already typed.
+    fn spoken(&self, text: &str, typed_len: usize) -> Option<String> {
+        self.correct_spoken_with(text, typed_len, |claimed| {
+            claim_each(&SPOKEN, text, self, claimed);
+        })
     }
 
     /// Where the words at the end of dictated `text` that more speech may
@@ -168,14 +163,9 @@ impl Vocabulary {
     /// types rather than holds.
     pub(super) fn spoken_deferred_from(&self, text: &str, max_words: usize) -> usize {
         let unjoined = SPOKEN.iter().take_while(|step| !step.joins()).count();
-        let mut claimed = self
-            .claimed(
-                text,
-                0,
-                |claimed| claim_each(&SPOKEN[..unjoined], text, self, claimed),
-                &|_| Ok::<_, Infallible>(()),
-            )
-            .unwrap_or_else(|never| match never {});
+        let mut claimed = self.claimed_spoken(text, 0, |claimed| {
+            claim_each(&SPOKEN[..unjoined], text, self, claimed);
+        });
         loop {
             let from = claimed.deferred_from();
             for step in SPOKEN {
