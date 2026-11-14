@@ -91,7 +91,7 @@ fn links(text: &str, words: &[Word<'_>]) -> Vec<Option<char>> {
         };
         let left_joins = index > 0 && joins_after(text, words, index - 1);
         let line_break = text[words[index].span.end..words[index + 1].span.start].contains('\n');
-        let right = words[index + 1].typed(text);
+        let right = in_join(text, &words[index + 1]);
         if left_joins && !line_break && joinable_after_a_symbol(right) {
             links[index] = Some(character);
         }
@@ -111,7 +111,12 @@ fn unclaimed_symbol(text: &str, word: &Word<'_>) -> Option<char> {
 /// no line break between them, and the word can sit in a join.
 fn joins_after(text: &str, words: &[Word<'_>], left: usize) -> bool {
     let line_break = text[words[left].span.end..words[left + 1].span.start].contains('\n');
-    !line_break && joinable_before_a_symbol(words[left].typed(text))
+    !line_break && joinable_before_a_symbol(in_join(text, &words[left]))
+}
+
+/// What `word` types in a join: "one four" types `14`.
+fn in_join<'s>(text: &'s str, word: &'s Word<'_>) -> &'s str {
+    word.joined.as_deref().unwrap_or_else(|| word.typed(text))
 }
 
 /// Whether `word` can sit before a symbol in a join, punctuation before it

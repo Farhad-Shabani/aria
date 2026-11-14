@@ -206,6 +206,8 @@ mod tests {
     #[case::cents_right_after_dollars(&[("five dollars", None), ("fifty", None), ("cents", None)], "$5.50")]
     #[case::bracket_before_a_number(&[("(twenty", None), ("one)", None)], "(21)")]
     #[case::digit_words_around_a_symbol(&[("version two", None), ("dot", None), ("five", None)], "version 2.5")]
+    #[case::digits_go_on_after_a_symbol(&[("thirty dot one", None), ("zero zero", None)], "30.100")]
+    #[case::digits_split_around_a_symbol(&[("three", None), ("dot one", None), ("four", None)], "3.14")]
     #[case::hyphen_before_a_number(&[("utf hyphen", None), ("sixteen", None)], "utf-16")]
     #[case::hyphen_before_a_split_number(&[("version hyphen twenty", None), ("five", None)], "version-25")]
     fn writes_numbers_across_segments(

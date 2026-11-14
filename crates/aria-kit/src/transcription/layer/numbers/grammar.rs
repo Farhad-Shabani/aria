@@ -33,11 +33,7 @@ impl Number {
     /// words, "point", "and", and "o" for a zero after the point. Anything
     /// English doesn't say as one number is `None`, as "one two three" is.
     pub(super) fn parse(words: &[&str]) -> Option<Self> {
-        let tokens = words
-            .iter()
-            .map(|word| Token::parse(word))
-            .collect::<Option<Vec<_>>>()?
-            .concat();
+        let tokens = Token::parse_all(words)?;
         let mut parser = Parser {
             tokens: &tokens,
             at: 0,
@@ -82,7 +78,29 @@ enum Token {
     Oh,
 }
 
+/// Reads `words`, in lowercase, as digits said one at a time, the way the
+/// words after "point" are: "one zero zero" is `100`.
+pub(super) fn digits(words: &[&str]) -> Option<String> {
+    let tokens = Token::parse_all(words)?;
+    let mut parser = Parser {
+        tokens: &tokens,
+        at: 0,
+    };
+    let digits = parser.fraction()?;
+    (parser.at == tokens.len()).then_some(digits)
+}
+
 impl Token {
+    fn parse_all(words: &[&str]) -> Option<Vec<Self>> {
+        Some(
+            words
+                .iter()
+                .map(|word| Self::parse(word))
+                .collect::<Option<Vec<_>>>()?
+                .concat(),
+        )
+    }
+
     /// The tokens one word in lowercase holds: "twenty-one" holds two.
     fn parse(word: &str) -> Option<Vec<Self>> {
         match word {

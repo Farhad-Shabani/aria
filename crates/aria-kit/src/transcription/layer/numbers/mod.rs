@@ -4,7 +4,7 @@ mod unit;
 use std::borrow::Cow;
 use std::ops::Range;
 
-use self::grammar::Number;
+use self::grammar::{Number, digits};
 use self::unit::Unit;
 use super::claim::{Claimed, Word};
 use super::number_words::{continues, is_number_word, is_ordinal};
@@ -14,7 +14,8 @@ use super::number_words::{continues, is_number_word, is_ordinal};
 /// a stream never cuts inside it, nor between a number and the ordinal that
 /// keeps it words. A lone digit word stays a word, as "one" in "no one
 /// knows" is, but keeps its digit for a spoken symbol that joins it to
-/// another number: `2.5` in "two dot five".
+/// another number: `2.5` in "two dot five". So does a run of digits said one
+/// at a time: `3.14` in "three dot one four".
 ///
 /// A number the text ends on is deferred while more speech may go on with
 /// it: more number words, a "point" or "and" it ends on, or cents after its
@@ -35,7 +36,13 @@ pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
         let whole = |end: usize| words[run.start].span.start..words[end - 1].span.end;
         let Some(number) = scan.number(&run) else {
             claimed.keep_whole(whole(run.end));
-            claimed.extend(words[run.clone()].iter().cloned());
+            match scan.digits(&run) {
+                Some(digits) => claimed.push(Word {
+                    joined: Some(Cow::Owned(digits)),
+                    ..Word::plain(whole(run.end))
+                }),
+                None => claimed.extend(words[run.clone()].iter().cloned()),
+            }
             index = run.end;
             continue;
         };
@@ -190,6 +197,13 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         Number::parse(&said)
     }
 
+    /// The digits `run` says one at a time, with its punctuation.
+    fn digits(&self, run: &Range<usize>) -> Option<String> {
+        let said: Vec<&str> = run.clone().filter_map(|index| self.word(index)).collect();
+        let digits = digits(&said)?;
+        Some(self.punctuated(run.start, &digits, run.end))
+    }
+
     /// How `number`, said by `run`, types.
     fn spelling(&self, number: &Number, run: &Range<usize>) -> Spelling {
         if let Some(counted) = self.counted(number, run) {
@@ -339,7 +353,11 @@ mod tests {
     #[case::digit_word_a_symbol_joins_to_a_word("user underscore one", "user_one")]
     #[case::digits_inside_a_longer_join("user underscore one dot two", "user_1.2")]
     #[case::word_after_joined_digits("two dot five underscore user", "2.5_user")]
-    #[case::digit_word_beside_digit_words("five dot one two", "five.one two")]
+    #[case::digits_after_a_symbol("thirty dot one zero zero", "30.100")]
+    #[case::digit_words_after_a_symbol("three dot one four", "3.14")]
+    #[case::zeros_around_a_symbol("zero dot zero one", "0.01")]
+    #[case::digits_on_both_sides("one nine two dot one six eight", "192.168")]
+    #[case::digits_after_a_version("version two dot one zero", "version 2.10")]
     #[case::digit_word_beside_a_scale_word("two million dot five", "2 million dot five")]
     #[case::digit_word_beside_dollars("two dot five dollars", "two dot $5")]
     #[case::digit_word_beside_a_scale_alone("hundred dot five", "hundred.five")]
@@ -370,6 +388,7 @@ mod tests {
     #[case::scale_word_first_before_more("a hundred and fifty")]
     #[case::run_with_no_one_form("fifty fifty")]
     #[case::and_between_digit_words("one and two")]
+    #[case::digit_words_no_symbol_joins("count one two three")]
     #[case::point_without_a_number_before("point five")]
     #[case::plural_after_one("one dollars")]
     #[case::comma_between("one, two")]
