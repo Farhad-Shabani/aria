@@ -70,8 +70,6 @@ public nonisolated struct Aria_Daemon_V1_Microphone: Sendable {
   /// The device's name, such as "MacBook Pro Microphone".
   public var label: String = String()
 
-  public var systemDefault: Bool = false
-
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -141,7 +139,7 @@ nonisolated extension Aria_Daemon_V1_ListMicrophonesResponse: SwiftProtobuf.Mess
 
 nonisolated extension Aria_Daemon_V1_Microphone: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Microphone"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}label\0\u{3}system_default\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}label\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -151,7 +149,6 @@ nonisolated extension Aria_Daemon_V1_Microphone: SwiftProtobuf.Message, SwiftPro
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.label) }()
-      case 3: try { try decoder.decodeSingularBoolField(value: &self.systemDefault) }()
       default: break
       }
     }
@@ -164,16 +161,12 @@ nonisolated extension Aria_Daemon_V1_Microphone: SwiftProtobuf.Message, SwiftPro
     if !self.label.isEmpty {
       try visitor.visitSingularStringField(value: self.label, fieldNumber: 2)
     }
-    if self.systemDefault != false {
-      try visitor.visitSingularBoolField(value: self.systemDefault, fieldNumber: 3)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_Microphone, rhs: Aria_Daemon_V1_Microphone) -> Bool {
     if lhs.id != rhs.id {return false}
     if lhs.label != rhs.label {return false}
-    if lhs.systemDefault != rhs.systemDefault {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

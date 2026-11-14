@@ -2687,7 +2687,6 @@ pub(crate) fn microphones(
             .map(|device| wire::Microphone {
                 id: device.id.to_string(),
                 label: device.name.clone(),
-                system_default: device.system_default,
             })
             .collect(),
         current_id: current.map(|device| device.id.to_string()),

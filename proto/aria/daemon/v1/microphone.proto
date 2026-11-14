@@ -27,5 +27,4 @@ message Microphone {
   string id = 1;
   // The device's name, such as "MacBook Pro Microphone".
   string label = 2;
-  bool system_default = 3;
 }
