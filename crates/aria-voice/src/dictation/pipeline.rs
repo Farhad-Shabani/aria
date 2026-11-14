@@ -758,6 +758,7 @@ where
                     deliver(published, sinks, released)?;
                 }
             }
+            published.release_overdue(vocabulary, sinks)?;
             published.retry(sinks);
             Ok(())
         };
@@ -908,6 +909,10 @@ impl SegmentEnds {
 /// The least time between two tries of queued text.
 const QUEUE_RETRY: Duration = Duration::from_millis(250);
 
+/// How long held words wait for more speech. After a pause this long the
+/// speaker has moved on, and typing the words beats holding them back.
+const HELD_WAIT: Duration = Duration::from_millis(1500);
+
 /// What one dictation has put out so far, with the events and logs each
 /// step owes.
 struct Published<'a> {
@@ -925,6 +930,8 @@ struct Published<'a> {
     /// When queued text last tried to type, so a silent return is noticed
     /// without asking on every wake.
     retried: Option<Instant>,
+    /// When the words now held were last added to, so a pause is noticed.
+    held_since: Option<Instant>,
     caption: Option<CaptionSnapshot>,
     completion: Completion,
     control: &'a ExecutionControl,
@@ -947,6 +954,7 @@ impl<'a> Published<'a> {
             heard_to: 0,
             failure: None,
             retried: None,
+            held_since: None,
             caption: settings
                 .route
                 .delivers()
@@ -962,9 +970,12 @@ impl<'a> Published<'a> {
     /// up to the ones more speech may still change.
     fn hold(&mut self, text: &str, heard: &Heard, vocabulary: Option<&Vocabulary>) -> Unheld {
         let vocabulary = rewrites::spoken(vocabulary);
-        self.ends
+        let unheld = self
+            .ends
             .words
-            .hold(text, heard.segment.sentence_ended_before(), vocabulary)
+            .hold(text, heard.segment.sentence_ended_before(), vocabulary);
+        self.held_since = self.ends.words.is_holding().then(Instant::now);
+        unheld
     }
 
     /// Corrects `unheld` after what the press published before it.
@@ -1025,12 +1036,44 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
+        self.held_since = None;
         let Some(mut held) = self.ends.words.finish() else {
             return Ok(());
         };
         self.correct(&mut held, vocabulary);
         self.type_text(&held, self.heard_to, None, None, sinks)
             .or_else(|error| self.undelivered(error))
+    }
+
+    /// Publishes the held words once they have waited `HELD_WAIT` with no
+    /// more words on the way, on any wake of the hearing loop. A decoder
+    /// still showing unfinished words means the speaker went on.
+    fn release_overdue<S>(
+        &mut self,
+        vocabulary: Option<&Vocabulary>,
+        sinks: &mut S,
+    ) -> Result<(), DictationError>
+    where
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+    {
+        let overdue = self
+            .held_since
+            .is_some_and(|since| since.elapsed() >= HELD_WAIT);
+        if !overdue || self.is_previewing() {
+            return Ok(());
+        }
+        self.release_held(vocabulary, sinks)
+    }
+
+    /// Whether the decoder shows words it hasn't finalized yet.
+    fn is_previewing(&self) -> bool {
+        let ghost = self.ghost.as_deref().is_some_and(|text| !text.is_empty());
+        let caption = self
+            .caption
+            .as_ref()
+            .is_some_and(|caption| !caption.provisional.is_empty());
+        ghost || caption
     }
 
     /// Punctuates `unheld` and types it at `at`. The error is a delivery
@@ -5219,6 +5262,69 @@ mod tests {
         let result = published.finish(whole, false, &mut FailingPeriod).unwrap();
 
         assert_eq!(result.transcript.as_str(), "we should.");
+    }
+
+    /// A streaming press that heard "it is twenty" and holds "twenty".
+    fn holding_twenty<'a, S>(
+        directory: &std::path::Path,
+        settings: &DictationSettings,
+        control: &'a ExecutionControl,
+        events: &'a DictationEventEmitter,
+        sinks: &mut S,
+    ) -> Published<'a>
+    where
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+    {
+        let mut published = Published::new(settings, control, events, Instant::now());
+        let heard = heard(directory, "it is twenty");
+        let unheld = published.hold("it is twenty", &heard, None);
+        published.release(heard, &unheld, None, sinks).unwrap();
+        published
+    }
+
+    fn segments(log: &CallLog) -> Vec<String> {
+        log.entries()
+            .into_iter()
+            .filter(|entry| entry.starts_with("segment:"))
+            .collect()
+    }
+
+    #[test]
+    fn held_words_are_published_once_the_speaker_pauses() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
+        let mut published =
+            holding_twenty(directory.path(), &settings, &control, &events, &mut sinks);
+
+        published.release_overdue(None, &mut sinks).unwrap();
+        assert_eq!(segments(&log), ["segment:it is"]);
+
+        published.held_since = Instant::now().checked_sub(HELD_WAIT);
+        published.release_overdue(None, &mut sinks).unwrap();
+        assert_eq!(segments(&log), ["segment:it is", "segment:20"]);
+    }
+
+    #[test]
+    fn held_words_wait_while_the_decoder_shows_more_words() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
+        let mut published =
+            holding_twenty(directory.path(), &settings, &control, &events, &mut sinks);
+        published.held_since = Instant::now().checked_sub(HELD_WAIT);
+
+        published.provisional("one", &sinks);
+        published.release_overdue(None, &mut sinks).unwrap();
+
+        assert_eq!(segments(&log), ["segment:it is"]);
     }
 
     #[test]

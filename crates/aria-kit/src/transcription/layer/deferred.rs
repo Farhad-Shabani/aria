@@ -85,6 +85,11 @@ impl DeferredWords {
         unheld
     }
 
+    /// Whether words wait for the next segment.
+    pub fn is_holding(&self) -> bool {
+        self.held.is_some()
+    }
+
     /// Releases the held words once nothing follows.
     #[must_use = "held words are owed to the transcript"]
     pub fn finish(&mut self) -> Option<Unheld> {
