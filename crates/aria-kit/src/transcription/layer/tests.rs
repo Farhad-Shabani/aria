@@ -631,3 +631,54 @@ fn a_session_accumulates_past_the_segment_bound() {
         MAX_TEXT_BYTES + 1
     );
 }
+
+mod correction_order {
+    use rstest::rstest;
+
+    use super::super::Vocabulary;
+    use super::super::vocabulary::PersonalRules;
+
+    fn corrected(heard: &str, terms: &[&str], learned: &[(&str, &str)]) -> String {
+        let terms = terms.iter().map(|term| (*term).to_owned()).collect();
+        let learned = learned
+            .iter()
+            .map(|(spoken, typed)| ((*spoken).to_owned(), (*typed).to_owned()))
+            .collect();
+        let vocabulary = Vocabulary::compile(&[], PersonalRules::new(terms, learned)).unwrap();
+        vocabulary
+            .correct_spoken(heard, "")
+            .unwrap_or_else(|| heard.to_owned())
+    }
+
+    #[rstest]
+    #[case::spoken_form_before_a_number("i eighteen n", &["i18n"], &[], "i18n")]
+    #[case::learned_pair_before_a_number("open twenty four seven", &[], &[("twenty four seven", "24/7")], "open 24/7")]
+    #[case::number_beside_a_spoken_form("i eighteen n twenty one", &["i18n"], &[], "i18n 21")]
+    #[case::symbol_joins_a_spoken_form("i eighteen n underscore key", &["i18n"], &[], "i18n_key")]
+    #[case::symbol_joins_a_number("version twenty dot twenty one", &[], &[], "version 20.21")]
+    #[case::form_inside_punctuation("(teh, twenty one)", &[], &[("teh", "the")], "(the, 21)")]
+    #[case::near_miss_beside_a_number("kubernets twenty one", &["Kubernetes"], &[], "Kubernetes 21")]
+    #[case::form_with_a_symbol_inside("open cargo dot toml", &[], &[("cargo dot toml", "Cargo.toml")], "open Cargo.toml")]
+    #[case::form_opening_on_a_symbol_joins("example dot com", &[], &[("dot com", ".com")], "example.com")]
+    #[case::form_opening_on_a_symbol_with_no_word_before("dot com is taken", &[], &[("dot com", ".com")], ".com is taken")]
+    fn each_step_keeps_what_an_earlier_one_claimed(
+        #[case] heard: &str,
+        #[case] terms: &[&str],
+        #[case] learned: &[(&str, &str)],
+        #[case] typed: &str,
+    ) {
+        assert_eq!(corrected(heard, terms, learned), typed);
+    }
+
+    #[test]
+    fn a_term_keeps_its_number_words() {
+        let vocabulary = Vocabulary::new(["Area Fifty One"]).unwrap();
+        assert_eq!(vocabulary.correct_spoken("area fifty one", ""), None);
+        assert_eq!(
+            Vocabulary::default()
+                .correct_spoken("area fifty one", "")
+                .as_deref(),
+            Some("area 51")
+        );
+    }
+}

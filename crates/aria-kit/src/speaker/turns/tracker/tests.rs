@@ -1172,6 +1172,28 @@ fn source_admission_waits_for_its_pending_turn() {
     assert_eq!(release(&mut held, &timeline).len(), 1);
 }
 
+#[test]
+fn a_preview_kept_from_view_still_counts_as_undecided_words() {
+    let timeline = Timeline {
+        turns: vec![Turn {
+            span: 0..16_000,
+            judgment: Judgment::Pending,
+        }],
+        reached: 16_000,
+        open: true,
+        ..Timeline::default()
+    };
+    let mut gate = Gate::new(Admission::OwnerOnly, 0);
+    assert!(!gate.has_undecided_words());
+
+    gate.propose("one".to_owned(), Some(0..16_000), 16_000);
+    assert_eq!(gate.decide(&timeline, None).preview.as_deref(), Some(""));
+    assert!(gate.has_undecided_words());
+
+    gate.propose(String::new(), None, 16_000);
+    assert!(!gate.has_undecided_words());
+}
+
 fn heard_text(text: &str, window: Range<u64>) -> Heard {
     Heard {
         segment: crate::transcription::TranscriptSegment::new(text, Some(window.clone())).unwrap(),

@@ -1,5 +1,6 @@
 //! What dictation does to its words once the gate lets them out.
 
+use std::sync::LazyLock;
 use std::time::Instant;
 
 use aria_kit::cancel::CancelToken;
@@ -69,22 +70,9 @@ impl<L: Layer> Rewrites<L> {
         }
     }
 
-    /// Calls each layer directly rather than through `Layered`, whose 64 KiB
-    /// bound would stop deterministic cleanup on a long transcript. `typed`
-    /// is what the press typed before `text`, which no rewrite changes.
-    pub(crate) fn segment(
-        &self,
-        text: &mut String,
-        typed: &str,
-        cleanup: Cleanup,
-        vocabulary: Option<&Vocabulary>,
-        cancel: &CancelToken,
-    ) -> Result<(), TranscriptionError> {
-        self.clean(text, cleanup, cancel)?;
-        self.correct(text, typed, vocabulary);
-        check_cancelled(cancel)
-    }
-
+    /// Drops fillers from `text`. Calls each layer directly rather than
+    /// through `Layered`, whose 64 KiB bound would stop deterministic cleanup
+    /// on a long transcript.
     pub(crate) fn clean(
         &self,
         text: &mut String,
@@ -97,14 +85,6 @@ impl<L: Layer> Rewrites<L> {
             RemoveRepeats.apply(text, cancel)?;
         }
         Ok(())
-    }
-
-    pub(crate) fn correct(&self, text: &mut String, typed: &str, vocabulary: Option<&Vocabulary>) {
-        // Spoken symbols join even when the press has no vocabulary.
-        let no_terms = Vocabulary::default();
-        if let Some(corrected) = vocabulary.unwrap_or(&no_terms).correct_spoken(text, typed) {
-            *text = corrected;
-        }
     }
 
     /// Whether a transcript delivered whole goes to the cleanup model.
@@ -124,7 +104,11 @@ impl<L: Layer> Rewrites<L> {
         if cleanup.enabled && cleanup.backtrack {
             Backtrack.apply(&mut text, cancel)?;
         }
-        self.segment(&mut text, "", cleanup, vocabulary, cancel)?;
+        self.clean(&mut text, cleanup, cancel)?;
+        if let Some(corrected) = spoken(vocabulary).correct_spoken(&text, "") {
+            text = corrected;
+        }
+        check_cancelled(cancel)?;
         // Cleanup can leave nothing, and then this fails as `NoSpeech`.
         let transcript = Transcript::new(text)?;
         if !self.reaches_model(cleanup) {
@@ -153,34 +137,39 @@ impl<L: Layer> Rewrites<L> {
     }
 }
 
+/// The vocabulary a press corrects with. A press with none still writes
+/// numbers and joins spoken symbols.
+pub(crate) fn spoken(vocabulary: Option<&Vocabulary>) -> &Vocabulary {
+    static NO_TERMS: LazyLock<Vocabulary> = LazyLock::new(Vocabulary::default);
+    vocabulary.unwrap_or(&NO_TERMS)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn segment(heard: &str, vocabulary: Option<&Vocabulary>) -> String {
-        let mut text = heard.to_owned();
+    fn finished(heard: &str, vocabulary: Option<&Vocabulary>) -> String {
         Rewrites::new()
-            .segment(
-                &mut text,
-                "",
+            .finish(
+                Transcript::new(heard).unwrap(),
                 Cleanup::default(),
                 vocabulary,
                 &CancelToken::never(),
             )
-            .unwrap();
-        text
+            .unwrap()
+            .into_text()
     }
 
     #[test]
-    fn a_segment_joins_spoken_symbols_without_a_vocabulary() {
-        assert_eq!(segment("call user underscore id.", None), "call user_id.");
+    fn a_transcript_joins_spoken_symbols_without_a_vocabulary() {
+        assert_eq!(finished("call user underscore id.", None), "call user_id.");
     }
 
     #[test]
-    fn a_segment_joins_a_hyphen_after_its_vocabulary() {
+    fn a_transcript_joins_a_hyphen_after_its_vocabulary() {
         let vocabulary = Vocabulary::new(["aria-stt"]).unwrap();
         assert_eq!(
-            segment("aria dash stt hyphen test", Some(&vocabulary)),
+            finished("aria dash stt hyphen test", Some(&vocabulary)),
             "aria-stt-test"
         );
     }

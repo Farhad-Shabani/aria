@@ -7,10 +7,17 @@ use super::{TranscriptUpdate, TranscriptionError, check_cancelled};
 
 mod backtrack;
 pub use backtrack::Backtrack;
+mod claim;
+mod deferred;
+pub use deferred::{DeferredWords, Unheld};
 mod disfluencies;
 pub use disfluencies::{RemoveHesitations, RemoveRepeats};
+mod correction;
+mod number_words;
+mod numbers;
+pub use correction::JoinSymbols;
+mod symbol_words;
 mod symbols;
-pub use symbols::{DeferredSymbols, JoinSymbols};
 pub mod vocabulary;
 pub use vocabulary::Vocabulary;
 
