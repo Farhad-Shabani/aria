@@ -10,13 +10,13 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
-use super::Directory;
 use super::document::{self, Loaded, SettingsFile, Stamp, Text};
 use super::write::{self, Refusal, Settled};
 use super::{
     Apply, CheckedSettings, Key, Patch, Revision, SettingsError, SettingsFault, SettingsStatus,
     Written,
 };
+use super::{Directory, Microphone};
 use aria_platform::hotkey::AriaKey;
 use aria_primitives::error_chain;
 
@@ -91,6 +91,7 @@ pub struct SettingsCache {
     startup: StartupSettings,
     state: Mutex<State>,
     aria_key: watch::Sender<AriaKey>,
+    microphone: watch::Sender<Microphone>,
     project_vocabulary: watch::Sender<Option<Directory>>,
     status: watch::Sender<SettingsStatus>,
 }
@@ -115,6 +116,7 @@ impl SettingsCache {
         let stamp = text.as_ref().map(|text| text.stamp);
         let loaded = Loaded::parse(text.as_ref().map_or("", |text| &text.raw), &home)?;
         let (aria_key, _) = watch::channel(loaded.settings.aria_key());
+        let (microphone, _) = watch::channel(loaded.settings.microphone());
         let (project_vocabulary, _) = watch::channel(loaded.settings.project_vocabulary());
         let (status, _) = watch::channel(SettingsStatus {
             revision: loaded.revision.get(),
@@ -133,6 +135,7 @@ impl SettingsCache {
                 recent: Vec::new(),
             }),
             aria_key,
+            microphone,
             project_vocabulary,
             status,
         })
@@ -151,6 +154,11 @@ impl SettingsCache {
     /// re-armed by unrelated writes.
     pub fn aria_key(&self) -> watch::Receiver<AriaKey> {
         self.aria_key.subscribe()
+    }
+
+    /// The input device to record on. Fires only when it changes.
+    pub fn microphone(&self) -> watch::Receiver<Microphone> {
+        self.microphone.subscribe()
     }
 
     /// The project folder to read terms from, `None` while project
@@ -318,6 +326,7 @@ impl SettingsCache {
     fn install(&self, state: &mut State, loaded: Loaded, effective: CheckedSettings) {
         state.effective = Arc::new(effective);
         send_if_changed(&self.aria_key, loaded.settings.aria_key());
+        send_if_changed(&self.microphone, loaded.settings.microphone());
         send_if_changed(
             &self.project_vocabulary,
             loaded.settings.project_vocabulary(),
@@ -512,6 +521,15 @@ mod tests {
         reloaded(store.poll().expect("polls"));
         assert!(aria_key.has_changed().expect("alive"));
         assert_eq!(*aria_key.borrow_and_update(), AriaKey::Fn);
+
+        let mut microphone = store.microphone();
+        hand_edit(
+            &store,
+            "[shortcuts]\naria_key = \"fn\"\n[dictation]\nmicrophone = \"coreaudio:usb\"\n",
+        );
+        reloaded(store.poll().expect("polls"));
+        assert!(microphone.has_changed().expect("alive"));
+        assert_eq!(microphone.borrow_and_update().as_str(), "coreaudio:usb");
 
         let mut vocabulary = store.project_vocabulary();
         hand_edit(

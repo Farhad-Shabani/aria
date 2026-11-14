@@ -418,6 +418,7 @@ pub struct Dictation {
     pub(crate) auto_stop_ms: Option<u64>,
     pub max_recording_secs: Option<f64>,
     pub timeout_secs: Option<f64>,
+    pub(crate) microphone: Option<String>,
     pub(crate) mute_sound: Option<bool>,
     pub(crate) return_sends: Option<bool>,
     pub(crate) own_voice_only: Option<bool>,
@@ -1407,6 +1408,16 @@ impl SettingsFile {
             None | Some(AriaKeyName::RightOption) => AriaKey::RightOption,
             Some(AriaKeyName::Fn) => AriaKey::Fn,
         }
+    }
+
+    /// The input device to record on.
+    pub(crate) fn microphone(&self) -> super::Microphone {
+        // Validation already accepted the value, so it parses here.
+        self.dictation
+            .microphone
+            .as_deref()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_default()
     }
 
     /// The folder project vocabulary reads, `None` while it is off.

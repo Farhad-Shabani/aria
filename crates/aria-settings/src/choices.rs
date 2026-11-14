@@ -20,6 +20,7 @@ pub struct Settings {
     pub silence_duration: SilenceDuration,
     /// `None` leaves a manual recording running until it is stopped.
     pub auto_stop: Option<AutoStop>,
+    pub microphone: Microphone,
     pub mute_sound: bool,
     /// Return in the app a dictation types into ends it, then sends after
     /// the text.
@@ -122,6 +123,7 @@ impl Default for Settings {
             delivery_mode: DeliveryMode::Streaming,
             silence_duration: SilenceDuration::default(),
             auto_stop: Some(AutoStop::default()),
+            microphone: Microphone::Automatic,
             mute_sound: true,
             return_sends: true,
             own_voice_only: false,
@@ -146,6 +148,64 @@ impl Default for Settings {
         }
     }
 }
+
+/// The input device a recording uses.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Microphone {
+    /// The system default.
+    #[default]
+    Automatic,
+    /// This device while it's connected, else the system default.
+    Device(MicrophoneId),
+}
+
+impl Microphone {
+    const AUTOMATIC: &str = "automatic";
+
+    /// The settings file's spelling.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Automatic => Self::AUTOMATIC,
+            Self::Device(id) => id.as_str(),
+        }
+    }
+}
+
+impl std::str::FromStr for Microphone {
+    type Err = MicrophoneIdError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value == Self::AUTOMATIC {
+            return Ok(Self::Automatic);
+        }
+        MicrophoneId::new(value).map(Self::Device)
+    }
+}
+
+/// An input device's id as the capture lists it: `host:device`, such as
+/// `coreaudio:BuiltInMicrophoneDevice`. Whether it's connected is the
+/// capture's question, not this type's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicrophoneId(String);
+
+impl MicrophoneId {
+    pub fn new(id: &str) -> Result<Self, MicrophoneIdError> {
+        match id.split_once(':') {
+            Some((host, device)) if !host.is_empty() && !device.is_empty() => {
+                Ok(Self(id.to_owned()))
+            }
+            _ => Err(MicrophoneIdError),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("must be \"automatic\" or a device id of the form host:device")]
+pub struct MicrophoneIdError;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DeliveryMode {

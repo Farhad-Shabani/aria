@@ -15,6 +15,10 @@ delivery_mode = "streaming"
 silence_duration_ms = 1500
 # Silence, in ms, that ends a tapped recording. 3000 to 60000. 0 is off.
 auto_stop_ms = 10000
+# The input device to record on. automatic follows the system default. A
+# device id, which the Mac app writes, records there while it's connected and
+# falls back to the system default while it isn't.
+microphone = "automatic"
 # Mutes other apps while recording, so Aria's own sounds still play.
 # Their sound comes back when recording stops.
 mute_sound = true
