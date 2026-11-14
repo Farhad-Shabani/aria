@@ -85,7 +85,7 @@ private struct SettingsSearchResults: View {
     @State private var picked: Pick?
 
     var body: some View {
-        List(selection: Binding(get: { picked }, set: pick)) {
+        List(selection: Binding(get: { picked }, set: { pick($0) })) {
             ForEach(results, id: \.pane) { result in
                 Section {
                     Label {
