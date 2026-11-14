@@ -8,26 +8,29 @@ struct PrivacySettings: View {
         SettingsForm(settings: settings) { editor in
             Section("History") {
                 Toggle(isOn: editor.binding(\.historyEnabled, \.historyEnabled)) {
-                    Text("Save history")
+                    Text(SettingsRow.saveHistory.title)
                     Text(
                         "Dictations, transcripts, and chats stay on your Mac for up to 30 days."
                     )
                 }
+                .settingsRow(.saveHistory)
                 Toggle(isOn: editor.binding(\.historyKeepAudio, \.historyKeepAudio)) {
-                    Text("Keep audio for 24 hours")
+                    Text(SettingsRow.keepAudio.title)
                     Text(
                         "Lets you transcribe a dictation again. Audio stays on your Mac and may capture people nearby.")
                 }
                 .disabled(!editor.snapshot.historyEnabled)
+                .settingsRow(.keepAudio)
             }
             Section {
                 Toggle(
-                    "Memory",
+                    SettingsRow.memory.title,
                     isOn: Self.memorySwitch(
                         editor.binding(\.memoryEnabled, \.memoryEnabled),
                         confirm: { confirmingMemory = true }
                     )
                 )
+                .settingsRow(.memory)
                 .confirmationDialog("Turn On Memory?", isPresented: $confirmingMemory) {
                     Button("Turn On") { editor.set(\.memoryEnabled, to: true) }
                 } message: {

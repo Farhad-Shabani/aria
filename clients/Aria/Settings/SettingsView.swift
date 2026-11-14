@@ -18,6 +18,8 @@ struct SettingsView: View {
     @ObservedObject var paneRequest: SettingsPaneRequest
     @StateObject private var assistantCatalog = AssistantCatalog()
     @State private var history = SettingsHistory(current: .pane(.general))
+    @State private var revealed: SettingsRow?
+    @State private var focusRequest: SettingsRow?
 
     private var setupItems: [SetupItem] {
         SetupItem.all(setup: setupStatus, health: settingsHealth, poller: poller)
@@ -28,27 +30,39 @@ struct SettingsView: View {
             SettingsSidebar(
                 selection: Binding(get: { history.current.pane }, set: { history.open(.pane($0)) }),
                 daemon: poller.state,
-                items: setupItems
+                items: setupItems,
+                reveal: reveal,
+                focusRequest: $focusRequest
             )
         } detail: {
-            page
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    VStack(spacing: 8) {
-                        SettingsAttentionView(health: settingsHealth, poller: poller, settings: settings)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 4)
+            ScrollViewReader { proxy in
+                page.environment(\.settingsScroll, proxy)
+            }
+            .environment(\.revealedRow, $revealed)
+            .environment(\.focusRequest, $focusRequest)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(spacing: 8) {
+                    SettingsAttentionView(health: settingsHealth, poller: poller, settings: settings)
                 }
-                .toolbar {
-                    ToolbarItemGroup(placement: .navigation) {
-                        Button("Back", systemImage: "chevron.left") { history.goBack() }
-                            .disabled(!history.canGoBack)
-                            .keyboardShortcut("[", modifiers: .command)
-                        Button("Forward", systemImage: "chevron.right") { history.goForward() }
-                            .disabled(!history.canGoForward)
-                            .keyboardShortcut("]", modifiers: .command)
-                    }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 4)
+            }
+            .toolbar {
+                ToolbarItemGroup(placement: .navigation) {
+                    Button("Back", systemImage: "chevron.left") { history.goBack() }
+                        .disabled(!history.canGoBack)
+                        .keyboardShortcut("[", modifiers: .command)
+                    Button("Forward", systemImage: "chevron.right") { history.goForward() }
+                        .disabled(!history.canGoForward)
+                        .keyboardShortcut("]", modifiers: .command)
                 }
+            }
+        }
+        .onChange(of: history.current) { _, page in
+            // A row that has left the screen can't clear its own reveal or
+            // focus request, so a page that doesn't show the row drops both.
+            if let revealed, !page.shows(revealed) { self.revealed = nil }
+            if let focusRequest, !page.shows(focusRequest) { self.focusRequest = nil }
         }
         .onChange(of: history.current.pane) { leaveFinishSetupIfDone() }
         .onChange(of: setupItems.isEmpty, initial: true) { leaveFinishSetupIfDone() }
@@ -145,6 +159,11 @@ struct SettingsView: View {
         case .phone: PhoneSettings(pairing: phonePairing)
         case .about: AboutSettings(updates: updates)
         }
+    }
+
+    private func reveal(_ row: SettingsRow) {
+        history.open(.pane(row.pane))
+        revealed = row
     }
 
     /// Finish Setting Up Aria with nothing left in it is an empty page.

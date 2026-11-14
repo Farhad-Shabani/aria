@@ -10,19 +10,25 @@ struct RecognitionSettings: View {
         SettingsForm(settings: settings) { editor in
             Section {
                 language(editor)
+                    .settingsRow(.language)
             }
             VoiceSection(voices: voices, setup: setup, editor: editor)
             Section("Vocabulary") {
-                Toggle("Use project vocabulary", isOn: editor.binding(\.vocabularyEnabled, \.vocabularyEnabled))
+                Toggle(
+                    SettingsRow.useProjectVocabulary.title,
+                    isOn: editor.binding(\.vocabularyEnabled, \.vocabularyEnabled)
+                )
+                .settingsRow(.useProjectVocabulary)
                 vocabularyFolder(editor)
                     .disabled(!editor.snapshot.vocabularyEnabled)
+                    .settingsRow(.vocabularyFolder)
             }
             ServerSttSection(server: serverStt, setup: setup)
         }
     }
 
     private func language(_ editor: SettingsEditor) -> some View {
-        Picker("Language", selection: editor.binding(\.sttLanguage, \.sttLanguage)) {
+        Picker(SettingsRow.language.title, selection: editor.binding(\.sttLanguage, \.sttLanguage)) {
             ForEach(DictationEdits.languageChoices(including: editor.snapshot.sttLanguage), id: \.self) {
                 Text(DictationEdits.languageTitle($0)).tag($0)
             }
@@ -41,7 +47,7 @@ struct RecognitionSettings: View {
                     .disabled(chosen == nil)
             }
         } label: {
-            Text("Folder")
+            Text(SettingsRow.vocabularyFolder.title)
             Text(chosen.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "No folder chosen")
                 .lineLimit(1)
                 .truncationMode(.middle)

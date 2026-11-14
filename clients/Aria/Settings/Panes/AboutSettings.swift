@@ -25,14 +25,16 @@ struct AboutSettings: View {
             }
             Section {
                 Toggle(
-                    "Automatically check for updates",
+                    SettingsRow.checkForUpdates.title,
                     isOn: Binding(get: { updates.checksAutomatically }, set: { updates.setChecksAutomatically($0) })
                 )
+                .settingsRow(.checkForUpdates)
                 Toggle(
-                    "Automatically download and install",
+                    SettingsRow.installUpdates.title,
                     isOn: Binding(get: { updates.installsAutomatically }, set: { updates.setInstallsAutomatically($0) })
                 )
                 .disabled(!updates.checksAutomatically)
+                .settingsRow(.installUpdates)
             }
             Section {
                 if let url = URL(string: Self.legal + "privacy-policy.md") {

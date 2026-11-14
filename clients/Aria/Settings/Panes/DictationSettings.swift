@@ -12,34 +12,42 @@ struct DictationSettings: View {
             let delivery = DictationEdits.shownDelivery(editor.snapshot.deliveryMode, canStream: unavailable == nil)
             Section {
                 SpeechModelPicker(
-                    setup: setup, engineChange: engineChange)
+                    setup: setup, engineChange: engineChange
+                )
+                .settingsRow(.speechModel)
                 deliveryPicker(editor, shown: delivery, unavailable: unavailable)
+                    .settingsRow(.deliver)
             }
             Section {
                 output(editor)
+                    .settingsRow(.output)
                 Toggle(isOn: editor.binding(\.cleanupEnabled, \.cleanupEnabled)) {
-                    Text("Clean up text")
+                    Text(SettingsRow.cleanUpText.title)
                     Text("Removes filler words like “um” and repeated words.")
                 }
+                .settingsRow(.cleanUpText)
             } header: {
                 Text("Text")
             }
             Section("Recording") {
                 Toggle(isOn: editor.binding(\.muteSound, \.muteSound)) {
-                    Text("Mute while recording")
+                    Text(SettingsRow.muteWhileRecording.title)
                     Text("Mutes other apps. Their sound comes back when recording stops.")
                 }
+                .settingsRow(.muteWhileRecording)
                 Toggle(isOn: editor.binding(\.returnSends, \.returnSends)) {
-                    Text("Return sends")
+                    Text(SettingsRow.returnSends.title)
                     Text("Pressing Return stops recording, then sends what you said.")
                 }
+                .settingsRow(.returnSends)
                 autoStop(editor)
+                    .settingsRow(.autoStop)
             }
         }
     }
 
     private func output(_ editor: SettingsEditor) -> some View {
-        Picker("Output", selection: editor.binding(\.outputMode, \.outputMode)) {
+        Picker(SettingsRow.output.title, selection: editor.binding(\.outputMode, \.outputMode)) {
             ForEach(DictationEdits.outputModes, id: \.self) { mode in
                 Text(mode.title).tag(mode)
             }
@@ -59,7 +67,7 @@ struct DictationSettings: View {
                 Text(mode.title).tag(mode)
             }
         } label: {
-            Text("Deliver")
+            Text(SettingsRow.deliver.title)
             if let unavailable {
                 Text(reason(unavailable))
             }
@@ -87,7 +95,7 @@ struct DictationSettings: View {
                 Text(DictationEdits.autoStopTitle($0)).tag($0)
             }
         } label: {
-            Text("Auto-stop")
+            Text(SettingsRow.autoStop.title)
             Text("Stops a tapped recording after this much silence.")
         }
     }

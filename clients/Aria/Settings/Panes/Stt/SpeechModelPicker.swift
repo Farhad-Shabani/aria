@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct SpeechModelPicker: View {
-    private static let title = "Speech model"
     /// Tags the server's row, which names no local engine.
     private static let serverTag = "server"
 
@@ -31,7 +30,7 @@ struct SpeechModelPicker: View {
                 picker
             }
         } label: {
-            Text(Self.title)
+            Text(SettingsRow.speechModel.title)
             status
         }
         .onChange(of: engineChange.state) { _, state in
@@ -82,7 +81,7 @@ struct SpeechModelPicker: View {
     }
 
     private var picker: some View {
-        Picker(Self.title, selection: Binding(get: { shown }, set: { choose($0) })) {
+        Picker(SettingsRow.speechModel.title, selection: Binding(get: { shown }, set: { choose($0) })) {
             if usesServer {
                 Text("Your server").tag(Self.serverTag)
             }
