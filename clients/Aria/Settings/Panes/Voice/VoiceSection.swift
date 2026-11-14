@@ -108,11 +108,12 @@ struct VoiceSection: View {
     /// setting can still be cleared.
     private var ownVoiceOnly: some View {
         Toggle(isOn: editor.binding(\.ownVoiceOnly, \.ownVoiceOnly)) {
-            Text("Only type my voice")
+            Text(SettingsRow.onlyTypeMyVoice.title)
             if let summary = voices.ownVoiceSummary {
                 Text(summary)
             }
         }
         .disabled(!voices.hasOwner && !editor.snapshot.ownVoiceOnly)
+        .settingsRow(.onlyTypeMyVoice)
     }
 }

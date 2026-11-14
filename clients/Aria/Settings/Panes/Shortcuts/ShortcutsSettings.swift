@@ -11,7 +11,7 @@ struct ShortcutsSettings: View {
             let ariaKey = editor.snapshot.storedAriaKey ?? .default
             Section {
                 Picker(
-                    "Aria key",
+                    SettingsRow.ariaKey.title,
                     selection: editor.binding(ariaKey) { key, edit in
                         edit.ariaKey = key.wire
                     }
@@ -22,12 +22,13 @@ struct ShortcutsSettings: View {
                 }
                 // An unknown stored key stays untouched rather than shown as Right Option.
                 .disabled(editor.snapshot.storedAriaKey == nil)
+                .settingsRow(.ariaKey)
             } footer: {
                 Text("Tap to dictate, or hold to talk. Requires permission in Privacy & Security.")
             }
             Section {
                 HotkeyRecorder(
-                    title: "Open Aria",
+                    title: SettingsRow.openAria.title,
                     hotkey: editor.snapshot.promptListShortcut,
                     ariaKey: ariaKey,
                     binding: paletteChord,
@@ -38,12 +39,13 @@ struct ShortcutsSettings: View {
                     editor.set(\.promptListShortcut, to: Aria_Daemon_V1_Shortcut($0))
                 }
                 .disabled(!editor.snapshot.hasPromptListShortcut)
+                .settingsRow(.openAria)
             } footer: {
                 Text("Search commands, prompts, and history.")
             }
             Section {
                 HotkeyRecorder(
-                    title: "Ask",
+                    title: SettingsRow.ask.title,
                     hotkey: editor.snapshot.askShortcut,
                     ariaKey: ariaKey,
                     binding: askChord,
@@ -54,6 +56,7 @@ struct ShortcutsSettings: View {
                 }
                 // Nothing to edit until the daemon sends its ask hotkey.
                 .disabled(!editor.snapshot.hasAskShortcut)
+                .settingsRow(.ask)
             } footer: {
                 Text("Tap the Aria key to send. Tap again to cancel.")
             }

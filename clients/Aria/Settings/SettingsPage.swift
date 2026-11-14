@@ -12,4 +12,8 @@ enum SettingsPage: Hashable {
         case .assistant, .storage: .general
         }
     }
+
+    func shows(_ row: SettingsRow) -> Bool {
+        self == .pane(row.pane)
+    }
 }

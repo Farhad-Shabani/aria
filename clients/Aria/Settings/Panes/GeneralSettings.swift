@@ -19,31 +19,37 @@ struct GeneralSettings: View {
         Form {
             Section("Startup") {
                 Toggle(
-                    "Open at login",
+                    SettingsRow.openAtLogin.title,
                     isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.set(enabled: $0) })
                 )
+                .settingsRow(.openAtLogin)
             }
             Section {
                 ItemLink(open: openAssistant) {
-                    Text("Assistant")
+                    Text(SettingsRow.assistant.title)
                     Spacer()
                     Text(assistantName).foregroundStyle(.secondary)
                 }
+                .settingsRow(.assistant)
             }
             Section("On Screen") {
-                Toggle("Show status pill", isOn: $statusPillEnabled)
+                Toggle(SettingsRow.showStatusPill.title, isOn: $statusPillEnabled)
+                    .settingsRow(.showStatusPill)
                 Toggle(isOn: $ghostTextEnabled) {
-                    Text("Show inline preview")
+                    Text(SettingsRow.showInlinePreview.title)
                     Text("Words Aria hasn’t typed yet appear faintly at the cursor.")
                 }
+                .settingsRow(.showInlinePreview)
                 Toggle(isOn: $captionsEnabled) {
-                    Text("Show captions")
+                    Text(SettingsRow.showCaptions.title)
                     Text("What Aria hears appears in a panel while you speak.")
                 }
+                .settingsRow(.showCaptions)
             }
             if let snapshot = settings.snapshot {
                 Section {
                     SpeakingRateRow(editor: SettingsEditor(snapshot: snapshot, settings: settings))
+                        .settingsRow(.speakingRate)
                 } header: {
                     Text("Spoken Content")
                 } footer: {
@@ -52,15 +58,17 @@ struct GeneralSettings: View {
             }
             Section {
                 ItemLink(open: openStorage) {
-                    Text("Storage")
+                    Text(SettingsRow.storage.title)
                     Spacer()
                     Text(SetupState.size(setup.downloadedModels.total)).foregroundStyle(.secondary)
                 }
+                .settingsRow(.storage)
             }
             Section {
-                LabeledContent("Aria Setup") {
+                LabeledContent(SettingsRow.ariaSetup.title) {
                     Button("Open…") { openWindow(id: WindowID.setup) }
                 }
+                .settingsRow(.ariaSetup)
             }
         }
         .onAppear { loginItem.refresh() }
@@ -98,7 +106,7 @@ private struct SpeakingRateRow: View {
                     .monospacedDigit()
             }
         } label: {
-            Text("Speaking rate")
+            Text(SettingsRow.speakingRate.title)
         }
         .onChange(of: editor.snapshot.ttsRate, initial: true) { _, stored in
             rate = stored

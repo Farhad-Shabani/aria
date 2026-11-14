@@ -1,8 +1,6 @@
 import SwiftUI
 
 struct ServerSttSection: View {
-    private static let rowTitle = "Recognize speech on your server"
-
     @ObservedObject var server: ServerStt
     @ObservedObject var setup: SetupStatus
     @EnvironmentObject private var runner: SetupRunner
@@ -12,6 +10,7 @@ struct ServerSttSection: View {
     var body: some View {
         Section {
             serverRow
+                .settingsRow(.serverRecognition)
         } footer: {
             footer
         }
@@ -42,7 +41,7 @@ struct ServerSttSection: View {
     @ViewBuilder
     private var serverRow: some View {
         if server.needsPairing {
-            LabeledContent(Self.rowTitle) {
+            LabeledContent(SettingsRow.serverRecognition.title) {
                 Button("Pair…") {
                     server.beginPairing()
                     isPairing = true
@@ -55,15 +54,17 @@ struct ServerSttSection: View {
                     if setup.server != nil {
                         Button("Forget…", role: .destructive) { isConfirmingForget = true }
                             .disabled(!server.canForget || runner.isRunning)
-                            .help(setup.sttRunsOn == .server ? "Turn off \(Self.rowTitle) first." : "")
+                            .help(
+                                setup.sttRunsOn == .server
+                                    ? "Turn off \(SettingsRow.serverRecognition.title) first." : "")
                     }
-                    Toggle(Self.rowTitle, isOn: usesServer)
+                    Toggle(SettingsRow.serverRecognition.title, isOn: usesServer)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .disabled(!server.canChooseRunsOn || runner.isRunning)
                 }
             } label: {
-                Text(Self.rowTitle)
+                Text(SettingsRow.serverRecognition.title)
                 if let paired = setup.server {
                     Text(ServerStt.address(of: paired.endpoint) ?? paired.endpoint)
                 }

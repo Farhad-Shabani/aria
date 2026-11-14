@@ -24,7 +24,7 @@ struct PhoneSettings: View {
                         set: { on in Task { await pairing.turn(on: on) } }
                     )
                 ) {
-                    Text("Phone pairing")
+                    Text(SettingsRow.phonePairing.title)
                     if pairing.status == .restarting {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
@@ -33,6 +33,7 @@ struct PhoneSettings: View {
                     }
                 }
                 .disabled(!pairing.canSwitch)
+                .settingsRow(.phonePairing)
             } footer: {
                 problems
             }
