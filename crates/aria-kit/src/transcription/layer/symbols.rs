@@ -85,14 +85,22 @@ fn symbol_to_defer(text: &str, words: &[Word<'_>], deferred_from: usize) -> Opti
 /// The symbol each word becomes when it links its two neighbors.
 fn links(text: &str, words: &[Word<'_>]) -> Vec<Option<char>> {
     let mut links = vec![None; words.len()];
-    for index in 0..words.len().saturating_sub(1) {
+    for index in 1..words.len().saturating_sub(1) {
         let Some(character) = unclaimed_symbol(text, &words[index]) else {
             continue;
         };
-        let left_joins = index > 0 && joins_after(text, words, index - 1);
-        let line_break = text[words[index].span.end..words[index + 1].span.start].contains('\n');
-        let right = words[index + 1].typed(text);
-        if left_joins && !line_break && joinable_after_a_symbol(right) {
+        let (left, right) = (&words[index - 1], &words[index + 1]);
+        // Each side types its joined form only when both sides have one.
+        let joined = left.joined.is_some() && right.joined.is_some();
+        let form = |word| {
+            if joined {
+                in_join(text, word)
+            } else {
+                word.typed(text)
+            }
+        };
+        let breaks = line_break(text, words, index - 1) || line_break(text, words, index);
+        if !breaks && joinable_before_a_symbol(form(left)) && joinable_after_a_symbol(form(right)) {
             links[index] = Some(character);
         }
     }
@@ -107,11 +115,22 @@ fn unclaimed_symbol(text: &str, word: &Word<'_>) -> Option<char> {
     }
 }
 
-/// Whether the word at `left` may join through the symbol word after it:
-/// no line break between them, and the word can sit in a join.
+/// Whether the word at `left` may join through the symbol word after it,
+/// whatever comes next: no line break between them, and the word can sit
+/// in a join.
 fn joins_after(text: &str, words: &[Word<'_>], left: usize) -> bool {
-    let line_break = text[words[left].span.end..words[left + 1].span.start].contains('\n');
-    !line_break && joinable_before_a_symbol(words[left].typed(text))
+    !line_break(text, words, left) && joinable_before_a_symbol(in_join(text, &words[left]))
+}
+
+/// Whether a line break separates the word at `index` from the next.
+fn line_break(text: &str, words: &[Word<'_>], index: usize) -> bool {
+    text[words[index].span.end..words[index + 1].span.start].contains('\n')
+}
+
+/// What `word` types in a join beside another word with a joined form:
+/// "one four" types `14`.
+fn in_join<'s>(text: &'s str, word: &'s Word<'_>) -> &'s str {
+    word.joined.as_deref().unwrap_or_else(|| word.typed(text))
 }
 
 /// Whether `word` can sit before a symbol in a join, punctuation before it
@@ -210,7 +229,10 @@ mod tests {
     #[case::hyphen_before_a_number_word("utf", "hyphen sixteen", Some(("-16", true)))]
     #[case::hyphen_before_a_long_number("version", "hyphen twenty five", Some(("-25", true)))]
     #[case::hyphen_after_a_symbol_word("the end, underscore", "hyphen twenty", Some(("hyphen 20", false)))]
+    #[case::digits_after_digits_typed("30", "dot one zero zero", Some((".100", true)))]
     #[case::digits_after_an_opening_symbol("python", "underscore three dot twelve", Some(("_3.12", true)))]
+    #[case::space_typed_after("src ", "slash main", None)]
+    #[case::line_break_typed_after("src\n", "slash main", None)]
     #[case::nothing_typed("", "underscore id", None)]
     #[case::punctuation_typed("user,", "underscore id", None)]
     fn opens_onto_the_word_typed_before(

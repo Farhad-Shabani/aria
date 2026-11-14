@@ -154,13 +154,14 @@ pub(super) fn is_ordinal(word: &str) -> bool {
 
 /// Whether `word` carries on a number that `previous` belongs to: a number
 /// word, "point" after one, "and" after "hundred" or a scale, or "o" for a
-/// zero once the number is `after_point`. All in lowercase.
-pub(super) fn continues(word: &str, previous: &str, after_point: bool) -> bool {
+/// zero once the number `reads_digits`, as it does past "point" or a spoken
+/// symbol. All in lowercase.
+pub(super) fn continues(word: &str, previous: &str, reads_digits: bool) -> bool {
     match word {
         "point" => is_number_word(previous),
         "and" => ends_on_hundred_or_scale(previous),
         // "ten oh my" ends at "ten".
-        "o" | "oh" => after_point,
+        "o" | "oh" => reads_digits,
         word => is_number_word(word),
     }
 }
@@ -197,10 +198,10 @@ mod tests {
     fn continues_a_number(
         #[case] previous: &str,
         #[case] word: &str,
-        #[case] after_point: bool,
+        #[case] reads_digits: bool,
         #[case] expected: bool,
     ) {
-        assert_eq!(continues(word, previous, after_point), expected);
+        assert_eq!(continues(word, previous, reads_digits), expected);
     }
 
     #[rstest]
