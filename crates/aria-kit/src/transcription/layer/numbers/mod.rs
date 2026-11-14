@@ -10,16 +10,21 @@ use super::claim::{Claimed, Word};
 use super::number_words::{continues, is_number_word, is_ordinal};
 use super::symbol_words::{is_symbol, symbol};
 
-/// Claims each run of number words that has one clear written form, as in
-/// "two point five" → `2.5`. A run with none stays words, and is kept whole:
-/// a stream never cuts inside it, nor between a number and the ordinal that
-/// keeps it words. A lone digit word stays a word, as "one" in "no one
-/// knows" is, but keeps its digit for a spoken symbol that joins it to
-/// another number: `2.5` in "two dot five". So does a run with no form,
-/// read the way the words after "point" are: `3.14` in "three dot one
-/// four". After a spoken symbol, as after "point", "o" is a zero. A number
-/// already written in digits keeps itself: `30.100` in "30 dot one zero
-/// zero".
+/// Claims each run of number words that has one clear written form as
+/// digits: "two point five" → `2.5`. Other runs stay words and are kept
+/// whole, so a stream never cuts inside them: "one two three", "twenty
+/// second".
+///
+/// Where a spoken symbol joins two words that both have a joined form
+/// (`Word::joined`), each types that form:
+///
+/// - a number typed in digits, unless a unit follows: `20.5` in "twenty
+///   dot five"
+/// - a lone digit word, which stays a word elsewhere: `2.5` in "two dot
+///   five", but "no one knows"
+/// - a run with no written form, read like the words after "point": `3.14`
+///   in "three dot one four", with "o" or "oh" as a zero
+/// - digits already written: `30.100` in "30 dot one zero zero"
 ///
 /// A number the text ends on is deferred while more speech may go on with
 /// it: more number words, a "point" or "and" it ends on, or cents after its
