@@ -123,9 +123,9 @@ impl Vocabulary {
     /// last word, unless whitespace ends it.
     pub fn correct_spoken(&self, text: &str, before: &str) -> Option<Corrected> {
         let typed = before
-            .rsplit(char::is_whitespace)
-            .next()
-            .filter(|word| !word.is_empty());
+            .split_whitespace()
+            .next_back()
+            .filter(|_| !before.ends_with(char::is_whitespace));
         let Some(typed) = typed else {
             let text = self.spoken(text, 0)?;
             return Some(Corrected {

@@ -4,7 +4,7 @@ mod unit;
 use std::borrow::Cow;
 use std::ops::Range;
 
-use self::grammar::{Number, digits};
+use self::grammar::Number;
 use self::unit::Unit;
 use super::claim::{Claimed, Word};
 use super::number_words::{continues, is_number_word, is_ordinal};
@@ -78,10 +78,10 @@ pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
 /// `word` with itself as its joined form when it is written in digits.
 fn written_in_digits<'a>(text: &str, word: Word<'a>) -> Word<'a> {
     let typed = word.typed(text);
-    let digits = typed.starts_with(|c: char| c.is_ascii_digit())
+    let in_digits = typed.starts_with(|c: char| c.is_ascii_digit())
         && typed.ends_with(|c: char| c.is_ascii_digit())
         && typed.chars().all(|c| c.is_ascii_digit() || is_symbol(c));
-    if word.joined.is_some() || !digits {
+    if word.joined.is_some() || !in_digits {
         return word;
     }
     let joined = Some(Cow::Owned(typed.to_owned()));
@@ -228,7 +228,7 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
     /// The digits `run` says one at a time, with its punctuation.
     fn digits(&self, run: &Range<usize>) -> Option<String> {
         let said: Vec<&str> = run.clone().filter_map(|index| self.word(index)).collect();
-        let digits = digits(&said)?;
+        let digits = grammar::digits(&said)?;
         Some(self.punctuated(run.start, &digits, run.end))
     }
 
