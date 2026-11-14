@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use aria_harness::{Sandbox, artifact, inputs};
-use aria_kit::transcription::Caret;
 use serde_json::{Value, json};
 use tonic::transport::{Channel, Endpoint};
 
@@ -231,13 +230,16 @@ fn segment_metrics(
         .0
         .checked_sub(recording_ms)
         .context("segment preceded recording")?;
-    let mut caret = Caret::default();
-    let reconstructed: String = segments
-        .iter()
-        .map(|(_, text)| caret.insert(text))
-        .collect();
+    // Segments carry no spacing, which the daemon owns, so only their
+    // characters must add up to the result.
+    let unspaced = |text: &str| {
+        text.chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    };
+    let reconstructed: String = segments.iter().map(|(_, text)| unspaced(text)).collect();
     ensure!(
-        reconstructed == result,
+        reconstructed == unspaced(result),
         "corrected segment reconstruction differs from completed result"
     );
     let mut previous = None;
@@ -300,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_corrected_segments_with_spaces_and_relative_timings() {
+    fn reconstructs_corrected_segments_and_relative_timings() {
         let segments = vec![(125, "héllo".into()), (180, "world".into())];
         let metrics = super::segment_metrics(&segments, 100, "héllo world").unwrap();
         assert_eq!(metrics["capture_to_first_segment_ms"], 25);
@@ -313,7 +315,9 @@ mod tests {
         let encoded = serde_json::to_string(&metrics).unwrap();
         assert!(!encoded.contains("héllo"));
         assert!(!encoded.contains("world"));
-        assert!(super::segment_metrics(&segments, 100, "hélloworld").is_err());
+        let joined = [(125, "open src".into()), (180, "/main".into())];
+        assert!(super::segment_metrics(&joined, 100, "open src/main").is_ok());
+        assert!(super::segment_metrics(&segments, 100, "héllo").is_err());
         assert!(super::segment_metrics(&segments, 130, "héllo world").is_err());
         assert!(super::segment_metrics(&[], 100, "").is_err());
         assert!(
