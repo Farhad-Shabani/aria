@@ -30,8 +30,7 @@ impl Layer for JoinSymbols {
 
 /// A step that claims dictated words. Reading the words claims vocabulary
 /// terms first, and typing applies personal rules last, to what no step
-/// claimed. No step rewrites an earlier claim, but one: a number after a
-/// hyphen that opens the text types as heard.
+/// claimed. No step rewrites an earlier claim.
 #[derive(Clone, Copy)]
 pub(super) enum Step {
     /// The spoken forms of personal rules. The user's words come first, so
