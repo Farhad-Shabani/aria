@@ -175,6 +175,8 @@ mod tests {
     #[case::after_a_hyphenated_word(&[("aria-stt", None), ("hyphen", None), ("test", None)], "aria-stt-test")]
     #[case::mark_after_the_symbol(&[("User underscore.", None), ("ID.", Some(false))], "User_ID.")]
     #[case::number_after_an_opening_hyphen(&[("covid", None), ("hyphen nineteen", None)], "covid-nineteen")]
+    #[case::slash_opens_a_segment(&[("src", None), ("slash main", None)], "src/main")]
+    #[case::backslash_alone(&[("c", None), ("backslash", None), ("windows", None)], "c\\windows")]
     fn joins_across_segments(#[case] pieces: &[(&str, Option<bool>)], #[case] typed: &str) {
         assert_eq!(streamed(pieces, &Vocabulary::default()), typed);
     }

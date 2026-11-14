@@ -5,8 +5,8 @@ use crate::cancel::CancelToken;
 use super::claim::Claimed;
 use super::{Layer, TranscriptionError, Vocabulary, check_cancelled, check_size, numbers, symbols};
 
-/// Joins the words around "underscore", "hyphen", or "dot", as in
-/// "user underscore id" → `user_id`.
+/// Joins the words around a spoken symbol, as in "user underscore id" →
+/// `user_id`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct JoinSymbols;
 

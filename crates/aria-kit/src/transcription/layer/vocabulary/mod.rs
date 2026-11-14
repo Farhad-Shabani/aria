@@ -427,6 +427,8 @@ fn aliases(canonical: &str) -> Vec<String> {
                     '-' => Some("dash"),
                     '_' => Some("underscore"),
                     '.' => Some("dot"),
+                    '/' => Some("slash"),
+                    '\\' => Some("backslash"),
                     _ => None,
                 } {
                     push_word(&mut word, &mut parts);

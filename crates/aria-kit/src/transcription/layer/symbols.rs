@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use super::claim::{Claimed, Word};
-use super::symbol_words::symbol;
+use super::symbol_words::{is_symbol, symbol};
 
 /// Claims each run of words that spoken symbols join as one word, as in
 /// "user underscore id" → `user_id`. A symbol opening `text` joins `before`,
@@ -167,9 +167,7 @@ fn joinable_after_a_symbol(word: &str) -> bool {
 fn is_joinable(word: &str) -> bool {
     word.starts_with(char::is_alphanumeric)
         && word.ends_with(char::is_alphanumeric)
-        && word
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && word.chars().all(|c| c.is_alphanumeric() || is_symbol(c))
         && symbol(word).is_none()
 }
 
@@ -199,9 +197,13 @@ mod tests {
     #[case::extra_spaces_around_the_symbol("user   underscore  id", "user_id")]
     #[case::spacing_elsewhere_is_kept("say  user underscore id  now", "say  user_id  now")]
     #[case::non_ascii_word("café underscore menu", "café_menu")]
+    #[case::slash_between_words("src slash main", "src/main")]
+    #[case::backslash_between_words("c backslash windows", "c\\windows")]
+    #[case::joined_slash_as_neighbor("src/main slash lib", "src/main/lib")]
     #[case::small_word_neighbor("to underscore string", "to_string")]
     // Accepted risk: a symbol word in ordinary prose still joins.
     #[case::symbol_word_in_prose("add a hyphen here", "add a-here")]
+    #[case::slash_in_prose("this and slash or that", "this and/or that")]
     fn joins(#[case] heard: &str, #[case] typed: &str) {
         assert_eq!(applied(heard), typed);
     }
@@ -227,8 +229,9 @@ mod tests {
     #[case::vocabulary_keeps_its_spelling("open cargo dot toml", "open Cargo.toml")]
     #[case::match_keeps_declared_casing("kit dash pro hyphen test", "Kit-Pro-test")]
     #[case::symbols_beside_a_match("aria-stt and user underscore id", "aria-stt and user_id")]
+    #[case::match_spoken_with_a_slash("run ci slash cd", "run CI/CD")]
     fn joins_through_vocabulary(#[case] heard: &str, #[case] typed: &str) {
-        let vocabulary = Vocabulary::new(["aria-stt", "Cargo.toml", "Kit-Pro"]).unwrap();
+        let vocabulary = Vocabulary::new(["aria-stt", "Cargo.toml", "Kit-Pro", "CI/CD"]).unwrap();
         let corrected = vocabulary.correct_spoken(heard, "");
         assert_eq!(corrected.as_deref().unwrap_or(heard), typed);
     }
@@ -238,6 +241,8 @@ mod tests {
     #[case::chain("max", "underscore retry underscore count", Some("_retry_count"))]
     #[case::dot_after_a_digit("2", "dot 5", Some(".5"))]
     #[case::hyphen_before_a_digit("3", "hyphen 5", None)]
+    #[case::slash_before_a_digit("24", "slash 7", Some("/7"))]
+    #[case::numbers_around_a_slash("", "one slash two", Some("1/2"))]
     #[case::hyphen_before_a_number_word("covid", "hyphen nineteen", Some("-nineteen"))]
     #[case::hyphen_after_a_symbol_word("the end, underscore", "hyphen twenty", Some("hyphen 20"))]
     #[case::digits_after_an_opening_symbol("x", "underscore five dot two", Some("_5.2"))]

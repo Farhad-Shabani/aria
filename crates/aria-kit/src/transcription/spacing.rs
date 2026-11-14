@@ -122,7 +122,7 @@ fn attaches_before(text: &str) -> bool {
     match chars.next() {
         Some('.' | ',' | '!' | '?' | ':' | ';' | ')' | ']' | '}' | '%' | '”') => true,
         // "-5" stays a number of its own.
-        Some('_') => chars.next().is_some_and(char::is_alphanumeric),
+        Some('_' | '/' | '\\') => chars.next().is_some_and(char::is_alphanumeric),
         Some('-') => chars.next().is_some_and(char::is_alphabetic),
         Some('\'' | '’') => {
             let rest = chars.as_str();
@@ -163,6 +163,8 @@ mod tests {
     #[test]
     fn an_identifiers_next_part_attaches_and_a_negative_number_does_not() {
         assert_eq!(Caret::between("user", "").insert("_id"), "_id");
+        assert_eq!(Caret::between("src", "").insert("/main"), "/main");
+        assert_eq!(Caret::between("c", "").insert("\\windows"), "\\windows");
         assert_eq!(Caret::between("aria", "").insert("-kit"), "-kit");
         assert_eq!(Caret::between("is", "").insert("-5"), " -5");
         assert_eq!(Caret::between("a", "").insert("- b"), " - b");
