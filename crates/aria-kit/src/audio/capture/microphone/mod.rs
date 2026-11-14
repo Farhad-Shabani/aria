@@ -1,5 +1,6 @@
-//! The default microphone: opened once, then recording one utterance at a time.
+//! The microphone: opened once, then recording one utterance at a time.
 
+mod devices;
 mod resampling;
 mod stream;
 mod transfer;
@@ -19,6 +20,7 @@ use crate::wake_word::WakeWordDetector;
 
 use super::{AudioCapture, MicrophoneError, RecordingMode};
 
+pub use devices::{InputDevice, InputDeviceId, input_devices, resolve_input};
 pub use stream::check_default_input_device;
 pub use wake_word::{
     WakeWordControl, WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
@@ -28,9 +30,9 @@ const DEFAULT_MAXIMUM_DURATION: Duration = Duration::from_secs(60);
 
 type Result<T> = std::result::Result<T, CaptureError>;
 
-/// The default microphone, ready to record. `open()` chooses a private
-/// per-user spool directory and a 60-second maximum duration; the builder
-/// overrides either.
+/// A microphone, ready to record. `open()` records on the system default,
+/// in a private per-user spool directory, for at most 60 seconds; the
+/// builder overrides each.
 pub struct Microphone {
     commands: Sender<worker::Command>,
 }
@@ -44,7 +46,17 @@ impl Microphone {
         MicrophoneBuilder {
             spool_dir: None,
             maximum_duration: DEFAULT_MAXIMUM_DURATION,
+            input: None,
         }
+    }
+
+    /// Records on `input` while it's connected, else the system default.
+    /// `None` follows the system default. A recording in progress keeps its
+    /// device; the next one uses the new choice.
+    pub fn use_input(&self, input: Option<InputDeviceId>) -> Result<()> {
+        self.commands
+            .send(worker::Command::UseInput(input))
+            .map_err(|_command| MicrophoneError::WorkerGone.into())
     }
 
     /// Records one utterance. The recording fills in the background; hand the
@@ -61,6 +73,7 @@ impl Microphone {
 pub struct MicrophoneBuilder {
     spool_dir: Option<PathBuf>,
     maximum_duration: Duration,
+    input: Option<InputDeviceId>,
 }
 
 impl MicrophoneBuilder {
@@ -77,6 +90,13 @@ impl MicrophoneBuilder {
     /// has not released, about 230 MB per hour.
     pub fn maximum_duration(mut self, maximum_duration: Duration) -> Self {
         self.maximum_duration = maximum_duration;
+        self
+    }
+
+    /// The device to record on while it's connected, as
+    /// [`Microphone::use_input`] takes it. The first stream opens on it.
+    pub fn input(mut self, input: Option<InputDeviceId>) -> Self {
+        self.input = input;
         self
     }
 
@@ -113,6 +133,7 @@ impl MicrophoneBuilder {
         Ok(PreparedMicrophone {
             spool_dir,
             maximum_duration: self.maximum_duration,
+            input: self.input,
             vad: vad()?,
         })
     }
@@ -123,12 +144,13 @@ impl MicrophoneBuilder {
 pub struct PreparedMicrophone<V = SileroVad> {
     spool_dir: PathBuf,
     maximum_duration: Duration,
+    input: Option<InputDeviceId>,
     vad: V,
 }
 
 impl<V: VoiceActivityDetector + Send + 'static> PreparedMicrophone<V> {
     pub fn open(self) -> Result<Microphone> {
-        let commands = worker::spawn(self.spool_dir, self.maximum_duration, self.vad)?;
+        let commands = worker::spawn(self.spool_dir, self.maximum_duration, self.input, self.vad)?;
         Ok(Microphone { commands })
     }
 
@@ -139,6 +161,7 @@ impl<V: VoiceActivityDetector + Send + 'static> PreparedMicrophone<V> {
         let (commands, events) = worker::spawn_with_wake_word(
             self.spool_dir,
             self.maximum_duration,
+            self.input,
             self.vad,
             detector,
         )?;
