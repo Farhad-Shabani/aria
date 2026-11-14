@@ -10,6 +10,7 @@ mod session;
 mod speak;
 mod stream;
 
+#[cfg(not(target_family = "wasm"))]
 use aria_primitives::Cause;
 use std::path::PathBuf;
 
