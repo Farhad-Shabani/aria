@@ -190,12 +190,12 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
             return None;
         }
         let mut last = start;
-        let mut after_point = after_symbol;
+        let mut reads_digits = after_symbol;
         while let Some(next) = self.following(last) {
-            if !continues(next, self.word(last)?, after_point) {
+            if !continues(next, self.word(last)?, reads_digits) {
                 break;
             }
-            after_point |= next == "point";
+            reads_digits |= next == "point";
             last += 1;
         }
         Some(start..last + 1)
@@ -225,7 +225,7 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         Number::parse(&said)
     }
 
-    /// The digits `run` says one at a time, with its punctuation.
+    /// `run` read the way the words after "point" are, with its punctuation.
     fn digits(&self, run: &Range<usize>) -> Option<String> {
         let said: Vec<&str> = run.clone().filter_map(|index| self.word(index)).collect();
         let digits = grammar::digits(&said)?;
