@@ -2,8 +2,8 @@
 //!
 //! ```text
 //! number   := whole ["point" fraction [scale]]
-//! whole    := "zero" | group (scale ["and"] group?)*    scales descending
-//! group    := under100 | under100 "hundred" ["and"] [under100]
+//! whole    := "zero" | group (scale [["and"] group])*  scales descending
+//! group    := under100 | under100 "hundred" [["and"] under100]
 //! under100 := digit | teen | tens [digit]               digit is 1 to 9
 //! fraction := (digit | "o" | teen | tens [digit])+      each as its digits
 //! ```

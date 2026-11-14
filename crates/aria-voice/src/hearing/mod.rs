@@ -328,8 +328,8 @@ impl<'scope> Hearing<'scope> {
         }
     }
 
-    /// Whether the decoder has words that [`Self::next`] hasn't handed out
-    /// as released: the speaker has not paused.
+    /// Whether the gate still holds words it hasn't decided: a held
+    /// segment, or provisional text.
     pub(crate) fn has_undecided_words(&self) -> bool {
         self.gate.has_undecided_words()
     }

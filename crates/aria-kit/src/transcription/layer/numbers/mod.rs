@@ -6,17 +6,23 @@ use std::ops::Range;
 
 use self::grammar::Number;
 use self::unit::Unit;
+use super::claim::{Claimed, Word};
 use super::number_words::{continues, is_number_word, is_ordinal};
-use super::symbol_words::symbol;
-use super::symbols;
-use super::vocabulary::Word;
 
 /// Claims each run of number words that has one clear written form, as in
-/// "two point five" → `2.5`. A run with none stays words, whole.
-pub(super) fn claim<'a>(text: &str, words: Vec<Word<'a>>) -> Vec<Word<'a>> {
+/// "two point five" → `2.5`. A run with none stays words, and is kept whole:
+/// a stream never cuts inside it, nor between a number and the ordinal that
+/// keeps it words. A lone digit word stays a word, as "one" in "no one
+/// knows" is, but keeps its digit for a spoken symbol that joins it to
+/// another number: `2.5` in "two dot five".
+///
+/// A number the text ends on is deferred while more speech may go on with
+/// it:
+/// more number words, a "point" or "and" it ends on, or cents after its
+/// dollars.
+pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
+    let words = claimed.take_words();
     let scan = Scan::new(text, &words);
-    let mut claimed = Vec::with_capacity(words.len());
-    let mut previous = None;
     let mut index = 0;
     while index < words.len() {
         let Some(run) = scan.run_from(index) else {
@@ -24,39 +30,39 @@ pub(super) fn claim<'a>(text: &str, words: Vec<Word<'a>>) -> Vec<Word<'a>> {
             index += 1;
             continue;
         };
-        match scan.written(&run, previous.as_ref()) {
-            Some(written) => {
+        if scan.ends_bare() && scan.takes_to(index) == Some(words.len()) {
+            claimed.defer_at(words[index].span.start);
+        }
+        let whole = |end: usize| words[run.start].span.start..words[end - 1].span.end;
+        let Some(number) = scan.number(&run) else {
+            claimed.keep_whole(whole(run.end));
+            claimed.extend(words[run.clone()].iter().cloned());
+            index = run.end;
+            continue;
+        };
+        match scan.spelling(&number, &run) {
+            Spelling::Written { written, joins } => {
+                let span = words[index].span.start..words[written.end - 1].span.end;
                 claimed.push(Word {
-                    span: words[index].span.start..words[written.end - 1].span.end,
-                    claim: Some(Cow::Owned(written.text)),
+                    joined: joins.then(|| Cow::Owned(written.text.clone())),
+                    ..Word::claimed(span, Cow::Owned(written.text))
                 });
                 index = written.end;
             }
-            None => {
-                claimed.extend_from_slice(&words[run.clone()]);
+            Spelling::LoneDigit { digit } => {
+                claimed.push(Word {
+                    joined: Some(Cow::Owned(digit)),
+                    ..words[index].clone()
+                });
+                index = run.end;
+            }
+            Spelling::Ordinal { end } => {
+                claimed.keep_whole(whole(end));
+                claimed.extend(words[run.clone()].iter().cloned());
                 index = run.end;
             }
         }
-        previous = Some(run);
     }
-    claimed
-}
-
-/// How many of the words `words` ends on more speech may still change: a
-/// number that may go on, or dollars that cents may follow.
-pub(super) fn open_tail(text: &str, words: &[Word<'_>]) -> usize {
-    let scan = Scan::new(text, words);
-    let ends_bare = scan
-        .parts
-        .last()
-        .and_then(Option::as_ref)
-        .is_some_and(|last| last.trail.is_empty());
-    if !ends_bare {
-        return 0;
-    }
-    (0..words.len())
-        .find(|start| scan.open_end(*start) == Some(words.len()))
-        .map_or(0, |start| words.len() - start)
 }
 
 /// One word, split from the punctuation around it.
@@ -88,6 +94,18 @@ struct Written {
     text: String,
 }
 
+/// How a run of number words types.
+enum Spelling {
+    /// As digits. `joins` when a spoken symbol may join it to another
+    /// number, which a unit after it rules out.
+    Written { written: Written, joins: bool },
+    /// As the word, though a spoken symbol joining it to another number
+    /// types the digit: "one" alone, `1.2` in "one dot two".
+    LoneDigit { digit: String },
+    /// As words, with the ordinal that ends at `end`: "twenty second".
+    Ordinal { end: usize },
+}
+
 /// A segment's words, read for the numbers in them.
 struct Scan<'t, 'w, 'a> {
     text: &'t str,
@@ -107,6 +125,15 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
             })
             .collect();
         Self { text, words, parts }
+    }
+
+    /// Whether the text ends on a word no step claimed, with no punctuation
+    /// after it: only then may more speech go on with a number there.
+    fn ends_bare(&self) -> bool {
+        self.parts
+            .last()
+            .and_then(Option::as_ref)
+            .is_some_and(|last| last.trail.is_empty())
     }
 
     fn part(&self, index: usize) -> Option<&Parts<'t>> {
@@ -163,22 +190,27 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         Number::parse(&said)
     }
 
-    /// How `run` is written. `None` leaves it as words. `previous` is the
-    /// run before it.
-    fn written(&self, run: &Range<usize>, previous: Option<&Range<usize>>) -> Option<Written> {
-        let number = self.number(run)?;
-        let written = match self.counted(&number, run) {
-            Some(counted) => counted,
-            None if self.stays_words(&number, run, previous) => return None,
-            None => Written {
-                end: run.end,
-                text: number.to_string(),
-            },
-        };
-        Some(Written {
-            text: self.punctuated(run.start, &written.text, written.end),
-            ..written
-        })
+    /// How `number`, said by `run`, types.
+    fn spelling(&self, number: &Number, run: &Range<usize>) -> Spelling {
+        if let Some(counted) = self.counted(number, run) {
+            let text = self.punctuated(run.start, &counted.text, counted.end);
+            return Spelling::Written {
+                written: Written { text, ..counted },
+                joins: false,
+            };
+        }
+        if let Some(end) = self.ordinal_end(run) {
+            return Spelling::Ordinal { end };
+        }
+        let text = self.punctuated(run.start, &number.to_string(), run.end);
+        // "one" or "nine" alone reads as a word in prose: "no one knows".
+        if run.len() == 1 && number.integer().is_some_and(|digit| digit < 10) {
+            return Spelling::LoneDigit { digit: text };
+        }
+        Spelling::Written {
+            written: Written { end: run.end, text },
+            joins: true,
+        }
     }
 
     /// `text` with the punctuation around the words from `start` up to
@@ -189,66 +221,14 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         format!("{lead}{text}{trail}")
     }
 
-    /// Whether a number with no unit keeps its words.
-    fn stays_words(
-        &self,
-        number: &Number,
-        run: &Range<usize>,
-        previous: Option<&Range<usize>>,
-    ) -> bool {
-        // "one" or "nine" alone reads as a word in prose: "no one knows".
-        let lone_digit = run.len() == 1 && number.integer().is_some_and(|digit| digit < 10);
-        self.opens_an_ordinal(run)
-            || self.follows_an_opening_hyphen(run)
-            || (lone_digit && !self.symbol_joins_a_number(run, previous))
-    }
-
-    /// Whether an ordinal follows `run`, past an "and": "twenty second" and
-    /// "one hundred and first" are ordinals, not a number and a word.
-    fn opens_an_ordinal(&self, run: &Range<usize>) -> bool {
-        let next = match self.following(run.end - 1) {
-            Some("and") => self.following(run.end),
-            next => next,
+    /// Just past the ordinal after `run`, past an "and": "twenty second"
+    /// and "one hundred and first" are ordinals, not a number and a word.
+    fn ordinal_end(&self, run: &Range<usize>) -> Option<usize> {
+        let (word, at) = match self.following(run.end - 1)? {
+            "and" => (self.following(run.end)?, run.end + 1),
+            word => (word, run.end),
         };
-        next.is_some_and(is_ordinal)
-    }
-
-    /// Whether `run` follows a "hyphen" that opens the text. That hyphen
-    /// joins what was typed before, and typed text can't take a `-5`.
-    fn follows_an_opening_hyphen(&self, run: &Range<usize>) -> bool {
-        run.start == 1 && self.word(0).and_then(symbol) == Some('-') && self.following(0).is_some()
-    }
-
-    /// Whether a spoken symbol joins the digit word `run` to a number
-    /// written on either side, as in "two dot five". `previous` is the run
-    /// before it.
-    fn symbol_joins_a_number(&self, run: &Range<usize>, previous: Option<&Range<usize>>) -> bool {
-        let joins = |left: &Range<usize>, right: &Range<usize>| {
-            self.symbol_links(left.end - 1, right.start)
-                && self
-                    .alone(left)
-                    .zip(self.alone(right))
-                    .is_some_and(|(left, right)| symbols::joins(&left, &right))
-        };
-        let next = self.run_from(run.start + 2);
-        previous.is_some_and(|previous| joins(previous, run))
-            || next.is_some_and(|next| joins(run, &next))
-    }
-
-    /// Whether one symbol word sits between the words at `left` and
-    /// `right`, reading on from one to the other.
-    fn symbol_links(&self, left: usize, right: usize) -> bool {
-        left + 2 == right
-            && self.following(left).and_then(symbol).is_some()
-            && self.following(left + 1).is_some()
-    }
-
-    /// What `run` types as a number alone, digit word or not: no unit
-    /// counts it and no ordinal follows it.
-    fn alone(&self, run: &Range<usize>) -> Option<String> {
-        let number = self.number(run)?;
-        let alone = self.counted(&number, run).is_none() && !self.opens_an_ordinal(run);
-        alone.then(|| self.punctuated(run.start, &number.to_string(), run.end))
+        is_ordinal(word).then_some(at + 1)
     }
 
     /// `number` with the unit said after `run`.
@@ -292,13 +272,13 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
     }
 
     /// Where what the number opening at `start` may still take ends: its
-    /// words with a "point" or "and" after them, or its dollars with the
-    /// cents after those. Everything [`claim`] joins is here, so a stream
-    /// never types half of it.
-    fn open_end(&self, start: usize) -> Option<usize> {
+    /// words with a "point" or "and" after them, an "and" an ordinal may
+    /// follow, or its dollars with the cents after those.
+    fn takes_to(&self, start: usize) -> Option<usize> {
         let said = self.said_from(start)?;
         let Some(dollars_at) = self.dollars_after(&said) else {
-            return Some(said.end);
+            let and = self.following(said.end - 1) == Some("and");
+            return Some(said.end + usize::from(and));
         };
         let cents_at = self.cents_start(dollars_at);
         let cents = self
@@ -357,12 +337,15 @@ mod tests {
     #[case::digit_words_in_a_chain("one dot two dot three", "1.2.3")]
     #[case::o_outside_a_decimal("ten oh my", "10 oh my")]
     #[case::digit_word_a_symbol_joins_to_a_word("user underscore one", "user_one")]
+    #[case::digits_inside_a_longer_join("user underscore one dot two", "user_1.2")]
+    #[case::word_after_joined_digits("two dot five underscore user", "2.5_user")]
+    #[case::digit_word_beside_digit_words("five dot one two", "five.one two")]
     #[case::digit_word_beside_a_scale_word("two million dot five", "2 million dot five")]
     #[case::digit_word_beside_dollars("two dot five dollars", "two dot $5")]
-    #[case::digit_word_beside_digit_words("five dot one two", "five.one two")]
     #[case::digit_word_beside_a_scale_alone("hundred dot five", "hundred.five")]
     #[case::number_before_a_measure("twenty kilograms", "20 kilograms")]
     #[case::number_after_a_hyphen("covid hyphen nineteen", "covid-19")]
+    #[case::number_after_a_hyphen_with_nothing_before("hyphen nineteen", "hyphen 19")]
     #[case::dollars_before_other_words("five dollars and twenty people", "$5 and 20 people")]
     // "x minus ten" may be a sum, so "minus" never signs a number.
     #[case::minus_stays_a_word("x minus ten", "x minus 10")]
@@ -380,7 +363,6 @@ mod tests {
     #[case::ordinal_past_an_and("one hundred and first")]
     #[case::hyphenated_ordinal("the one hundred twenty-second time")]
     #[case::digit_words_in_curly_quotes("\u{201c}two dot five\u{201d}")]
-    #[case::number_after_an_opening_hyphen("hyphen nineteen")]
     #[case::measure("two kilograms")]
     #[case::time_with_a_meridiem("three thirty pm")]
     #[case::another_currency("five euros")]

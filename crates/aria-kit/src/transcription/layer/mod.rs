@@ -7,15 +7,17 @@ use super::{TranscriptUpdate, TranscriptionError, check_cancelled};
 
 mod backtrack;
 pub use backtrack::Backtrack;
+mod claim;
 mod deferred;
 pub use deferred::{DeferredWords, Unheld};
 mod disfluencies;
 pub use disfluencies::{RemoveHesitations, RemoveRepeats};
+mod correction;
 mod number_words;
 mod numbers;
+pub use correction::JoinSymbols;
 mod symbol_words;
 mod symbols;
-pub use symbols::JoinSymbols;
 pub mod vocabulary;
 pub use vocabulary::Vocabulary;
 
@@ -124,26 +126,6 @@ impl Layer for Vocabulary {
             *text = corrected;
         }
         Ok(())
-    }
-}
-
-impl Vocabulary {
-    /// Corrects dictated `text` in one pass. Each step claims words, and no
-    /// later step rewrites a claim:
-    ///
-    /// 1. Vocabulary terms.
-    /// 2. The spoken forms of personal rules.
-    /// 3. Spoken numbers, written as digits.
-    /// 4. Spoken symbols, which join their neighbors, claimed or not.
-    /// 5. Personal rules' fuzzy fixes, on what nothing claimed.
-    ///
-    /// `before` is text already typed: a symbol `text` opens with joins its
-    /// last word.
-    pub fn correct_spoken(&self, text: &str, before: &str) -> Option<String> {
-        let before = before.split_whitespace().next_back();
-        let claim = |text, words| symbols::claim(text, numbers::claim(text, words), before);
-        self.correct_with(text, claim, &|_| Ok::<_, std::convert::Infallible>(()))
-            .unwrap_or_else(|never| match never {})
     }
 }
 

@@ -49,9 +49,9 @@ impl SentenceEnds {
     /// anything else opens `text` with it.
     #[must_use = "the deferred ending is owed to the previous segment"]
     pub fn punctuate(&mut self, text: &str, sentence_ended_before: Option<bool>) -> Punctuated {
-        let mut text = match (self.deferred.take(), sentence_ended_before) {
-            (Some(_), Some(false)) | (None, _) => text.to_owned(),
-            (Some(mark), _) => format!("{mark} {text}"),
+        let mut text = match self.deferred.take() {
+            Some(mark) if !goes_on(sentence_ended_before) => format!("{mark} {text}"),
+            _ => text.to_owned(),
         };
         let defers_ending = match closing_mark(&text) {
             Some(mark) => {
@@ -71,10 +71,27 @@ impl SentenceEnds {
         self.deferred.is_some()
     }
 
+    /// Whether a segment read as `sentence_ended_before` goes on from the
+    /// text before it. Without a reading, it does unless a closing mark
+    /// waits.
+    pub fn reads_on(&self, sentence_ended_before: Option<bool>) -> bool {
+        match sentence_ended_before {
+            Some(ended) => !ended,
+            None => !self.is_deferring(),
+        }
+    }
+
     /// The mark the last segment owes, once nothing follows it.
     pub fn finish(&mut self) -> Option<String> {
         self.deferred.take().map(char::into)
     }
+}
+
+/// Whether a segment read as `sentence_ended_before` goes on with the
+/// sentence before it, so that sentence's closing mark drops. Only a
+/// reading says so: without one, the mark stays as the recognizer wrote it.
+pub(crate) fn goes_on(sentence_ended_before: Option<bool>) -> bool {
+    sentence_ended_before == Some(false)
 }
 
 /// Whether `word` ends a sentence: a lone mark, not "U.S." or "etc.".
@@ -192,6 +209,17 @@ mod tests {
                 "{text:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_reading_says_whether_the_next_text_reads_on() {
+        let mut sentences = SentenceEnds::default();
+        let _ = sentences.punctuate("We should go.", None);
+        assert!(sentences.reads_on(Some(false)));
+        assert!(!sentences.reads_on(Some(true)));
+        assert!(!sentences.reads_on(None));
+        let _ = sentences.punctuate("now", Some(false));
+        assert!(sentences.reads_on(None));
     }
 
     #[test]

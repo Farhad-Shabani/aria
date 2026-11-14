@@ -4,9 +4,10 @@ use std::ops::Range;
 
 use crate::cancel::CancelToken;
 
+use super::super::claim::{Claimed, Word};
 use super::super::number_words::{is_up_to_twenty, word_for};
 use super::super::symbol_words::symbol;
-use super::{MatchError, Word, is_word};
+use super::{MatchError, is_word};
 
 /// What stored rules may cost in memory.
 const MAX_PERSONAL_BYTES: usize = 8 * 1024 * 1024;
@@ -130,23 +131,20 @@ impl PersonalRules {
         let mut output = String::with_capacity(text.len());
         let mut substitutions = Vec::new();
         let mut position = 0;
-        while position < chars.len() {
-            check(output.len())?;
-            let matched = self.form_at(&chars, position, &|| check(output.len()))?;
-            if let Some((length, correct)) = matched {
-                check(output.len().saturating_add(correct.len()))?;
-                let original: String = chars[position..position + length].iter().collect();
-                if original != correct {
-                    substitutions.push((original, correct.to_owned()));
-                }
-                output.push_str(correct);
-                position += length;
-            } else {
-                check(output.len().saturating_add(chars[position].len_utf8()))?;
-                output.push(chars[position]);
-                position += 1;
+        for (form, correct) in self.forms_typed(&chars, &|| check(0))? {
+            let between: String = chars[position..form.start].iter().collect();
+            check(output.len().saturating_add(between.len() + correct.len()))?;
+            output.push_str(&between);
+            let original: String = chars[form.clone()].iter().collect();
+            if original != correct {
+                substitutions.push((original, correct.to_owned()));
             }
+            output.push_str(correct);
+            position = form.end;
         }
+        let rest: String = chars[position..].iter().collect();
+        check(output.len().saturating_add(rest.len()))?;
+        output.push_str(&rest);
         let (output, fuzzy) = apply_fuzzy(&output, &self.terms, &self.known, check)?;
         substitutions.extend(fuzzy);
         Ok((output, substitutions))
@@ -189,11 +187,11 @@ impl PersonalRules {
     /// split around it, as "teh," is. A form that opens or ends on a symbol
     /// word waits: only the symbol's own join can attach it to the word
     /// beside it, as "dot com" attaches to "example".
-    pub(super) fn claim<'a>(&'a self, text: &str, words: Vec<Word<'a>>) -> Vec<Word<'a>> {
+    pub(super) fn claim<'a>(&'a self, text: &str, claimed: &mut Claimed<'a>) {
         if self.forms.is_empty() {
-            return words;
+            return;
         }
-        let mut claimed = Vec::with_capacity(words.len());
+        let words = claimed.take_words();
         let mut unclaimed = Vec::new();
         let mut start = 0;
         for word in words {
@@ -201,17 +199,96 @@ impl PersonalRules {
                 unclaimed.push(word);
                 continue;
             }
-            self.claim_between(
-                text,
-                start..word.span.start,
-                unclaimed.drain(..),
-                &mut claimed,
-            );
+            self.claim_between(text, start..word.span.start, unclaimed.drain(..), claimed);
             start = word.span.end;
             claimed.push(word);
         }
-        self.claim_between(text, start..text.len(), unclaimed.drain(..), &mut claimed);
-        claimed
+        self.claim_between(text, start..text.len(), unclaimed.drain(..), claimed);
+    }
+
+    /// The spoken forms [`Self::apply_checked`] types in `chars`, text no
+    /// step claimed: at each position the longest form that starts there,
+    /// then on past it. Each comes as its char range and what it types.
+    fn forms_typed<E>(
+        &self,
+        chars: &[char],
+        check: &impl Fn() -> Result<(), E>,
+    ) -> Result<Vec<(Range<usize>, &str)>, E> {
+        let mut forms = Vec::new();
+        let mut position = 0;
+        while position < chars.len() {
+            check()?;
+            match self.form_at(chars, position, check)? {
+                Some((length, typed)) => {
+                    forms.push((position..position + length, typed));
+                    position += length;
+                }
+                None => position += 1,
+            }
+        }
+        Ok(forms)
+    }
+
+    /// Defers the words of a spoken form that waits on a symbol, where more
+    /// speech may still change it: a form the cut would split, as learned
+    /// "tilde dot" → `~.` in "cd tilde dot", or one the text ends inside, as
+    /// "use see sharp" may become "see sharp dot" → `C#.`. Forms are read
+    /// in the text between claims, as [`Self::apply_checked`] reads them.
+    pub(super) fn defer_waiting_forms(&self, text: &str, claimed: &mut Claimed<'_>) {
+        let cut = claimed.deferred_from();
+        let Some(gap) = unclaimed_around(claimed.words(), text.len(), cut) else {
+            return;
+        };
+        if self.forms.is_empty() {
+            return;
+        }
+        let (offsets, chars): (Vec<usize>, Vec<char>) = text[gap.clone()].char_indices().unzip();
+        let at = |index: usize| gap.start + offsets[index];
+        let cut = offsets.partition_point(|offset| gap.start + offset < cut);
+        let forms = self
+            .forms_typed(&chars, &|| Ok::<_, std::convert::Infallible>(()))
+            .unwrap_or_else(|never| match never {});
+        if let Some((form, _)) = forms
+            .iter()
+            .find(|(form, _)| form.start < cut && cut < form.end)
+        {
+            claimed.defer_at(at(form.start));
+            return;
+        }
+        if gap.end < text.len() {
+            return;
+        }
+        let after_forms = forms.last().map_or(0, |(form, _)| form.end);
+        if let Some(start) =
+            (after_forms..cut).find(|&start| self.begins_a_waiting_form(&chars, start))
+        {
+            claimed.defer_at(at(start));
+        }
+    }
+
+    /// Whether the words from `position` to the end of `chars` begin a
+    /// longer form that waits on a symbol: "see sharp" begins "see sharp
+    /// dot".
+    fn begins_a_waiting_form(&self, chars: &[char], position: usize) -> bool {
+        let said = &chars[position..];
+        let Some(first) = said.first() else {
+            return false;
+        };
+        let first = first.to_lowercase().next().unwrap_or(*first);
+        let begins = |form: &[char]| {
+            form.len() > said.len()
+                && form[said.len()].is_whitespace()
+                && form
+                    .iter()
+                    .zip(said)
+                    .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
+        };
+        boundary(chars, position)
+            && self.forms.get(&first).is_some_and(|forms| {
+                forms
+                    .iter()
+                    .any(|(form, _)| edges_on_a_symbol(form) && begins(form))
+            })
     }
 
     /// Claims the forms in `between`, the text from one claim to the next,
@@ -221,14 +298,14 @@ impl PersonalRules {
         text: &str,
         between: Range<usize>,
         words: impl Iterator<Item = Word<'a>>,
-        claimed: &mut Vec<Word<'a>>,
+        claimed: &mut Claimed<'a>,
     ) {
         let mut forms = self.forms_in(text, between).into_iter().peekable();
         for word in words {
             let mut from = word.span.start;
             while let Some(form) = forms.peek().filter(|form| form.span.start < word.span.end) {
                 if form.span.start > from {
-                    claimed.push(plain(from..form.span.start));
+                    claimed.push(Word::plain(from..form.span.start));
                 }
                 from = form.span.end.min(word.span.end);
                 // A form that runs past this word is claimed where it ends.
@@ -238,12 +315,13 @@ impl PersonalRules {
                 claimed.extend(forms.next());
             }
             if from < word.span.end {
-                claimed.push(plain(from..word.span.end));
+                claimed.push(Word::plain(from..word.span.end));
             }
         }
     }
 
-    /// Each spoken form in `between`, in order, as a claim on its bytes.
+    /// Each spoken form in `between` that doesn't wait on a symbol, in
+    /// order, as a claim on its bytes.
     fn forms_in<'a>(&'a self, text: &str, between: Range<usize>) -> Vec<Word<'a>> {
         let (offsets, chars): (Vec<usize>, Vec<char>) =
             text[between.clone()].char_indices().unzip();
@@ -260,14 +338,34 @@ impl PersonalRules {
                 position += 1;
                 continue;
             };
-            forms.push(Word {
-                span: byte(position)..byte(position + length),
-                claim: Some(Cow::Borrowed(typed)),
-            });
+            forms.push(Word::claimed(
+                byte(position)..byte(position + length),
+                Cow::Borrowed(typed),
+            ));
             position += length;
         }
         forms
     }
+}
+
+/// The text between the claims on either side of `at`, which personal rules
+/// read for forms. `None` when `at` falls inside a claim.
+fn unclaimed_around(words: &[Word<'_>], len: usize, at: usize) -> Option<Range<usize>> {
+    let claims = || words.iter().filter(|word| word.claim.is_some());
+    if claims().any(|word| word.span.start < at && at < word.span.end) {
+        return None;
+    }
+    let start = claims()
+        .map(|word| word.span.end)
+        .filter(|end| *end <= at)
+        .max()
+        .unwrap_or(0);
+    let end = claims()
+        .map(|word| word.span.start)
+        .filter(|start| *start >= at)
+        .min()
+        .unwrap_or(len);
+    Some(start..end)
 }
 
 /// Whether `spoken` opens or ends on a symbol word, as "dot com" does.
@@ -280,10 +378,6 @@ fn edges_on_a_symbol(spoken: &[char]) -> bool {
         .into_iter()
         .flatten()
         .any(|word| symbol(word).is_some())
-}
-
-fn plain<'a>(span: Range<usize>) -> Word<'a> {
-    Word { span, claim: None }
 }
 
 /// A false substitution reads worse than a missed one.

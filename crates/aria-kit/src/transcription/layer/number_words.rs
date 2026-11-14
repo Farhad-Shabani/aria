@@ -77,7 +77,7 @@ pub(super) enum NumberWord {
 }
 
 impl NumberWord {
-    /// `word` in lowercase.
+    /// Reads `word`, which must be in lowercase.
     pub(super) fn parse(word: &str) -> Option<Self> {
         if word == "hundred" {
             return Some(Self::Hundred);
@@ -107,7 +107,6 @@ impl Scale {
     }
 }
 
-/// Where `word` sits in `words`.
 fn place(words: &[&str], word: &str) -> Option<u128> {
     (0..)
         .zip(words)

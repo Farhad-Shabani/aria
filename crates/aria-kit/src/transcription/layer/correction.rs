@@ -1,0 +1,161 @@
+use std::convert::Infallible;
+
+use crate::cancel::CancelToken;
+
+use super::claim::Claimed;
+use super::{Layer, TranscriptionError, Vocabulary, check_cancelled, check_size, numbers, symbols};
+
+/// Joins the words around "underscore", "hyphen", or "dot", as in
+/// "user underscore id" → `user_id`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JoinSymbols;
+
+impl Layer for JoinSymbols {
+    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
+        let vocabulary = Vocabulary::default();
+        let corrected = vocabulary.correct_with(
+            text,
+            |claimed| claim_each(&[Step::Symbols], text, None, &vocabulary, claimed),
+            &|bytes| {
+                check_cancelled(cancel)?;
+                check_size(bytes)
+            },
+        )?;
+        if let Some(corrected) = corrected {
+            *text = corrected;
+        }
+        Ok(())
+    }
+}
+
+/// A step that claims dictated words. Reading the words claims vocabulary
+/// terms first, and typing applies personal rules last, to what no step
+/// claimed. No step rewrites an earlier claim.
+#[derive(Clone, Copy)]
+pub(super) enum Step {
+    /// The spoken forms of personal rules. The user's words come first, so
+    /// "i eighteen n" types `i18n`, not `i 18 n`.
+    Forms,
+    /// Spoken numbers, written as digits.
+    Numbers,
+    /// Spoken symbols, which join their neighbors, claimed or not.
+    Symbols,
+}
+
+/// The steps of [`Vocabulary::correct_spoken`], in order.
+const SPOKEN: [Step; 3] = [Step::Forms, Step::Numbers, Step::Symbols];
+
+// Only the steps before the first join claim when the deferred words are
+// found, so a step that defers as it claims must come before it.
+const _: () = {
+    let mut index = 0;
+    let mut joined = false;
+    while index < SPOKEN.len() {
+        assert!(
+            !(joined && SPOKEN[index].defers_as_it_claims()),
+            "a step that defers as it claims comes before the first join"
+        );
+        joined |= SPOKEN[index].joins();
+        index += 1;
+    }
+};
+
+impl Step {
+    fn claim<'a>(
+        self,
+        text: &str,
+        before: Option<&str>,
+        vocabulary: &'a Vocabulary,
+        claimed: &mut Claimed<'a>,
+    ) {
+        match self {
+            Self::Forms => vocabulary.claim_forms(text, claimed),
+            Self::Numbers => numbers::claim(text, claimed),
+            Self::Symbols => symbols::claim(text, before, claimed),
+        }
+    }
+
+    /// Defers more words, given where the cut now falls.
+    fn defer(self, text: &str, vocabulary: &Vocabulary, claimed: &mut Claimed<'_>) {
+        match self {
+            Self::Forms => vocabulary.defer_waiting_forms(text, claimed),
+            Self::Numbers => {}
+            Self::Symbols => symbols::defer(text, claimed),
+        }
+    }
+
+    /// Whether the step defers its words as it claims them, rather than in
+    /// [`Self::defer`].
+    const fn defers_as_it_claims(self) -> bool {
+        match self {
+            Self::Forms | Self::Symbols => false,
+            Self::Numbers => true,
+        }
+    }
+
+    /// Whether the step joins words into one claim, which more speech may
+    /// still undo.
+    const fn joins(self) -> bool {
+        match self {
+            Self::Forms | Self::Numbers => false,
+            Self::Symbols => true,
+        }
+    }
+}
+
+fn claim_each<'a>(
+    steps: &[Step],
+    text: &str,
+    before: Option<&str>,
+    vocabulary: &'a Vocabulary,
+    claimed: &mut Claimed<'a>,
+) {
+    for step in steps {
+        step.claim(text, before, vocabulary, claimed);
+    }
+}
+
+impl Vocabulary {
+    /// Corrects dictated `text` in one pass: terms, spoken forms, numbers,
+    /// symbols, then personal rules on what nothing claimed.
+    /// `before` is text already typed: a symbol `text` opens with joins its
+    /// last word.
+    pub fn correct_spoken(&self, text: &str, before: &str) -> Option<String> {
+        let before = before.split_whitespace().next_back();
+        self.correct_with(
+            text,
+            |claimed| claim_each(&SPOKEN, text, before, self, claimed),
+            &|_| Ok::<_, Infallible>(()),
+        )
+        .unwrap_or_else(|never| match never {})
+    }
+
+    /// Where the words dictated `text` ends on begin that more speech may
+    /// still change: the text's length when none may. This is what
+    /// [`DeferredWords`](super::DeferredWords) holds.
+    ///
+    /// Only the steps before the first join claim, because more speech may
+    /// still undo a join. Then every step defers more words until the cut
+    /// stays put, or until more than `max_words` are deferred, which a hold
+    /// types rather than holds.
+    pub(super) fn spoken_deferred_from(&self, text: &str, max_words: usize) -> usize {
+        let unjoined = SPOKEN.iter().take_while(|step| !step.joins()).count();
+        let mut claimed = self
+            .claimed(
+                text,
+                |claimed| claim_each(&SPOKEN[..unjoined], text, None, self, claimed),
+                &|_| Ok::<_, Infallible>(()),
+            )
+            .unwrap_or_else(|never| match never {});
+        loop {
+            let from = claimed.deferred_from();
+            for step in SPOKEN {
+                step.defer(text, self, &mut claimed);
+            }
+            let to = claimed.deferred_from();
+            if to == from || text[to..].split_whitespace().nth(max_words).is_some() {
+                return to;
+            }
+        }
+    }
+}

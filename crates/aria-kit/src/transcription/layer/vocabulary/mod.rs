@@ -1,11 +1,12 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::ops::Range;
 
 use crate::cancel::CancelToken;
 
 mod personal;
 pub use personal::PersonalRules;
+
+use super::claim::{Claimed, Word};
 
 const MAX_TERMS: usize = 100_000;
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
@@ -38,21 +39,6 @@ struct Candidate {
 struct Bucket {
     aliases: HashMap<String, Candidate>,
     max_chars: usize,
-}
-
-/// Plain text between spaces or matches, or a vocabulary match of any length.
-#[derive(Clone)]
-pub(super) struct Word<'a> {
-    pub(super) span: Range<usize>,
-    /// What a claimed span types, which no later step rewrites: a term's
-    /// spelling, a spoken form's, a number's digits, or joined words.
-    pub(super) claim: Option<Cow<'a, str>>,
-}
-
-impl Word<'_> {
-    pub(super) fn typed<'s>(&'s self, text: &'s str) -> &'s str {
-        self.claim.as_deref().unwrap_or(&text[self.span.clone()])
-    }
 }
 
 #[derive(Default)]
@@ -208,31 +194,40 @@ impl Vocabulary {
             let (corrected, _) = self.personal.apply_checked(text, check)?;
             return Ok((corrected != text).then_some(corrected));
         }
-        check(text.len())?;
-        self.typed(text, &self.words(text, check)?, check)
+        self.correct_with(text, |_| {}, check)
     }
 
-    /// Corrects `text` with more steps than terms. Each claims words, and
-    /// none rewrites an earlier claim: terms, then the user's spoken forms,
-    /// then what `claim` adds, as when spoken symbols join words. The user's
-    /// words come first, so "i eighteen n" types `i18n`, not `i 18 n`.
+    /// `text` corrected by `claim`, between reading its words, which claims
+    /// vocabulary terms, and typing them, which applies personal rules to
+    /// what nothing claimed.
     pub(super) fn correct_with<'a, E>(
         &'a self,
         text: &'a str,
-        claim: impl FnOnce(&'a str, Vec<Word<'a>>) -> Vec<Word<'a>>,
+        claim: impl FnOnce(&mut Claimed<'a>),
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Option<String>, E> {
-        check(text.len())?;
-        let words = self.personal.claim(text, self.words(text, check)?);
-        self.typed(text, &claim(text, words), check)
+        let claimed = self.claimed(text, claim, check)?;
+        self.typed(text, claimed.words(), check)
     }
 
-    /// `text`'s words, with terms and the user's spoken forms claimed.
-    pub(super) fn claimed_words<'a>(&'a self, text: &'a str) -> Vec<Word<'a>> {
-        let words = self
-            .words(text, &|_| Ok::<_, std::convert::Infallible>(()))
-            .unwrap_or_else(|never| match never {});
-        self.personal.claim(text, words)
+    pub(super) fn claimed<'a, E>(
+        &'a self,
+        text: &'a str,
+        claim: impl FnOnce(&mut Claimed<'a>),
+        check: &impl Fn(usize) -> Result<(), E>,
+    ) -> Result<Claimed<'a>, E> {
+        check(text.len())?;
+        let mut claimed = Claimed::new(self.words(text, check)?, text.len());
+        claim(&mut claimed);
+        Ok(claimed)
+    }
+
+    pub(super) fn claim_forms<'a>(&'a self, text: &str, claimed: &mut Claimed<'a>) {
+        self.personal.claim(text, claimed);
+    }
+
+    pub(super) fn defer_waiting_forms(&self, text: &str, claimed: &mut Claimed<'_>) {
+        self.personal.defer_waiting_forms(text, claimed);
     }
 
     /// `text` with each claim typed, and personal rules applied to the
@@ -271,7 +266,7 @@ impl Vocabulary {
         text: &'a str,
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Vec<Word<'a>>, E> {
-        let plain = |span: Range<usize>| Word { span, claim: None };
+        let plain = Word::plain;
         let mut words = Vec::new();
         let mut word_start = None;
         let mut position = 0;
@@ -307,10 +302,7 @@ impl Vocabulary {
             } else {
                 candidate.canonical.as_deref().unwrap()
             };
-            words.push(Word {
-                span: position..end,
-                claim: Some(Cow::Borrowed(term)),
-            });
+            words.push(Word::claimed(position..end, Cow::Borrowed(term)));
             position = end;
         }
         if let Some(start) = word_start {
