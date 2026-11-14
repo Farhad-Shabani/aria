@@ -1,8 +1,6 @@
 import SwiftUI
 
 struct SettingsView: View {
-    private static let paneKey = "settingsPane"
-
     @ObservedObject var settings: DaemonSettings
     @ObservedObject var poller: StatusPoller
     let phonePairing: PhonePairing
@@ -19,9 +17,7 @@ struct SettingsView: View {
     @ObservedObject var settingsHealth: SettingsHealth
     @ObservedObject var paneRequest: SettingsPaneRequest
     @StateObject private var assistantCatalog = AssistantCatalog()
-    @State private var history = SettingsHistory(
-        current: .pane(UserDefaults.standard.string(forKey: paneKey).flatMap(SettingsPane.init) ?? .general)
-    )
+    @State private var history = SettingsHistory(current: .pane(.general))
 
     private var setupItems: [SetupItem] {
         SetupItem.all(setup: setupStatus, health: settingsHealth, poller: poller)
@@ -54,10 +50,7 @@ struct SettingsView: View {
                     }
                 }
         }
-        .onChange(of: history.current.pane) { _, pane in
-            UserDefaults.standard.set(pane.rawValue, forKey: Self.paneKey)
-            leaveFinishSetupIfDone()
-        }
+        .onChange(of: history.current.pane) { leaveFinishSetupIfDone() }
         .onChange(of: setupItems.isEmpty, initial: true) { leaveFinishSetupIfDone() }
         .onChange(of: paneRequest.pane, initial: true) { _, pane in
             guard let pane else { return }
@@ -154,8 +147,8 @@ struct SettingsView: View {
         }
     }
 
-    /// Finish Setting Up Aria with nothing left in it is an empty page, so
-    /// General takes its place, also when Back or a saved pane reaches it.
+    /// Finish Setting Up Aria with nothing left in it is an empty page.
+    /// General takes its place, even when Back or a pane request opens it.
     private func leaveFinishSetupIfDone() {
         if setupItems.isEmpty && history.current.pane == .finishSetup {
             history.replace(with: .pane(.general))
