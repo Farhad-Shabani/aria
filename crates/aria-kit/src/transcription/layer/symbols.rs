@@ -36,6 +36,7 @@ pub(super) fn claim<'a>(text: &str, before: Option<&str>, claimed: &mut Claimed<
         let mut typed = String::new();
         if let (0, Some(symbol)) = (index, links[0]) {
             typed.push(symbol);
+            claimed.join_before();
             index = 1;
         }
         let mut last = index;
@@ -132,9 +133,8 @@ fn joins_after(text: &str, words: &[Word<'_>], left: usize) -> bool {
     !line_break && joinable_before_a_symbol(words[left].typed(text))
 }
 
-/// What the word after the symbol at `index` types in its join. A hyphen
-/// opening the text joins typed text, and a caret keeps `-19` apart from it
-/// as a number, so a number there types as heard: "covid" then "hyphen
+/// What the word after the symbol at `index` types in its join. After a
+/// hyphen opening the text, a number types as heard: "covid" then "hyphen
 /// nineteen" types `covid-nineteen`. `None` when digits were heard there.
 fn right_form<'s>(
     text: &'s str,
@@ -232,31 +232,34 @@ mod tests {
     #[case::match_spoken_with_a_slash("run ci slash cd", "run CI/CD")]
     fn joins_through_vocabulary(#[case] heard: &str, #[case] typed: &str) {
         let vocabulary = Vocabulary::new(["aria-stt", "Cargo.toml", "Kit-Pro", "CI/CD"]).unwrap();
-        let corrected = vocabulary.correct_spoken(heard, "");
+        let corrected = vocabulary
+            .correct_spoken(heard, "")
+            .map(|corrected| corrected.text);
         assert_eq!(corrected.as_deref().unwrap_or(heard), typed);
     }
 
     #[rstest]
-    #[case::underscore("call user", "underscore id", Some("_id"))]
-    #[case::chain("max", "underscore retry underscore count", Some("_retry_count"))]
-    #[case::dot_after_a_digit("2", "dot 5", Some(".5"))]
+    #[case::underscore("call user", "underscore id", Some(("_id", true)))]
+    #[case::chain("max", "underscore retry underscore count", Some(("_retry_count", true)))]
+    #[case::dot_after_a_digit("2", "dot 5", Some((".5", true)))]
     #[case::hyphen_before_a_digit("3", "hyphen 5", None)]
-    #[case::slash_before_a_digit("24", "slash 7", Some("/7"))]
-    #[case::numbers_around_a_slash("", "one slash two", Some("1/2"))]
-    #[case::hyphen_before_a_number_word("covid", "hyphen nineteen", Some("-nineteen"))]
-    #[case::hyphen_after_a_symbol_word("the end, underscore", "hyphen twenty", Some("hyphen 20"))]
-    #[case::digits_after_an_opening_symbol("x", "underscore five dot two", Some("_5.2"))]
+    #[case::slash_before_a_digit("24", "slash 7", Some(("/7", true)))]
+    #[case::numbers_around_a_slash("", "one slash two", Some(("1/2", false)))]
+    #[case::hyphen_before_a_number_word("covid", "hyphen nineteen", Some(("-nineteen", true)))]
+    #[case::hyphen_after_a_symbol_word("the end, underscore", "hyphen twenty", Some(("hyphen 20", false)))]
+    #[case::digits_after_an_opening_symbol("x", "underscore five dot two", Some(("_5.2", true)))]
     #[case::nothing_typed("", "underscore id", None)]
     #[case::punctuation_typed("user,", "underscore id", None)]
     fn opens_onto_the_word_typed_before(
         #[case] before: &str,
         #[case] heard: &str,
-        #[case] typed: Option<&str>,
+        #[case] typed: Option<(&str, bool)>,
     ) {
+        let corrected = Vocabulary::default().correct_spoken(heard, before);
         assert_eq!(
-            Vocabulary::default()
-                .correct_spoken(heard, before)
-                .as_deref(),
+            corrected
+                .as_ref()
+                .map(|corrected| (corrected.text.as_str(), corrected.joins_before)),
             typed
         );
     }
@@ -268,6 +271,7 @@ mod tests {
         assert_eq!(
             vocabulary
                 .correct_spoken("teh user underscore id", "")
+                .map(|corrected| corrected.text)
                 .as_deref(),
             Some("the user_id")
         );

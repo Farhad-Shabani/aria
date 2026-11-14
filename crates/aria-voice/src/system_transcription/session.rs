@@ -305,6 +305,7 @@ impl Session<'_> {
                 at: heard.window.start,
                 span: heard.span,
                 defers_ending: false,
+                joins_before: false,
             },
             released.embedding.as_deref(),
         )

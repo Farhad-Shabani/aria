@@ -739,11 +739,11 @@ where
         let previews = (published.caption.is_some() || published.streaming) && M::INCREMENTAL;
         let deliver = |published: &mut Published<'_>, sinks: &mut S, released: Released| {
             let Released { heard, speaker, .. } = released;
-            let unheld = self
+            let segment = self
                 .rewritten(&heard, published, settings.cleanup, &cancel)
                 .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
             let speaker = speaker.as_ref().and_then(Label::enrolled).cloned();
-            published.publish(heard, &unheld, speaker, sinks)
+            published.publish(heard, &segment, speaker, sinks)
         };
         let failed = |error: HearingError, published: &mut Published<'_>| match error {
             HearingError::Transcription(_) => published
@@ -859,10 +859,10 @@ where
                 None => timeline.owner_name(),
             }
             .cloned();
-            let unheld = self
+            let segment = self
                 .rewritten(&heard, &mut published, settings.cleanup, cancel)
                 .map_err(started)?;
-            published.publish(heard, &unheld, speaker, sinks)?;
+            published.publish(heard, &segment, speaker, sinks)?;
         }
         published.finish(transcript, timeline.admitted_is_owner(), sinks)
     }
@@ -876,15 +876,23 @@ where
         published: &mut Published<'_>,
         cleanup: Cleanup,
         cancel: &CancelToken,
-    ) -> Result<Unheld, TranscriptionError> {
+    ) -> Result<CorrectedSegment, TranscriptionError> {
         let mut text = heard.segment.as_str().to_owned();
         self.rewrites.clean(&mut text, cleanup, cancel)?;
-        // Nothing fails past here: the words `hold` takes back would be lost.
+        // Nothing fails after this check: the words `hold` takes back would
+        // be lost.
         check_cancelled(cancel)?;
-        let mut unheld = published.hold(&text, heard);
-        published.correct(&mut unheld);
-        Ok(unheld)
+        let unheld = published.hold(&text, heard);
+        Ok(published.correct(unheld))
     }
+}
+
+/// A segment's text once corrected, ready to punctuate and type.
+struct CorrectedSegment {
+    text: String,
+    sentence_ended_before: Option<bool>,
+    /// `text` opens with a spoken symbol that joins the last word typed.
+    joins_before: bool,
 }
 
 /// What a stream holds back at each segment's end: the closing mark, and
@@ -931,6 +939,16 @@ impl SegmentEnds {
             return "";
         }
         typed
+    }
+}
+
+/// Spaces `text` after `caret`, with no space before it when
+/// `joins_before`.
+fn spaced(mut caret: Caret, text: &str, joins_before: bool) -> String {
+    if joins_before {
+        caret.attach(text)
+    } else {
+        caret.insert(text)
     }
 }
 
@@ -1007,23 +1025,29 @@ impl<'a> Published<'a> {
     }
 
     /// Corrects `unheld` after what the press published before it.
-    fn correct(&self, unheld: &mut Unheld) {
+    fn correct(&self, unheld: Unheld) -> CorrectedSegment {
         let before = self
             .ends
             .context(unheld.sentence_ended_before, &self.written);
-        if let Some(corrected) = self.vocabulary.correct_spoken(&unheld.text, before) {
-            unheld.text = corrected;
+        let (text, joins_before) = match self.vocabulary.correct_spoken(&unheld.text, before) {
+            Some(corrected) => (corrected.text, corrected.joins_before),
+            None => (unheld.text, false),
+        };
+        CorrectedSegment {
+            text,
+            sentence_ended_before: unheld.sentence_ended_before,
+            joins_before,
         }
     }
 
-    /// Publishes what `heard` let through: `unheld` may open with words
+    /// Publishes what `heard` let through: `segment` may open with words
     /// held from an earlier segment and leave out its own last ones.
     /// `speaker` is the enrolled voice of the press so far, which clients
     /// show; the segment's own label is what history keeps.
     fn publish<S>(
         &mut self,
         heard: Heard,
-        unheld: &Unheld,
+        segment: &CorrectedSegment,
         speaker: Option<SpeakerName>,
         sinks: &mut S,
     ) -> Result<(), DictationError>
@@ -1037,10 +1061,10 @@ impl<'a> Published<'a> {
         self.ghost = None;
         self.heard_to = heard.window.end;
         // A streamed segment of only fillers or held words has nothing to type.
-        if unheld.text.is_empty() {
+        if segment.text.is_empty() {
             return Ok(());
         }
-        self.type_text(unheld, heard.window.start, heard.span, speaker, sinks)
+        self.type_text(segment, heard.window.start, heard.span, speaker, sinks)
             .or_else(|error| self.undelivered(error))
     }
 
@@ -1061,10 +1085,10 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let Some(mut held) = self.ends.finish_words() else {
+        let Some(held) = self.ends.finish_words() else {
             return Ok(());
         };
-        self.correct(&mut held);
+        let held = self.correct(held);
         self.type_text(&held, self.heard_to, None, None, sinks)
             .or_else(|error| self.undelivered(error))
     }
@@ -1095,11 +1119,11 @@ impl<'a> Published<'a> {
         held
     }
 
-    /// Punctuates `unheld` and types it at `at`. The error is a delivery
-    /// that failed, already logged; the text is kept either way.
+    /// Punctuates `segment` and types it at `at`. The error is a delivery
+    /// that failed, already logged. The text is kept either way.
     fn type_text<S>(
         &mut self,
-        unheld: &Unheld,
+        segment: &CorrectedSegment,
         at: u64,
         span: Option<std::ops::Range<u64>>,
         speaker: Option<SpeakerName>,
@@ -1115,14 +1139,14 @@ impl<'a> Published<'a> {
         let punctuated = if self.streaming {
             self.ends
                 .sentences
-                .punctuate(&unheld.text, unheld.sentence_ended_before)
+                .punctuate(&segment.text, segment.sentence_ended_before)
         } else {
             Punctuated {
-                text: unheld.text.clone(),
+                text: segment.text.clone(),
                 defers_ending: false,
             }
         };
-        self.keep(&punctuated.text);
+        self.keep(&punctuated.text, segment.joins_before);
         if self.failure.is_some() {
             return Ok(());
         }
@@ -1133,6 +1157,7 @@ impl<'a> Published<'a> {
             at,
             span,
             defers_ending: punctuated.defers_ending,
+            joins_before: segment.joins_before,
         };
         if let Err(error) = sinks.segment(utterance) {
             let error = stopped_partway(map_sink_error(error, self.control), sinks);
@@ -1145,7 +1170,7 @@ impl<'a> Published<'a> {
                 "dictation first segment transcribed"
             );
         }
-        self.announce(&punctuated.text, speaker, sinks);
+        self.announce(&punctuated.text, segment.joins_before, speaker, sinks);
         Ok(())
     }
 
@@ -1197,7 +1222,7 @@ impl<'a> Published<'a> {
         let Some(closing) = self.ends.sentences.finish() else {
             return;
         };
-        self.keep(&closing);
+        self.keep(&closing, false);
         if self.failure.is_some() {
             return;
         }
@@ -1207,6 +1232,7 @@ impl<'a> Published<'a> {
             at: self.heard_to,
             span: None,
             defers_ending: false,
+            joins_before: false,
         };
         let words_waited = sinks.is_queueing();
         if let Err(error) = sinks.segment(utterance) {
@@ -1222,19 +1248,25 @@ impl<'a> Published<'a> {
             );
             return;
         }
-        self.announce(&closing, None, sinks);
+        self.announce(&closing, false, None, sinks);
     }
 
-    fn keep(&mut self, text: &str) {
-        let spaced = Caret::between(&self.written, "").insert(text);
+    fn keep(&mut self, text: &str, joins_before: bool) {
+        let spaced = spaced(Caret::between(&self.written, ""), text, joins_before);
         self.written.push_str(&spaced);
     }
 
     /// Tells clients what was published, and when streaming, whether it
     /// was typed or waits for its field to regain focus.
-    fn announce<S: TranscriptSink>(&mut self, text: &str, speaker: Option<SpeakerName>, sinks: &S) {
+    fn announce<S: TranscriptSink>(
+        &mut self,
+        text: &str,
+        joins_before: bool,
+        speaker: Option<SpeakerName>,
+        sinks: &S,
+    ) {
         if let Some(caption) = &mut self.caption {
-            let spaced = Caret::between(&caption.finalized, "").insert(text);
+            let spaced = spaced(Caret::between(&caption.finalized, ""), text, joins_before);
             caption.finalized = caption_suffix(&format!("{}{spaced}", caption.finalized));
             self.events.emit(caption.clone());
         }
@@ -2982,11 +3014,12 @@ mod tests {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let unheld = Unheld {
+        let segment = CorrectedSegment {
             text: text.to_owned(),
             sentence_ended_before: heard.segment.sentence_ended_before(),
+            joins_before: false,
         };
-        published.publish(heard, &unheld, None, sinks)
+        published.publish(heard, &segment, None, sinks)
     }
 
     fn no_terms() -> &'static Vocabulary {
@@ -3043,6 +3076,20 @@ mod tests {
     }
 
     #[test]
+    fn a_symbol_opening_a_segment_joins_the_word_typed_before() {
+        let (text, log) = streamed_parts(&["open src", "slash main."], streaming());
+        assert_eq!(text, "open src/main.");
+        assert_eq!(delivered(&log), "open src/main.");
+    }
+
+    #[test]
+    fn a_slash_the_recognizer_wrote_keeps_its_space() {
+        let (text, log) = streamed_parts(&["run it", "/compact."], streaming());
+        assert_eq!(text, "run it /compact.");
+        assert_eq!(delivered(&log), "run it /compact.");
+    }
+
+    #[test]
     fn a_symbol_never_joins_across_a_held_sentence_end() {
         let (text, log) = streamed_parts(&["I like it.", "dot com is great."], streaming());
         assert_eq!(text, "I like it. dot com is great.");
@@ -3067,11 +3114,15 @@ mod tests {
             let complete = settings(DeliveryMode::Complete, OutputMode::Insert);
             let (text, log) = streamed_parts(parts, complete);
             let mut published = String::new();
-            for segment in log
-                .iter()
-                .filter_map(|entry| entry.strip_prefix("segment:"))
-            {
-                let spaced = Caret::between(&published, "").insert(segment);
+            for entry in &log {
+                let mut caret = Caret::between(&published, "");
+                let spaced = if let Some(segment) = entry.strip_prefix("segment:") {
+                    caret.insert(segment)
+                } else if let Some(joined) = entry.strip_prefix("joined:") {
+                    caret.attach(joined)
+                } else {
+                    continue;
+                };
                 published.push_str(&spaced);
             }
             assert_eq!(text, typed);
@@ -5341,7 +5392,8 @@ mod tests {
         let mut published = Published::new(settings, no_terms(), control, events, Instant::now());
         let heard = heard(directory, "it is twenty");
         let unheld = published.hold("it is twenty", &heard);
-        published.publish(heard, &unheld, None, sinks).unwrap();
+        let segment = published.correct(unheld);
+        published.publish(heard, &segment, None, sinks).unwrap();
         published
     }
 
@@ -5441,9 +5493,11 @@ mod tests {
             heard.segment = heard
                 .segment
                 .with_sentence_ended_before(sentence_ended_before);
-            let mut unheld = published.hold(text, &heard);
-            published.correct(&mut unheld);
-            published.publish(heard, &unheld, None, &mut sinks).unwrap();
+            let unheld = published.hold(text, &heard);
+            let segment = published.correct(unheld);
+            published
+                .publish(heard, &segment, None, &mut sinks)
+                .unwrap();
         }
 
         // The whole transcript, "I have twenty. one apple.", types the same.
@@ -5540,8 +5594,9 @@ mod tests {
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let heard = heard(directory.path(), "it is twenty one");
         let unheld = published.hold("it is twenty one", &heard);
+        let segment = published.correct(unheld);
         published
-            .publish(heard, &unheld, None, &mut FailingNumber)
+            .publish(heard, &segment, None, &mut FailingNumber)
             .unwrap();
         let whole = Transcript::new("unused").unwrap();
 

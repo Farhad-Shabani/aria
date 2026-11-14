@@ -26,6 +26,9 @@ pub struct Utterance<'a> {
     pub(crate) at: u64,
     pub(crate) span: Option<Range<u64>>,
     pub(crate) defers_ending: bool,
+    /// `text` opens with a spoken symbol that joins the last word typed,
+    /// so it attaches with no space.
+    pub joins_before: bool,
 }
 
 impl<'a> Utterance<'a> {
@@ -38,6 +41,7 @@ impl<'a> Utterance<'a> {
             at: 0,
             span: None,
             defers_ending: false,
+            joins_before: false,
         }
     }
 }

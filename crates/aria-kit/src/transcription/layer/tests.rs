@@ -647,7 +647,7 @@ mod correction_order {
         let vocabulary = Vocabulary::compile(&[], PersonalRules::new(terms, learned)).unwrap();
         vocabulary
             .correct_spoken(heard, "")
-            .unwrap_or_else(|| heard.to_owned())
+            .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
     }
 
     #[rstest]
@@ -677,6 +677,7 @@ mod correction_order {
         assert_eq!(
             Vocabulary::default()
                 .correct_spoken("area fifty one", "")
+                .map(|corrected| corrected.text)
                 .as_deref(),
             Some("area 51")
         );

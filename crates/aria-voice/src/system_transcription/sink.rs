@@ -307,6 +307,7 @@ impl TranscriptSink for TranscriptFile {
             at: heard_at,
             span,
             defers_ending: _,
+            joins_before: _,
         } = utterance;
         // One clock for the file, the follower and the speaker timeline: the
         // recording's own. A wall clock would drift from the audio the
@@ -406,6 +407,7 @@ mod tests {
             at: 0,
             span: None,
             defers_ending: false,
+            joins_before: false,
         }
     }
 

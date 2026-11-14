@@ -30,7 +30,8 @@ impl Layer for JoinSymbols {
 
 /// A step that claims dictated words. Reading the words claims vocabulary
 /// terms first, and typing applies personal rules last, to what no step
-/// claimed. No step rewrites an earlier claim.
+/// claimed. No step rewrites an earlier claim, but one: a number after a
+/// hyphen that opens the text types as heard.
 #[derive(Clone, Copy)]
 pub(super) enum Step {
     /// The spoken forms of personal rules. The user's words come first, so
@@ -115,23 +116,38 @@ fn claim_each<'a>(
     }
 }
 
+/// Dictated text as corrected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Corrected {
+    pub text: String,
+    /// `text` opens with a spoken symbol that joins the last word typed
+    /// before it. Type it with no space between, as
+    /// [`Caret::attach`](crate::transcription::Caret::attach) does.
+    pub joins_before: bool,
+}
+
 impl Vocabulary {
     /// Corrects dictated `text` in one pass: terms, spoken forms, numbers,
     /// symbols, then personal rules on what nothing claimed.
     /// `before` is text already typed: a symbol `text` opens with joins its
     /// last word.
-    pub fn correct_spoken(&self, text: &str, before: &str) -> Option<String> {
+    pub fn correct_spoken(&self, text: &str, before: &str) -> Option<Corrected> {
         let before = before.split_whitespace().next_back();
+        let mut joins_before = false;
         self.correct_with(
             text,
-            |claimed| claim_each(&SPOKEN, text, before, self, claimed),
+            |claimed| {
+                claim_each(&SPOKEN, text, before, self, claimed);
+                joins_before = claimed.joins_before();
+            },
             &|_| Ok::<_, Infallible>(()),
         )
         .unwrap_or_else(|never| match never {})
+        .map(|text| Corrected { text, joins_before })
     }
 
-    /// Where the words dictated `text` ends on begin that more speech may
-    /// still change: the text's length when none may. This is what
+    /// Where the words at the end of dictated `text` that more speech may
+    /// still change begin: the text's length when none may. This is what
     /// [`DeferredWords`](super::DeferredWords) holds.
     ///
     /// Only the steps before the first join claim, because more speech may

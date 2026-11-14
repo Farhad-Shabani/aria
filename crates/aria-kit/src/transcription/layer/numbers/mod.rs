@@ -17,8 +17,7 @@ use super::number_words::{continues, is_number_word, is_ordinal};
 /// another number: `2.5` in "two dot five".
 ///
 /// A number the text ends on is deferred while more speech may go on with
-/// it:
-/// more number words, a "point" or "and" it ends on, or cents after its
+/// it: more number words, a "point" or "and" it ends on, or cents after its
 /// dollars.
 pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
     let words = claimed.take_words();
@@ -157,8 +156,9 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         reads_on.then_some(next.core.as_str())
     }
 
-    /// The words from `start` on that say one number, with a "point" or
-    /// "and" they end on: more speech may still read on from those.
+    /// The number words from `start` on that read on from each other, with
+    /// a "point" or "and" they end on: more speech may still read on from
+    /// those. They may not parse as one number, as "one two three" doesn't.
     fn said_from(&self, start: usize) -> Option<Range<usize>> {
         if !is_number_word(self.word(start)?) {
             return None;
@@ -304,7 +304,7 @@ mod tests {
     fn written(heard: &str) -> String {
         Vocabulary::default()
             .correct_spoken(heard, "")
-            .unwrap_or_else(|| heard.to_owned())
+            .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
     }
 
     #[rstest]

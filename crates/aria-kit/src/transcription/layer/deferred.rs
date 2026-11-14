@@ -34,8 +34,10 @@ const MAX_HELD_WORDS: usize = 8;
 /// assert_eq!(words.hold("user underscore", None, &vocabulary).text, "user");
 /// let next = words.hold("id", None, &vocabulary).text;
 /// assert_eq!(next, "underscore id");
-/// let corrected = vocabulary.correct_spoken(&next, "user");
-/// assert_eq!(corrected.as_deref(), Some("_id"));
+/// let corrected = vocabulary.correct_spoken(&next, "user").unwrap();
+/// assert_eq!(corrected.text, "_id");
+/// // Type it joined to "user", as `Caret::attach` does.
+/// assert!(corrected.joins_before);
 /// assert!(words.finish().is_none());
 /// ```
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -63,8 +65,7 @@ impl DeferredWords {
     /// Releases the held words and `text`, minus the words at its end that
     /// the next segment may still change. The steps of
     /// [`Vocabulary::correct_spoken`] say which those are: each defers its
-    /// own words. More than `MAX_HELD_WORDS` are typed rather than
-    /// held, which bounds the delay. The held words keep their closing mark unless
+    /// own words. The held words keep their closing mark unless
     /// `sentence_ended_before` says the sentence goes on.
     #[must_use = "held words are owed to the transcript"]
     pub fn hold(
@@ -152,9 +153,13 @@ mod tests {
         let mut words = DeferredWords::default();
         let mut typed = String::new();
         let put = |text: &str, typed: &mut String| {
-            let corrected = vocabulary.correct_spoken(text, typed);
-            let corrected = corrected.as_deref().unwrap_or(text);
-            typed.push_str(&Caret::between(typed, "").insert_open(corrected));
+            let mut caret = Caret::between(typed, "");
+            let spaced = match vocabulary.correct_spoken(text, typed) {
+                Some(corrected) if corrected.joins_before => caret.attach_open(&corrected.text),
+                Some(corrected) => caret.insert_open(&corrected.text),
+                None => caret.insert_open(text),
+            };
+            typed.push_str(&spaced);
         };
         for (piece, sentence_ended_before) in pieces {
             let unheld = words.hold(piece, *sentence_ended_before, vocabulary);
@@ -310,7 +315,9 @@ mod tests {
     #[case("zero point five percent of five dollars")]
     fn any_split_types_what_the_whole_text_would(#[case] heard: &str) {
         let vocabulary = Vocabulary::default();
-        let whole = vocabulary.correct_spoken(heard, "");
+        let whole = vocabulary
+            .correct_spoken(heard, "")
+            .map(|corrected| corrected.text);
         let words: Vec<&str> = heard.split(' ').collect();
         for first in 1..words.len() {
             for second in first..words.len() {
@@ -354,6 +361,7 @@ mod tests {
             vocabulary
                 .correct_spoken("cd tilde dot bashrc", "")
                 .unwrap()
+                .text
         );
     }
 
@@ -390,7 +398,7 @@ mod tests {
             ),
             vocabulary
                 .correct_spoken(heard, "")
-                .unwrap_or_else(|| heard.to_owned())
+                .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
         );
     }
 
@@ -449,7 +457,9 @@ mod tests {
     fn a_held_form_or_symbol_types_what_the_whole_text_would(#[case] pieces: &[&str]) {
         let vocabulary = crowded();
         let heard = pieces.join(" ");
-        let whole = vocabulary.correct_spoken(&heard, "");
+        let whole = vocabulary
+            .correct_spoken(&heard, "")
+            .map(|corrected| corrected.text);
         let pieces: Vec<_> = pieces.iter().map(|piece| (*piece, None)).collect();
         assert_eq!(
             streamed(&pieces, &vocabulary),
@@ -482,7 +492,9 @@ mod tests {
                 })
             })
         };
-        let whole = vocabulary.correct_spoken(heard, "");
+        let whole = vocabulary
+            .correct_spoken(heard, "")
+            .map(|corrected| corrected.text);
         for cut in (1..words.len()).filter(|cut| !splits_a_unit(*cut)) {
             if words[..cut].ends_with(&["new", "york"]) {
                 continue;

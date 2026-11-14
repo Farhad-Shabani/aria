@@ -44,6 +44,7 @@ struct Target<P> {
 struct Queued {
     text: String,
     defers_ending: bool,
+    joins_before: bool,
 }
 
 /// What a press does with text decoded while its field lacks focus.
@@ -99,6 +100,7 @@ impl<D: TextDelivery> Cursor<D> {
         target.queue.push(Queued {
             text: utterance.text.to_owned(),
             defers_ending: utterance.defers_ending,
+            joins_before: utterance.joins_before,
         });
         self.type_queue()
     }
@@ -223,12 +225,11 @@ fn without_owed_mark(text: &str) -> &str {
 fn spaced(queue: &[Queued], caret: &mut Caret) -> String {
     queue
         .iter()
-        .map(|queued| {
-            if queued.defers_ending {
-                caret.insert_open(&queued.text)
-            } else {
-                caret.insert(&queued.text)
-            }
+        .map(|queued| match (queued.joins_before, queued.defers_ending) {
+            (true, true) => caret.attach_open(&queued.text),
+            (true, false) => caret.attach(&queued.text),
+            (false, true) => caret.insert_open(&queued.text),
+            (false, false) => caret.insert(&queued.text),
         })
         .collect()
 }
