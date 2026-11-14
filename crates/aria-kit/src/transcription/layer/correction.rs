@@ -1,12 +1,10 @@
-use std::convert::Infallible;
-
 use crate::cancel::CancelToken;
 
 use super::claim::Claimed;
 use super::{Layer, TranscriptionError, Vocabulary, check_cancelled, check_size, numbers, symbols};
 
-/// Joins the words around "underscore", "hyphen", or "dot", as in
-/// "user underscore id" → `user_id`.
+/// Joins the words around a spoken symbol, as in "user underscore id" →
+/// `user_id`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct JoinSymbols;
 
@@ -15,7 +13,7 @@ impl Layer for JoinSymbols {
         let vocabulary = Vocabulary::default();
         let corrected = vocabulary.correct_with(
             text,
-            |claimed| claim_each(&[Step::Symbols], text, None, &vocabulary, claimed),
+            |claimed| claim_each(&[Step::Symbols], text, &vocabulary, claimed),
             &|bytes| {
                 check_cancelled(cancel)?;
                 check_size(bytes)
@@ -61,17 +59,11 @@ const _: () = {
 };
 
 impl Step {
-    fn claim<'a>(
-        self,
-        text: &str,
-        before: Option<&str>,
-        vocabulary: &'a Vocabulary,
-        claimed: &mut Claimed<'a>,
-    ) {
+    fn claim<'a>(self, text: &str, vocabulary: &'a Vocabulary, claimed: &mut Claimed<'a>) {
         match self {
             Self::Forms => vocabulary.claim_forms(text, claimed),
             Self::Numbers => numbers::claim(text, claimed),
-            Self::Symbols => symbols::claim(text, before, claimed),
+            Self::Symbols => symbols::claim(text, claimed),
         }
     }
 
@@ -106,13 +98,22 @@ impl Step {
 fn claim_each<'a>(
     steps: &[Step],
     text: &str,
-    before: Option<&str>,
     vocabulary: &'a Vocabulary,
     claimed: &mut Claimed<'a>,
 ) {
     for step in steps {
-        step.claim(text, before, vocabulary, claimed);
+        step.claim(text, vocabulary, claimed);
     }
+}
+
+/// Dictated text as corrected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Corrected {
+    pub text: String,
+    /// `text` opens with a spoken symbol that joins the last word typed
+    /// before it, so no space comes between them. This is
+    /// [`Spacing::joins_before`](crate::transcription::Spacing::joins_before).
+    pub joins_before: bool,
 }
 
 impl Vocabulary {
@@ -120,18 +121,40 @@ impl Vocabulary {
     /// symbols, then personal rules on what nothing claimed.
     /// `before` is text already typed: a symbol `text` opens with joins its
     /// last word.
-    pub fn correct_spoken(&self, text: &str, before: &str) -> Option<String> {
-        let before = before.split_whitespace().next_back();
-        self.correct_with(
-            text,
-            |claimed| claim_each(&SPOKEN, text, before, self, claimed),
-            &|_| Ok::<_, Infallible>(()),
-        )
-        .unwrap_or_else(|never| match never {})
+    pub fn correct_spoken(&self, text: &str, before: &str) -> Option<Corrected> {
+        let Some(typed) = before.split_whitespace().next_back() else {
+            let text = self.spoken(text, 0)?;
+            return Some(Corrected {
+                text,
+                joins_before: false,
+            });
+        };
+        // The typed word reads as the first word, so a symbol after it joins
+        // it as it would any word. Whether a space still follows it says
+        // whether one did.
+        let read = format!("{typed} {text}");
+        let corrected = self.spoken(&read, typed.len())?;
+        let after = &corrected[typed.len()..];
+        let (after, joins_before) = match after.strip_prefix(' ') {
+            Some(after) => (after, false),
+            None => (after, true),
+        };
+        (joins_before || after != text).then(|| Corrected {
+            text: after.to_owned(),
+            joins_before,
+        })
     }
 
-    /// Where the words dictated `text` ends on begin that more speech may
-    /// still change: the text's length when none may. This is what
+    /// `text` corrected by every step, after its first `typed_len` bytes,
+    /// a word already typed.
+    fn spoken(&self, text: &str, typed_len: usize) -> Option<String> {
+        self.correct_spoken_with(text, typed_len, |claimed| {
+            claim_each(&SPOKEN, text, self, claimed);
+        })
+    }
+
+    /// Where the words at the end of dictated `text` that more speech may
+    /// still change begin: the text's length when none may. This is what
     /// [`DeferredWords`](super::DeferredWords) holds.
     ///
     /// Only the steps before the first join claim, because more speech may
@@ -140,13 +163,9 @@ impl Vocabulary {
     /// types rather than holds.
     pub(super) fn spoken_deferred_from(&self, text: &str, max_words: usize) -> usize {
         let unjoined = SPOKEN.iter().take_while(|step| !step.joins()).count();
-        let mut claimed = self
-            .claimed(
-                text,
-                |claimed| claim_each(&SPOKEN[..unjoined], text, None, self, claimed),
-                &|_| Ok::<_, Infallible>(()),
-            )
-            .unwrap_or_else(|never| match never {});
+        let mut claimed = self.claimed_spoken(text, 0, |claimed| {
+            claim_each(&SPOKEN[..unjoined], text, self, claimed);
+        });
         loop {
             let from = claimed.deferred_from();
             for step in SPOKEN {

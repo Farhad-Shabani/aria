@@ -10,11 +10,11 @@ mod spacing;
 
 pub use heard::{Heard, HeardUpdate, next_heard, next_heard_update};
 pub use layer::{
-    Backtrack, DeferredWords, JoinSymbols, Layer, Layered, RemoveHesitations, RemoveRepeats,
-    Unheld, Vocabulary,
+    Backtrack, Corrected, DeferredWords, JoinSymbols, Layer, Layered, RemoveHesitations,
+    RemoveRepeats, Unheld, Vocabulary,
 };
 pub use sentences::{Punctuated, SentenceEnds};
-pub use spacing::Caret;
+pub use spacing::{Caret, Spacing};
 
 use std::path::PathBuf;
 

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use super::{DictationSettings, ExecutionControl};
 use crate::speaker::Label;
+use aria_kit::transcription::Spacing;
 use aria_platform::delivery::Placement;
 
 /// What the pipeline heard in one stretch of speech.
@@ -17,15 +18,14 @@ use aria_platform::delivery::Placement;
 /// times its words can say — without it a sink has text to write but nothing
 /// to attribute a voice by.
 ///
-/// `defers_ending` holds `text`'s closing mark back for the next
-/// utterance, so a sink that types must leave `text`'s end open.
+/// A sink that types `text` spaces it with `spacing`.
 #[derive(Clone)]
 pub struct Utterance<'a> {
     pub text: &'a str,
     pub(crate) speaker: Option<&'a Label>,
     pub(crate) at: u64,
     pub(crate) span: Option<Range<u64>>,
-    pub(crate) defers_ending: bool,
+    pub spacing: Spacing,
 }
 
 impl<'a> Utterance<'a> {
@@ -37,7 +37,7 @@ impl<'a> Utterance<'a> {
             speaker: None,
             at: 0,
             span: None,
-            defers_ending: false,
+            spacing: Spacing::default(),
         }
     }
 }

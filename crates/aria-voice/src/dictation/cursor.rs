@@ -3,6 +3,7 @@ use super::{
     Delivered, DeliveryMode, DeliveryOutcome, DictationError, DictationSettings, ExecutionControl,
     TranscriptSink, Utterance,
 };
+use aria_kit::transcription::Spacing;
 use aria_platform::delivery::{
     Caret, DeliveryError, Finished, OutputMode, Placement, TextDelivery,
 };
@@ -43,7 +44,7 @@ struct Target<P> {
 
 struct Queued {
     text: String,
-    defers_ending: bool,
+    spacing: Spacing,
 }
 
 /// What a press does with text decoded while its field lacks focus.
@@ -98,7 +99,7 @@ impl<D: TextDelivery> Cursor<D> {
         }
         target.queue.push(Queued {
             text: utterance.text.to_owned(),
-            defers_ending: utterance.defers_ending,
+            spacing: utterance.spacing,
         });
         self.type_queue()
     }
@@ -127,7 +128,10 @@ impl<D: TextDelivery> Cursor<D> {
         match typed {
             Ok((outcome, caret)) => {
                 target.caret = Some(caret);
-                target.owes_mark = target.queue.last().is_some_and(|last| last.defers_ending);
+                target.owes_mark = target
+                    .queue
+                    .last()
+                    .is_some_and(|last| last.spacing.defers_ending);
                 target.queue.clear();
                 target.delivered = Some(Delivered {
                     outcome: outcome.into(),
@@ -223,13 +227,7 @@ fn without_owed_mark(text: &str) -> &str {
 fn spaced(queue: &[Queued], caret: &mut Caret) -> String {
     queue
         .iter()
-        .map(|queued| {
-            if queued.defers_ending {
-                caret.insert_open(&queued.text)
-            } else {
-                caret.insert(&queued.text)
-            }
-        })
+        .map(|queued| caret.insert_with(&queued.text, queued.spacing))
         .collect()
 }
 
@@ -545,7 +543,10 @@ mod tests {
 
     fn deferring(text: &str) -> Utterance<'_> {
         Utterance {
-            defers_ending: true,
+            spacing: Spacing {
+                defers_ending: true,
+                ..Spacing::default()
+            },
             ..Utterance::anonymous(text)
         }
     }
@@ -1504,7 +1505,10 @@ mod tests {
     #[test]
     fn a_deferred_period_attaches_before_the_text_after_the_caret() {
         let deferring = |text| Utterance {
-            defers_ending: true,
+            spacing: Spacing {
+                defers_ending: true,
+                ..Spacing::default()
+            },
             ..Utterance::anonymous(text)
         };
         let utterances = [

@@ -1,15 +1,14 @@
 use std::borrow::Cow;
 
 use super::claim::{Claimed, Word};
-use super::symbol_words::symbol;
+use super::symbol_words::{is_symbol, symbol};
 
 /// Claims each run of words that spoken symbols join as one word, as in
-/// "user underscore id" → `user_id`. A symbol opening `text` joins `before`,
-/// the last word already typed, so its run types from the symbol on. Two
-/// words that both have a joined form, as numbers do, join in that form.
-pub(super) fn claim<'a>(text: &str, before: Option<&str>, claimed: &mut Claimed<'a>) {
+/// "user underscore id" → `user_id`. Two words that both have a joined
+/// form, as numbers do, join in that form.
+pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
     let words = claimed.take_words();
-    let links = links(text, &words, before);
+    let links = links(text, &words);
     let in_joined_form = |index: usize| {
         let pair = |link: usize| {
             links[link].is_some()
@@ -18,41 +17,27 @@ pub(super) fn claim<'a>(text: &str, before: Option<&str>, claimed: &mut Claimed<
         };
         (index >= 2 && pair(index - 1)) || (index + 2 < words.len() && pair(index + 1))
     };
-    // A number after a hyphen opening the text types as heard.
-    let heard_after_opening = links
-        .first()
-        .copied()
-        .flatten()
-        .and_then(|character| right_form(text, &words, 0, character))
-        .filter(|form| *form != words[1].typed(text));
-    let word_typed = |index: usize| match (index, heard_after_opening, &words[index].joined) {
-        (1, Some(heard), _) => heard,
-        (_, _, Some(joined)) if in_joined_form(index) => joined.as_ref(),
+    let word_typed = |index: usize| match &words[index].joined {
+        Some(joined) if in_joined_form(index) => joined.as_ref(),
         _ => words[index].typed(text),
     };
     let mut index = 0;
     while index < words.len() {
-        let first = index;
-        let mut typed = String::new();
-        if let (0, Some(symbol)) = (index, links[0]) {
-            typed.push(symbol);
-            index = 1;
-        }
         let mut last = index;
         while links.get(last + 1).is_some_and(Option::is_some) {
             last += 2;
         }
-        if typed.is_empty() && last == index {
+        if last == index {
             claimed.push(words[index].clone());
             index += 1;
             continue;
         }
-        typed.push_str(word_typed(index));
+        let mut typed = word_typed(index).to_owned();
         for link in (index + 1..last).step_by(2) {
             typed.extend(links[link]);
             typed.push_str(word_typed(link + 1));
         }
-        let span = words[first].span.start..words[last].span.end;
+        let span = words[index].span.start..words[last].span.end;
         claimed.push(Word::claimed(span, Cow::Owned(typed)));
         index = last + 1;
     }
@@ -60,10 +45,10 @@ pub(super) fn claim<'a>(text: &str, before: Option<&str>, claimed: &mut Claimed<
 
 /// Defers the symbol words at the edge of the deferred words that may
 /// still link, as "underscore" in "user underscore". Each one defers the
-/// word before it too when that word can't be typed alone yet: a hyphen's,
-/// since typed text can't take `-5`, or one with a joined form, as "two" in
-/// "two dot". When the word before can join, it defers the same words
-/// whether the cut falls before the symbol word or after it.
+/// word before it too when that word has a joined form, as "two" in "two
+/// dot": it can't be typed alone yet. When the word before can join, it
+/// defers the same words whether the cut falls before the symbol word or
+/// after it.
 ///
 /// A deferred symbol word whose left word can't join defers that word as
 /// well: once typed, its words would read as if they could.
@@ -82,14 +67,14 @@ fn symbol_to_defer(text: &str, words: &[Word<'_>], deferred_from: usize) -> Opti
         .get(first)
         .is_some_and(|word| unclaimed_symbol(text, word).is_some());
     let index = if at_cut { first } else { first.checked_sub(1)? };
-    let character = unclaimed_symbol(text, &words[index])?;
+    unclaimed_symbol(text, &words[index])?;
     let Some(left) = index.checked_sub(1) else {
         return (!at_cut).then(|| words[index].span.start);
     };
     let joins = joins_after(text, words, left);
     let defers_left = match joins {
         false => at_cut,
-        true => character == '-' || words[left].joined.is_some(),
+        true => words[left].joined.is_some(),
     };
     if defers_left {
         return Some(words[left].span.start);
@@ -98,19 +83,16 @@ fn symbol_to_defer(text: &str, words: &[Word<'_>], deferred_from: usize) -> Opti
 }
 
 /// The symbol each word becomes when it links its two neighbors.
-fn links(text: &str, words: &[Word<'_>], before: Option<&str>) -> Vec<Option<char>> {
+fn links(text: &str, words: &[Word<'_>]) -> Vec<Option<char>> {
     let mut links = vec![None; words.len()];
     for index in 0..words.len().saturating_sub(1) {
         let Some(character) = unclaimed_symbol(text, &words[index]) else {
             continue;
         };
-        let left_joins = match index {
-            0 => before.is_some_and(joinable_before_a_symbol),
-            _ => joins_after(text, words, index - 1),
-        };
+        let left_joins = index > 0 && joins_after(text, words, index - 1);
         let line_break = text[words[index].span.end..words[index + 1].span.start].contains('\n');
-        let right = right_form(text, words, index, character);
-        if left_joins && !line_break && right.is_some_and(joinable_after_a_symbol) {
+        let right = words[index + 1].typed(text);
+        if left_joins && !line_break && joinable_after_a_symbol(right) {
             links[index] = Some(character);
         }
     }
@@ -132,26 +114,6 @@ fn joins_after(text: &str, words: &[Word<'_>], left: usize) -> bool {
     !line_break && joinable_before_a_symbol(words[left].typed(text))
 }
 
-/// What the word after the symbol at `index` types in its join. A hyphen
-/// opening the text joins typed text, and a caret keeps `-19` apart from it
-/// as a number, so a number there types as heard: "covid" then "hyphen
-/// nineteen" types `covid-nineteen`. `None` when digits were heard there.
-fn right_form<'s>(
-    text: &'s str,
-    words: &'s [Word<'_>],
-    index: usize,
-    character: char,
-) -> Option<&'s str> {
-    let right = &words[index + 1];
-    let starts_a_number = |word: &str| word.starts_with(|c: char| c.is_ascii_digit());
-    let typed = right.typed(text);
-    if index != 0 || character != '-' || !starts_a_number(typed) {
-        return Some(typed);
-    }
-    let heard = &text[right.span.clone()];
-    (!starts_a_number(heard)).then_some(heard)
-}
-
 /// Whether `word` can sit before a symbol in a join, punctuation before it
 /// aside.
 fn joinable_before_a_symbol(word: &str) -> bool {
@@ -167,9 +129,7 @@ fn joinable_after_a_symbol(word: &str) -> bool {
 fn is_joinable(word: &str) -> bool {
     word.starts_with(char::is_alphanumeric)
         && word.ends_with(char::is_alphanumeric)
-        && word
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && word.chars().all(|c| c.is_alphanumeric() || is_symbol(c))
         && symbol(word).is_none()
 }
 
@@ -199,9 +159,13 @@ mod tests {
     #[case::extra_spaces_around_the_symbol("user   underscore  id", "user_id")]
     #[case::spacing_elsewhere_is_kept("say  user underscore id  now", "say  user_id  now")]
     #[case::non_ascii_word("café underscore menu", "café_menu")]
+    #[case::slash_between_words("src slash main", "src/main")]
+    #[case::backslash_between_words("c backslash windows", "c\\windows")]
+    #[case::joined_slash_as_neighbor("src/main slash lib", "src/main/lib")]
     #[case::small_word_neighbor("to underscore string", "to_string")]
     // Accepted risk: a symbol word in ordinary prose still joins.
     #[case::symbol_word_in_prose("add a hyphen here", "add a-here")]
+    #[case::slash_in_prose("read and slash or write", "read and/or write")]
     fn joins(#[case] heard: &str, #[case] typed: &str) {
         assert_eq!(applied(heard), typed);
     }
@@ -227,33 +191,46 @@ mod tests {
     #[case::vocabulary_keeps_its_spelling("open cargo dot toml", "open Cargo.toml")]
     #[case::match_keeps_declared_casing("kit dash pro hyphen test", "Kit-Pro-test")]
     #[case::symbols_beside_a_match("aria-stt and user underscore id", "aria-stt and user_id")]
+    #[case::match_spoken_with_a_slash("run ci slash cd", "run CI/CD")]
     fn joins_through_vocabulary(#[case] heard: &str, #[case] typed: &str) {
-        let vocabulary = Vocabulary::new(["aria-stt", "Cargo.toml", "Kit-Pro"]).unwrap();
-        let corrected = vocabulary.correct_spoken(heard, "");
+        let vocabulary = Vocabulary::new(["aria-stt", "Cargo.toml", "Kit-Pro", "CI/CD"]).unwrap();
+        let corrected = vocabulary
+            .correct_spoken(heard, "")
+            .map(|corrected| corrected.text);
         assert_eq!(corrected.as_deref().unwrap_or(heard), typed);
     }
 
     #[rstest]
-    #[case::underscore("call user", "underscore id", Some("_id"))]
-    #[case::chain("max", "underscore retry underscore count", Some("_retry_count"))]
-    #[case::dot_after_a_digit("2", "dot 5", Some(".5"))]
-    #[case::hyphen_before_a_digit("3", "hyphen 5", None)]
-    #[case::hyphen_before_a_number_word("covid", "hyphen nineteen", Some("-nineteen"))]
-    #[case::hyphen_after_a_symbol_word("the end, underscore", "hyphen twenty", Some("hyphen 20"))]
-    #[case::digits_after_an_opening_symbol("x", "underscore five dot two", Some("_5.2"))]
+    #[case::underscore("call user", "underscore id", Some(("_id", true)))]
+    #[case::chain("max", "underscore retry underscore count", Some(("_retry_count", true)))]
+    #[case::dot_after_a_digit("2", "dot 5", Some((".5", true)))]
+    #[case::hyphen_before_a_digit("3", "hyphen 5", Some(("-5", true)))]
+    #[case::slash_before_a_digit("24", "slash 7", Some(("/7", true)))]
+    #[case::numbers_around_a_slash("", "one slash two", Some(("1/2", false)))]
+    #[case::hyphen_before_a_number_word("utf", "hyphen sixteen", Some(("-16", true)))]
+    #[case::hyphen_before_a_long_number("version", "hyphen twenty five", Some(("-25", true)))]
+    #[case::hyphen_after_a_symbol_word("the end, underscore", "hyphen twenty", Some(("hyphen 20", false)))]
+    #[case::digits_after_an_opening_symbol("python", "underscore three dot twelve", Some(("_3.12", true)))]
     #[case::nothing_typed("", "underscore id", None)]
     #[case::punctuation_typed("user,", "underscore id", None)]
     fn opens_onto_the_word_typed_before(
         #[case] before: &str,
         #[case] heard: &str,
-        #[case] typed: Option<&str>,
+        #[case] typed: Option<(&str, bool)>,
     ) {
+        let corrected = Vocabulary::default().correct_spoken(heard, before);
         assert_eq!(
-            Vocabulary::default()
-                .correct_spoken(heard, before)
-                .as_deref(),
+            corrected
+                .as_ref()
+                .map(|corrected| (corrected.text.as_str(), corrected.joins_before)),
             typed
         );
+    }
+
+    #[test]
+    fn a_term_never_reads_across_the_word_typed_before() {
+        let vocabulary = Vocabulary::new(["New York"]).unwrap();
+        assert_eq!(vocabulary.correct_spoken("york", "new"), None);
     }
 
     #[test]
@@ -263,6 +240,7 @@ mod tests {
         assert_eq!(
             vocabulary
                 .correct_spoken("teh user underscore id", "")
+                .map(|corrected| corrected.text)
                 .as_deref(),
             Some("the user_id")
         );

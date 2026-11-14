@@ -309,7 +309,8 @@ impl TranscriptSink for History {
             && !entry.complete
             && !self.oversized
         {
-            let spaced = Caret::between(&entry.text, "").insert(utterance.text);
+            let mut caret = Caret::between(&entry.text, "");
+            let spaced = caret.insert_with(utterance.text, utterance.spacing);
             if entry.text.len() + spaced.len() > MAX_ENTRY_BYTES {
                 self.oversized = true;
             } else {
@@ -525,9 +526,17 @@ mod tests {
         for text in ["we should", ". Ship it", "."] {
             sink.segment(Utterance::anonymous(text)).unwrap();
         }
+        sink.segment(Utterance::anonymous("open src")).unwrap();
+        let mut joined = Utterance::anonymous("/main");
+        joined.spacing.joins_before = true;
+        sink.segment(joined).unwrap();
+        sink.segment(Utterance::anonymous("/compact")).unwrap();
         sink.recording_finished(&mut recording, Err(&DictationError::DeliveryTargetChanged));
 
-        assert_eq!(entries(&saved)[0].text, "we should. Ship it.");
+        assert_eq!(
+            entries(&saved)[0].text,
+            "we should. Ship it. open src/main /compact"
+        );
     }
 
     #[test]

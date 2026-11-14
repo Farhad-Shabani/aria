@@ -1,12 +1,13 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-/// Plain text between spaces or matches, or a vocabulary match of any length.
+/// A span of the text: plain text between spaces or claims, or a claim of
+/// any length.
 #[derive(Clone)]
 pub(super) struct Word<'a> {
     pub(super) span: Range<usize>,
-    /// What a claimed span types, which no later step rewrites: a term's
-    /// spelling, a spoken form's, a number's digits, or joined words.
+    /// What a claimed span types: a term's spelling, a spoken form's, a
+    /// number's digits, or joined words.
     pub(super) claim: Option<Cow<'a, str>>,
     /// What the word types where a spoken symbol joins it to another word
     /// that has one, as a number's digits do: "two dot five" → `2.5`.
@@ -39,7 +40,7 @@ impl<'a> Claimed<'a> {
         &self.words
     }
 
-    /// Takes the words for a step to claim from, which pushes them back.
+    /// Takes the words for a step to claim from. The step pushes them back.
     pub(super) fn take_words(&mut self) -> Vec<Word<'a>> {
         std::mem::take(&mut self.words)
     }

@@ -34,8 +34,10 @@ const MAX_HELD_WORDS: usize = 8;
 /// assert_eq!(words.hold("user underscore", None, &vocabulary).text, "user");
 /// let next = words.hold("id", None, &vocabulary).text;
 /// assert_eq!(next, "underscore id");
-/// let corrected = vocabulary.correct_spoken(&next, "user");
-/// assert_eq!(corrected.as_deref(), Some("_id"));
+/// let corrected = vocabulary.correct_spoken(&next, "user").unwrap();
+/// assert_eq!(corrected.text, "_id");
+/// // Type it with no space after "user".
+/// assert!(corrected.joins_before);
 /// assert!(words.finish().is_none());
 /// ```
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -63,8 +65,7 @@ impl DeferredWords {
     /// Releases the held words and `text`, minus the words at its end that
     /// the next segment may still change. The steps of
     /// [`Vocabulary::correct_spoken`] say which those are: each defers its
-    /// own words. More than `MAX_HELD_WORDS` are typed rather than
-    /// held, which bounds the delay. The held words keep their closing mark unless
+    /// own words. The held words keep their closing mark unless
     /// `sentence_ended_before` says the sentence goes on.
     #[must_use = "held words are owed to the transcript"]
     pub fn hold(
@@ -144,6 +145,7 @@ fn joined(held: &str, text: &str) -> String {
 mod tests {
     use rstest::rstest;
 
+    use super::super::super::Spacing;
     use super::super::vocabulary::{PersonalRules, Term};
     use super::*;
 
@@ -152,9 +154,17 @@ mod tests {
         let mut words = DeferredWords::default();
         let mut typed = String::new();
         let put = |text: &str, typed: &mut String| {
-            let corrected = vocabulary.correct_spoken(text, typed);
-            let corrected = corrected.as_deref().unwrap_or(text);
-            typed.push_str(&Caret::between(typed, "").insert_open(corrected));
+            let mut caret = Caret::between(typed, "");
+            let (text, joins_before) = match vocabulary.correct_spoken(text, typed) {
+                Some(corrected) => (corrected.text, corrected.joins_before),
+                None => (text.to_owned(), false),
+            };
+            let spacing = Spacing {
+                joins_before,
+                defers_ending: true,
+            };
+            let spaced = caret.insert_with(&text, spacing);
+            typed.push_str(&spaced);
         };
         for (piece, sentence_ended_before) in pieces {
             let unheld = words.hold(piece, *sentence_ended_before, vocabulary);
@@ -174,7 +184,11 @@ mod tests {
     #[case::chain(&[("max underscore", None), ("retry underscore", None), ("count", None)], "max_retry_count")]
     #[case::after_a_hyphenated_word(&[("aria-stt", None), ("hyphen", None), ("test", None)], "aria-stt-test")]
     #[case::mark_after_the_symbol(&[("User underscore.", None), ("ID.", Some(false))], "User_ID.")]
-    #[case::number_after_an_opening_hyphen(&[("covid", None), ("hyphen nineteen", None)], "covid-nineteen")]
+    #[case::number_after_an_opening_hyphen(&[("utf", None), ("hyphen sixteen", None)], "utf-16")]
+    #[case::digits_around_a_hyphen(&[("3", None), ("hyphen", None), ("5", None)], "3-5")]
+    #[case::hyphen_chain(&[("en hyphen us", None), ("hyphen posix", None)], "en-us-posix")]
+    #[case::slash_opens_a_segment(&[("src", None), ("slash main", None)], "src/main")]
+    #[case::backslash_alone(&[("c", None), ("backslash", None), ("windows", None)], "c\\windows")]
     fn joins_across_segments(#[case] pieces: &[(&str, Option<bool>)], #[case] typed: &str) {
         assert_eq!(streamed(pieces, &Vocabulary::default()), typed);
     }
@@ -192,7 +206,7 @@ mod tests {
     #[case::cents_right_after_dollars(&[("five dollars", None), ("fifty", None), ("cents", None)], "$5.50")]
     #[case::bracket_before_a_number(&[("(twenty", None), ("one)", None)], "(21)")]
     #[case::digit_words_around_a_symbol(&[("version two", None), ("dot", None), ("five", None)], "version 2.5")]
-    #[case::hyphen_before_a_number(&[("covid hyphen", None), ("nineteen", None)], "covid-19")]
+    #[case::hyphen_before_a_number(&[("utf hyphen", None), ("sixteen", None)], "utf-16")]
     #[case::hyphen_before_a_split_number(&[("version hyphen twenty", None), ("five", None)], "version-25")]
     fn writes_numbers_across_segments(
         #[case] pieces: &[(&str, Option<bool>)],
@@ -207,7 +221,6 @@ mod tests {
     #[case::sentence_ended_after_the_symbol(&[("the dot.", None), ("Then we rest.", Some(true))], "the dot. Then we rest.")]
     #[case::unread_cut_after_the_symbol(&[("the dot.", None), ("Then we rest.", None)], "the dot. Then we rest.")]
     #[case::no_word_before(&[("hyphen", None), ("of the word", None)], "hyphen of the word")]
-    #[case::number_range(&[("3", None), ("hyphen", None), ("5", None)], "3 hyphen 5")]
     #[case::digit_word_in_prose(&[("no", None), ("one", None), ("knows", None)], "no one knows")]
     #[case::sentence_ended_after_a_number(&[("twenty.", None), ("One more.", Some(true))], "20. One more.")]
     #[case::ellipsis_after_a_number(&[("I have twenty...", None), ("or so", Some(false))], "I have 20... or so")]
@@ -308,7 +321,9 @@ mod tests {
     #[case("zero point five percent of five dollars")]
     fn any_split_types_what_the_whole_text_would(#[case] heard: &str) {
         let vocabulary = Vocabulary::default();
-        let whole = vocabulary.correct_spoken(heard, "");
+        let whole = vocabulary
+            .correct_spoken(heard, "")
+            .map(|corrected| corrected.text);
         let words: Vec<&str> = heard.split(' ').collect();
         for first in 1..words.len() {
             for second in first..words.len() {
@@ -331,7 +346,6 @@ mod tests {
     #[rstest]
     #[case::trailing_symbol("user underscore", "user ")]
     #[case::symbol_after_punctuation("user, underscore", "user, underscore")]
-    #[case::hyphen_chain("x hyphen y hyphen", "")]
     #[case::number_before_a_symbol("version two dot", "version ")]
     #[case::cents_may_follow("five dollars and", "")]
     #[case::number_word_in_prose("no one", "no ")]
@@ -352,6 +366,7 @@ mod tests {
             vocabulary
                 .correct_spoken("cd tilde dot bashrc", "")
                 .unwrap()
+                .text
         );
     }
 
@@ -388,7 +403,7 @@ mod tests {
             ),
             vocabulary
                 .correct_spoken(heard, "")
-                .unwrap_or_else(|| heard.to_owned())
+                .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
         );
     }
 
@@ -447,7 +462,9 @@ mod tests {
     fn a_held_form_or_symbol_types_what_the_whole_text_would(#[case] pieces: &[&str]) {
         let vocabulary = crowded();
         let heard = pieces.join(" ");
-        let whole = vocabulary.correct_spoken(&heard, "");
+        let whole = vocabulary
+            .correct_spoken(&heard, "")
+            .map(|corrected| corrected.text);
         let pieces: Vec<_> = pieces.iter().map(|piece| (*piece, None)).collect();
         assert_eq!(
             streamed(&pieces, &vocabulary),
@@ -480,7 +497,9 @@ mod tests {
                 })
             })
         };
-        let whole = vocabulary.correct_spoken(heard, "");
+        let whole = vocabulary
+            .correct_spoken(heard, "")
+            .map(|corrected| corrected.text);
         for cut in (1..words.len()).filter(|cut| !splits_a_unit(*cut)) {
             if words[..cut].ends_with(&["new", "york"]) {
                 continue;

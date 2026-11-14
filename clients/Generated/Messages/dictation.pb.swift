@@ -633,10 +633,10 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   /// The press ends at delivered, cancelled, or failed.
   public var stage: Aria_Daemon_V1_DictationStage = .unspecified
 
-  /// Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: what that segment put out.
-  /// While streaming it is the typed text, so it may open with the mark the
-  /// segment before held back, or be that mark alone. A caption joins these
-  /// with one space, except before a mark.
+  /// Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED: what that segment put out,
+  /// without the space before it. While streaming it is the typed text, so it
+  /// may open with the mark the segment before held back, or be that mark
+  /// alone. CaptionSnapshot.finalized holds the text spaced as typed.
   public var text: String = String()
 
   /// Set on DICTATION_STAGE_SEGMENT_TRANSCRIBED, and on

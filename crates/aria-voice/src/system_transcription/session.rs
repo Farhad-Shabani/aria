@@ -9,6 +9,7 @@ use std::thread;
 use aria_kit::audio::canonical_duration;
 use aria_kit::cancel::CancelToken;
 use aria_kit::speaker::{Admission, Released, TurnFeed};
+use aria_kit::transcription::Spacing;
 use aria_kit::voice_activity::{SpeechDetector, VoiceActivityDetector};
 use aria_stt::EngineConfig;
 
@@ -304,7 +305,7 @@ impl Session<'_> {
                 speaker: label.as_ref(),
                 at: heard.window.start,
                 span: heard.span,
-                defers_ending: false,
+                spacing: Spacing::default(),
             },
             released.embedding.as_deref(),
         )

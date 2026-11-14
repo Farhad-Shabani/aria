@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::convert::Infallible;
 
 use crate::cancel::CancelToken;
 
@@ -7,6 +8,7 @@ mod personal;
 pub use personal::PersonalRules;
 
 use super::claim::{Claimed, Word};
+use super::symbol_words;
 
 const MAX_TERMS: usize = 100_000;
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
@@ -222,6 +224,47 @@ impl Vocabulary {
         Ok(claimed)
     }
 
+    /// Like [`Self::correct_with`], for dictated text, which nothing
+    /// cancels. See [`Self::claimed_spoken`] for `typed_len`.
+    pub(super) fn correct_spoken_with<'a>(
+        &'a self,
+        text: &'a str,
+        typed_len: usize,
+        claim: impl FnOnce(&mut Claimed<'a>),
+    ) -> Option<String> {
+        let claimed = self.claimed_spoken(text, typed_len, claim);
+        self.typed(text, claimed.words(), &no_check)
+            .unwrap_or_else(|never| match never {})
+    }
+
+    /// Like [`Self::claimed`], for dictated text, which nothing cancels.
+    /// Its first `typed_len` bytes are a word already typed. That word types
+    /// as it stands: no term reads across it, and no step changes it.
+    pub(super) fn claimed_spoken<'a>(
+        &'a self,
+        text: &'a str,
+        typed_len: usize,
+        claim: impl FnOnce(&mut Claimed<'a>),
+    ) -> Claimed<'a> {
+        let mut words = Vec::new();
+        if typed_len > 0 {
+            words.push(Word::claimed(
+                0..typed_len,
+                Cow::Borrowed(&text[..typed_len]),
+            ));
+        }
+        let heard = self
+            .words(&text[typed_len..], &no_check)
+            .unwrap_or_else(|never| match never {});
+        words.extend(heard.into_iter().map(|word| Word {
+            span: word.span.start + typed_len..word.span.end + typed_len,
+            ..word
+        }));
+        let mut claimed = Claimed::new(words, text.len());
+        claim(&mut claimed);
+        claimed
+    }
+
     pub(super) fn claim_forms<'a>(&'a self, text: &str, claimed: &mut Claimed<'a>) {
         self.personal.claim(text, claimed);
     }
@@ -394,13 +437,26 @@ fn normalize(text: &str) -> String {
         .to_lowercase()
 }
 
+/// How a recognizer writes `character` in a term, as "dash" in "aria dash
+/// stt". Dictation's symbol words say "hyphen" for `-` instead.
+fn spoken_symbol(character: char) -> Option<&'static str> {
+    match character {
+        '-' => Some("dash"),
+        _ => symbol_words::word(character),
+    }
+}
+
+fn no_check(_: usize) -> Result<(), Infallible> {
+    Ok(())
+}
+
 fn aliases(canonical: &str) -> Vec<String> {
     let mut aliases = Vec::new();
     for punctuation in [true, false] {
         for spell_letters in [false, true] {
             if !punctuation
                 && (!spell_letters
-                    || !canonical.split(['-', '_', '.']).any(|part| {
+                    || !canonical.split(|c| spoken_symbol(c).is_some()).any(|part| {
                         !part.is_empty()
                             && part.len() <= 3
                             && part.chars().all(|c| c.is_ascii_alphabetic())
@@ -423,12 +479,7 @@ fn aliases(canonical: &str) -> Vec<String> {
                 word.clear();
             };
             for character in canonical.chars() {
-                if let Some(spoken) = match character {
-                    '-' => Some("dash"),
-                    '_' => Some("underscore"),
-                    '.' => Some("dot"),
-                    _ => None,
-                } {
+                if let Some(spoken) = spoken_symbol(character) {
                     push_word(&mut word, &mut parts);
                     if punctuation {
                         parts.push(spoken.to_owned());
@@ -559,6 +610,8 @@ mod tests {
             Some("écho-stt 😊".to_owned())
         );
         assert_eq!(matcher.correct("aria dot stt"), None);
+        let matcher = compile(&["CI/CD"], PersonalRules::default());
+        assert_eq!(matcher.correct("run c i c d"), Some("run CI/CD".to_owned()));
         assert_eq!(matcher.correct("xaria dash stt aria dash sttx"), None);
     }
 

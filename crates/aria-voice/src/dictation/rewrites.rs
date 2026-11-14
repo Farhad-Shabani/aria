@@ -106,7 +106,7 @@ impl<L: Layer> Rewrites<L> {
         }
         self.clean(&mut text, cleanup, cancel)?;
         if let Some(corrected) = spoken(vocabulary).correct_spoken(&text, "") {
-            text = corrected;
+            text = corrected.text;
         }
         check_cancelled(cancel)?;
         // Cleanup can leave nothing, and then this fails as `NoSpeech`.

@@ -182,8 +182,7 @@ impl PersonalRules {
         Ok(None)
     }
 
-    /// Claims each spoken form in the text no term claimed, so no later
-    /// step rewrites the user's own words. A word a form ends inside is
+    /// Claims each spoken form in the text no term claimed. A word a form ends inside is
     /// split around it, as "teh," is. A form that opens or ends on a symbol
     /// word waits: only the symbol's own join can attach it to the word
     /// beside it, as "dot com" attaches to "example".

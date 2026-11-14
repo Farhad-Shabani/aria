@@ -24,6 +24,17 @@ pub struct Caret {
     after: Option<char>,
 }
 
+/// How inserted text meets the text around the caret.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Spacing {
+    /// The text opens with a spoken symbol that joins the last word typed,
+    /// as "src" then "slash main" types `src/main`. No space comes before it.
+    pub joins_before: bool,
+    /// The text's closing mark is held back for the next text, so its end
+    /// stays open, as [`Caret::insert_open`] leaves it.
+    pub defers_ending: bool,
+}
+
 impl Caret {
     /// A caret with `before` to its left and `after` to its right. Pass the
     /// whole field split at the cursor; only the characters next to it count.
@@ -40,22 +51,27 @@ impl Caret {
     /// To retry a failed typing, insert again from a copy taken before.
     #[must_use = "the caret has moved past text that must be typed"]
     pub fn insert(&mut self, text: &str) -> String {
-        let trailing = self.needs_trailing_space(text);
-        let mut spaced = self.insert_open(text);
-        if trailing {
-            spaced.push(' ');
-            self.before_that = self.before;
-            self.before = Some(' ');
-        }
-        spaced
+        self.insert_with(text, Spacing::default())
     }
 
     /// Like [`Caret::insert`], but leaves `text`'s end open so the next
     /// insertion can attach to it. A later insert supplies the space.
     #[must_use = "the caret has moved past text that must be typed"]
     pub fn insert_open(&mut self, text: &str) -> String {
+        let spacing = Spacing {
+            defers_ending: true,
+            ..Spacing::default()
+        };
+        self.insert_with(text, spacing)
+    }
+
+    /// Like [`Caret::insert`], with the spaces `spacing` leaves out.
+    #[must_use = "the caret has moved past text that must be typed"]
+    pub fn insert_with(&mut self, text: &str, spacing: Spacing) -> String {
+        let leading = !spacing.joins_before && self.needs_leading_space(text);
+        let trailing = !spacing.defers_ending && self.needs_trailing_space(text);
         let mut spaced = String::with_capacity(text.len() + 2);
-        if self.needs_leading_space(text) {
+        if leading {
             spaced.push(' ');
         }
         spaced.push_str(text);
@@ -63,6 +79,11 @@ impl Caret {
         if let Some(last) = typed.next() {
             self.before_that = typed.next().or(self.before);
             self.before = Some(last);
+        }
+        if trailing {
+            spaced.push(' ');
+            self.before_that = self.before;
+            self.before = Some(' ');
         }
         spaced
     }
@@ -114,16 +135,12 @@ const OPENERS: [char; 9] = ['(', '[', '{', '/', '-', '@', '#', '“', '‘'];
 const CONTRACTION_TAILS: [&str; 7] = ["s", "t", "d", "m", "re", "ll", "ve"];
 
 /// Whether `text` begins with something that attaches to the text before it:
-/// closing punctuation, an identifier's next part, or an apostrophe that
-/// starts a contraction ending.
+/// closing punctuation, or an apostrophe that starts a contraction ending.
 /// An apostrophe before anything else opens a word, as in `'90s` or `'cause`.
 fn attaches_before(text: &str) -> bool {
     let mut chars = text.chars();
     match chars.next() {
         Some('.' | ',' | '!' | '?' | ':' | ';' | ')' | ']' | '}' | '%' | '”') => true,
-        // "-5" stays a number of its own.
-        Some('_') => chars.next().is_some_and(char::is_alphanumeric),
-        Some('-') => chars.next().is_some_and(char::is_alphabetic),
         Some('\'' | '’') => {
             let rest = chars.as_str();
             CONTRACTION_TAILS.iter().any(|tail| {
@@ -161,11 +178,32 @@ mod tests {
     }
 
     #[test]
-    fn an_identifiers_next_part_attaches_and_a_negative_number_does_not() {
-        assert_eq!(Caret::between("user", "").insert("_id"), "_id");
-        assert_eq!(Caret::between("aria", "").insert("-kit"), "-kit");
+    fn only_joined_text_attaches_to_the_word_before() {
+        let joins = Spacing {
+            joins_before: true,
+            ..Spacing::default()
+        };
+        let joins_open = Spacing {
+            defers_ending: true,
+            ..joins
+        };
+        assert_eq!(
+            Caret::between("src", "").insert_with("/main", joins),
+            "/main"
+        );
+        assert_eq!(Caret::between("user", "").insert_with("_id", joins), "_id");
+        assert_eq!(
+            Caret::between("src", "x").insert_with("/main", joins),
+            "/main "
+        );
+        assert_eq!(
+            Caret::between("src", "x").insert_with("/main", joins_open),
+            "/main"
+        );
+        assert_eq!(Caret::between("run", "").insert("/compact"), " /compact");
+        assert_eq!(Caret::between("user", "").insert("_id"), " _id");
+        assert_eq!(Caret::between("aria", "").insert("-kit"), " -kit");
         assert_eq!(Caret::between("is", "").insert("-5"), " -5");
-        assert_eq!(Caret::between("a", "").insert("- b"), " - b");
     }
 
     #[test]
