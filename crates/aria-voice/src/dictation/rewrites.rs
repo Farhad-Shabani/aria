@@ -1,5 +1,6 @@
 //! What dictation does to its words once the gate lets them out.
 
+use std::sync::LazyLock;
 use std::time::Instant;
 
 use aria_kit::cancel::CancelToken;
@@ -81,7 +82,7 @@ impl<L: Layer> Rewrites<L> {
         cancel: &CancelToken,
     ) -> Result<(), TranscriptionError> {
         self.clean(text, cleanup, cancel)?;
-        self.correct(text, typed, vocabulary);
+        correct(text, typed, vocabulary);
         check_cancelled(cancel)
     }
 
@@ -97,14 +98,6 @@ impl<L: Layer> Rewrites<L> {
             RemoveRepeats.apply(text, cancel)?;
         }
         Ok(())
-    }
-
-    pub(crate) fn correct(&self, text: &mut String, typed: &str, vocabulary: Option<&Vocabulary>) {
-        // Spoken symbols join even when the press has no vocabulary.
-        let no_terms = Vocabulary::default();
-        if let Some(corrected) = vocabulary.unwrap_or(&no_terms).correct_spoken(text, typed) {
-            *text = corrected;
-        }
     }
 
     /// Whether a transcript delivered whole goes to the cleanup model.
@@ -153,6 +146,20 @@ impl<L: Layer> Rewrites<L> {
     }
 }
 
+/// The vocabulary a press corrects with. A press with none still writes
+/// numbers and joins spoken symbols.
+pub(crate) fn spoken(vocabulary: Option<&Vocabulary>) -> &Vocabulary {
+    static NO_TERMS: LazyLock<Vocabulary> = LazyLock::new(Vocabulary::default);
+    vocabulary.unwrap_or(&NO_TERMS)
+}
+
+/// Corrects `text` after `typed`, what the press typed before it.
+pub(crate) fn correct(text: &mut String, typed: &str, vocabulary: Option<&Vocabulary>) {
+    if let Some(corrected) = spoken(vocabulary).correct_spoken(text, typed) {
+        *text = corrected;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +181,14 @@ mod tests {
     #[test]
     fn a_segment_joins_spoken_symbols_without_a_vocabulary() {
         assert_eq!(segment("call user underscore id.", None), "call user_id.");
+    }
+
+    #[test]
+    fn a_segment_writes_numbers_without_a_vocabulary() {
+        assert_eq!(
+            segment("about two point five seconds", None),
+            "about 2.5 seconds"
+        );
     }
 
     #[test]

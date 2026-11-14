@@ -44,8 +44,8 @@ struct Bucket {
 #[derive(Clone)]
 pub(super) struct Word<'a> {
     pub(super) span: Range<usize>,
-    /// What a claimed span types instead of personal rules' output: a term's
-    /// spelling, or the words a spoken symbol joined.
+    /// What a claimed span types, which no later step rewrites: a term's
+    /// spelling, a spoken form's, a number's digits, or joined words.
     pub(super) claim: Option<Cow<'a, str>>,
 }
 
@@ -208,11 +208,14 @@ impl Vocabulary {
             let (corrected, _) = self.personal.apply_checked(text, check)?;
             return Ok((corrected != text).then_some(corrected));
         }
-        self.correct_with(text, |_, words| words, check)
+        check(text.len())?;
+        self.typed(text, &self.words(text, check)?, check)
     }
 
-    /// `claim` may claim more spans, as when spoken symbols join words.
-    /// Personal rules get the spans nothing claimed.
+    /// Corrects `text` with more steps than terms. Each claims words, and
+    /// none rewrites an earlier claim: terms, then the user's spoken forms,
+    /// then what `claim` adds, as when spoken symbols join words. The user's
+    /// words come first, so "i eighteen n" types `i18n`, not `i 18 n`.
     pub(super) fn correct_with<'a, E>(
         &'a self,
         text: &'a str,
@@ -220,10 +223,21 @@ impl Vocabulary {
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Option<String>, E> {
         check(text.len())?;
-        let words = claim(text, self.words(text, check)?);
+        let words = self.personal.claim(text, self.words(text, check)?);
+        self.typed(text, &claim(text, words), check)
+    }
+
+    /// `text` with each claim typed, and personal rules applied to the
+    /// spans nothing claimed.
+    fn typed<E>(
+        &self,
+        text: &str,
+        words: &[Word<'_>],
+        check: &impl Fn(usize) -> Result<(), E>,
+    ) -> Result<Option<String>, E> {
         let mut output = String::with_capacity(text.len());
         let mut unclaimed = 0;
-        for word in &words {
+        for word in words {
             let Some(typed) = &word.claim else {
                 continue;
             };

@@ -1,8 +1,12 @@
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::ops::Range;
 
 use crate::cancel::CancelToken;
 
-use super::{MatchError, is_word};
+use super::super::number_words::{DIGIT_WORDS, TEEN_WORDS};
+use super::super::symbol_words::symbol;
+use super::{MatchError, Word, is_word};
 
 /// What stored rules may cost in memory.
 const MAX_PERSONAL_BYTES: usize = 8 * 1024 * 1024;
@@ -128,36 +132,15 @@ impl PersonalRules {
         let mut position = 0;
         while position < chars.len() {
             check(output.len())?;
-            let first = chars[position]
-                .to_lowercase()
-                .next()
-                .unwrap_or(chars[position]);
-            let mut matched = None;
-            if let Some(forms) = self.forms.get(&first) {
-                for (form, correct) in forms {
-                    check(output.len())?;
-                    let end = position + form.len();
-                    if boundary(&chars, position)
-                        && end <= chars.len()
-                        && boundary(&chars, end)
-                        && chars[position..end]
-                            .iter()
-                            .zip(form)
-                            .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
-                    {
-                        matched = Some((form, correct));
-                        break;
-                    }
-                }
-            }
-            if let Some((form, correct)) = matched {
+            let matched = self.form_at(&chars, position, &|| check(output.len()))?;
+            if let Some((length, correct)) = matched {
                 check(output.len().saturating_add(correct.len()))?;
-                let original: String = chars[position..position + form.len()].iter().collect();
-                if original != *correct {
-                    substitutions.push((original, correct.clone()));
+                let original: String = chars[position..position + length].iter().collect();
+                if original != correct {
+                    substitutions.push((original, correct.to_owned()));
                 }
                 output.push_str(correct);
-                position += form.len();
+                position += length;
             } else {
                 check(output.len().saturating_add(chars[position].len_utf8()))?;
                 output.push(chars[position]);
@@ -168,6 +151,139 @@ impl PersonalRules {
         substitutions.extend(fuzzy);
         Ok((output, substitutions))
     }
+
+    /// The longest spoken form that starts at `position` between word
+    /// boundaries: its length in characters, and what it types.
+    fn form_at<E>(
+        &self,
+        chars: &[char],
+        position: usize,
+        check: &impl Fn() -> Result<(), E>,
+    ) -> Result<Option<(usize, &str)>, E> {
+        let first = chars[position]
+            .to_lowercase()
+            .next()
+            .unwrap_or(chars[position]);
+        let Some(forms) = self.forms.get(&first) else {
+            return Ok(None);
+        };
+        for (form, correct) in forms {
+            check()?;
+            let end = position + form.len();
+            if boundary(chars, position)
+                && end <= chars.len()
+                && boundary(chars, end)
+                && chars[position..end]
+                    .iter()
+                    .zip(form)
+                    .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
+            {
+                return Ok(Some((form.len(), correct)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Claims each spoken form in the text no term claimed, so no later
+    /// step rewrites the user's own words. A word a form ends inside is
+    /// split around it, as "teh," is. A form that opens or ends on a symbol
+    /// word waits: only the symbol's own join can attach it to the word
+    /// beside it, as "dot com" attaches to "example".
+    pub(super) fn claim<'a>(&'a self, text: &str, words: Vec<Word<'a>>) -> Vec<Word<'a>> {
+        if self.forms.is_empty() {
+            return words;
+        }
+        let mut claimed = Vec::with_capacity(words.len());
+        let mut unclaimed = Vec::new();
+        let mut start = 0;
+        for word in words {
+            if word.claim.is_none() {
+                unclaimed.push(word);
+                continue;
+            }
+            self.claim_between(
+                text,
+                start..word.span.start,
+                unclaimed.drain(..),
+                &mut claimed,
+            );
+            start = word.span.end;
+            claimed.push(word);
+        }
+        self.claim_between(text, start..text.len(), unclaimed.drain(..), &mut claimed);
+        claimed
+    }
+
+    /// Claims the forms in `between`, the text from one claim to the next,
+    /// and pushes them with what is left of its `words`.
+    fn claim_between<'a>(
+        &'a self,
+        text: &str,
+        between: Range<usize>,
+        words: impl Iterator<Item = Word<'a>>,
+        claimed: &mut Vec<Word<'a>>,
+    ) {
+        let mut forms = self.forms_in(text, between).into_iter().peekable();
+        for word in words {
+            let mut from = word.span.start;
+            while let Some(form) = forms.peek().filter(|form| form.span.start < word.span.end) {
+                if form.span.start > from {
+                    claimed.push(plain(from..form.span.start));
+                }
+                from = form.span.end.min(word.span.end);
+                // A form that runs past this word is claimed where it ends.
+                if form.span.end > word.span.end {
+                    break;
+                }
+                claimed.extend(forms.next());
+            }
+            if from < word.span.end {
+                claimed.push(plain(from..word.span.end));
+            }
+        }
+    }
+
+    /// Each spoken form in `between`, in order, as a claim on its bytes.
+    fn forms_in<'a>(&'a self, text: &str, between: Range<usize>) -> Vec<Word<'a>> {
+        let (offsets, chars): (Vec<usize>, Vec<char>) =
+            text[between.clone()].char_indices().unzip();
+        let byte =
+            |index: usize| between.start + offsets.get(index).copied().unwrap_or(between.len());
+        let mut forms = Vec::new();
+        let mut position = 0;
+        while position < chars.len() {
+            let form = self
+                .form_at(&chars, position, &|| Ok::<_, std::convert::Infallible>(()))
+                .unwrap_or_else(|never| match never {});
+            let waits = |length: usize| edges_on_a_symbol(&chars[position..position + length]);
+            let Some((length, typed)) = form.filter(|(length, _)| !waits(*length)) else {
+                position += 1;
+                continue;
+            };
+            forms.push(Word {
+                span: byte(position)..byte(position + length),
+                claim: Some(Cow::Borrowed(typed)),
+            });
+            position += length;
+        }
+        forms
+    }
+}
+
+/// Whether `spoken` opens or ends on a symbol word, as "dot com" does.
+fn edges_on_a_symbol(spoken: &[char]) -> bool {
+    let spoken: String = spoken.iter().collect();
+    let mut words = spoken.split_whitespace();
+    let first = words.next();
+    let last = words.next_back().or(first);
+    [first, last]
+        .into_iter()
+        .flatten()
+        .any(|word| symbol(word).is_some())
+}
+
+fn plain<'a>(span: Range<usize>) -> Word<'a> {
+    Word { span, claim: None }
 }
 
 /// A false substitution reads worse than a missed one.
@@ -177,23 +293,6 @@ const MAX_VARIANTS: usize = 8;
 /// A term with more parts than this is a serial number, not a word, and
 /// its spoken forms would number in the millions.
 const MAX_SEGMENTS: usize = 8;
-
-const DIGIT_WORDS: [&str; 10] = [
-    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
-];
-const NUMBER_WORDS: [(&str, &str); 11] = [
-    ("10", "ten"),
-    ("11", "eleven"),
-    ("12", "twelve"),
-    ("13", "thirteen"),
-    ("14", "fourteen"),
-    ("15", "fifteen"),
-    ("16", "sixteen"),
-    ("17", "seventeen"),
-    ("18", "eighteen"),
-    ("19", "nineteen"),
-    ("20", "twenty"),
-];
 
 /// A variant made only of these, digits, or number words would rewrite
 /// ordinary speech ("no1" as "no one"). Small on purpose: only words that
@@ -267,8 +366,8 @@ fn expand_term_variants(term: &str) -> Vec<String> {
         .map(|segment| {
             if is_digits(segment) {
                 let mut options = vec![segment.clone(), spelled_digits(segment)];
-                if let Some((_, word)) = NUMBER_WORDS.iter().find(|(digits, _)| digits == segment) {
-                    options.push((*word).to_owned());
+                if let Some(word) = one_word(segment) {
+                    options.push(word.to_owned());
                 }
                 options
             } else if segment == "-" || segment == "_" {
@@ -289,7 +388,8 @@ fn expand_term_variants(term: &str) -> Vec<String> {
                 let token = token.to_lowercase();
                 COMMON_TOKENS.contains(&token.as_str())
                     || DIGIT_WORDS.contains(&token.as_str())
-                    || NUMBER_WORDS.iter().any(|(_, word)| *word == token)
+                    || TEEN_WORDS.contains(&token.as_str())
+                    || token == TWENTY
                     || token.chars().all(char::is_numeric)
             })
     };
@@ -340,6 +440,17 @@ fn segments(term: &str) -> Vec<String> {
 
 fn is_digits(segment: &str) -> bool {
     !segment.is_empty() && segment.chars().all(|c| c.is_ascii_digit())
+}
+
+const TWENTY: &str = "twenty";
+
+/// The one word a recognizer may write for "10" through "20".
+fn one_word(segment: &str) -> Option<&'static str> {
+    match (segment.len(), segment.parse::<usize>().ok()?) {
+        (2, teen @ 10..=19) => Some(TEEN_WORDS[teen - 10]),
+        (2, 20) => Some(TWENTY),
+        _ => None,
+    }
 }
 
 fn spelled_digits(segment: &str) -> String {

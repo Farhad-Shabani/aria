@@ -2,11 +2,9 @@ use std::borrow::Cow;
 
 use crate::cancel::CancelToken;
 
-use super::super::Caret;
+use super::symbol_words::symbol;
 use super::vocabulary::Word;
 use super::{Layer, TranscriptionError, Vocabulary, check_cancelled, check_size};
-
-const CLOSING_MARKS: [char; 3] = ['.', '?', '!'];
 
 /// Joins the words around "underscore", "hyphen", or "dot", as in
 /// "user underscore id" → `user_id`.
@@ -15,10 +13,14 @@ pub struct JoinSymbols;
 
 impl Layer for JoinSymbols {
     fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
-        let corrected = Vocabulary::default().correct_spoken_checked(text, "", &|bytes| {
-            check_cancelled(cancel)?;
-            check_size(bytes)
-        })?;
+        let corrected = Vocabulary::default().correct_with(
+            text,
+            |text, words| claim(text, words, None),
+            &|bytes| {
+                check_cancelled(cancel)?;
+                check_size(bytes)
+            },
+        )?;
         if let Some(corrected) = corrected {
             *text = corrected;
         }
@@ -26,99 +28,17 @@ impl Layer for JoinSymbols {
     }
 }
 
-impl Vocabulary {
-    /// Corrects dictated `text` in one pass. Terms win, spoken symbols join
-    /// the rest, and personal rules get what neither claimed. `before` is
-    /// text already typed: a symbol `text` opens with joins its last word.
-    pub fn correct_spoken(&self, text: &str, before: &str) -> Option<String> {
-        self.correct_spoken_checked(text, before, &|_| Ok::<_, std::convert::Infallible>(()))
-            .unwrap_or_else(|never| match never {})
-    }
-
-    pub(super) fn correct_spoken_checked<E>(
-        &self,
-        text: &str,
-        before: &str,
-        check: &impl Fn(usize) -> Result<(), E>,
-    ) -> Result<Option<String>, E> {
-        let before = before.split_whitespace().next_back();
-        self.correct_with(text, |text, words| join_runs(text, &words, before), check)
-    }
-}
-
-/// Holds a segment's last word while it is a symbol word, until the next
-/// segment shows what it joins.
-///
-/// Streaming can split "user underscore id" across segments. Correct what
-/// [`hold`](Self::hold) returns with [`Vocabulary::correct_spoken`], after the
-/// text already typed.
-///
-/// ```
-/// use aria_kit::transcription::{DeferredSymbols, Vocabulary};
-///
-/// let mut symbols = DeferredSymbols::default();
-/// assert_eq!(symbols.hold("user underscore", None), "user");
-/// let next = symbols.hold("id", None);
-/// assert_eq!(next, "underscore id");
-/// let corrected = Vocabulary::default().correct_spoken(&next, "user");
-/// assert_eq!(corrected.as_deref(), Some("_id"));
-/// assert_eq!(symbols.finish(), None);
-/// ```
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct DeferredSymbols {
-    held: Option<String>,
-}
-
-impl DeferredSymbols {
-    /// Returns the held word and `text`, minus a symbol word `text` ends on.
-    /// The held word drops its closing mark only when `sentence_ended_before`
-    /// is `Some(false)`, as [`SentenceEnds`](super::super::SentenceEnds) does.
-    #[must_use = "held words are owed to the transcript"]
-    pub fn hold(&mut self, text: &str, sentence_ended_before: Option<bool>) -> String {
-        let mut text = match self.held.take() {
-            Some(held) if sentence_ended_before == Some(false) => {
-                joined(held.trim_end_matches(CLOSING_MARKS), text)
-            }
-            Some(held) => joined(&held, text),
-            None => text.to_owned(),
-        };
-        let kept = text.trim_end();
-        let (rest, last) = kept.rsplit_once(char::is_whitespace).unwrap_or(("", kept));
-        if symbol(last.trim_end_matches(CLOSING_MARKS)).is_none() {
-            return text;
-        }
-        self.held = Some(last.to_owned());
-        text.truncate(rest.trim_end().len());
-        text
-    }
-
-    /// Returns the held word once nothing follows.
-    #[must_use = "held words are owed to the transcript"]
-    pub fn finish(&mut self) -> Option<String> {
-        self.held.take()
-    }
-}
-
-fn joined(held: &str, text: &str) -> String {
-    let mut joined = held.to_owned();
-    joined.push_str(&Caret::between(held, "").insert_open(text));
-    joined
-}
-
-fn symbol(word: &str) -> Option<char> {
-    match word.to_lowercase().as_str() {
-        "underscore" => Some('_'),
-        "hyphen" => Some('-'),
-        "dot" => Some('.'),
-        _ => None,
-    }
+/// How many of the words `words` ends on more speech may still change: a
+/// symbol word that may join what follows.
+pub(super) fn open_tail(words: &[&str]) -> usize {
+    usize::from(words.last().is_some_and(|word| symbol(word).is_some()))
 }
 
 /// Claims each run of words that spoken symbols join as one word, as in
 /// "user underscore id" → `user_id`. A symbol opening `text` joins `before`,
 /// the last word already typed, so its run types from the symbol on.
-fn join_runs<'a>(text: &str, words: &[Word<'a>], before: Option<&str>) -> Vec<Word<'a>> {
-    let links = links(text, words, before);
+pub(super) fn claim<'a>(text: &str, words: Vec<Word<'a>>, before: Option<&str>) -> Vec<Word<'a>> {
+    let links = links(text, &words, before);
     let mut joined = Vec::with_capacity(words.len());
     let mut index = 0;
     while index < words.len() {
@@ -274,51 +194,6 @@ mod tests {
                 .as_deref(),
             typed
         );
-    }
-
-    /// Each piece is one segment, corrected after what the stream typed.
-    fn streamed(pieces: &[(&str, Option<bool>)]) -> String {
-        let mut symbols = DeferredSymbols::default();
-        let mut typed = String::new();
-        let put = |text: &str, typed: &mut String| {
-            let corrected = Vocabulary::default().correct_spoken(text, typed);
-            let corrected = corrected.as_deref().unwrap_or(text);
-            typed.push_str(&Caret::between(typed, "").insert_open(corrected));
-        };
-        for (piece, sentence_ended_before) in pieces {
-            let text = symbols.hold(piece, *sentence_ended_before);
-            put(&text, &mut typed);
-        }
-        if let Some(held) = symbols.finish() {
-            put(&held, &mut typed);
-        }
-        typed
-    }
-
-    #[rstest]
-    #[case::underscore(&[("user", None), ("underscore", None), ("id", None)], "user_id")]
-    #[case::keeps_casing(&[("User", None), ("underscore", None), ("ID", None)], "User_ID")]
-    #[case::symbol_ends_a_segment(&[("user underscore", None), ("id and more", None)], "user_id and more")]
-    #[case::symbol_opens_a_segment(&[("user", None), ("underscore id and more", None)], "user_id and more")]
-    #[case::chain(&[("max underscore", None), ("retry underscore", None), ("count", None)], "max_retry_count")]
-    #[case::after_a_hyphenated_word(&[("aria-stt", None), ("hyphen", None), ("test", None)], "aria-stt-test")]
-    #[case::mark_after_the_symbol(&[("User underscore.", None), ("ID.", Some(false))], "User_ID.")]
-    fn joins_across_segments(#[case] pieces: &[(&str, Option<bool>)], #[case] typed: &str) {
-        assert_eq!(streamed(pieces), typed);
-    }
-
-    #[rstest]
-    #[case::ordinary_words(&[("turn", None), ("left now", None)], "turn left now")]
-    #[case::press_ends_on_a_symbol(&[("user", None), ("underscore.", None)], "user underscore.")]
-    #[case::sentence_ended_after_the_symbol(&[("the dot.", None), ("Then we rest.", Some(true))], "the dot. Then we rest.")]
-    #[case::unread_cut_after_the_symbol(&[("the dot.", None), ("Then we rest.", None)], "the dot. Then we rest.")]
-    #[case::no_word_before(&[("hyphen", None), ("of the word", None)], "hyphen of the word")]
-    #[case::number_range(&[("3", None), ("hyphen", None), ("5", None)], "3 hyphen 5")]
-    fn leaves_unjoined_across_segments(
-        #[case] pieces: &[(&str, Option<bool>)],
-        #[case] typed: &str,
-    ) {
-        assert_eq!(streamed(pieces), typed);
     }
 
     #[test]
