@@ -36,11 +36,6 @@ impl Unit {
     }
 }
 
-/// Whether `word` names dollars, which cents may still follow.
-pub(super) fn names_dollars(word: &str) -> bool {
-    matches!(word, "dollar" | "dollars")
-}
-
 /// "five dollars and twenty cents" as `$5.20`. `None` unless both are whole
 /// counts, with under a hundred cents.
 pub(super) fn dollars_and_cents(dollars: &Number, cents: &Number) -> Option<String> {

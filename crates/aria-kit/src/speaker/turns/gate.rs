@@ -101,6 +101,16 @@ impl Gate {
         self.held.front().map(|heard| heard.window.start)
     }
 
+    /// Whether the decoder wrote words the gate hasn't let out: a held
+    /// segment, or provisional text, shown or not.
+    pub fn has_undecided_words(&self) -> bool {
+        let provisional = self
+            .provisional
+            .as_ref()
+            .is_some_and(|provisional| !provisional.text.trim().is_empty());
+        provisional || !self.held.is_empty()
+    }
+
     /// A finalized segment joins the queue. It replaces the provisional text it came from.
     pub fn hold(&mut self, heard: Heard) {
         self.provisional = None;

@@ -29,9 +29,23 @@ impl Layer for JoinSymbols {
 }
 
 /// How many of the words `words` ends on more speech may still change: a
-/// symbol word that may join what follows.
-pub(super) fn open_tail(words: &[&str]) -> usize {
-    usize::from(words.last().is_some_and(|word| symbol(word).is_some()))
+/// symbol word that may join what follows. A hyphen keeps the word before
+/// it too: once that word is typed, the hyphen can't join it to a number.
+pub(super) fn open_tail(text: &str, words: &[Word<'_>]) -> usize {
+    let last = words.last().filter(|word| word.claim.is_none());
+    match last.and_then(|word| symbol(word.typed(text))) {
+        Some('-') => words.len().min(2),
+        Some(_) => 1,
+        None => 0,
+    }
+}
+
+/// Whether a symbol between them joins `left` and `right`, whatever
+/// punctuation sits outside the pair.
+pub(super) fn joins(left: &str, right: &str) -> bool {
+    let left = left.trim_start_matches(|c: char| c.is_ascii_punctuation());
+    let right = right.trim_end_matches(|c: char| c.is_ascii_punctuation());
+    is_joinable(left) && is_joinable(right)
 }
 
 /// Claims each run of words that spoken symbols join as one word, as in
@@ -73,7 +87,7 @@ pub(super) fn claim<'a>(text: &str, words: Vec<Word<'a>>, before: Option<&str>) 
 
 /// The symbol each word becomes when it links its two neighbors.
 fn links(text: &str, words: &[Word<'_>], before: Option<&str>) -> Vec<Option<char>> {
-    let mut joins = vec![None; words.len()];
+    let mut links = vec![None; words.len()];
     for index in 0..words.len().saturating_sub(1) {
         if words[index].claim.is_some() {
             continue;
@@ -88,13 +102,10 @@ fn links(text: &str, words: &[Word<'_>], before: Option<&str>) -> Vec<Option<cha
         let Some(left) = left else {
             continue;
         };
-        let left = left.trim_start_matches(|c: char| c.is_ascii_punctuation());
-        let right = words[index + 1]
-            .typed(text)
-            .trim_end_matches(|c: char| c.is_ascii_punctuation());
+        let right = words[index + 1].typed(text);
         let gap_start = index.checked_sub(1).map_or(0, |left| words[left].span.end);
         let line_break = text[gap_start..words[index + 1].span.start].contains('\n');
-        if line_break || !is_joinable(left) || !is_joinable(right) {
+        if line_break || !joins(left, right) {
             continue;
         }
         // Typed text can't change, and a caret keeps "-5" apart from it.
@@ -103,9 +114,9 @@ fn links(text: &str, words: &[Word<'_>], before: Option<&str>) -> Vec<Option<cha
         if opens_number {
             continue;
         }
-        joins[index] = Some(character);
+        links[index] = Some(character);
     }
-    joins
+    links
 }
 
 fn is_joinable(word: &str) -> bool {

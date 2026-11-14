@@ -1,8 +1,6 @@
 use super::super::Caret;
-use super::super::sentences::ends_sentence;
+use super::super::sentences::{ends_sentence, without_closing_mark};
 use super::{Vocabulary, numbers, symbols};
-
-const CLOSING_MARKS: [char; 3] = ['.', '?', '!'];
 
 /// More held words than this are typed rather than held, which bounds the
 /// delay.
@@ -70,7 +68,8 @@ impl DeferredWords {
             };
         }
         let mut unheld = self.release(text, sentence_ended_before);
-        let (rest, held) = split_last_words(&unheld.text, held_words(&unheld.text));
+        let (rest, held) = unheld.text.split_at(held_from(&unheld.text, vocabulary));
+        let rest = rest.trim_end();
         if held.is_empty() || splitting_changes(vocabulary, rest, held) {
             return unheld;
         }
@@ -108,7 +107,7 @@ impl DeferredWords {
             };
         };
         let words = match sentence_ended_before {
-            Some(false) => held.words.trim_end_matches(CLOSING_MARKS),
+            Some(false) => without_closing_mark(&held.words),
             _ => &held.words,
         };
         Unheld {
@@ -124,43 +123,26 @@ fn joined(held: &str, text: &str) -> String {
     joined
 }
 
-/// How many words `text` ends on that the next segment may still change.
-/// Each kind of word answers for itself, and a symbol may sit between
-/// numbers, so the count grows until neither adds to it.
-fn held_words(text: &str) -> usize {
-    let mut words: Vec<&str> = text
-        .split_whitespace()
-        .rev()
-        .take(MAX_HELD_WORDS + 2)
-        .collect();
-    words.reverse();
-    let Some(last) = words.last_mut() else {
-        return 0;
-    };
-    *last = last.trim_end_matches(CLOSING_MARKS);
-    let mut held = 0;
-    while held <= MAX_HELD_WORDS {
-        let before = &words[..words.len() - held];
-        let more = numbers::open_tail(before).max(symbols::open_tail(before));
+/// Where the words `text` ends on that the next segment may still change
+/// begin. A term or spoken form of `vocabulary` is one word here, so none is
+/// cut. Each kind of word answers for itself, and a symbol may sit between
+/// numbers, so the tail grows until neither adds to it.
+fn held_from(text: &str, vocabulary: &Vocabulary) -> usize {
+    let open = without_closing_mark(text);
+    let words = vocabulary.claimed_words(open);
+    let mut kept = words.len();
+    loop {
+        let before = &words[kept.saturating_sub(MAX_HELD_WORDS + 2)..kept];
+        let more = numbers::open_tail(open, before).max(symbols::open_tail(open, before));
         if more == 0 {
-            return held;
+            break;
         }
-        held += more;
+        kept -= more;
+        if words.len() - kept > MAX_HELD_WORDS {
+            return text.len();
+        }
     }
-    0
-}
-
-/// `text` before its last `count` words, and those words.
-fn split_last_words(text: &str, count: usize) -> (&str, &str) {
-    let mut from = text.len();
-    for _ in 0..count {
-        let before = text[..from].trim_end();
-        from = before
-            .char_indices()
-            .rfind(|(_, c)| c.is_whitespace())
-            .map_or(0, |(at, space)| at + space.len_utf8());
-    }
-    (text[..from].trim_end(), text[from..].trim_end())
+    words.get(kept).map_or(text.len(), |word| word.span.start)
 }
 
 /// Whether `vocabulary` corrects `rest` then `held` differently from the
@@ -181,7 +163,7 @@ fn splitting_changes(vocabulary: &Vocabulary, rest: &str, held: &str) -> bool {
 mod tests {
     use rstest::rstest;
 
-    use super::super::vocabulary::PersonalRules;
+    use super::super::vocabulary::{PersonalRules, Term};
     use super::*;
 
     /// Each piece is one segment, corrected after what the stream typed.
@@ -211,6 +193,7 @@ mod tests {
     #[case::chain(&[("max underscore", None), ("retry underscore", None), ("count", None)], "max_retry_count")]
     #[case::after_a_hyphenated_word(&[("aria-stt", None), ("hyphen", None), ("test", None)], "aria-stt-test")]
     #[case::mark_after_the_symbol(&[("User underscore.", None), ("ID.", Some(false))], "User_ID.")]
+    #[case::number_after_an_opening_hyphen(&[("covid", None), ("hyphen nineteen", None)], "covid-nineteen")]
     fn joins_across_segments(#[case] pieces: &[(&str, Option<bool>)], #[case] typed: &str) {
         assert_eq!(streamed(pieces, &Vocabulary::default()), typed);
     }
@@ -227,6 +210,8 @@ mod tests {
     #[case::cents_right_after_dollars(&[("five dollars", None), ("fifty", None), ("cents", None)], "$5.50")]
     #[case::bracket_before_a_number(&[("(twenty", None), ("one)", None)], "(21)")]
     #[case::digit_words_around_a_symbol(&[("version two", None), ("dot", None), ("five", None)], "version 2.5")]
+    #[case::hyphen_before_a_number(&[("covid hyphen", None), ("nineteen", None)], "covid-19")]
+    #[case::hyphen_before_a_split_number(&[("version hyphen twenty", None), ("five", None)], "version-25")]
     fn writes_numbers_across_segments(
         #[case] pieces: &[(&str, Option<bool>)],
         #[case] typed: &str,
@@ -243,6 +228,7 @@ mod tests {
     #[case::number_range(&[("3", None), ("hyphen", None), ("5", None)], "3 hyphen 5")]
     #[case::digit_word_in_prose(&[("no", None), ("one", None), ("knows", None)], "no one knows")]
     #[case::sentence_ended_after_a_number(&[("twenty.", None), ("One more.", Some(true))], "20. One more.")]
+    #[case::ellipsis_after_a_number(&[("I have twenty...", None), ("or so", Some(false))], "I have 20... or so")]
     fn leaves_unjoined_across_segments(
         #[case] pieces: &[(&str, Option<bool>)],
         #[case] typed: &str,
@@ -293,6 +279,24 @@ mod tests {
         let heard = "visit area fifty one";
         assert_eq!(words.hold(heard, None, &vocabulary).text, heard);
         assert!(words.finish().is_none());
+    }
+
+    #[rstest]
+    #[case::symbol_after_a_spoken_form(&["s three underscore", "bucket"], "s3_bucket")]
+    #[case::number_after_a_spoken_form(&["upgrade d b two twenty", "five times"], "upgrade db2 25 times")]
+    #[case::number_after_a_term(&["area fifty one twenty", "five"], "area fifty one 25")]
+    fn words_after_a_term_or_spoken_form_are_still_held(
+        #[case] pieces: &[&str],
+        #[case] typed: &str,
+    ) {
+        let term = Term {
+            canonical: "Area Fifty One".to_owned(),
+            priority: 0,
+        };
+        let personal = PersonalRules::new(vec!["s3".into(), "db2".into()], vec![]);
+        let vocabulary = Vocabulary::compile(&[term], personal).unwrap();
+        let pieces: Vec<_> = pieces.iter().map(|piece| (*piece, None)).collect();
+        assert_eq!(streamed(&pieces, &vocabulary), typed);
     }
 
     #[test]

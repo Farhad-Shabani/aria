@@ -82,6 +82,14 @@ pub(crate) fn ends_sentence(word: &str) -> bool {
     closing_mark(word).is_some()
 }
 
+/// `text` without the mark that ends it as a sentence.
+pub(crate) fn without_closing_mark(text: &str) -> &str {
+    match closing_mark(text) {
+        Some(mark) => &text[..text.len() - mark.len_utf8()],
+        None => text,
+    }
+}
+
 /// The one mark that ends `text` as a sentence. `None` for a mark inside
 /// the last word, as in "U.S." or "...", and for anything else.
 fn closing_mark(text: &str) -> Option<char> {

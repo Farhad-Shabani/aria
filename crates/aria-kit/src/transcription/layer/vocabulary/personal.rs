@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use crate::cancel::CancelToken;
 
-use super::super::number_words::{DIGIT_WORDS, TEEN_WORDS};
+use super::super::number_words::{is_up_to_twenty, word_for};
 use super::super::symbol_words::symbol;
 use super::{MatchError, Word, is_word};
 
@@ -387,9 +387,7 @@ fn expand_term_variants(term: &str) -> Vec<String> {
             && !variant.split_whitespace().all(|token| {
                 let token = token.to_lowercase();
                 COMMON_TOKENS.contains(&token.as_str())
-                    || DIGIT_WORDS.contains(&token.as_str())
-                    || TEEN_WORDS.contains(&token.as_str())
-                    || token == TWENTY
+                    || is_up_to_twenty(&token)
                     || token.chars().all(char::is_numeric)
             })
     };
@@ -442,13 +440,10 @@ fn is_digits(segment: &str) -> bool {
     !segment.is_empty() && segment.chars().all(|c| c.is_ascii_digit())
 }
 
-const TWENTY: &str = "twenty";
-
 /// The one word a recognizer may write for "10" through "20".
 fn one_word(segment: &str) -> Option<&'static str> {
     match (segment.len(), segment.parse::<usize>().ok()?) {
-        (2, teen @ 10..=19) => Some(TEEN_WORDS[teen - 10]),
-        (2, 20) => Some(TWENTY),
+        (2, number @ 10..=20) => word_for(number),
         _ => None,
     }
 }
@@ -456,8 +451,7 @@ fn one_word(segment: &str) -> Option<&'static str> {
 fn spelled_digits(segment: &str) -> String {
     segment
         .chars()
-        .filter_map(|c| c.to_digit(10))
-        .map(|digit| DIGIT_WORDS[digit as usize])
+        .filter_map(|c| word_for(c.to_digit(10)? as usize))
         .collect::<Vec<_>>()
         .join(" ")
 }

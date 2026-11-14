@@ -328,6 +328,12 @@ impl<'scope> Hearing<'scope> {
         }
     }
 
+    /// Whether the decoder has words that [`Self::next`] hasn't handed out
+    /// as released: the speaker has not paused.
+    pub(crate) fn has_undecided_words(&self) -> bool {
+        self.gate.has_undecided_words()
+    }
+
     /// Waits for both threads, and decides what is still held.
     pub(crate) fn finish(self) -> Result<Ended, HearingError> {
         let Self {

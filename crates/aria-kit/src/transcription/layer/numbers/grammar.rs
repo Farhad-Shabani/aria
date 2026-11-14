@@ -10,7 +10,7 @@
 
 use std::fmt;
 
-use super::super::number_words::{NumberWord, Scale};
+use super::super::number_words::{NumberWord, Scale, number_words_in};
 
 const MILLION: u128 = 1_000_000;
 
@@ -26,7 +26,7 @@ pub(super) struct Number {
 }
 
 impl Number {
-    /// Reads `words` as one number. Every word must belong to it: number
+    /// Reads `words`, in lowercase, as one number. Every word must belong to it: number
     /// words, "point", "and", and "o" for a zero after the point. Anything
     /// English doesn't say as one number is `None`, as "one two three" is.
     pub(super) fn parse(words: &[&str]) -> Option<Self> {
@@ -80,15 +80,14 @@ enum Token {
 }
 
 impl Token {
-    /// The tokens one word holds: "twenty-one" holds two.
+    /// The tokens one word in lowercase holds: "twenty-one" holds two.
     fn parse(word: &str) -> Option<Vec<Self>> {
-        match word.to_lowercase().as_str() {
+        match word {
             "point" => Some(vec![Self::Point]),
             "and" => Some(vec![Self::And]),
             "o" | "oh" => Some(vec![Self::Oh]),
-            word => word
-                .split('-')
-                .map(|part| NumberWord::parse(part).map(Self::Word))
+            word => number_words_in(word)
+                .map(|word| word.map(Self::Word))
                 .collect(),
         }
     }
@@ -282,7 +281,6 @@ mod tests {
     #[case::tens("seventy", "70")]
     #[case::tens_and_digit("twenty one", "21")]
     #[case::hyphenated("twenty-one", "21")]
-    #[case::capitalized("Twenty One", "21")]
     #[case::hundreds("three hundred", "300")]
     #[case::hundreds_and_tens("one hundred five", "105")]
     #[case::hundreds_with_and("six hundred and thirty one", "631")]

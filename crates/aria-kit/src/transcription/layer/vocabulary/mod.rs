@@ -227,6 +227,14 @@ impl Vocabulary {
         self.typed(text, &claim(text, words), check)
     }
 
+    /// `text`'s words, with terms and the user's spoken forms claimed.
+    pub(super) fn claimed_words<'a>(&'a self, text: &'a str) -> Vec<Word<'a>> {
+        let words = self
+            .words(text, &|_| Ok::<_, std::convert::Infallible>(()))
+            .unwrap_or_else(|never| match never {});
+        self.personal.claim(text, words)
+    }
+
     /// `text` with each claim typed, and personal rules applied to the
     /// spans nothing claimed.
     fn typed<E>(
