@@ -15,7 +15,7 @@ impl Layer for JoinSymbols {
         let vocabulary = Vocabulary::default();
         let corrected = vocabulary.correct_with(
             text,
-            |claimed| claim_each(&[Step::Symbols], text, None, &vocabulary, claimed),
+            |claimed| claim_each(&[Step::Symbols], text, &vocabulary, claimed),
             &|bytes| {
                 check_cancelled(cancel)?;
                 check_size(bytes)
@@ -61,17 +61,11 @@ const _: () = {
 };
 
 impl Step {
-    fn claim<'a>(
-        self,
-        text: &str,
-        before: Option<&str>,
-        vocabulary: &'a Vocabulary,
-        claimed: &mut Claimed<'a>,
-    ) {
+    fn claim<'a>(self, text: &str, vocabulary: &'a Vocabulary, claimed: &mut Claimed<'a>) {
         match self {
             Self::Forms => vocabulary.claim_forms(text, claimed),
             Self::Numbers => numbers::claim(text, claimed),
-            Self::Symbols => symbols::claim(text, before, claimed),
+            Self::Symbols => symbols::claim(text, claimed),
         }
     }
 
@@ -106,12 +100,11 @@ impl Step {
 fn claim_each<'a>(
     steps: &[Step],
     text: &str,
-    before: Option<&str>,
     vocabulary: &'a Vocabulary,
     claimed: &mut Claimed<'a>,
 ) {
     for step in steps {
-        step.claim(text, before, vocabulary, claimed);
+        step.claim(text, vocabulary, claimed);
     }
 }
 
@@ -131,18 +124,38 @@ impl Vocabulary {
     /// `before` is text already typed: a symbol `text` opens with joins its
     /// last word.
     pub fn correct_spoken(&self, text: &str, before: &str) -> Option<Corrected> {
-        let before = before.split_whitespace().next_back();
-        let mut joins_before = false;
-        self.correct_with(
+        let Some(typed) = before.split_whitespace().next_back() else {
+            let text = self.spoken(text, 0)?;
+            return Some(Corrected {
+                text,
+                joins_before: false,
+            });
+        };
+        // The typed word reads as the first word, so a symbol after it joins
+        // it as it would any word. Whether a space still follows it says
+        // whether one did.
+        let read = format!("{typed} {text}");
+        let corrected = self.spoken(&read, typed.len())?;
+        let after = &corrected[typed.len()..];
+        let (after, joins_before) = match after.strip_prefix(' ') {
+            Some(after) => (after, false),
+            None => (after, true),
+        };
+        (joins_before || after != text).then(|| Corrected {
+            text: after.to_owned(),
+            joins_before,
+        })
+    }
+
+    /// `text` corrected by every step, after the word typed up to `typed`.
+    fn spoken(&self, text: &str, typed: usize) -> Option<String> {
+        self.correct_after(
             text,
-            |claimed| {
-                claim_each(&SPOKEN, text, before, self, claimed);
-                joins_before = claimed.joins_before();
-            },
+            typed,
+            |claimed| claim_each(&SPOKEN, text, self, claimed),
             &|_| Ok::<_, Infallible>(()),
         )
         .unwrap_or_else(|never| match never {})
-        .map(|text| Corrected { text, joins_before })
     }
 
     /// Where the words at the end of dictated `text` that more speech may
@@ -158,7 +171,8 @@ impl Vocabulary {
         let mut claimed = self
             .claimed(
                 text,
-                |claimed| claim_each(&SPOKEN[..unjoined], text, None, self, claimed),
+                0,
+                |claimed| claim_each(&SPOKEN[..unjoined], text, self, claimed),
                 &|_| Ok::<_, Infallible>(()),
             )
             .unwrap_or_else(|never| match never {});

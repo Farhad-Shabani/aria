@@ -344,7 +344,7 @@ mod tests {
     #[case::digit_word_beside_dollars("two dot five dollars", "two dot $5")]
     #[case::digit_word_beside_a_scale_alone("hundred dot five", "hundred.five")]
     #[case::number_before_a_measure("twenty kilograms", "20 kilograms")]
-    #[case::number_after_a_hyphen("covid hyphen nineteen", "covid-19")]
+    #[case::number_after_a_hyphen("utf hyphen sixteen", "utf-16")]
     #[case::number_after_a_hyphen_with_nothing_before("hyphen nineteen", "hyphen 19")]
     #[case::dollars_before_other_words("five dollars and twenty people", "$5 and 20 people")]
     // "x minus ten" may be a sum, so "minus" never signs a number.

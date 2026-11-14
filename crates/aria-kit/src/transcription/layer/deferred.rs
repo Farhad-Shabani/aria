@@ -179,9 +179,9 @@ mod tests {
     #[case::chain(&[("max underscore", None), ("retry underscore", None), ("count", None)], "max_retry_count")]
     #[case::after_a_hyphenated_word(&[("aria-stt", None), ("hyphen", None), ("test", None)], "aria-stt-test")]
     #[case::mark_after_the_symbol(&[("User underscore.", None), ("ID.", Some(false))], "User_ID.")]
-    #[case::number_after_an_opening_hyphen(&[("covid", None), ("hyphen nineteen", None)], "covid-19")]
+    #[case::number_after_an_opening_hyphen(&[("utf", None), ("hyphen sixteen", None)], "utf-16")]
     #[case::digits_around_a_hyphen(&[("3", None), ("hyphen", None), ("5", None)], "3-5")]
-    #[case::hyphen_chain(&[("x hyphen y", None), ("hyphen z", None)], "x-y-z")]
+    #[case::hyphen_chain(&[("en hyphen us", None), ("hyphen posix", None)], "en-us-posix")]
     #[case::slash_opens_a_segment(&[("src", None), ("slash main", None)], "src/main")]
     #[case::backslash_alone(&[("c", None), ("backslash", None), ("windows", None)], "c\\windows")]
     fn joins_across_segments(#[case] pieces: &[(&str, Option<bool>)], #[case] typed: &str) {
@@ -201,7 +201,7 @@ mod tests {
     #[case::cents_right_after_dollars(&[("five dollars", None), ("fifty", None), ("cents", None)], "$5.50")]
     #[case::bracket_before_a_number(&[("(twenty", None), ("one)", None)], "(21)")]
     #[case::digit_words_around_a_symbol(&[("version two", None), ("dot", None), ("five", None)], "version 2.5")]
-    #[case::hyphen_before_a_number(&[("covid hyphen", None), ("nineteen", None)], "covid-19")]
+    #[case::hyphen_before_a_number(&[("utf hyphen", None), ("sixteen", None)], "utf-16")]
     #[case::hyphen_before_a_split_number(&[("version hyphen twenty", None), ("five", None)], "version-25")]
     fn writes_numbers_across_segments(
         #[case] pieces: &[(&str, Option<bool>)],

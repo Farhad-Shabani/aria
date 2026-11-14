@@ -25,9 +25,6 @@ pub(super) struct Claimed<'a> {
     deferred_from: usize,
     /// Spans a step decided as one, though it left their words unclaimed.
     kept_whole: Vec<Range<usize>>,
-    /// The text opens with a symbol that joins the last word typed before
-    /// it.
-    joins_before: bool,
 }
 
 impl<'a> Claimed<'a> {
@@ -36,16 +33,7 @@ impl<'a> Claimed<'a> {
             words,
             deferred_from: len,
             kept_whole: Vec::new(),
-            joins_before: false,
         }
-    }
-
-    pub(super) fn joins_before(&self) -> bool {
-        self.joins_before
-    }
-
-    pub(super) fn join_before(&mut self) {
-        self.joins_before = true;
     }
 
     pub(super) fn words(&self) -> &[Word<'a>] {

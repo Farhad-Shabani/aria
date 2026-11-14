@@ -206,18 +206,44 @@ impl Vocabulary {
         claim: impl FnOnce(&mut Claimed<'a>),
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Option<String>, E> {
-        let claimed = self.claimed(text, claim, check)?;
+        self.correct_after(text, 0, claim, check)
+    }
+
+    /// Like [`Self::correct_with`], for `text` that opens with a word
+    /// already typed, up to `typed`. That word types as it stands: no term
+    /// reads across it, and no step changes it.
+    pub(super) fn correct_after<'a, E>(
+        &'a self,
+        text: &'a str,
+        typed: usize,
+        claim: impl FnOnce(&mut Claimed<'a>),
+        check: &impl Fn(usize) -> Result<(), E>,
+    ) -> Result<Option<String>, E> {
+        let claimed = self.claimed(text, typed, claim, check)?;
         self.typed(text, claimed.words(), check)
     }
 
     pub(super) fn claimed<'a, E>(
         &'a self,
         text: &'a str,
+        typed: usize,
         claim: impl FnOnce(&mut Claimed<'a>),
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Claimed<'a>, E> {
         check(text.len())?;
-        let mut claimed = Claimed::new(self.words(text, check)?, text.len());
+        let mut words = Vec::new();
+        if typed > 0 {
+            words.push(Word::claimed(0..typed, Cow::Borrowed(&text[..typed])));
+        }
+        words.extend(
+            self.words(&text[typed..], check)?
+                .into_iter()
+                .map(|word| Word {
+                    span: word.span.start + typed..word.span.end + typed,
+                    ..word
+                }),
+        );
+        let mut claimed = Claimed::new(words, text.len());
         claim(&mut claimed);
         Ok(claimed)
     }
