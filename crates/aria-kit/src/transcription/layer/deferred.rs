@@ -520,8 +520,8 @@ mod tests {
     /// the whole text keeps a term's words together and doesn't join.
     #[test]
     fn a_symbol_opening_a_segment_joins_the_last_word_of_a_term() {
-        let pieces = [("visit new york", None), ("dot five six", None)];
-        assert_eq!(streamed(&pieces, &crowded()), "visit new york.five six");
+        let pieces = [("visit new york", None), ("dot five", None)];
+        assert_eq!(streamed(&pieces, &crowded()), "visit new york.five");
     }
 
     #[test]

@@ -8,14 +8,18 @@ use self::grammar::{Number, digits};
 use self::unit::Unit;
 use super::claim::{Claimed, Word};
 use super::number_words::{continues, is_number_word, is_ordinal};
+use super::symbol_words::{is_symbol, symbol};
 
 /// Claims each run of number words that has one clear written form, as in
 /// "two point five" → `2.5`. A run with none stays words, and is kept whole:
 /// a stream never cuts inside it, nor between a number and the ordinal that
 /// keeps it words. A lone digit word stays a word, as "one" in "no one
 /// knows" is, but keeps its digit for a spoken symbol that joins it to
-/// another number: `2.5` in "two dot five". So does a run of digits said one
-/// at a time: `3.14` in "three dot one four".
+/// another number: `2.5` in "two dot five". So does a run with no form,
+/// read the way the words after "point" are: `3.14` in "three dot one
+/// four". After a spoken symbol, as after "point", "o" is a zero. A number
+/// already written in digits keeps itself: `30.100` in "30 dot one zero
+/// zero".
 ///
 /// A number the text ends on is deferred while more speech may go on with
 /// it: more number words, a "point" or "and" it ends on, or cents after its
@@ -26,7 +30,7 @@ pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
     let mut index = 0;
     while index < words.len() {
         let Some(run) = scan.run_from(index) else {
-            claimed.push(words[index].clone());
+            claimed.push(written_in_digits(text, words[index].clone()));
             index += 1;
             continue;
         };
@@ -69,6 +73,19 @@ pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
             }
         }
     }
+}
+
+/// `word` with itself as its joined form when it is written in digits.
+fn written_in_digits<'a>(text: &str, word: Word<'a>) -> Word<'a> {
+    let typed = word.typed(text);
+    let digits = typed.starts_with(|c: char| c.is_ascii_digit())
+        && typed.ends_with(|c: char| c.is_ascii_digit())
+        && typed.chars().all(|c| c.is_ascii_digit() || is_symbol(c));
+    if word.joined.is_some() || !digits {
+        return word;
+    }
+    let joined = Some(Cow::Owned(typed.to_owned()));
+    Word { joined, ..word }
 }
 
 /// One word, split from the punctuation around it.
@@ -167,11 +184,13 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
     /// a "point" or "and" they end on: more speech may still read on from
     /// those. They may not parse as one number, as "one two three" doesn't.
     fn said_from(&self, start: usize) -> Option<Range<usize>> {
-        if !is_number_word(self.word(start)?) {
+        let after_symbol = self.after_symbol(start);
+        let first = self.word(start)?;
+        if !is_number_word(first) && !(after_symbol && matches!(first, "o" | "oh")) {
             return None;
         }
         let mut last = start;
-        let mut after_point = false;
+        let mut after_point = after_symbol;
         while let Some(next) = self.following(last) {
             if !continues(next, self.word(last)?, after_point) {
                 break;
@@ -180,6 +199,15 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
             last += 1;
         }
         Some(start..last + 1)
+    }
+
+    /// Whether a spoken symbol reads on into the word at `start`.
+    fn after_symbol(&self, start: usize) -> bool {
+        let Some(before) = start.checked_sub(1) else {
+            return false;
+        };
+        self.following(before).is_some()
+            && self.word(before).is_some_and(|word| symbol(word).is_some())
     }
 
     /// The number run that opens at `start`. A "point" or "and" the run
@@ -358,6 +386,9 @@ mod tests {
     #[case::zeros_around_a_symbol("zero dot zero one", "0.01")]
     #[case::digits_on_both_sides("one nine two dot one six eight", "192.168")]
     #[case::digits_after_a_version("version two dot one zero", "version 2.10")]
+    #[case::oh_opening_digits_after_a_symbol("thirty dot o one", "30.01")]
+    #[case::oh_inside_digits_after_a_symbol("three dot one oh one", "3.101")]
+    #[case::digits_the_model_wrote_before_a_symbol("30 dot one zero zero", "30.100")]
     #[case::digit_word_beside_a_scale_word("two million dot five", "2 million dot five")]
     #[case::digit_word_beside_dollars("two dot five dollars", "two dot $5")]
     #[case::digit_word_beside_a_scale_alone("hundred dot five", "hundred.five")]
@@ -389,6 +420,7 @@ mod tests {
     #[case::run_with_no_one_form("fifty fifty")]
     #[case::and_between_digit_words("one and two")]
     #[case::digit_words_no_symbol_joins("count one two three")]
+    #[case::digit_run_beside_a_word("user underscore one two")]
     #[case::point_without_a_number_before("point five")]
     #[case::plural_after_one("one dollars")]
     #[case::comma_between("one, two")]
