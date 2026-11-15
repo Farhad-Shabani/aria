@@ -20,7 +20,7 @@ use rustix::fs::{Access, Mode, OFlags, access, open};
 use rustix::ioctl::{Getter, Setter, ioctl, opcode};
 use rustix::time::{ClockId, clock_gettime};
 
-use super::{AriaKey, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press, PressDetector};
+use super::{AriaKey, BareKey, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press, PressDetector};
 
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("`EVENT_SIZE` assumes the kernel's 64-bit `struct input_event`");
@@ -117,11 +117,11 @@ impl LinuxHotkeyListener {
         }
     }
 
-    /// Devices are only read, so Return always reaches the app and
-    /// `take_return` is never asked.
+    /// Devices are only read, so every key reaches the app and `take` is
+    /// never asked.
     pub fn listen(
         key: AriaKey,
-        _take_return: impl Fn() -> bool,
+        _take: impl Fn(BareKey) -> bool,
         events: impl Fn(ListenerEvent),
         should_stop: impl Fn() -> bool,
     ) {
