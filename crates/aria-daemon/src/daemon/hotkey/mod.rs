@@ -1,5 +1,5 @@
 //! The Aria key as a trigger, owned by a persistent daemon. The listener
-//! turns keys into presses and bare Returns; the key router decides what
+//! turns keys into presses and bare keys; the key router decides what
 //! each one means.
 
 mod router;
@@ -9,7 +9,7 @@ use super::dictation::{DictationHandle, DictationRuntime};
 use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
-use aria_platform::hotkey::{AriaKey, ListenerEvent, PlatformHotkeyListener};
+use aria_platform::hotkey::{AriaKey, BareKey, ListenerEvent, PlatformHotkeyListener};
 use router::{Hold, KeyRouter};
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -18,11 +18,11 @@ use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
 
 /// The blocking platform listener; tests swap in a fake.
-type Listener = fn(AriaKey, &dyn Fn() -> bool, &dyn Fn(ListenerEvent), &dyn Fn() -> bool);
+type Listener = fn(AriaKey, &dyn Fn(BareKey) -> bool, &dyn Fn(ListenerEvent), &dyn Fn() -> bool);
 
 pub(super) struct HotkeyTrigger {
     key: watch::Receiver<AriaKey>,
-    /// Shared with the listener thread, which asks it about each Return.
+    /// Shared with the listener thread, which asks it about each bare key.
     router: Arc<KeyRouter>,
     health: HealthReporter,
     listener: Listener,
@@ -57,8 +57,8 @@ impl HotkeyTrigger {
             key,
             router: Arc::new(KeyRouter::new(dictation, chat, runtime, subscriptions)),
             health,
-            listener: |key, take_return, events, should_stop| {
-                PlatformHotkeyListener::listen(key, take_return, events, should_stop);
+            listener: |key, take, events, should_stop| {
+                PlatformHotkeyListener::listen(key, take, events, should_stop);
             },
         }
     }
@@ -101,14 +101,14 @@ impl HotkeyTrigger {
         let listener = self.listener;
         let router = Arc::clone(&self.router);
         let mut listener = tokio::task::spawn_blocking(move || {
-            let take_return = || router.take_return();
+            let take = |key| router.take(key);
             let events = |event| {
                 if events.try_send(event).is_err() {
                     tracing::warn!(trigger = "hotkey", ?event, "hotkey event dropped");
                 }
             };
             let should_stop = || stop.is_cancelled() || rearm.has_changed().unwrap_or(true);
-            listener(current, &take_return, &events, &should_stop);
+            listener(current, &take, &events, &should_stop);
         });
 
         let mut waiting = false;
@@ -275,7 +275,7 @@ mod tests {
         let trigger = trigger(
             watch,
             Arc::new(Subscriptions::new()),
-            |key, _take_return, _events, should_stop| {
+            |key, _take, _events, should_stop| {
                 ARMED.lock().expect("armed keys").push(key);
                 park_until(should_stop);
             },
@@ -305,7 +305,7 @@ mod tests {
         let trigger = trigger(
             watch,
             subscriptions,
-            |_key, _take_return, events, should_stop| {
+            |_key, _take, events, should_stop| {
                 events(ListenerEvent::Press(Press::Combo(Combo::Shift)));
                 park_until(should_stop);
             },
@@ -370,7 +370,7 @@ mod tests {
             key: watch,
             router: Arc::new(KeyRouter::new(handle, chat, dictation, subscriptions)),
             health,
-            listener: |_key, _take_return, events, should_stop| {
+            listener: |_key, _take, events, should_stop| {
                 events(ListenerEvent::Press(Press::Tap));
                 park_until(should_stop);
             },

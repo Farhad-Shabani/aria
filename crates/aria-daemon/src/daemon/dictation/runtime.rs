@@ -22,8 +22,8 @@ use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreEr
 use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
     ActiveDictation, DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter,
-    DictationOutcome, DictationRequest, DictationSettings, DictationStage, RecordingId, StopMode,
-    Transcribed, subscribers::DictationSubscribers,
+    DictationOutcome, DictationRequest, DictationSettings, DictationStage, EscapeRule, RecordingId,
+    StopMode, Transcribed, subscribers::DictationSubscribers,
 };
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
@@ -498,6 +498,7 @@ impl DictationRuntime {
         &self,
         request: DictationRequest,
         auto_stop: AutoStopRule,
+        escape: EscapeRule,
         cancellation: CancelToken,
         events: Option<&DictationEventEmitter>,
     ) -> Result<DictationOutcome, DictationRuntimeError> {
@@ -530,10 +531,9 @@ impl DictationRuntime {
             AutoStopRule::Setting => {}
             AutoStopRule::Off => settings.auto_stop = None,
         }
-
         ready
             .coordinator
-            .execute(settings, cancellation, &events)
+            .execute(settings, escape, cancellation, &events)
             .map_err(DictationRuntimeError::Execution)
     }
 
@@ -829,6 +829,7 @@ mod event_tests {
                 .execute(
                     DictationRequest::new(StopMode::OnSilence),
                     AutoStopRule::Setting,
+                    EscapeRule::Passes,
                     CancelToken::never(),
                     Some(&events)
                 )
@@ -840,6 +841,7 @@ mod event_tests {
                 .execute(
                     DictationRequest::new(StopMode::OnSilence),
                     AutoStopRule::Setting,
+                    EscapeRule::Passes,
                     CancelToken::never(),
                     Some(&events)
                 )
@@ -881,17 +883,22 @@ mod event_tests {
         ));
     }
 
-    /// Records the auto-stop each press runs with, then ends the press.
-    struct AutoStopSpy(Arc<std::sync::Mutex<Vec<Option<aria_kit::audio::AutoStop>>>>);
+    /// Records the auto-stop and Escape rule each press runs with, then
+    /// ends the press.
+    type Run = (Option<aria_kit::audio::AutoStop>, EscapeRule);
+    struct PressSpy(Arc<std::sync::Mutex<Vec<Run>>>);
 
-    impl aria_voice::dictation::DictationExecutor for AutoStopSpy {
+    impl aria_voice::dictation::DictationExecutor for PressSpy {
         fn execute(
             &self,
             settings: DictationSettings,
-            _: &Arc<aria_voice::dictation::ExecutionControl>,
+            control: &Arc<aria_voice::dictation::ExecutionControl>,
             _: &DictationEventEmitter,
         ) -> Result<aria_voice::dictation::DictationResult, DictationError> {
-            self.0.lock().unwrap().push(settings.auto_stop);
+            self.0
+                .lock()
+                .unwrap()
+                .push((settings.auto_stop, control.escape()));
             Err(DictationError::NoSpeech)
         }
 
@@ -925,21 +932,56 @@ mod event_tests {
             Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
         let mut runtime = DictationRuntime::detached(settings);
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-        runtime.execute_with(Box::new(AutoStopSpy(Arc::clone(&seen))));
+        runtime.execute_with(Box::new(PressSpy(Arc::clone(&seen))));
 
         for rule in [AutoStopRule::Setting, AutoStopRule::Off] {
             let _no_speech = runtime.execute(
                 DictationRequest::new(StopMode::Manual),
+                rule,
+                EscapeRule::Passes,
+                CancelToken::never(),
+                None,
+            );
+        }
+
+        let auto_stops: Vec<_> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(auto_stop, _)| *auto_stop)
+            .collect();
+        assert_eq!(
+            auto_stops,
+            [Some(aria_kit::audio::AutoStop::default()), None]
+        );
+    }
+
+    #[test]
+    fn escape_cancels_only_a_press_started_to_allow_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let settings =
+            Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
+        let mut runtime = DictationRuntime::detached(settings);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        runtime.execute_with(Box::new(PressSpy(Arc::clone(&seen))));
+
+        for rule in [EscapeRule::Cancels, EscapeRule::Passes] {
+            let _no_speech = runtime.execute(
+                DictationRequest::new(StopMode::Manual),
+                AutoStopRule::Setting,
                 rule,
                 CancelToken::never(),
                 None,
             );
         }
 
-        assert_eq!(
-            *seen.lock().unwrap(),
-            [Some(aria_kit::audio::AutoStop::default()), None]
-        );
+        let escapes: Vec<_> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, escape)| *escape)
+            .collect();
+        assert_eq!(escapes, [EscapeRule::Cancels, EscapeRule::Passes]);
     }
 }
 

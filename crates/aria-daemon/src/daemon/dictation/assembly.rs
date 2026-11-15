@@ -847,6 +847,7 @@ mod tests {
             tokio::task::spawn_blocking(move || {
                 coordinator.execute(
                     settings,
+                    aria_voice::dictation::EscapeRule::Passes,
                     CancelToken::never(),
                     &DictationEventEmitter::unsubscribed(),
                 )

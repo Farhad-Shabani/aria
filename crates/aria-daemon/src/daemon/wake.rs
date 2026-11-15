@@ -19,7 +19,9 @@ use aria_kit::audio::{
 use aria_primitives::error_chain;
 use aria_settings::WakeEngine;
 use aria_settings::{DeliveryMode, DictationOverrides};
-use aria_voice::dictation::{DictationError, DictationOutcome, DictationRequest, StopMode};
+use aria_voice::dictation::{
+    DictationError, DictationOutcome, DictationRequest, EscapeRule, StopMode,
+};
 
 use super::DictationInitializationError;
 use super::dictation::DictationRuntimeError;
@@ -161,7 +163,8 @@ impl WakeTrigger {
         };
         // Daemon shutdown reaches the operation through the actor, which also
         // releases this blocking wait by answering it.
-        let result = self.dictation.start_blocking(request);
+        // Hands-free, so no client can cancel it: Escape does.
+        let result = self.dictation.start_blocking(request, EscapeRule::Cancels);
         match result {
             Ok(DictationOutcome::Completed(_)) => tracing::info!(
                 trigger = "wake_word",

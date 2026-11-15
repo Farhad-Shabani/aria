@@ -9,7 +9,7 @@ use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_voice::dictation::{DictationRequest, RecordingId};
+use aria_voice::dictation::{DictationRequest, EscapeRule, RecordingId};
 
 use super::super::dictation::{AutoStopRule, DictationHandle, DictationRuntime};
 use super::super::server::ActivityGuard;
@@ -66,7 +66,12 @@ impl wire::dictation_service_server::DictationService for DictationRpc {
         });
         let pending = self
             .dictation
-            .submit(request, AutoStopRule::Setting, Some(events))
+            .submit(
+                request,
+                AutoStopRule::Setting,
+                EscapeRule::Passes,
+                Some(events),
+            )
             .await
             .map_err(|error| super::failed(METHOD, &error))?;
 
