@@ -98,15 +98,21 @@ final class Microphones: ObservableObject {
         return "Something went wrong. Try again."
     }
 
-    /// Which device records, when the choice alone doesn't say.
+    /// What records, when the choice alone doesn't say.
     static func caption(listed: MicrophoneList?, chosen: String, names: [String: String]) -> String? {
         guard let listed else { return nil }
-        guard let currentID = listed.currentID else { return "No microphone is connected." }
-        let current = listed.microphones.first { $0.id == currentID }?.label ?? "the system default"
-        if isWord(chosen) { return "Records with \(current)." }
-        if chosen == currentID { return nil }
-        let name = names[chosen] ?? "The chosen microphone"
-        return "\(name) isn’t connected, so Aria records with \(current)."
+        guard let current = listed.current else { return "No microphone is connected." }
+        if current == .device(chosen) { return nil }
+        let recorder =
+            switch current {
+            case .phone: "your iPhone"
+            case .device(let id): listed.microphones.first { $0.id == id }?.label ?? "the system default"
+            }
+        if !isWord(chosen), !listed.microphones.contains(where: { $0.id == chosen }) {
+            let name = names[chosen] ?? "The chosen microphone"
+            return "\(name) isn’t connected, so Aria records with \(recorder)."
+        }
+        return "Records with \(recorder)."
     }
 
     private static func isWord(_ chosen: String) -> Bool {

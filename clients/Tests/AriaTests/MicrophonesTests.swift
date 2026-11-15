@@ -8,7 +8,7 @@ final class MicrophonesTests: XCTestCase {
     private let airPods = ListedMicrophone(id: "coreaudio:airpods", label: "AirPods Pro")
 
     private func list(_ microphones: [ListedMicrophone], current: String?) -> MicrophoneList {
-        MicrophoneList(microphones: microphones, currentID: current)
+        MicrophoneList(microphones: microphones, current: current.map { .device($0) })
     }
 
     func testAutomaticComesFirstThenEachConnectedDevice() {
@@ -63,6 +63,17 @@ final class MicrophonesTests: XCTestCase {
         XCTAssertEqual(
             Microphones.caption(listed: list([], current: nil), chosen: Microphones.automatic, names: [:]),
             "No microphone is connected.")
+    }
+
+    func testTheCaptionNamesTheAttachedPhoneWhenItRecords() {
+        let listed = MicrophoneList(microphones: [builtIn], current: .phone)
+
+        XCTAssertEqual(
+            Microphones.caption(listed: listed, chosen: Microphones.automatic, names: [:]),
+            "Records with your iPhone.")
+        XCTAssertEqual(
+            Microphones.caption(listed: listed, chosen: airPods.id, names: [airPods.id: "AirPods Pro"]),
+            "AirPods Pro isn’t connected, so Aria records with your iPhone.")
     }
 
     func testARefreshRemembersEachDevicesName() async throws {

@@ -2,6 +2,7 @@
 
 use super::wire;
 use crate::daemon::relay::{Invite, RelayStage};
+use crate::daemon::{CurrentMicrophone, PhoneCommand, PhoneRecordingId, PhoneRequest};
 use aria_assistant::chat::{
     AskCall, AssistantModel, AssistantStatus, ChatChoice, ChatReply, ChatStage, ChatStageKind,
     ChatTarget, DeliverCall, Instructions, PendingAsk, PromptCall, PromptChoice, PromptInput, Step,
@@ -2677,11 +2678,12 @@ impl From<SettingsPatch> for wire::SettingsPatch {
     }
 }
 
-/// The devices a press can record on, and the one it would use now.
+/// The devices a press can record on, and what it records on now.
 pub(crate) fn microphones(
     devices: &[InputDevice],
-    current: Option<&InputDevice>,
+    current: Option<CurrentMicrophone>,
 ) -> wire::ListMicrophonesResponse {
+    use wire::list_microphones_response::Current;
     wire::ListMicrophonesResponse {
         microphones: devices
             .iter()
@@ -2690,7 +2692,63 @@ pub(crate) fn microphones(
                 label: device.name.clone(),
             })
             .collect(),
-        current_id: current.map(|device| device.id.to_string()),
+        current: current.map(|current| match current {
+            CurrentMicrophone::Device(id) => Current::DeviceId(id.to_string()),
+            CurrentMicrophone::Phone => Current::Phone(wire::AttachedPhone {}),
+        }),
+    }
+}
+
+/// One chunk of a phone's PCM. A phone sends about a tenth of a second at a
+/// time.
+pub(crate) const MAX_PHONE_CHUNK_BYTES: usize = 64 * 1024;
+
+/// `None` for a newer phone's message this build doesn't know.
+impl TryFrom<wire::PhoneMicrophoneRequest> for Option<PhoneRequest> {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::PhoneMicrophoneRequest) -> Result<Self, Self::Error> {
+        use wire::phone_microphone_request::Body;
+        Ok(Some(match request.body {
+            Some(Body::Offer(_)) => PhoneRequest::Offer,
+            Some(Body::Audio(audio)) => PhoneRequest::Audio(phone_samples(&audio.chunk)?),
+            Some(Body::Stopped(stopped)) => {
+                PhoneRequest::Stopped(PhoneRecordingId::from(stopped.recording))
+            }
+            None => return Ok(None),
+        }))
+    }
+}
+
+/// Little-endian 16-bit PCM. The errors name no length, which stays out of
+/// logs.
+fn phone_samples(chunk: &[u8]) -> Result<Vec<i16>, ProtocolError> {
+    if chunk.is_empty() {
+        return Err(ProtocolError::EmptyAudio);
+    }
+    if chunk.len() > MAX_PHONE_CHUNK_BYTES {
+        return Err(ProtocolError::AudioTooLarge);
+    }
+    let (samples, rest) = chunk.as_chunks();
+    if !rest.is_empty() {
+        return Err(ProtocolError::PartialSample);
+    }
+    Ok(samples.iter().copied().map(i16::from_le_bytes).collect())
+}
+
+impl From<PhoneCommand> for wire::PhoneMicrophoneCommand {
+    fn from(command: PhoneCommand) -> Self {
+        use wire::phone_microphone_command::Body;
+        Self {
+            body: Some(match command {
+                PhoneCommand::Start(recording) => Body::Start(wire::PhoneMicrophoneStart {
+                    recording: recording.into(),
+                }),
+                PhoneCommand::Stop(recording) => Body::Stop(wire::PhoneMicrophoneStop {
+                    recording: recording.into(),
+                }),
+            }),
+        }
     }
 }
 
@@ -3427,6 +3485,15 @@ pub enum ProtocolError {
 
     #[error("microphone {0}")]
     InvalidMicrophone(#[from] aria_settings::MicrophoneIdError),
+
+    #[error("the audio chunk is empty")]
+    EmptyAudio,
+
+    #[error("the audio chunk ends mid-sample")]
+    PartialSample,
+
+    #[error("the audio chunk is over {MAX_PHONE_CHUNK_BYTES} bytes")]
+    AudioTooLarge,
 
     #[error(transparent)]
     InvalidSilenceDuration(#[from] SilenceDurationError),

@@ -40,22 +40,49 @@ public nonisolated struct Aria_Daemon_V1_ListMicrophonesResponse: Sendable {
   /// In the audio system's order.
   public var microphones: [Aria_Daemon_V1_Microphone] = []
 
-  /// The `id` a press records on: the chosen device while it's connected,
-  /// else the system default. Absent when no device can record.
-  public var currentID: String {
-    get {_currentID ?? String()}
-    set {_currentID = newValue}
+  /// What a press records on now. Absent when nothing can record.
+  public var current: Aria_Daemon_V1_ListMicrophonesResponse.OneOf_Current? = nil
+
+  /// A listed microphone's `id`.
+  public var deviceID: String {
+    get {
+      if case .deviceID(let v)? = current {return v}
+      return String()
+    }
+    set {current = .deviceID(newValue)}
   }
-  /// Returns true if `currentID` has been explicitly set.
-  public var hasCurrentID: Bool {self._currentID != nil}
-  /// Clears the value of `currentID`. Subsequent reads from it will return its default value.
-  public mutating func clearCurrentID() {self._currentID = nil}
+
+  /// The attached phone.
+  public var phone: Aria_Daemon_V1_AttachedPhone {
+    get {
+      if case .phone(let v)? = current {return v}
+      return Aria_Daemon_V1_AttachedPhone()
+    }
+    set {current = .phone(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  /// What a press records on now. Absent when nothing can record.
+  public nonisolated enum OneOf_Current: Equatable, Sendable {
+    /// A listed microphone's `id`.
+    case deviceID(String)
+    /// The attached phone.
+    case phone(Aria_Daemon_V1_AttachedPhone)
+
+  }
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_AttachedPhone: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
-
-  fileprivate var _currentID: String? = nil
 }
 
 public nonisolated struct Aria_Daemon_V1_Microphone: Sendable {
@@ -100,7 +127,7 @@ nonisolated extension Aria_Daemon_V1_ListMicrophonesRequest: SwiftProtobuf.Messa
 
 nonisolated extension Aria_Daemon_V1_ListMicrophonesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListMicrophonesResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}microphones\0\u{3}current_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}microphones\0\u{3}device_id\0\u{1}phone\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -109,7 +136,27 @@ nonisolated extension Aria_Daemon_V1_ListMicrophonesResponse: SwiftProtobuf.Mess
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedMessageField(value: &self.microphones) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self._currentID) }()
+      case 2: try {
+        var v: String?
+        try decoder.decodeSingularStringField(value: &v)
+        if let v = v {
+          if self.current != nil {try decoder.handleConflictingOneOf()}
+          self.current = .deviceID(v)
+        }
+      }()
+      case 3: try {
+        var v: Aria_Daemon_V1_AttachedPhone?
+        var hadOneofValue = false
+        if let current = self.current {
+          hadOneofValue = true
+          if case .phone(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.current = .phone(v)
+        }
+      }()
       default: break
       }
     }
@@ -123,15 +170,42 @@ nonisolated extension Aria_Daemon_V1_ListMicrophonesResponse: SwiftProtobuf.Mess
     if !self.microphones.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.microphones, fieldNumber: 1)
     }
-    try { if let v = self._currentID {
+    switch self.current {
+    case .deviceID?: try {
+      guard case .deviceID(let v)? = self.current else { preconditionFailure() }
       try visitor.visitSingularStringField(value: v, fieldNumber: 2)
-    } }()
+    }()
+    case .phone?: try {
+      guard case .phone(let v)? = self.current else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    }()
+    case nil: break
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_ListMicrophonesResponse, rhs: Aria_Daemon_V1_ListMicrophonesResponse) -> Bool {
     if lhs.microphones != rhs.microphones {return false}
-    if lhs._currentID != rhs._currentID {return false}
+    if lhs.current != rhs.current {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_AttachedPhone: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AttachedPhone"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_AttachedPhone, rhs: Aria_Daemon_V1_AttachedPhone) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

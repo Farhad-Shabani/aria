@@ -9,21 +9,31 @@ struct ListedMicrophone: Equatable, Sendable {
     var label: String
 }
 
-/// The connected devices, and the one a dictation records on now.
+/// What a press records on, as the daemon decides it.
+enum CurrentMicrophone: Equatable, Sendable {
+    /// A listed microphone's `id`.
+    case device(String)
+    case phone
+}
+
+/// The connected devices, and what a press records on now.
 struct MicrophoneList: Equatable, Sendable {
     var microphones: [ListedMicrophone]
     /// Nil when nothing can record.
-    var currentID: String?
+    var current: CurrentMicrophone?
+}
 
-    init(microphones: [ListedMicrophone], currentID: String?) {
-        self.microphones = microphones
-        self.currentID = currentID
-    }
-
+extension MicrophoneList {
     init(_ wire: Aria_Daemon_V1_ListMicrophonesResponse) {
+        let current: CurrentMicrophone? =
+            switch wire.current {
+            case .deviceID(let id): .device(id)
+            case .phone: .phone
+            case nil: nil
+            }
         self.init(
             microphones: wire.microphones.map { ListedMicrophone(id: $0.id, label: $0.label) },
-            currentID: wire.hasCurrentID ? wire.currentID : nil
+            current: current
         )
     }
 }

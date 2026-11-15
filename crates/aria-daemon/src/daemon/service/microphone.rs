@@ -2,21 +2,22 @@
 
 use std::sync::Arc;
 
-use aria_kit::audio::resolve_input;
 use aria_settings::SettingsCache;
 use tonic::{Request, Response, Status};
 
 use crate::ipc::{protocol, wire};
 
-use super::super::capture;
+use super::super::phone::PhoneMicrophone;
+use super::super::{capture, microphone};
 
 pub(in crate::daemon) struct MicrophoneRpc {
     cache: Arc<SettingsCache>,
+    phones: Arc<PhoneMicrophone>,
 }
 
 impl MicrophoneRpc {
-    pub(in crate::daemon) fn new(cache: Arc<SettingsCache>) -> Self {
-        Self { cache }
+    pub(in crate::daemon) fn new(cache: Arc<SettingsCache>, phones: Arc<PhoneMicrophone>) -> Self {
+        Self { cache, phones }
     }
 }
 
@@ -27,10 +28,11 @@ impl wire::microphone_service_server::MicrophoneService for MicrophoneRpc {
         _request: Request<wire::ListMicrophonesRequest>,
     ) -> Result<Response<wire::ListMicrophonesResponse>, Status> {
         const METHOD: &str = "MicrophoneService/List";
-        let chosen = capture::input(&self.cache.microphone().borrow());
+        let preference = self.cache.microphone().borrow().clone();
+        let attached = self.phones.is_attached();
         match super::blocking(METHOD, capture::list_microphones).await? {
             Ok(devices) => {
-                let current = resolve_input(chosen.as_ref(), &devices);
+                let current = microphone::current(&preference, attached, &devices);
                 super::served(METHOD);
                 Ok(Response::new(protocol::microphones(&devices, current)))
             }

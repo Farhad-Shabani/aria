@@ -2,13 +2,16 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use crate::daemon::config::WakeConfig;
 use aria_kit::audio::{
-    AudioCapture, CaptureError, InputDevice, InputDeviceId, Inputs, Microphone, PreparedMicrophone,
-    RecordingMode, RecordingReader, StopSignal, WakeWordMonitor, WavReplayCapture,
+    AudioCapture, CaptureError, InputDevice, InputDeviceId, Inputs, Microphone, MicrophoneError,
+    PreparedMicrophone, PushedCapture, RecordingMode, RecordingReader, StopSignal, WakeWordMonitor,
+    WavReplayCapture, is_connected,
 };
+use aria_kit::voice_activity::SileroVad;
 use aria_primitives::error_chain;
 use aria_settings::config::ConfigError;
 use aria_settings::rpc::RpcErrorCode;
@@ -17,22 +20,170 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use super::DictationInitializationError;
+use super::microphone::{Target, admits_no_phone, admits_phone, input, target};
+use super::phone::{AdmitsPhone, PhoneMicrophone};
 use super::tasks::Supervised;
 use super::wake::WakeDetector;
 
+/// How long a press waits for the phone's first audio before it records on
+/// the Mac. The Mac's held stream keeps its last second, so falling back
+/// loses nothing.
+const PHONE_FIRST_AUDIO: Duration = Duration::from_millis(600);
+/// How often the wait for the phone's first audio checks for a stop.
+const STOP_POLL: Duration = Duration::from_millis(10);
+/// A phone that goes this quiet mid-recording has dropped. The recording
+/// keeps what it sent.
+const PHONE_STALL: Duration = Duration::from_secs(2);
+
 pub(in crate::daemon) enum CaptureBackend {
-    Microphone(Microphone),
+    Microphone {
+        microphone: Microphone,
+        /// `dictation.microphone`, read once per press for both the phone
+        /// and the Mac device.
+        preference: watch::Receiver<aria_settings::Microphone>,
+        /// `None` for a daemon that serves no phone.
+        phone: Option<PhoneInput>,
+    },
     WavReplay(WavReplayCapture),
 }
 
-impl CaptureBackend {
-    /// The next recording uses `input`. A replay has no device to choose.
-    pub(in crate::daemon) fn use_input(
+pub(in crate::daemon) struct PhoneInput {
+    phones: Arc<PhoneMicrophone>,
+    /// Whether a chosen Mac device is connected, which decides the phone.
+    connected: fn(&InputDeviceId) -> bool,
+    capture: PushedCapture<SileroVad>,
+}
+
+/// How a phone recording started, or the stop it hands back for the Mac.
+enum Started {
+    Phone(Result<RecordingReader, CaptureError>),
+    Mac(StopSignal),
+}
+
+/// How the wait for a phone's first samples ended.
+enum FirstAudio {
+    Arrived(Vec<i16>),
+    Stopped,
+    /// None in time, or the phone went away.
+    Missed,
+}
+
+/// Waits for the phone's first samples, checking `stop` as it waits.
+fn first_audio(feed: &Receiver<Vec<i16>>, stop: &StopSignal) -> FirstAudio {
+    let deadline = Instant::now() + PHONE_FIRST_AUDIO;
+    loop {
+        if stop.should_stop() {
+            return FirstAudio::Stopped;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        match feed.recv_timeout(left.min(STOP_POLL)) {
+            Ok(first) => return FirstAudio::Arrived(first),
+            Err(RecvTimeoutError::Timeout) if !left.is_zero() => {}
+            Err(_missed_or_gone) => return FirstAudio::Missed,
+        }
+    }
+}
+
+impl PhoneInput {
+    fn load(
+        phones: Arc<PhoneMicrophone>,
+        spool_dir: &Path,
+        recording_timeout: Duration,
+    ) -> Result<Self, CaptureError> {
+        let vad = SileroVad::load().map_err(MicrophoneError::VoiceActivity)?;
+        Ok(Self {
+            phones,
+            connected: is_connected,
+            capture: PushedCapture::new(spool_dir, recording_timeout, vad),
+        })
+    }
+
+    fn start(
         &self,
-        input: Option<InputDeviceId>,
-    ) -> Result<(), CaptureError> {
+        preference: &aria_settings::Microphone,
+        mode: RecordingMode,
+        inputs: Inputs,
+        stop: StopSignal,
+    ) -> Started {
+        let attached = self.phones.is_attached();
+        if target(preference, inputs, attached, self.connected) == Target::Mac {
+            // A connected chosen device outranks the phone, which then
+            // waits awake for nothing.
+            if attached && inputs == Inputs::Any {
+                self.phones.dismiss();
+            }
+            return Started::Mac(stop);
+        }
+        if stop.should_stop() {
+            return Started::Mac(stop);
+        }
+        let Some(recording) = self.phones.start() else {
+            return Started::Mac(stop);
+        };
+        let first = match first_audio(&recording.feed, &stop) {
+            FirstAudio::Arrived(first) => first,
+            // The phone answered nothing yet but did nothing wrong, so it
+            // stays attached.
+            FirstAudio::Stopped => {
+                self.phones.stop(recording.id);
+                return Started::Mac(stop);
+            }
+            FirstAudio::Missed => {
+                tracing::warn!(
+                    wait_ms = PHONE_FIRST_AUDIO.as_millis() as u64,
+                    "the phone sent no audio in time; recording on the Mac"
+                );
+                self.phones.abandon(recording.generation);
+                return Started::Mac(stop);
+            }
+        };
+        tracing::info!(stage = "recording", "recording on the phone");
+        let phones = Arc::clone(&self.phones);
+        let id = recording.id;
+        Started::Phone(self.capture.start(
+            mode,
+            first,
+            recording.feed,
+            PHONE_STALL,
+            stop,
+            move || phones.stop(id),
+        ))
+    }
+
+    /// Ends an attached phone's stream once `preference` rules it out, so it
+    /// doesn't wait awake for nothing.
+    fn apply(&self, preference: &aria_settings::Microphone) {
+        if self.phones.is_attached()
+            && target(preference, Inputs::Any, true, self.connected) == Target::Mac
+        {
+            self.phones.dismiss();
+        }
+    }
+}
+
+impl CaptureBackend {
+    /// The rule for whether a press would record on an attached phone.
+    pub(in crate::daemon) fn admits_phone(&self) -> AdmitsPhone {
         match self {
-            Self::Microphone(capture) => capture.use_input(input),
+            Self::Microphone { phone: Some(_), .. } => admits_phone,
+            Self::Microphone { phone: None, .. } | Self::WavReplay(_) => admits_no_phone,
+        }
+    }
+
+    /// Applies a changed `preference`: the Mac device it names, and the end
+    /// of an attached phone it rules out.
+    fn apply(&self, preference: &aria_settings::Microphone) -> Result<(), CaptureError> {
+        match self {
+            Self::Microphone {
+                microphone, phone, ..
+            } => {
+                // First, and whatever the Mac device does: a phone the
+                // setting rules out must not stay attached.
+                if let Some(phone) = phone {
+                    phone.apply(preference);
+                }
+                microphone.use_input(input(preference))
+            }
             Self::WavReplay(_) => Ok(()),
         }
     }
@@ -53,31 +204,26 @@ pub(in crate::daemon) fn list_microphones() -> Result<Vec<InputDevice>, ListMicr
     aria_kit::audio::input_devices().map_err(ListMicrophonesError)
 }
 
-/// The device `dictation.microphone` names, or `None` for the system default.
-pub(in crate::daemon) fn input(microphone: &aria_settings::Microphone) -> Option<InputDeviceId> {
-    match microphone {
-        aria_settings::Microphone::Automatic | aria_settings::Microphone::SystemDefault => None,
-        aria_settings::Microphone::Device(id) => Some(InputDeviceId::new(id.as_str())),
-    }
-}
-
 /// Hands each change of `dictation.microphone` to the capture, which applies
 /// it before the next recording.
 pub(in crate::daemon) struct MicrophoneFollower {
     capture: Arc<CaptureBackend>,
-    /// Marked seen where the capture took its first device.
-    microphone: watch::Receiver<aria_settings::Microphone>,
+    /// A copy of the capture's own, which it never marks seen. A change since
+    /// the capture took its first device still applies.
+    preference: watch::Receiver<aria_settings::Microphone>,
 }
 
 impl MicrophoneFollower {
-    pub(in crate::daemon) fn new(
-        capture: Arc<CaptureBackend>,
-        microphone: watch::Receiver<aria_settings::Microphone>,
-    ) -> Self {
-        Self {
+    /// `None` for a capture with no device to choose.
+    pub(in crate::daemon) fn new(capture: Arc<CaptureBackend>) -> Option<Self> {
+        let CaptureBackend::Microphone { preference, .. } = capture.as_ref() else {
+            return None;
+        };
+        let preference = preference.clone();
+        Some(Self {
             capture,
-            microphone,
-        }
+            preference,
+        })
     }
 }
 
@@ -86,17 +232,31 @@ impl Supervised for MicrophoneFollower {
         loop {
             tokio::select! {
                 () = shutdown.cancelled() => return,
-                changed = self.microphone.changed() => {
+                changed = self.preference.changed() => {
                     if changed.is_err() {
                         return;
                     }
-                    let input = input(&self.microphone.borrow_and_update());
-                    if let Err(error) = self.capture.use_input(input) {
-                        tracing::error!(
-                            error = %error_chain(&error),
-                            "the capture stopped; microphone changes no longer apply"
-                        );
-                        return;
+                    let preference = self.preference.borrow_and_update().clone();
+                    let capture = Arc::clone(&self.capture);
+                    // Ruling a phone out can list the audio devices.
+                    let applied =
+                        tokio::task::spawn_blocking(move || capture.apply(&preference)).await;
+                    match applied {
+                        Ok(Ok(())) => {}
+                        // Keeps following, so a later change still ends a
+                        // phone it rules out.
+                        Ok(Err(error)) => {
+                            tracing::error!(
+                                error = %error_chain(&error),
+                                "the capture stopped; the Mac device didn't change"
+                            );
+                        }
+                        Err(_panicked) => {
+                            tracing::error!(
+                                "applying a microphone change panicked; changes no longer apply"
+                            );
+                            return;
+                        }
                     }
                 }
             }
@@ -112,7 +272,25 @@ impl AudioCapture for CaptureBackend {
         stop: StopSignal,
     ) -> Result<RecordingReader, CaptureError> {
         match self {
-            Self::Microphone(capture) => capture.start(mode, inputs, stop),
+            Self::Microphone {
+                microphone,
+                preference,
+                phone,
+            } => {
+                let preference = preference.borrow().clone();
+                // The follower applies a change soon after it, but this press
+                // must not record on a device it didn't choose. An unchanged
+                // input is a no-op.
+                microphone.use_input(input(&preference))?;
+                let stop = match phone {
+                    Some(phone) => match phone.start(&preference, mode, inputs, stop) {
+                        Started::Phone(recording) => return recording,
+                        Started::Mac(stop) => stop,
+                    },
+                    None => stop,
+                };
+                microphone.start(mode, inputs, stop)
+            }
             Self::WavReplay(capture) => capture.start(mode, inputs, stop),
         }
     }
@@ -125,14 +303,18 @@ pub(in crate::daemon) enum PreparedCapture {
     Microphone {
         microphone: Box<PreparedMicrophone>,
         wake: Option<WakeDetector>,
+        preference: watch::Receiver<aria_settings::Microphone>,
+        phone: Option<PhoneInput>,
     },
 }
 
 impl PreparedCapture {
+    /// `phones` is `None` for a daemon that serves no phone.
     pub(in crate::daemon) fn load(
         capture: CaptureConfig,
         wake: WakeConfig,
-        input: Option<InputDeviceId>,
+        preference: watch::Receiver<aria_settings::Microphone>,
+        phones: Option<Arc<PhoneMicrophone>>,
         spool_dir: &Path,
         recording_timeout: Duration,
     ) -> Result<Self, DictationInitializationError> {
@@ -160,16 +342,22 @@ impl PreparedCapture {
                 let microphone = Microphone::builder()
                     .spool_dir(spool_dir)
                     .maximum_duration(recording_timeout)
-                    .input(input)
+                    .input(input(&preference.borrow()))
                     .load()
                     .map_err(DictationInitializationError::Capture)?;
                 tracing::info!(
                     load_ms = started.elapsed().as_millis(),
                     "silero speech detector loaded"
                 );
+                let phone = phones
+                    .map(|phones| PhoneInput::load(phones, spool_dir, recording_timeout))
+                    .transpose()
+                    .map_err(DictationInitializationError::Capture)?;
                 Ok(Self::Microphone {
                     microphone: Box::new(microphone),
                     wake,
+                    preference,
+                    phone,
                 })
             }
         }
@@ -178,26 +366,211 @@ impl PreparedCapture {
     pub(in crate::daemon) fn open(
         self,
     ) -> Result<(CaptureBackend, Option<WakeWordMonitor>), CaptureError> {
-        match self {
-            Self::Replay(replay) => Ok((CaptureBackend::WavReplay(replay), None)),
+        let (microphone, wake, preference, phone) = match self {
+            Self::Replay(replay) => return Ok((CaptureBackend::WavReplay(replay), None)),
             Self::Microphone {
                 microphone,
-                wake: None,
-            } => Ok((CaptureBackend::Microphone((*microphone).open()?), None)),
-            Self::Microphone {
-                microphone,
-                wake: Some(detector),
-            } => {
+                wake,
+                preference,
+                phone,
+            } => (microphone, wake, preference, phone),
+        };
+        let (microphone, monitor) = match wake {
+            None => ((*microphone).open()?, None),
+            Some(detector) => {
                 let (microphone, monitor) = detector.open_microphone(*microphone)?;
-                Ok((CaptureBackend::Microphone(microphone), Some(monitor)))
+                (microphone, Some(monitor))
             }
-        }
+        };
+        Ok((
+            CaptureBackend::Microphone {
+                microphone,
+                preference,
+                phone,
+            },
+            monitor,
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use aria_kit::audio::Stopper;
+    use aria_settings::Microphone as Preference;
+
+    use super::super::phone::testing::FakePhone;
+    use super::super::phone::{Detached, PhoneCommand, PhoneRequest};
+
+    fn device(id: &str) -> Preference {
+        id.parse().expect("a device id")
+    }
+
+    struct Phone {
+        _directory: tempfile::TempDir,
+        input: Arc<PhoneInput>,
+        phones: Arc<PhoneMicrophone>,
+        setting: watch::Sender<Preference>,
+    }
+
+    impl Phone {
+        fn load() -> Self {
+            Self::with_devices(|_| false)
+        }
+
+        /// `connected` stands in for the Mac's devices.
+        fn with_devices(connected: fn(&InputDeviceId) -> bool) -> Self {
+            let directory = tempfile::tempdir().expect("a temp dir");
+            let phones = PhoneMicrophone::new();
+            let (setting, _) = watch::channel(Preference::Automatic);
+            let mut input = PhoneInput::load(
+                Arc::clone(&phones),
+                directory.path(),
+                Duration::from_secs(60),
+            )
+            .expect("silero loads");
+            input.connected = connected;
+            Self {
+                _directory: directory,
+                input: Arc::new(input),
+                phones,
+                setting,
+            }
+        }
+
+        async fn start(&self, inputs: Inputs, stop: StopSignal) -> Started {
+            let input = Arc::clone(&self.input);
+            let preference = self.setting.borrow().clone();
+            tokio::task::spawn_blocking(move || {
+                input.start(&preference, RecordingMode::UntilStopped, inputs, stop)
+            })
+            .await
+            .expect("starting doesn't panic")
+        }
+    }
+
+    fn speech() -> Vec<i16> {
+        vec![1_000; 1_600]
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_dictation_records_on_the_attached_phone() {
+        let phone = Phone::load();
+        let mut fake = FakePhone::attach(&phone.phones);
+        let stopper = Stopper::new();
+        let starting = phone.start(Inputs::Any, StopSignal::from(stopper.clone()));
+
+        let (started, ()) = tokio::join!(starting, async {
+            assert!(matches!(
+                fake.commands.recv().await,
+                Some(PhoneCommand::Start(_))
+            ));
+            fake.send(PhoneRequest::Audio(speech())).unwrap();
+            fake.send(PhoneRequest::Audio(speech())).unwrap();
+        });
+        let Started::Phone(recording) = started else {
+            panic!("the phone records");
+        };
+        let mut recording = recording.expect("audio arrived");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        stopper.stop();
+        let audio = tokio::task::spawn_blocking(move || {
+            recording.fill().expect("the recording finishes");
+            recording.finished_audio().expect("audio").duration()
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(audio, Duration::from_millis(200));
+        assert!(matches!(
+            fake.commands.recv().await,
+            Some(PhoneCommand::Stop(_))
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_silent_phone_hands_the_recording_to_the_mac() {
+        let phone = Phone::load();
+        let mut fake = FakePhone::attach(&phone.phones);
+
+        let started = phone.start(Inputs::Any, StopSignal::never()).await;
+
+        assert!(matches!(started, Started::Mac(_)));
+        assert_eq!(fake.detached(), Some(Detached::Silent));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_connected_chosen_device_dismisses_the_phone() {
+        let phone = Phone::with_devices(|_| true);
+        let mut fake = FakePhone::attach(&phone.phones);
+        phone.setting.send_replace(device("coreaudio:usb"));
+
+        let started = phone.start(Inputs::Any, StopSignal::never()).await;
+
+        assert!(matches!(started, Started::Mac(_)));
+        assert_eq!(fake.detached(), Some(Detached::Dismissed));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn choosing_a_connected_mac_device_dismisses_the_phone() {
+        let phone = Phone::with_devices(|_| true);
+        let mut fake = FakePhone::attach(&phone.phones);
+
+        phone.input.apply(&Preference::Automatic);
+        assert_eq!(fake.detached(), None, "Automatic keeps the phone");
+        phone.input.apply(&device("coreaudio:usb"));
+
+        assert_eq!(fake.detached(), Some(Detached::Dismissed));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stopped_press_never_asks_the_phone() {
+        let phone = Phone::load();
+        let mut fake = FakePhone::attach(&phone.phones);
+        let stopper = Stopper::new();
+        stopper.stop();
+
+        let started = phone.start(Inputs::Any, StopSignal::from(stopper)).await;
+
+        assert!(matches!(started, Started::Mac(_)));
+        assert!(fake.commands.try_recv().is_err(), "no Start went out");
+        assert_eq!(fake.detached(), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stop_while_waiting_for_the_phone_ends_the_wait() {
+        let phone = Phone::load();
+        let mut fake = FakePhone::attach(&phone.phones);
+        let stopper = Stopper::new();
+        let starting = phone.start(Inputs::Any, StopSignal::from(stopper.clone()));
+
+        let (started, ()) = tokio::join!(starting, async {
+            assert!(matches!(
+                fake.commands.recv().await,
+                Some(PhoneCommand::Start(_))
+            ));
+            stopper.stop();
+        });
+
+        assert!(matches!(started, Started::Mac(_)));
+        assert!(matches!(
+            fake.commands.recv().await,
+            Some(PhoneCommand::Stop(_))
+        ));
+        assert_eq!(fake.detached(), None, "the phone did nothing wrong");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_local_recording_never_asks_the_phone() {
+        let phone = Phone::load();
+        let mut fake = FakePhone::attach(&phone.phones);
+
+        let started = phone.start(Inputs::Local, StopSignal::never()).await;
+
+        assert!(matches!(started, Started::Mac(_)));
+        assert!(fake.commands.try_recv().is_err(), "no Start went out");
+    }
 
     use aria_kit::audio::ReplayPace;
     use aria_settings::WakeEngine;
@@ -215,8 +588,14 @@ mod tests {
             pace: ReplayPace::Immediate,
         };
 
-        let outcome =
-            PreparedCapture::load(replay, wake, None, home.path(), Duration::from_secs(60));
+        let outcome = PreparedCapture::load(
+            replay,
+            wake,
+            watch::channel(Preference::Automatic).1,
+            None,
+            home.path(),
+            Duration::from_secs(60),
+        );
 
         assert!(matches!(
             outcome,

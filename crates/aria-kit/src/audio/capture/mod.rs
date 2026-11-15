@@ -18,7 +18,7 @@ use crate::voice_activity::VoiceActivityError;
 pub use microphone::{
     InputDevice, InputDeviceId, Microphone, MicrophoneBuilder, PreparedMicrophone, WakeWordControl,
     WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
-    check_default_input_device, input_devices, resolve_input,
+    check_default_input_device, input_devices, is_connected, resolve_input,
 };
 #[cfg(feature = "microphone")]
 pub use pushed::PushedCapture;
@@ -50,10 +50,9 @@ pub trait AudioCapture: Send + Sync + 'static {
 }
 
 /// Which inputs one recording may use.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Inputs {
     /// Any input the capture offers, a remote one included.
-    #[default]
     Any,
     /// Only this machine's own devices.
     Local,

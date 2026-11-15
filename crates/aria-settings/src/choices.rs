@@ -157,7 +157,7 @@ pub enum Microphone {
     Automatic,
     /// The system default, never a phone.
     SystemDefault,
-    /// This device while it's connected, else the system default.
+    /// This device while it's connected, else as `Automatic`.
     Device(MicrophoneId),
 }
 

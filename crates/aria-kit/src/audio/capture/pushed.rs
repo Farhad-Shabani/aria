@@ -94,7 +94,6 @@ impl Session {
                 );
                 poisoned.into_inner()
             });
-            vad.reset();
             let mut recording = CaptureRecording::new(spool, self.mode, &mut *vad);
             self.pump(&mut recording, first, &stop)?;
             recording.finish()

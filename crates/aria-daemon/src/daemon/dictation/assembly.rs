@@ -606,14 +606,22 @@ pub(super) fn build_dictation(
         speaker,
         vocabulary,
         delivery: factory,
-        input,
+        preference,
+        phones,
     } = setup;
     let delivery = factory
         .create(timeouts.delivery())
         .map_err(DictationInitializationError::Delivery)?;
     let policy =
         DictationPolicy::new(timeouts.overall()).map_err(DictationInitializationError::Policy)?;
-    let capture = PreparedCapture::load(capture, wake, input, spool_dir, timeouts.recording())?;
+    let capture = PreparedCapture::load(
+        capture,
+        wake,
+        preference,
+        phones,
+        spool_dir,
+        timeouts.recording(),
+    )?;
     let backend = stt.clone();
     let engine =
         select_engine(stt, loading, home).map_err(DictationInitializationError::Transcription)?;
@@ -814,7 +822,8 @@ mod tests {
                     vocabulary: Arc::clone(&vocabulary.0),
                     wake: WakeConfig::Disabled,
                     delivery: aria_platform::delivery::DeliveryFactory::detect(&root),
-                    input: None,
+                    preference: tokio::sync::watch::channel(aria_settings::Microphone::Automatic).1,
+                    phones: None,
                 },
                 &root,
                 &root,
@@ -903,7 +912,8 @@ mod tests {
             ),
             vocabulary,
             delivery: aria_platform::delivery::DeliveryFactory::detect(home.path()),
-            input: None,
+            preference: tokio::sync::watch::channel(aria_settings::Microphone::Automatic).1,
+            phones: None,
         };
 
         let outcome = build_dictation(

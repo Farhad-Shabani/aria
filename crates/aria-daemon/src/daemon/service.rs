@@ -12,6 +12,7 @@ mod history;
 mod inference;
 mod microphone;
 mod pairing;
+mod phone;
 mod relay;
 mod settings;
 mod speaker;
@@ -34,6 +35,7 @@ pub(super) use inference::{
 };
 pub(super) use microphone::MicrophoneRpc;
 pub(super) use pairing::{PairingAdminRpc, PairingRpc};
+pub(super) use phone::PhoneMicrophoneRpc;
 pub(super) use relay::RelayRpc;
 pub(super) use settings::SettingsRpc;
 pub(super) use speaker::SpeakerRpc;
