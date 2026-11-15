@@ -16,11 +16,12 @@ use unicode_normalization::UnicodeNormalization;
 use super::collection::{Collector, Error};
 use super::extract::{Extractor, TextInput};
 use super::{
-    Candidate, Completeness, Coverage, Discovery, MAX_CANDIDATES, MAX_IGNORE_BYTES,
-    MAX_SOURCE_BYTES, MAX_TERMS, Source, SourceKind, cache_key, source_bytes,
+    Candidate, Completeness, Coverage, Discovery, MAX_CANDIDATES, MAX_SOURCE_BYTES, MAX_TERMS,
+    Source, SourceKind, cache_key, source_bytes,
 };
 
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+const MAX_IGNORE_BYTES: usize = 64 * 1024;
 const MAX_ENTRIES: usize = 20_000;
 const DIRECTORY_ENTRIES: usize = 4096;
 const MAX_DEPTH: usize = 16;
@@ -335,8 +336,8 @@ impl<E: Extractor> Scanner<'_, E> {
             let Ok(count) = file.read(&mut buffer) else {
                 return Ok(Rules::Unreadable);
             };
-            self.coverage.bytes += count;
-            if self.coverage.bytes > MAX_TOTAL_BYTES {
+            self.coverage.ignore_bytes += count;
+            if self.coverage.ignore_bytes > MAX_TOTAL_BYTES {
                 self.stop();
                 return Ok(Rules::Stopped);
             }

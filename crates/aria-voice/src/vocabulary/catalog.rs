@@ -354,7 +354,7 @@ impl Catalog {
              accessed=excluded.accessed,entries=excluded.entries,hidden=excluded.hidden,
              symlinks=excluded.symlinks,unsupported=excluded.unsupported,oversized=excluded.oversized,bytes=excluded.bytes",
             params![bytes(&discovery.root),key,sql_integer(coverage.entries)?,sql_integer(coverage.hidden)?,sql_integer(coverage.symlinks)?,
-                sql_integer(coverage.unsupported)?,sql_integer(coverage.bytes)?],
+                sql_integer(coverage.unsupported)?,sql_integer(coverage.ignore_bytes)?],
         )?;
         let (project, revision): (i64, i64) = transaction.query_row(
             "SELECT id,revision FROM projects WHERE root=?1",

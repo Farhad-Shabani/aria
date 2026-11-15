@@ -1,5 +1,5 @@
 mod context;
-pub use context::{Context, State, Status};
+pub use context::{Activity, Context, Failure, List, Status};
 pub mod catalog;
 pub mod collection;
 pub mod discover;
@@ -15,7 +15,6 @@ use std::path::PathBuf;
 
 pub(crate) const MAX_TERMS: usize = 100_000;
 pub(crate) const MAX_CANDIDATES: usize = 128;
-pub(crate) const MAX_IGNORE_BYTES: usize = 64 * 1024;
 pub(crate) const SELECTED_TERMS: usize = 2048;
 pub(crate) const MAX_SOURCE_BYTES: usize = 32 * 1024 * 1024;
 
@@ -53,7 +52,7 @@ pub struct Coverage {
     pub hidden: usize,
     pub symlinks: usize,
     pub unsupported: usize,
-    pub bytes: usize,
+    pub ignore_bytes: usize,
     /// Nested folders whose `.git` is a file: linked worktrees and submodules.
     pub linked: usize,
     pub unreadable: usize,

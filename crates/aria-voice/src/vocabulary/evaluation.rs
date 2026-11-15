@@ -149,7 +149,7 @@ fn measure(
             "selected": selection.terms.len(),
             "found": selection.found,
             "entries": discovery.coverage.entries,
-            "bytes_read": discovery.coverage.bytes,
+            "bytes_read": discovery.coverage.ignore_bytes,
             "hidden": discovery.coverage.hidden,
             "symlinks": discovery.coverage.symlinks,
             "unsupported": discovery.coverage.unsupported,

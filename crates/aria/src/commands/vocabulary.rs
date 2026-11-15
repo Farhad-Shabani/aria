@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use aria_daemon::DaemonSession;
+use aria_voice::vocabulary::{Activity, Completeness, Failure, Status};
 use clap::Subcommand;
 
 use super::runtime_paths;
@@ -29,20 +30,42 @@ pub(super) fn run(command: VocabularyCommand) -> anyhow::Result<()> {
             session.vocabulary_forget(directory.map(vocabulary_dir).transpose()?.as_ref())?
         }
     };
-    println!(
-        "{:?}: {} of {} names{}, catalog revision {}, runtime revision {}",
-        status.state,
-        status.terms,
-        status.found,
-        if status.partial { ", partial" } else { "" },
-        status.catalog_revision,
-        status.runtime_revision
-    );
-    if status.state != aria_voice::vocabulary::State::Disabled && !status.error.is_empty() {
-        anyhow::bail!(
-            "vocabulary {} failed; the previous snapshot is retained when available",
-            status.error
-        );
+    let Status::Folder { list, activity } = status else {
+        println!("Disabled");
+        return Ok(());
+    };
+    let state = match (activity, &list) {
+        (Activity::Refreshing, _) => "Refreshing",
+        (Activity::Removing, _) => "Removing",
+        (Activity::Failed(Failure::Limit), _) => "TooLarge",
+        (Activity::Idle, Some(list)) if !list.is_stale => "Ready",
+        (_, Some(_)) => "Stale",
+        (_, None) => "Unavailable",
+    };
+    match &list {
+        Some(list) => println!(
+            "{state}: {} of {} names{}{}",
+            list.terms,
+            list.found,
+            if list.completeness.is_some_and(Completeness::is_partial) {
+                ", partial"
+            } else {
+                ""
+            },
+            list.catalog_revision
+                .map(|revision| format!(", catalog revision {revision}"))
+                .unwrap_or_default(),
+        ),
+        None => println!("{state}"),
+    }
+    if let Activity::Failed(failure) = activity {
+        let cause = match failure {
+            Failure::Limit => "vocabulary refresh exceeded a resource limit",
+            Failure::Refresh => "vocabulary refresh failed",
+            Failure::Evicted => "vocabulary list was dropped to free memory",
+            Failure::Removal => "vocabulary removal failed",
+        };
+        anyhow::bail!("{cause}; the previous list stays in use when available");
     }
     Ok(())
 }

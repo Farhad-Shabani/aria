@@ -110,30 +110,41 @@ impl Preparation {
             .context("non-UTF8 benchmark directory")?
             .to_owned();
         let mut vocabulary = wire::vocabulary_service_client::VocabularyServiceClient::new(channel);
-        let status = loop {
+        let list = loop {
             let status = vocabulary
                 .get_status(wire::VocabularyRequest {
                     directory: Some(directory.clone()),
                 })
                 .await?
                 .into_inner();
-            if status.state == wire::VocabularyState::Ready as i32 {
-                break status;
-            }
+            let Some(wire::vocabulary_status::Status::Folder(folder)) = status.status else {
+                anyhow::bail!("vocabulary is disabled");
+            };
+            let activity = wire::VocabularyActivity::try_from(folder.activity)
+                .unwrap_or(wire::VocabularyActivity::Unspecified);
             ensure!(
-                status.error_category.is_empty(),
-                "vocabulary preparation failed: {}",
-                status.error_category
+                !matches!(
+                    activity,
+                    wire::VocabularyActivity::LimitReached
+                        | wire::VocabularyActivity::RefreshFailed
+                        | wire::VocabularyActivity::Evicted
+                        | wire::VocabularyActivity::RemovalFailed
+                ),
+                "vocabulary preparation failed: {activity:?}"
             );
+            if activity == wire::VocabularyActivity::Idle
+                && let Some(list) = folder.list
+            {
+                break list;
+            }
             tokio::time::sleep(Duration::from_millis(20)).await;
         };
         ensure!(
-            status.term_count > 0 && status.runtime_revision > 0,
-            "vocabulary did not prepare a nonempty snapshot: {}",
-            status.error_category
+            list.term_count > 0,
+            "vocabulary did not prepare a nonempty list"
         );
         Ok(Some(
-            json!({"catalog_revision": status.catalog_revision, "runtime_revision": status.runtime_revision, "terms": status.term_count}),
+            json!({"catalog_revision": list.catalog_revision, "terms": list.term_count}),
         ))
     }
 }

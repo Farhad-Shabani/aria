@@ -1710,23 +1710,35 @@ fn project_from_wire(
 
 impl From<aria_voice::vocabulary::Status> for wire::VocabularyStatus {
     fn from(status: aria_voice::vocabulary::Status) -> Self {
-        use aria_voice::vocabulary::State;
-        Self {
-            state: match status.state {
-                State::Ready => wire::VocabularyState::Ready,
-                State::Refreshing => wire::VocabularyState::Refreshing,
-                State::Stale => wire::VocabularyState::Stale,
-                State::Unavailable => wire::VocabularyState::Unavailable,
-                State::TooLarge => wire::VocabularyState::TooLarge,
-                State::Disabled => wire::VocabularyState::Disabled,
-            } as i32,
-            catalog_revision: status.catalog_revision,
-            runtime_revision: status.runtime_revision,
-            term_count: status.terms as u64,
-            found_count: status.found as u64,
-            partial: status.partial,
-            error_category: status.error,
-        }
+        use aria_voice::vocabulary::{Activity, Completeness, Failure, Status};
+        use wire::vocabulary_status::Status as Body;
+        let body = match status {
+            Status::Disabled => Body::Disabled(wire::VocabularyDisabled {}),
+            Status::Folder { list, activity } => Body::Folder(wire::VocabularyFolder {
+                list: list.map(|list| wire::VocabularyList {
+                    catalog_revision: list.catalog_revision,
+                    term_count: list.terms as u64,
+                    found_count: list.found as u64,
+                    completeness: match list.completeness {
+                        None => wire::VocabularyCompleteness::Unspecified,
+                        Some(Completeness::Whole) => wire::VocabularyCompleteness::Whole,
+                        Some(Completeness::Partial) => wire::VocabularyCompleteness::Partial,
+                        Some(Completeness::OutOfTime) => wire::VocabularyCompleteness::OutOfTime,
+                    } as i32,
+                    stale: list.is_stale,
+                }),
+                activity: match activity {
+                    Activity::Idle => wire::VocabularyActivity::Idle,
+                    Activity::Refreshing => wire::VocabularyActivity::Refreshing,
+                    Activity::Removing => wire::VocabularyActivity::Removing,
+                    Activity::Failed(Failure::Limit) => wire::VocabularyActivity::LimitReached,
+                    Activity::Failed(Failure::Refresh) => wire::VocabularyActivity::RefreshFailed,
+                    Activity::Failed(Failure::Evicted) => wire::VocabularyActivity::Evicted,
+                    Activity::Failed(Failure::Removal) => wire::VocabularyActivity::RemovalFailed,
+                } as i32,
+            }),
+        };
+        Self { status: Some(body) }
     }
 }
 
@@ -2301,38 +2313,61 @@ const MAX_VOCABULARY_NAMES: u64 = 100_000;
 impl TryFrom<wire::VocabularyStatus> for aria_voice::vocabulary::Status {
     type Error = ProtocolError;
     fn try_from(status: wire::VocabularyStatus) -> Result<Self, Self::Error> {
-        use aria_voice::vocabulary::State;
-        for (field, count) in [
-            ("term count", status.term_count),
-            ("found count", status.found_count),
-        ] {
-            if count > MAX_VOCABULARY_NAMES {
-                return Err(ProtocolError::InvalidVocabularyCount(field, count));
-            }
-        }
-        let state = match wire::VocabularyState::try_from(status.state) {
-            Ok(wire::VocabularyState::Ready) => State::Ready,
-            Ok(wire::VocabularyState::Refreshing) => State::Refreshing,
-            Ok(wire::VocabularyState::Stale) => State::Stale,
-            Ok(wire::VocabularyState::Unavailable) => State::Unavailable,
-            Ok(wire::VocabularyState::TooLarge) => State::TooLarge,
-            Ok(wire::VocabularyState::Disabled) => State::Disabled,
-            _ => {
+        use aria_voice::vocabulary::{Activity, Completeness, Failure, List};
+        use wire::vocabulary_status::Status as Body;
+        let folder = match status.status {
+            Some(Body::Disabled(_)) => return Ok(Self::Disabled),
+            Some(Body::Folder(folder)) => folder,
+            None => return Err(ProtocolError::MissingBody("vocabulary status")),
+        };
+        let list = folder
+            .list
+            .map(|list| {
+                for (field, count) in [
+                    ("term count", list.term_count),
+                    ("found count", list.found_count),
+                ] {
+                    if count > MAX_VOCABULARY_NAMES {
+                        return Err(ProtocolError::InvalidVocabularyCount(field, count));
+                    }
+                }
+                let completeness = match wire::VocabularyCompleteness::try_from(list.completeness) {
+                    Ok(wire::VocabularyCompleteness::Unspecified) => None,
+                    Ok(wire::VocabularyCompleteness::Whole) => Some(Completeness::Whole),
+                    Ok(wire::VocabularyCompleteness::Partial) => Some(Completeness::Partial),
+                    Ok(wire::VocabularyCompleteness::OutOfTime) => Some(Completeness::OutOfTime),
+                    Err(_) => {
+                        return Err(ProtocolError::InvalidEnum {
+                            field: "vocabulary completeness",
+                            value: list.completeness,
+                        });
+                    }
+                };
+                Ok(List {
+                    catalog_revision: list.catalog_revision,
+                    terms: list.term_count as usize,
+                    found: list.found_count as usize,
+                    completeness,
+                    is_stale: list.stale,
+                })
+            })
+            .transpose()?;
+        let activity = match wire::VocabularyActivity::try_from(folder.activity) {
+            Ok(wire::VocabularyActivity::Idle) => Activity::Idle,
+            Ok(wire::VocabularyActivity::Refreshing) => Activity::Refreshing,
+            Ok(wire::VocabularyActivity::Removing) => Activity::Removing,
+            Ok(wire::VocabularyActivity::LimitReached) => Activity::Failed(Failure::Limit),
+            Ok(wire::VocabularyActivity::RefreshFailed) => Activity::Failed(Failure::Refresh),
+            Ok(wire::VocabularyActivity::Evicted) => Activity::Failed(Failure::Evicted),
+            Ok(wire::VocabularyActivity::RemovalFailed) => Activity::Failed(Failure::Removal),
+            Ok(wire::VocabularyActivity::Unspecified) | Err(_) => {
                 return Err(ProtocolError::InvalidEnum {
-                    field: "vocabulary state",
-                    value: status.state,
+                    field: "vocabulary activity",
+                    value: folder.activity,
                 });
             }
         };
-        Ok(Self {
-            state,
-            catalog_revision: status.catalog_revision,
-            runtime_revision: status.runtime_revision,
-            terms: status.term_count as usize,
-            found: status.found_count as usize,
-            partial: status.partial,
-            error: status.error_category,
-        })
+        Ok(Self::Folder { list, activity })
     }
 }
 
@@ -4754,28 +4789,53 @@ mod tests {
     }
 
     #[test]
-    fn vocabulary_status_keeps_its_counts_and_bounds_them() {
-        use aria_voice::vocabulary::{State, Status};
-        let status = Status {
-            state: State::Ready,
-            catalog_revision: 3,
-            runtime_revision: 3,
+    fn vocabulary_status_keeps_its_shape_and_bounds_its_counts() {
+        use aria_voice::vocabulary::{Activity, Completeness, Failure, List, Status};
+        let list = List {
+            catalog_revision: None,
             terms: 2048,
             found: 2665,
-            partial: true,
-            error: String::new(),
+            completeness: Some(Completeness::OutOfTime),
+            is_stale: true,
         };
-        assert_eq!(
-            Status::try_from(wire::VocabularyStatus::from(status.clone())).unwrap(),
-            status
-        );
-        let oversized = wire::VocabularyStatus {
-            found_count: MAX_VOCABULARY_NAMES + 1,
-            ..wire::VocabularyStatus::from(status)
-        };
+        for status in [
+            Status::Disabled,
+            Status::Folder {
+                list: None,
+                activity: Activity::Failed(Failure::Evicted),
+            },
+            Status::Folder {
+                list: Some(list.clone()),
+                activity: Activity::Refreshing,
+            },
+            Status::Folder {
+                list: Some(List {
+                    catalog_revision: Some(3),
+                    completeness: None,
+                    ..list
+                }),
+                activity: Activity::Failed(Failure::Limit),
+            },
+        ] {
+            assert_eq!(
+                Status::try_from(wire::VocabularyStatus::from(status.clone())).unwrap(),
+                status
+            );
+        }
+        let mut oversized = wire::VocabularyStatus::from(Status::Folder {
+            list: Some(list),
+            activity: Activity::Idle,
+        });
+        if let Some(wire::vocabulary_status::Status::Folder(folder)) = &mut oversized.status {
+            folder.list.as_mut().unwrap().found_count = MAX_VOCABULARY_NAMES + 1;
+        }
         assert!(matches!(
             Status::try_from(oversized),
             Err(ProtocolError::InvalidVocabularyCount("found count", _))
+        ));
+        assert!(matches!(
+            Status::try_from(wire::VocabularyStatus { status: None }),
+            Err(ProtocolError::MissingBody(_))
         ));
     }
 
