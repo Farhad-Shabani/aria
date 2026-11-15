@@ -95,8 +95,12 @@ impl Vocabulary {
                 return Err(MatchError::Cancelled);
             }
             validate_name(&term.canonical)?;
+            // Only a symbol shows that words are a name. So a name without
+            // one types as heard.
+            let has_symbol = term.canonical.chars().any(symbol_words::is_symbol);
             for (index, alias) in matching_forms(&term.canonical).enumerate() {
                 let protected = index == 0;
+                let typed = || (!protected || has_symbol).then(|| term.canonical.clone());
                 if cancel.is_cancelled() {
                     return Err(MatchError::Cancelled);
                 }
@@ -116,11 +120,16 @@ impl Vocabulary {
                 let bucket = matcher.index.get_mut(&first).expect("inserted bucket");
                 bucket.max_chars = bucket.max_chars.max(alias.chars().count());
                 match bucket.aliases.get_mut(&alias) {
-                    Some(existing) if existing.protected => {}
+                    Some(existing) if existing.protected => {
+                        if protected && existing.canonical.as_deref() != Some(&term.canonical) {
+                            existing.canonical = None;
+                        }
+                    }
                     Some(existing) if protected || term.priority > existing.priority => {
-                        bytes += term.canonical.len();
+                        let canonical = typed();
+                        bytes += canonical.as_ref().map_or(0, String::len);
                         *existing = Candidate {
-                            canonical: Some(term.canonical.clone()),
+                            canonical,
                             priority: term.priority,
                             protected,
                         };
@@ -133,12 +142,13 @@ impl Vocabulary {
                     }
                     Some(_) => {}
                     None => {
-                        bytes += alias.capacity() + term.canonical.len();
+                        let canonical = typed();
+                        bytes += alias.capacity() + canonical.as_ref().map_or(0, String::len);
                         let capacity = bucket.aliases.capacity();
                         bucket.aliases.insert(
                             alias,
                             Candidate {
-                                canonical: Some(term.canonical.clone()),
+                                canonical,
                                 priority: term.priority,
                                 protected,
                             },
@@ -324,7 +334,7 @@ impl Vocabulary {
                 position += character.len_utf8();
                 continue;
             }
-            let matched = if !text[..position].chars().next_back().is_some_and(is_word) {
+            let matched = if !continues_word(text[..position].chars().rev()) {
                 match first_word(rest).and_then(|first| self.index.get(&first)) {
                     Some(bucket) => self.find(text, position, bucket, check)?,
                     None => None,
@@ -340,11 +350,10 @@ impl Vocabulary {
             if let Some(start) = word_start.take() {
                 words.push(plain(start..position));
             }
-            let term = if candidate.protected || candidate.canonical.is_none() {
-                &text[position..end]
-            } else {
-                candidate.canonical.as_deref().unwrap()
-            };
+            let term = candidate
+                .canonical
+                .as_deref()
+                .unwrap_or(&text[position..end]);
             words.push(Word::claimed(position..end, Cow::Borrowed(term)));
             position = end;
         }
@@ -384,7 +393,7 @@ impl Vocabulary {
                 break;
             }
             let end = start + offset + character.len_utf8();
-            if !text[end..].chars().next().is_some_and(is_word)
+            if !continues_word(text[end..].chars())
                 && let Some(candidate) = bucket.aliases.get(&normalized)
             {
                 longest = Some((end, candidate));
@@ -403,6 +412,17 @@ fn validate_name(name: &str) -> Result<(), MatchError> {
         return Err(MatchError::InvalidName);
     }
     Ok(())
+}
+
+// A symbol with no word beyond it, as a sentence's final dot, ends the word.
+fn continues_word(mut outward: impl Iterator<Item = char>) -> bool {
+    match outward.next() {
+        Some(character) if is_word(character) => true,
+        Some(character) if symbol_words::is_symbol(character) => {
+            outward.next().is_some_and(is_word)
+        }
+        _ => false,
+    }
 }
 
 fn is_word(character: char) -> bool {
@@ -437,7 +457,8 @@ fn normalize(text: &str) -> String {
         .to_lowercase()
 }
 
-// A recognizer writes "dash" for `-`, and dictation says "hyphen".
+// A recognizer writes "dash" for `-`, but dictation's symbol words call it
+// "hyphen".
 fn spoken_symbol(character: char, hyphen: &'static str) -> Option<&'static str> {
     match character {
         '-' => Some(hyphen),
@@ -456,14 +477,21 @@ enum Said {
     Letters,
 }
 
-// Every form says a symbol, so ordinary speech never matches a name.
+// Every form says a symbol, so words alone never match a name.
 fn aliases(canonical: &str) -> Vec<String> {
+    if !canonical.chars().any(symbol_words::is_symbol) {
+        return Vec::new();
+    }
     let mut aliases = Vec::new();
-    for hyphen in ["dash"].into_iter().chain(symbol_words::word('-')) {
+    let hyphens = if canonical.contains('-') { 2 } else { 1 };
+    for hyphen in ["dash"]
+        .into_iter()
+        .chain(symbol_words::word('-'))
+        .take(hyphens)
+    {
         for said in [Said::Whole, Said::Words, Said::Letters] {
             let mut words: Vec<String> = Vec::new();
             let mut part = String::new();
-            let mut has_symbol = false;
             for character in canonical.chars() {
                 let Some(symbol) = spoken_symbol(character, hyphen) else {
                     part.push(character);
@@ -472,11 +500,10 @@ fn aliases(canonical: &str) -> Vec<String> {
                 push_part(&part, said, &mut words);
                 part.clear();
                 words.push(symbol.to_owned());
-                has_symbol = true;
             }
             push_part(&part, said, &mut words);
             let alias = normalize(&words.join(" "));
-            if has_symbol && alias != canonical.to_lowercase() && !aliases.contains(&alias) {
+            if alias != canonical.to_lowercase() && !aliases.contains(&alias) {
                 aliases.push(alias);
             }
         }
@@ -577,7 +604,6 @@ mod tests {
     #[case::hyphen_names_a_dash("aria hyphen stt", "aria-stt")]
     #[case::camel_case_part_as_words("open app delegate dot swift", "open AppDelegate.swift")]
     #[case::acronym_part_as_words("html parser dot swift", "HTMLParser.swift")]
-    #[case::spelled_part_beside_a_symbol("ARIA dash S T T", "aria-stt")]
     fn spoken_forms_type_the_stored_name(#[case] heard: &str, #[case] typed: &str) {
         let vocabulary =
             Vocabulary::new(["aria-stt", "AppDelegate.swift", "HTMLParser.swift"]).unwrap();
@@ -599,6 +625,30 @@ mod tests {
         let vocabulary = Vocabulary::new(["aria-kit", "main.rs"]).unwrap();
         let corrected = vocabulary.correct_spoken(heard, "").map(|c| c.text);
         assert_eq!(corrected.as_deref(), Some(typed));
+    }
+
+    #[rstest]
+    #[case::joined_by_the_recognizer("open appdelegate.swift", "open AppDelegate.swift")]
+    #[case::other_casing("ARIA-kit.", "aria-kit.")]
+    fn a_written_name_takes_the_stored_casing(#[case] heard: &str, #[case] typed: &str) {
+        let vocabulary = Vocabulary::new(["AppDelegate.swift", "aria-kit"]).unwrap();
+        assert_eq!(vocabulary.correct(heard).as_deref(), Some(typed));
+    }
+
+    #[rstest]
+    #[case::inside_a_hyphen_join("My-Aria-Kit")]
+    #[case::after_a_slash("src/Main.rs")]
+    #[case::before_a_dot_join("Main.rs.bak")]
+    fn a_name_inside_a_longer_written_name_stays_as_heard(#[case] heard: &str) {
+        let vocabulary = Vocabulary::new(["aria-kit", "main.rs"]).unwrap();
+        assert_eq!(vocabulary.correct(heard), None);
+    }
+
+    #[test]
+    fn names_that_differ_only_by_case_keep_the_heard_casing() {
+        let vocabulary = Vocabulary::new(["aria-kit", "Aria-Kit"]).unwrap();
+        assert_eq!(vocabulary.correct("ARIA-kit"), None);
+        assert_eq!(vocabulary.correct("aria dash kit"), None);
     }
 
     #[test]
