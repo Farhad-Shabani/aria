@@ -14,7 +14,9 @@ use tonic_health::pb::health_server::HealthServer;
 use tonic_health::server::{HealthReporter, HealthService};
 
 use crate::daemon::relay::{Advert, LanSettings, Pairing, Phones, require_paired};
-use crate::daemon::service::{PairingAdminRpc, PairingRpc, RelayRpc, SettingsRpc};
+use crate::daemon::service::{
+    PairingAdminRpc, PairingRpc, PhoneMicrophoneRpc, RelayRpc, SettingsRpc,
+};
 use crate::ipc::wire;
 use aria_primitives::error_chain;
 use connections::Admitted;
@@ -38,6 +40,8 @@ const MAX_SETTINGS_MESSAGE_BYTES: usize = 64 * 1024;
 /// A pairing request carries one 32-character code, and any phone on the
 /// LAN can send one while a code is live.
 const MAX_PAIR_MESSAGE_BYTES: usize = 1024;
+/// One audio chunk and its framing. The handler checks the chunk itself.
+const MAX_PHONE_MICROPHONE_MESSAGE_BYTES: usize = crate::ipc::protocol::MAX_PHONE_CHUNK_BYTES + 64;
 
 /// A phone on the LAN finishes its handshake in well under a second. A
 /// connection that has not finished by then holds a socket for nothing.
@@ -55,6 +59,7 @@ pub(in crate::daemon) struct Relay {
     pub(in crate::daemon) rpc: RelayRpc,
     pub(in crate::daemon) port: u16,
     pub(in crate::daemon) settings: SettingsRpc,
+    pub(in crate::daemon) microphone: PhoneMicrophoneRpc,
     pub(in crate::daemon) pairing: Pairing,
     pub(in crate::daemon) instance: String,
 }
@@ -83,6 +88,7 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
         rpc,
         port,
         settings,
+        microphone,
         pairing,
         instance,
     } = relay;
@@ -107,6 +113,7 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
     let router = router(
         rpc,
         LanSettings::new(settings),
+        microphone,
         relay_health,
         Arc::clone(&pairing.phones),
     );
@@ -126,10 +133,16 @@ pub(super) async fn open(relay: Relay, health: &HealthReporter) -> Opened {
     .await
 }
 
-/// What a phone reaches over TCP, all behind TLS: relay, settings, and
-/// health for a paired phone, and Pair, which takes a pairing code instead.
-/// The generic services let tests build it without a model.
-fn router<R, P>(relay: R, settings: P, health: HealthReporter, phones: Arc<Phones>) -> RelayRouter
+/// What a phone reaches over TCP, all behind TLS: relay, settings, its
+/// microphone and health for a paired phone, and Pair, which takes a pairing
+/// code instead. The generic services let tests build it without a model.
+fn router<R, P>(
+    relay: R,
+    settings: P,
+    microphone: PhoneMicrophoneRpc,
+    health: HealthReporter,
+    phones: Arc<Phones>,
+) -> RelayRouter
 where
     R: wire::relay_service_server::RelayService,
     P: wire::settings_service_server::SettingsService,
@@ -154,6 +167,11 @@ where
         .add_service(InterceptedService::new(
             wire::settings_service_server::SettingsServiceServer::new(settings)
                 .max_decoding_message_size(MAX_SETTINGS_MESSAGE_BYTES),
+            paired.clone(),
+        ))
+        .add_service(InterceptedService::new(
+            wire::phone_microphone_service_server::PhoneMicrophoneServiceServer::new(microphone)
+                .max_decoding_message_size(MAX_PHONE_MICROPHONE_MESSAGE_BYTES),
             paired.clone(),
         ))
         .add_service(
@@ -298,6 +316,18 @@ mod tests {
             // apart.
             Err(Status::aborted("the stand-in relay was reached"))
         }
+    }
+
+    /// No phone attached, and a setting that never changes.
+    fn silent_microphone() -> PhoneMicrophoneRpc {
+        let (_setting, preference) =
+            tokio::sync::watch::channel(aria_settings::Microphone::Automatic);
+        PhoneMicrophoneRpc::new(
+            crate::daemon::phone::PhoneMicrophone::new(),
+            crate::daemon::microphone::admits_phone,
+            preference,
+            CancellationToken::new(),
+        )
     }
 
     /// Refuses every call, like [`SilentRelay`]: an `Aborted` from it proves
@@ -448,6 +478,7 @@ mod tests {
                 router(
                     SilentRelay,
                     SilentSettings,
+                    silent_microphone(),
                     health,
                     Arc::clone(&pairing.phones),
                 )
@@ -519,6 +550,16 @@ mod tests {
             .code()
     }
 
+    /// An empty stream: once past the pairing check, it fails for want of
+    /// an offer.
+    async fn microphone(channel: &Channel) -> tonic::Code {
+        wire::phone_microphone_service_client::PhoneMicrophoneServiceClient::new(channel.clone())
+            .attach(tokio_stream::empty())
+            .await
+            .expect_err("an empty stream offers nothing")
+            .code()
+    }
+
     async fn pair(channel: &Channel, code: &str) -> Result<(), Status> {
         wire::pairing_service_client::PairingServiceClient::new(channel.clone())
             .pair(wire::PairRequest {
@@ -544,11 +585,11 @@ mod tests {
         !matches!(call, Err(status) if status.code() == tonic::Code::Unimplemented)
     }
 
-    /// The LAN serves exactly Relay, scoped Settings, Pairing and Health.
-    /// Nothing that records or speaks, and no reflection: one method from
-    /// every service the daemon has.
+    /// The LAN serves exactly Relay, scoped Settings, the phone's microphone,
+    /// Pairing and Health. Nothing that records on the Mac or speaks, and no
+    /// reflection: one method from every service the daemon has.
     #[tokio::test]
-    async fn the_lan_serves_exactly_four_services() {
+    async fn the_lan_serves_exactly_five_services() {
         let lan = Lan::start().await;
         let phone = Phone::mint();
         pin(&lan.pairing.phones, &phone);
@@ -558,6 +599,8 @@ mod tests {
         for path in [
             "/aria.daemon.v1.RelayService/Relay",
             "/aria.daemon.v1.SettingsService/Get",
+            "/aria.daemon.v1.PhoneMicrophoneService/Attach",
+            "/aria.daemon.v1.MicrophoneService/List",
             "/aria.daemon.v1.PairingService/Pair",
             "/grpc.health.v1.Health/Check",
             "/aria.daemon.v1.ChatService/Ask",
@@ -584,6 +627,7 @@ mod tests {
             [
                 "/aria.daemon.v1.RelayService/Relay",
                 "/aria.daemon.v1.SettingsService/Get",
+                "/aria.daemon.v1.PhoneMicrophoneService/Attach",
                 "/aria.daemon.v1.PairingService/Pair",
                 "/grpc.health.v1.Health/Check",
             ]
@@ -628,6 +672,7 @@ mod tests {
         );
         assert_eq!(relay(&channel).await, tonic::Code::Unauthenticated);
         assert_eq!(settings(&channel).await, tonic::Code::Unauthenticated);
+        assert_eq!(microphone(&channel).await, tonic::Code::Unauthenticated);
 
         let wrong = pair(&channel, &"0".repeat(32))
             .await
@@ -641,6 +686,7 @@ mod tests {
             .expect("the live code should pair");
         assert_eq!(relay(&channel).await, tonic::Code::Aborted);
         assert_eq!(settings(&channel).await, tonic::Code::Aborted);
+        assert_eq!(microphone(&channel).await, tonic::Code::InvalidArgument);
         let reused = pair(&channel, code.raw())
             .await
             .expect_err("a used code must not pair again");
@@ -839,6 +885,7 @@ mod tests {
         let router = router(
             SilentRelay,
             SilentSettings,
+            silent_microphone(),
             relay_health,
             Arc::clone(&pairing.phones),
         );

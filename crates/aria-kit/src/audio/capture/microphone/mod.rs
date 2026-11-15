@@ -18,9 +18,9 @@ use crate::primitives::private_fs;
 use crate::voice_activity::{SileroVad, VoiceActivityDetector};
 use crate::wake_word::WakeWordDetector;
 
-use super::{AudioCapture, MicrophoneError, RecordingMode};
+use super::{AudioCapture, Inputs, MicrophoneError, RecordingMode};
 
-pub use devices::{InputDevice, InputDeviceId, input_devices, resolve_input};
+pub use devices::{InputDevice, InputDeviceId, input_devices, is_connected, resolve_input};
 pub use stream::check_default_input_device;
 pub use wake_word::{
     WakeWordControl, WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
@@ -65,7 +65,7 @@ impl Microphone {
     // second concurrent record would silently queue behind the first.
     pub fn record(&mut self, mode: RecordingMode) -> Result<(RecordingReader, Stopper)> {
         let stopper = Stopper::new();
-        let recording = self.start(mode, StopSignal::from(stopper.clone()))?;
+        let recording = self.start(mode, Inputs::Local, StopSignal::from(stopper.clone()))?;
         Ok((recording, stopper))
     }
 }
@@ -178,7 +178,12 @@ fn private_spool_dir() -> Result<PathBuf> {
 }
 
 impl AudioCapture for Microphone {
-    fn start(&self, mode: RecordingMode, stop: StopSignal) -> Result<RecordingReader> {
+    fn start(
+        &self,
+        mode: RecordingMode,
+        _inputs: Inputs,
+        stop: StopSignal,
+    ) -> Result<RecordingReader> {
         let (mut recording, writer) = recording::ends();
         self.commands
             .send(worker::Command::Record(worker::RecordCommand {

@@ -34,14 +34,14 @@ pub use stop::{StopSignal, Stopper};
 
 #[cfg(not(target_family = "wasm"))]
 pub use capture::{
-    AudioCapture, AutoStop, AutoStopError, MicrophoneError, RecordingMode, ReplayPace,
+    AudioCapture, AutoStop, AutoStopError, Inputs, MicrophoneError, RecordingMode, ReplayPace,
     SilenceDuration, SilenceDurationError, WavReplayCapture, WavReplayError,
 };
 #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
 pub use capture::{
-    InputDevice, InputDeviceId, Microphone, MicrophoneBuilder, PreparedMicrophone, WakeWordControl,
-    WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
-    check_default_input_device, input_devices, resolve_input,
+    InputDevice, InputDeviceId, Microphone, MicrophoneBuilder, PreparedMicrophone, PushedCapture,
+    WakeWordControl, WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
+    check_default_input_device, input_devices, is_connected, resolve_input,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use spool::{SpoolError, remove_all_spools};

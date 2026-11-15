@@ -27,10 +27,11 @@ use super::history::HistoryStore;
 use super::host::DaemonLifetime;
 use super::hotkey::HotkeyTrigger;
 use super::memory::{self, MemoryBacklog};
+use super::phone::{AdmitsPhone, PhoneMicrophone};
 use super::server::{Actors, Relay, Server, ServerError, Services};
 use super::service::{
-    ChatRpc, DictationRpc, EventsService, HistoryRpc, MicrophoneRpc, RelayRpc, SettingsRpc,
-    SpeakerRpc, SpeechRpc, SystemTranscriptionRpc, VocabularyRpc,
+    ChatRpc, DictationRpc, EventsService, HistoryRpc, MicrophoneRpc, PhoneMicrophoneRpc, RelayRpc,
+    SettingsRpc, SpeakerRpc, SpeechRpc, SystemTranscriptionRpc, VocabularyRpc,
 };
 use super::settings;
 use super::shutdown::ShutdownError;
@@ -190,6 +191,8 @@ fn compose(
         monitor,
         engine,
         microphone: microphone_follower,
+        phone_microphone,
+        admits_phone,
         hotkey,
         relay_port,
     } = workers;
@@ -252,6 +255,12 @@ fn compose(
             ),
             port,
             settings: settings_rpc.clone(),
+            microphone: PhoneMicrophoneRpc::new(
+                Arc::clone(&phone_microphone),
+                admits_phone,
+                cache.microphone(),
+                tasks.cancellation(),
+            ),
             pairing,
             instance,
         })
@@ -273,7 +282,7 @@ fn compose(
         settings: settings_rpc,
         vocabulary: VocabularyRpc::new(Arc::clone(&vocabulary)),
         speaker: SpeakerRpc::new(speaker),
-        microphone: MicrophoneRpc::new(Arc::clone(&cache)),
+        microphone: MicrophoneRpc::new(Arc::clone(&cache), Arc::clone(&phone_microphone)),
         events: EventsService::new(Arc::clone(&subscriptions)),
         relay,
         health,
@@ -336,6 +345,12 @@ struct Workers {
     engine: Option<super::dictation::EngineFollower>,
     /// `None` for an on-demand daemon, as for `engine`.
     microphone: Option<MicrophoneFollower>,
+    /// The phone the relay attaches and dictation records on. An on-demand
+    /// daemon serves no relay, so nothing attaches to its one.
+    phone_microphone: Arc<PhoneMicrophone>,
+    /// Whether a press would record on an attached phone, answered by the
+    /// capture, so a capture without a phone input takes none.
+    admits_phone: AdmitsPhone,
     hotkey: HotkeyConfig,
     /// The relay's delivery adapter and its port, read from the
     /// settings a persistent daemon loads. An on-demand one — which
@@ -438,10 +453,7 @@ fn eager_workers(
         );
     }
     let speaker_config = SpeakerConfig::load(&startup.speaker, &context.home);
-    // Subscribed before the capture reads its first device, so no change
-    // falls between the two.
-    let mut chosen_microphone = cache.microphone();
-    let input = super::capture::input(&chosen_microphone.borrow_and_update());
+    let phone_microphone = PhoneMicrophone::new();
     let (dictation, monitor, recorder, engine) = DictationRuntime::eager(
         context,
         Arc::clone(subscriptions),
@@ -454,13 +466,14 @@ fn eager_workers(
             speaker: speaker_config.clone(),
             vocabulary,
             delivery: context.delivery.clone(),
-            input,
+            preference: cache.microphone(),
+            phones: Some(Arc::clone(&phone_microphone)),
         },
         Arc::clone(&microphone),
     )
     .map_err(DaemonError::Dictation)?;
-    let microphone_follower =
-        MicrophoneFollower::new(Arc::clone(&recorder.capture), chosen_microphone);
+    let admits_phone = recorder.capture.admits_phone();
+    let microphone_follower = MicrophoneFollower::new(Arc::clone(&recorder.capture));
     let speakers = Arc::new(Speakers::open(&speaker_config));
     let enroller = Enroller::new(
         recorder.capture,
@@ -488,7 +501,9 @@ fn eager_workers(
         )),
         monitor,
         engine: Some(engine),
-        microphone: Some(microphone_follower),
+        microphone: microphone_follower,
+        phone_microphone,
+        admits_phone,
         hotkey: context.hotkey(),
         relay_port,
     })
@@ -553,6 +568,8 @@ fn deferred_workers(
         hotkey: HotkeyConfig::Disabled,
         engine: None,
         microphone: None,
+        phone_microphone: PhoneMicrophone::new(),
+        admits_phone: super::microphone::admits_no_phone,
         relay_port: None,
     }
 }

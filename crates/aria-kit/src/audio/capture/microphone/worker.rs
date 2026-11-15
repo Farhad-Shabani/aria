@@ -26,9 +26,10 @@ use crate::wake_word::WakeWordDetector;
 
 use super::devices::{self, Follow, InputDeviceId};
 use super::stream::{DRAIN_BUFFER_SAMPLES, LiveStream};
-use super::transfer::{CaptureRecording, capture};
+use super::transfer::capture;
 use super::wake_word::{WakeMonitor, WakeWordEvent};
 use super::{MicrophoneError, Result};
+use crate::audio::capture::modes::CaptureRecording;
 
 /// The sample ring holds 5 s; draining every 100ms keeps it far from full.
 const IDLE_DRAIN_INTERVAL: Duration = Duration::from_millis(100);

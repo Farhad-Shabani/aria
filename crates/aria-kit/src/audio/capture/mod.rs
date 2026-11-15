@@ -2,6 +2,10 @@
 
 #[cfg(feature = "microphone")]
 mod microphone;
+#[cfg(feature = "microphone")]
+mod modes;
+#[cfg(feature = "microphone")]
+mod pushed;
 mod wav_replay;
 
 use aria_primitives::Cause;
@@ -14,8 +18,10 @@ use crate::voice_activity::VoiceActivityError;
 pub use microphone::{
     InputDevice, InputDeviceId, Microphone, MicrophoneBuilder, PreparedMicrophone, WakeWordControl,
     WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
-    check_default_input_device, input_devices, resolve_input,
+    check_default_input_device, input_devices, is_connected, resolve_input,
 };
+#[cfg(feature = "microphone")]
+pub use pushed::PushedCapture;
 pub use wav_replay::{ReplayPace, WavReplayCapture, WavReplayError};
 
 const MIN_SILENCE_DURATION: Duration = Duration::from_millis(100);
@@ -33,9 +39,23 @@ pub trait AudioCapture: Send + Sync + 'static {
     /// ended in error.
     ///
     /// A live source writes from its own thread and polls `stop` there, so
-    /// the caller can transcribe while audio arrives.
-    fn start(&self, mode: RecordingMode, stop: StopSignal)
-    -> Result<RecordingReader, CaptureError>;
+    /// the caller can transcribe while audio arrives. A source with no
+    /// remote input ignores `inputs`.
+    fn start(
+        &self,
+        mode: RecordingMode,
+        inputs: Inputs,
+        stop: StopSignal,
+    ) -> Result<RecordingReader, CaptureError>;
+}
+
+/// Which inputs one recording may use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Inputs {
+    /// Any input the capture offers, a remote one included.
+    Any,
+    /// Only this machine's own devices.
+    Local,
 }
 
 /// One backend serves every operation that records, so the operations share
@@ -44,9 +64,10 @@ impl<C: AudioCapture> AudioCapture for std::sync::Arc<C> {
     fn start(
         &self,
         mode: RecordingMode,
+        inputs: Inputs,
         stop: StopSignal,
     ) -> Result<RecordingReader, CaptureError> {
-        (**self).start(mode, stop)
+        (**self).start(mode, inputs, stop)
     }
 }
 

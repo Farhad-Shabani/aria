@@ -314,6 +314,7 @@ pub fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> Dictati
         output_mode,
         delivery_mode,
         stop_mode: StopMode::Manual,
+        inputs: aria_kit::audio::Inputs::Any,
         silence_duration: SilenceDuration::default(),
         auto_stop: None,
         own_voice_only: false,

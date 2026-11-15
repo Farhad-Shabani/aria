@@ -1055,6 +1055,7 @@ mod tests {
             output_mode: OutputMode::Copy,
             delivery_mode: DeliveryMode::Complete,
             stop_mode,
+            inputs: aria_kit::audio::Inputs::Any,
             silence_duration: SilenceDuration::default(),
             auto_stop: None,
             own_voice_only: false,

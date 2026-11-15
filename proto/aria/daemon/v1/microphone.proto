@@ -16,10 +16,16 @@ message ListMicrophonesRequest {}
 message ListMicrophonesResponse {
   // In the audio system's order.
   repeated Microphone microphones = 1;
-  // The `id` a press records on: the chosen device while it's connected,
-  // else the system default. Absent when no device can record.
-  optional string current_id = 2;
+  // What a press records on now. Absent when nothing can record.
+  oneof current {
+    // A listed microphone's `id`.
+    string device_id = 2;
+    // The attached phone.
+    AttachedPhone phone = 3;
+  }
 }
+
+message AttachedPhone {}
 
 message Microphone {
   // What `Settings.microphone` takes to choose this device. Stable while

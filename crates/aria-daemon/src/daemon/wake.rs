@@ -14,7 +14,7 @@ use tonic_health::server::HealthReporter;
 
 use crate::ipc::WAKE_WORD_HEALTH_SERVICE;
 use aria_kit::audio::{
-    CaptureError, Microphone, PreparedMicrophone, WakeWordEvent, WakeWordMonitor,
+    CaptureError, Inputs, Microphone, PreparedMicrophone, WakeWordEvent, WakeWordMonitor,
 };
 use aria_primitives::error_chain;
 use aria_settings::WakeEngine;
@@ -160,6 +160,8 @@ impl WakeTrigger {
                 delivery_mode: Some(DeliveryMode::Complete),
             }),
             project: aria_voice::vocabulary::Context::Default,
+            // The Mac heard the wake word, and its held stream has the words after it.
+            inputs: Inputs::Local,
         };
         // Daemon shutdown reaches the operation through the actor, which also
         // releases this blocking wait by answering it.

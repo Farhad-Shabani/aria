@@ -62,6 +62,7 @@ impl DictationSettings {
             output_mode,
             delivery_mode,
             stop_mode: request.stop_mode,
+            inputs: request.inputs,
             silence_duration: settings.silence_duration,
             auto_stop: settings.auto_stop,
             own_voice_only: settings.own_voice_only,
@@ -154,6 +155,21 @@ mod tests {
             modes(DictationSettings::resolve(settings, request, None)),
             (OutputMode::Insert, DeliveryMode::Streaming)
         );
+    }
+
+    #[test]
+    fn a_dictation_takes_the_inputs_its_request_allows() {
+        let any = DictationRequest::new(StopMode::Manual);
+        let local = DictationRequest {
+            inputs: aria_kit::audio::Inputs::Local,
+            ..DictationRequest::new(StopMode::OnSilence)
+        };
+
+        for request in [any, local] {
+            let inputs = request.inputs;
+            let settings = DictationSettings::resolve(Settings::default(), request, None);
+            assert_eq!(settings.inputs, inputs);
+        }
     }
 
     #[test]

@@ -152,20 +152,24 @@ impl Default for Settings {
 /// The input device a recording uses.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Microphone {
-    /// The system default.
+    /// An attached phone, else the system default.
     #[default]
     Automatic,
-    /// This device while it's connected, else the system default.
+    /// The system default, never a phone.
+    SystemDefault,
+    /// This device while it's connected, else as `Automatic`.
     Device(MicrophoneId),
 }
 
 impl Microphone {
     const AUTOMATIC: &str = "automatic";
+    const SYSTEM_DEFAULT: &str = "system_default";
 
     /// The settings file's spelling.
     pub fn as_str(&self) -> &str {
         match self {
             Self::Automatic => Self::AUTOMATIC,
+            Self::SystemDefault => Self::SYSTEM_DEFAULT,
             Self::Device(id) => id.as_str(),
         }
     }
@@ -175,10 +179,11 @@ impl std::str::FromStr for Microphone {
     type Err = MicrophoneIdError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if value == Self::AUTOMATIC {
-            return Ok(Self::Automatic);
+        match value {
+            Self::AUTOMATIC => Ok(Self::Automatic),
+            Self::SYSTEM_DEFAULT => Ok(Self::SystemDefault),
+            id => MicrophoneId::new(id).map(Self::Device),
         }
-        MicrophoneId::new(value).map(Self::Device)
     }
 }
 
@@ -204,7 +209,7 @@ impl MicrophoneId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("must be \"automatic\" or a device id of the form host:device")]
+#[error("must be \"automatic\", \"system_default\" or a device id of the form host:device")]
 pub struct MicrophoneIdError;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

@@ -73,9 +73,8 @@ pub(super) fn open_target(wanted: Option<&InputDeviceId>) -> Result<(cpal::Devic
     Ok((device, listed.id))
 }
 
-/// Whether [`resolve_input`] would pick `id` now, by the same listing
-/// `open_target` reads.
-pub(super) fn is_connected(id: &InputDeviceId) -> bool {
+/// Whether the device `id` names is connected. Opens nothing.
+pub fn is_connected(id: &InputDeviceId) -> bool {
     connected(&cpal::default_host())
         .is_ok_and(|inputs| inputs.iter().any(|(_, device)| device.id == *id))
 }

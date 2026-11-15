@@ -6,7 +6,9 @@
 use std::path::Path;
 use std::time::Duration;
 
-use aria_kit::audio::{AudioCapture, RecordingMode, ReplayPace, StopSignal, WavReplayCapture};
+use aria_kit::audio::{
+    AudioCapture, Inputs, RecordingMode, ReplayPace, StopSignal, WavReplayCapture,
+};
 use aria_kit::speaker::{Admission, Decision, Gate, Timeline, TurnFeed};
 use aria_kit::transcription::next_heard;
 use aria_kit::voice_activity::{SileroVad, SpeechDetector};
@@ -67,7 +69,11 @@ pub(crate) fn hear<T: Recognizer>(
     let transcribing = |source| BenchError::Transcription { scenario, source };
     let mut recording = WavReplayCapture::new(spool_dir, longest, wav, pace)
         .map_err(replay)?
-        .start(RecordingMode::UntilStopped, StopSignal::never())
+        .start(
+            RecordingMode::UntilStopped,
+            Inputs::Local,
+            StopSignal::never(),
+        )
         .map_err(replay)?;
     let from = recording.held_from();
     let vad = SileroVad::load().map_err(BenchError::SpeechGate)?;

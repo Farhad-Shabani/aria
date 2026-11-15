@@ -19,7 +19,9 @@ mod inference;
 mod live_keys;
 mod log;
 mod memory;
+mod microphone;
 mod operation;
+mod phone;
 pub(crate) mod relay;
 mod server;
 mod service;
@@ -48,6 +50,8 @@ pub use inference::client::RemoteClientError;
 pub use inference::host::{InferenceHostError, serve_inference};
 pub use inference::pairing::{Forgotten, PairingFailure, pair_server, read_invitation};
 pub use log::{DaemonLogError, open_log_writer, read_log_tail};
+pub(crate) use microphone::CurrentMicrophone;
+pub(crate) use phone::{PhoneCommand, PhoneRecordingId, PhoneRequest};
 pub use session::{
     Clarify, DaemonSession, ReplyError, RouteError, Routing, StartupError,
     SystemTranscriptionCommandError, SystemTranscriptionFollow, SystemTranscriptionSnapshot,
