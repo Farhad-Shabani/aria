@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::Infallible;
 
@@ -56,23 +55,25 @@ impl Candidate {
     }
 
     fn settle(&mut self, incoming: Self) -> usize {
-        let differs = self.name.canonical() != incoming.name.canonical();
-        match incoming.origin.cmp(&self.origin) {
-            Ordering::Less => 0,
-            Ordering::Greater => self.replace(incoming),
-            Ordering::Equal if self.origin == Origin::Written => {
-                if differs {
-                    self.name = Name::Shared;
-                }
+        if incoming.origin != self.origin {
+            return if incoming.origin > self.origin {
+                self.replace(incoming)
+            } else {
                 0
+            };
+        }
+        // Two written names never outrank each other.
+        let tied = self.origin == Origin::Written || incoming.priority == self.priority;
+        if tied {
+            if self.name.canonical() != incoming.name.canonical() {
+                self.name = Name::Shared;
             }
-            Ordering::Equal if incoming.priority > self.priority => self.replace(incoming),
-            Ordering::Equal => {
-                if incoming.priority == self.priority && differs {
-                    self.name = Name::Shared;
-                }
-                0
-            }
+            return 0;
+        }
+        if incoming.priority > self.priority {
+            self.replace(incoming)
+        } else {
+            0
         }
     }
 
