@@ -14,10 +14,6 @@ enum AriaKey: CaseIterable {
         }
     }
 
-    func gesture(for combo: ShortcutCombo) -> String {
-        "\(title) + \(combo.symbol)"
-    }
-
     var wire: Aria_Daemon_V1_AriaKey {
         switch self {
         case .rightOption: return .rightOption
@@ -35,8 +31,6 @@ enum AriaKey: CaseIterable {
     }
 }
 
-/// Read off the shared snapshot here: only the Mac knows the key type, so
-/// this stays out of the shared settings code.
 extension Aria_Daemon_V1_Settings {
     /// Nil when unset or when the key is one this build does not know.
     var storedAriaKey: AriaKey? {

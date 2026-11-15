@@ -7,6 +7,7 @@
 
 mod clip;
 mod recording;
+mod source;
 mod stop;
 
 #[cfg(not(target_family = "wasm"))]
@@ -30,6 +31,7 @@ pub use recording::SpooledRecordingWriter;
 pub use recording::{CaptureError, RecordedAudio, Recording, RecordingReader, RecordingWriter};
 #[cfg(not(target_family = "wasm"))]
 pub use resample::{ResampleError, Resampler};
+pub use source::{InputDeviceId, RecordingSource};
 pub use stop::{StopSignal, Stopper};
 
 #[cfg(not(target_family = "wasm"))]
@@ -39,8 +41,8 @@ pub use capture::{
 };
 #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
 pub use capture::{
-    InputDevice, InputDeviceId, Microphone, MicrophoneBuilder, PreparedMicrophone, PushedCapture,
-    WakeWordControl, WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
+    InputDevice, Microphone, MicrophoneBuilder, PreparedMicrophone, PushedCapture, WakeWordControl,
+    WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
     check_default_input_device, input_devices, is_connected, resolve_input,
 };
 #[cfg(not(target_family = "wasm"))]

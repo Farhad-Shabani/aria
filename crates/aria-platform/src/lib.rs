@@ -5,6 +5,7 @@ pub mod delivery;
 pub mod feedback;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod hotkey;
+pub mod microphone;
 pub mod runtime;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;

@@ -43,6 +43,8 @@ enum PillState: Equatable {
         // A segment or a voice arrives while the speaker is still talking,
         // so it says nothing about the press.
         case .segmentTranscribed, .segmentDelivered, .segmentQueued, .speakerChanged: return nil
+        // Names the microphone of a press already recording.
+        case .capturing: return nil
         // Follows the terminal stage, whose pill it keeps.
         case .returnDropped: return nil
         case .unspecified, .UNRECOGNIZED: return nil

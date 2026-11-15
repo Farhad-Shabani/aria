@@ -35,6 +35,12 @@ enum ShortcutCombo: Equatable {
     }
 }
 
+extension AriaKey {
+    func gesture(for combo: ShortcutCombo) -> String {
+        "\(title) + \(combo.symbol)"
+    }
+}
+
 extension Aria_Daemon_V1_Shortcut {
     init(_ binding: ShortcutBinding?) {
         self.init()

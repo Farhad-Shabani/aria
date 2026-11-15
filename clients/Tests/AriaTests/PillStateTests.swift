@@ -168,6 +168,27 @@ final class PillStateTests: XCTestCase {
         XCTAssertNil(PillState(event))
     }
 
+    func testOnlyAnIPhoneMarksTheRecording() {
+        var event = Aria_Daemon_V1_DictationEvent()
+        event.stage = .capturing
+
+        event.phone = Aria_Daemon_V1_AttachedPhone()
+        XCTAssertTrue(Pill.capturesFromIPhone(event))
+        event.device = .with { $0.onIphone = true }
+        XCTAssertTrue(Pill.capturesFromIPhone(event))
+        event.device = .with { $0.onIphone = false }
+        XCTAssertFalse(Pill.capturesFromIPhone(event))
+        event.microphone = nil
+        XCTAssertFalse(Pill.capturesFromIPhone(event))
+    }
+
+    func testCapturingDoesNotChangeThePill() {
+        var event = Aria_Daemon_V1_DictationEvent()
+        event.stage = .capturing
+        event.phone = Aria_Daemon_V1_AttachedPhone()
+        XCTAssertNil(PillState(event))
+    }
+
     func testQueuedWordsWaitForTheStartAppUntilTyped() {
         let recording = PillState.recording(since: epoch)
 

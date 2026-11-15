@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::level::MicLevel;
 use crate::speaker::SpeakerName;
+use aria_kit::audio::InputDeviceId;
 use aria_platform::delivery::Placement;
 use aria_settings::DeliveryMode;
 use aria_settings::event::EventEmitter;
@@ -23,6 +24,12 @@ pub enum DictationStage {
         id: RecordingId,
         delivery: DeliveryMode,
         route: TranscriptRoute,
+    },
+    /// Capture is live, from `microphone`. Follows `Recording` once capture
+    /// starts.
+    Capturing {
+        id: RecordingId,
+        microphone: CapturedMicrophone,
     },
     Transcribing,
     Delivering,
@@ -52,6 +59,18 @@ pub enum DictationStage {
     /// pressed: Aria could not confirm the field. Comes after the terminal
     /// stage.
     ReturnDropped,
+}
+
+/// What a live recording captures from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapturedMicrophone {
+    /// An input device, and whether it is an iPhone's microphone the Mac
+    /// uses through Continuity.
+    Device { id: InputDeviceId, on_iphone: bool },
+    /// Audio pushed in as it arrives.
+    Pushed,
+    /// Audio recorded earlier, such as a replay.
+    Prerecorded,
 }
 
 /// What a press does with the current speaker's words.
@@ -88,6 +107,7 @@ impl DictationStage {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Recording { .. } => "recording",
+            Self::Capturing { .. } => "capturing",
             Self::Transcribing => "transcribing",
             Self::Delivering => "delivering",
             Self::Delivered { .. } => "delivered",

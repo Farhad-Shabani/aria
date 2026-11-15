@@ -13,6 +13,7 @@ use std::time::Instant;
 
 #[cfg(not(target_family = "wasm"))]
 use super::MAX_RECORDING_DURATION;
+use super::RecordingSource;
 use super::canonical_duration;
 #[cfg(not(target_family = "wasm"))]
 use super::spool::WavSpool;
@@ -143,6 +144,8 @@ pub struct Recording {
 struct State {
     /// Capture is live: audio is flowing, whether or not any is kept yet.
     capturing: bool,
+    /// What capture records from, once it's live.
+    source: Option<RecordingSource>,
     /// One queue per live reader. Capture writes into every one of them, so a
     /// reader falling behind holds its own memory and nobody else's.
     queues: Vec<Queue>,
@@ -197,10 +200,18 @@ fn spool_room(samples: usize) -> Duration {
 }
 
 impl Recording {
-    /// A new recording's two ends. Capture is live at once.
+    /// A new recording's two ends, for samples pushed in as they arrive.
+    /// Capture is live at once.
     pub fn open() -> (RecordingReader, RecordingWriter) {
         let (reader, writer) = ends();
-        writer.begin();
+        writer.begin(RecordingSource::Pushed);
+        (reader, writer)
+    }
+
+    /// A new recording's two ends, for audio recorded before.
+    pub(super) fn prerecorded() -> (RecordingReader, RecordingWriter) {
+        let (reader, writer) = ends();
+        writer.begin(RecordingSource::Prerecorded);
         (reader, writer)
     }
 
@@ -265,8 +276,8 @@ impl RecordingWriter {
     /// Capture is live from here on. The first sample can come later — a
     /// microphone holds back leading silence — so this mark is when the
     /// recording started.
-    pub(super) fn begin(&self) {
-        self.recording.begin();
+    pub(super) fn begin(&self, source: RecordingSource) {
+        self.recording.begin(source);
     }
 
     pub(super) fn close(&self, outcome: Result<RecordedAudio, CaptureError>) {
@@ -288,9 +299,10 @@ impl Recording {
         }
     }
 
-    fn begin(&self) {
+    fn begin(&self, source: RecordingSource) {
         let mut state = self.lock();
         state.capturing = true;
+        state.source = Some(source);
         drop(state);
         self.changed.notify_all();
     }
@@ -410,7 +422,7 @@ impl RecordingReader {
     /// A finished recording of canonical 16 kHz mono `samples`, held in
     /// memory.
     pub fn from_samples(samples: &[f32]) -> Self {
-        let (reader, mut writer) = Recording::open();
+        let (reader, mut writer) = Recording::prerecorded();
         writer.push(samples);
         writer.finish();
         reader
@@ -434,11 +446,16 @@ impl RecordingReader {
         spool_dir: &std::path::Path,
         samples: &[i16],
     ) -> Result<Self, CaptureError> {
-        let (recording, writer) = ends();
+        let (recording, writer) = Recording::prerecorded();
         let mut spool = WavSpool::create(spool_dir, spool_room(samples.len()), &writer)?;
         spool.write_samples(samples)?;
         writer.close(spool.finish().map_err(CaptureError::from));
         Ok(recording)
+    }
+
+    /// What capture records from. `None` until capture is live.
+    pub fn source(&self) -> Option<RecordingSource> {
+        self.recording.lock().source.clone()
     }
 
     /// Waits until capture is live or the recording has ended, and reports
@@ -1164,7 +1181,7 @@ mod tests {
     #[test]
     fn a_silent_capture_still_counts_as_started() {
         let (mut recording, writer) = ends();
-        writer.begin();
+        writer.begin(RecordingSource::Pushed);
 
         recording
             .wait_for_capture()

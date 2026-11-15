@@ -24,12 +24,13 @@ use crate::primitives::thread::raise_scheduling_class;
 use crate::voice_activity::VoiceActivityDetector;
 use crate::wake_word::WakeWordDetector;
 
-use super::devices::{self, Follow, InputDeviceId};
+use super::devices::{self, Follow};
 use super::stream::{DRAIN_BUFFER_SAMPLES, LiveStream};
 use super::transfer::capture;
 use super::wake_word::{WakeMonitor, WakeWordEvent};
 use super::{MicrophoneError, Result};
 use crate::audio::capture::modes::CaptureRecording;
+use crate::audio::{InputDeviceId, RecordingSource};
 
 /// The sample ring holds 5 s; draining every 100ms keeps it far from full.
 const IDLE_DRAIN_INTERVAL: Duration = Duration::from_millis(100);
@@ -202,7 +203,7 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
         self.follow_input();
         let recording = CaptureRecording::new(spool, mode, &mut self.vad);
         let live = ensure_live(&mut self.live, self.input.as_ref())?;
-        writer.begin();
+        writer.begin(RecordingSource::Device(live.device().clone()));
         capture(
             live,
             recording,

@@ -5,6 +5,7 @@ struct Pill: Equatable {
     let prompt: String?
     let voice: VoiceEmphasis?
     let glows: Bool
+    let isFromIPhone: Bool
 
     var label: String? { state.label(prompt: prompt) }
 }
@@ -19,6 +20,16 @@ extension Pill {
         case .ticket: return true
         case .recording: return run == chat
         case nil: return false
+        }
+    }
+
+    /// Whether a recording captures from an iPhone, by its CAPTURING event:
+    /// the attached phone, or an iPhone's microphone through Continuity.
+    static func capturesFromIPhone(_ event: Aria_Daemon_V1_DictationEvent) -> Bool {
+        switch event.microphone {
+        case .phone: true
+        case .device(let device): device.onIphone
+        case nil: false
         }
     }
 }
@@ -56,7 +67,7 @@ struct StatusPillView: View {
         let state = pill.state
         let label = pill.label
         HStack(spacing: 7) {
-            Mark(state: state, level: level, voice: pill.voice)
+            Mark(state: state, level: level, voice: pill.voice, isFromIPhone: pill.isFromIPhone)
             if label != nil || state.since != nil {
                 HStack(spacing: 4) {
                     if let label {
@@ -157,6 +168,7 @@ private struct Mark: View {
     let state: PillState
     let level: LiveLevel
     let voice: VoiceEmphasis?
+    let isFromIPhone: Bool
 
     var body: some View {
         switch state {
@@ -166,6 +178,10 @@ private struct Mark: View {
             HStack(spacing: 6) {
                 if case .recording(_, let startApp?) = state, let app = startApp.app {
                     StartAppIcon(app: app)
+                }
+                if case .recording = state, isFromIPhone {
+                    Glyph(name: "iphone", tint: OverlayStyle.dimInk)
+                        .accessibilityLabel("iPhone")
                 }
                 Ribbon(state: state, level: level, voice: voice)
             }

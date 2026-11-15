@@ -15,7 +15,7 @@ use crate::audio::spool::{WavSpool, maximum_samples};
 use crate::audio::wav::{
     WavFileReader, check_declared_length, collect_samples, open_canonical_wav,
 };
-use crate::audio::{RecordedAudio, RecordingReader, canonical_samples};
+use crate::audio::{RecordedAudio, RecordingReader, RecordingSource, canonical_samples};
 use crate::primitives::file_inspection::{InspectedFile, InspectionError};
 
 use super::RecordingMode;
@@ -83,7 +83,7 @@ impl AudioCapture for WavReplayCapture {
                 let (recording, writer) = recording::ends();
                 let spool = WavSpool::create(&self.spool_dir, self.maximum_duration, &writer)?;
                 let samples = Arc::clone(&self.samples);
-                writer.begin();
+                writer.begin(RecordingSource::Prerecorded);
                 thread::Builder::new()
                     .name("aria-wav-replay".to_owned())
                     .spawn(move || {
@@ -198,6 +198,7 @@ mod tests {
                 StopSignal::never(),
             )
             .expect("replay must succeed");
+        assert_eq!(recording.source(), Some(RecordingSource::Prerecorded));
         let audio = recording
             .finished_audio()
             .expect("the replay already ended");
