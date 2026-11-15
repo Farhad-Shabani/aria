@@ -40,6 +40,9 @@ message StartDictationRequest {
     string project_directory = 5;
     ProjectVocabularyDisabled project_vocabulary_disabled = 6;
   }
+  // A bare Escape, pressed in any app, cancels this dictation. The app
+  // doesn't receive that Escape.
+  bool escape_cancels = 12;
 }
 
 message ProjectVocabularyDisabled {}

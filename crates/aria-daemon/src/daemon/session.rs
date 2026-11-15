@@ -824,6 +824,7 @@ mod tests {
                 ),
                 application: None,
                 tap_cancels: false,
+                escape_cancels: false,
                 output_mode: None,
             })
             .err()

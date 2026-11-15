@@ -6,6 +6,7 @@ use super::super::config::{load_chat, load_memory};
 use super::super::context::Context;
 use super::super::history::HistoryStore;
 use super::super::subscriptions::Subscriptions;
+use super::control::JobControl;
 use super::error::{ChatError, ResolveError};
 use aria_assistant::chat::ChatConfig;
 use aria_assistant::chat::{
@@ -66,6 +67,15 @@ impl ChatJob {
         match self {
             Self::Ask(job) => job.tap_cancels,
             Self::Prompt(request) => request.tap_cancels,
+        }
+    }
+
+    /// Only a prompt run: an ask's reply shows in the palette, which keeps
+    /// Escape for itself.
+    pub(in crate::daemon) fn escape_cancels(&self) -> bool {
+        match self {
+            Self::Ask(_) => false,
+            Self::Prompt(request) => request.escape_cancels,
         }
     }
 }
@@ -379,15 +389,10 @@ impl ChatRuntime {
 
     /// Runs one job to its end. Everything a caller learns arrives as an
     /// event under `ticket`.
-    pub(in crate::daemon) fn execute(
-        &self,
-        ticket: Ticket,
-        job: ChatJob,
-        cancellation: CancelToken,
-    ) {
+    pub(in crate::daemon) fn execute(&self, ticket: Ticket, job: ChatJob, control: &JobControl) {
         #[cfg(test)]
         if let Some(overrides) = &self.assistant_overrides {
-            (overrides.execute)(self, ticket, job, cancellation);
+            (overrides.execute)(self, ticket, job, control);
             return;
         }
         match job.assistant_id() {
@@ -395,16 +400,16 @@ impl ChatRuntime {
                 |_| ClaudeCodeAssistant::new(CLAUDE_BINARY.into()),
                 ticket,
                 job,
-                cancellation,
+                control,
             ),
             AssistantId::Codex => self.execute_with(
                 |_| CodexAssistant::new(CODEX_BINARY.into(), self.codex_home.clone()),
                 ticket,
                 job,
-                cancellation,
+                control,
             ),
             AssistantId::LocalModel => {
-                self.execute_with(|history| self.local(history), ticket, job, cancellation);
+                self.execute_with(|history| self.local(history), ticket, job, control);
             }
         }
     }
@@ -415,10 +420,10 @@ impl ChatRuntime {
         assistant: impl FnOnce(Option<&'a HistoryStore>) -> A,
         ticket: Ticket,
         job: ChatJob,
-        cancellation: CancelToken,
+        control: &JobControl,
     ) {
         let assistant_id = job.assistant_id();
-        if cancellation.is_cancelled() {
+        if control.cancellation().is_cancelled() {
             self.cancel_unstarted(ticket, assistant_id);
             return;
         }
@@ -437,12 +442,10 @@ impl ChatRuntime {
         let mut steps = StepRelay::new(&self.emitter, ticket, assistant_id);
         steps.step(Step::Thinking);
         let outcome = match job {
-            ChatJob::Ask(job) => self.resolve(job).and_then(|request| {
-                self.ask(&assistant, &mut steps, request, history, &cancellation)
-            }),
-            ChatJob::Prompt(request) => {
-                self.run_prompt(&assistant, request, history, &cancellation)
-            }
+            ChatJob::Ask(job) => self
+                .resolve(job)
+                .and_then(|request| self.ask(&assistant, &mut steps, request, history, control)),
+            ChatJob::Prompt(request) => self.run_prompt(&assistant, request, history, control),
         };
         self.report(ticket, assistant_id, outcome);
     }
@@ -552,6 +555,7 @@ impl ChatRuntime {
             model_id: snapshot.settings.model_id(assistant_id).map(str::to_owned),
             application: call.application,
             tap_cancels: call.tap_cancels,
+            escape_cancels: call.escape_cancels,
             output_mode: call.output_mode,
         })
     }
@@ -669,8 +673,9 @@ impl ChatRuntime {
         steps: &mut StepRelay<'_>,
         request: ChatRequest,
         history: Option<&HistoryStore>,
-        cancel: &CancelToken,
+        control: &JobControl,
     ) -> Result<ChatStageKind, ChatError> {
+        let cancel = control.cancellation();
         let config = self.chat_config();
         let started = (SystemTime::now(), Instant::now());
         if !request.workdir.is_dir() {
@@ -722,7 +727,7 @@ impl ChatRuntime {
 
         let delivered = match (refused, delivery) {
             (Some(code), _) => Some(Err(code)),
-            (None, Some(delivery)) => Some(delivery.deliver(&text, &self.typing, cancel)),
+            (None, Some(delivery)) => Some(delivery.deliver(&text, &self.typing, control)),
             (None, None) => None,
         };
         // Saved before the reply goes out, so whoever hears it finds it saved.
@@ -755,8 +760,9 @@ impl ChatRuntime {
         assistant: &A,
         request: PromptRequest,
         history: Option<&HistoryStore>,
-        cancel: &CancelToken,
+        control: &JobControl,
     ) -> Result<ChatStageKind, ChatError> {
+        let cancel = control.cancellation();
         let config = self.chat_config();
         let started = (SystemTime::now(), Instant::now());
         // Prepared before the run, so a front app that refuses typing fails
@@ -777,7 +783,7 @@ impl ChatRuntime {
         if cancel.is_cancelled() {
             return Err(ChatError::Assistant(AssistantError::Cancelled));
         }
-        let delivered = delivery.map(|delivery| delivery.deliver(&text, &self.typing, cancel));
+        let delivered = delivery.map(|delivery| delivery.deliver(&text, &self.typing, control));
         // Saved before the reply goes out, so whoever shows it finds it saved.
         if let (Some(history), Some(entry)) = (history, request.entry)
             && !text.trim().is_empty()
@@ -791,7 +797,7 @@ impl ChatRuntime {
     pub(in crate::daemon) fn deliver(
         &self,
         call: &DeliverCall,
-        cancel: &CancelToken,
+        control: &JobControl,
     ) -> Result<DeliveryOutcome, ChatError> {
         #[cfg(test)]
         if let Some(deliver) = self
@@ -799,8 +805,9 @@ impl ChatRuntime {
             .as_ref()
             .and_then(|overrides| overrides.deliver.as_ref())
         {
-            return deliver(call, cancel);
+            return deliver(call, control);
         }
+        let cancel = control.cancellation();
         if cancel.is_cancelled() {
             return Err(ChatError::Delivery(DeliveryError::Cancelled));
         }
@@ -812,7 +819,7 @@ impl ChatRuntime {
             &self.delivery,
             cancel,
         )?
-        .send(&call.text, &self.typing, cancel)
+        .send(&call.text, &self.typing, control)
         .map_err(ChatError::Delivery)
     }
 
@@ -1102,9 +1109,9 @@ impl Delivery {
         self,
         text: &str,
         typing: &TypingTurns,
-        cancel: &CancelToken,
+        control: &JobControl,
     ) -> Result<DeliveryOutcome, RpcErrorCode> {
-        self.send(text, typing, cancel).map_err(|failed| {
+        self.send(text, typing, control).map_err(|failed| {
             tracing::warn!(error = %error_chain(&failed), "the reply was not delivered");
             RpcErrorCode::from(&ChatError::Delivery(failed))
         })
@@ -1114,9 +1121,13 @@ impl Delivery {
         self,
         text: &str,
         typing: &TypingTurns,
-        cancel: &CancelToken,
+        control: &JobControl,
     ) -> Result<DeliveryOutcome, DeliveryError> {
+        let cancel = control.cancellation();
         let _turn = typing.take(cancel)?;
+        if !control.start_typing() {
+            return Err(DeliveryError::Cancelled);
+        }
         let text = self.platform.caret(&self.target).insert(text);
         self.policy
             .confirm_front(&self.platform)
@@ -1247,13 +1258,13 @@ pub(super) mod tests {
 
     use super::*;
 
-    type ExecuteAssistant = dyn Fn(&ChatRuntime, Ticket, ChatJob, CancelToken) + Send + Sync;
+    type ExecuteAssistant = dyn Fn(&ChatRuntime, Ticket, ChatJob, &JobControl) + Send + Sync;
     type DiscoverModels = dyn Fn(AssistantId, &CancelToken) -> Result<Vec<AssistantModel>, AssistantError>
         + Send
         + Sync;
     type CheckReady = dyn Fn(AssistantId, &CancelToken) -> AssistantStatus + Send + Sync;
     type DeliverText =
-        dyn Fn(&DeliverCall, &CancelToken) -> Result<DeliveryOutcome, ChatError> + Send + Sync;
+        dyn Fn(&DeliverCall, &JobControl) -> Result<DeliveryOutcome, ChatError> + Send + Sync;
 
     pub(in crate::daemon) struct AssistantOverrides {
         pub(super) execute: Box<ExecuteAssistant>,
@@ -1501,6 +1512,7 @@ pub(super) mod tests {
             model_id: None,
             application: None,
             tap_cancels: false,
+            escape_cancels: false,
             output_mode: Some(OutputMode::InsertOrCopy),
         }
     }
@@ -1605,6 +1617,7 @@ pub(super) mod tests {
             prompt: PromptChoice::Stored(PromptId::new("polish").unwrap()),
             application: None,
             tap_cancels: false,
+            escape_cancels: false,
             output_mode: None,
         };
         assert_eq!(
@@ -1672,6 +1685,7 @@ pub(super) mod tests {
             prompt: PromptChoice::Stored(PromptId::new(id).expect("id")),
             application: None,
             tap_cancels: false,
+            escape_cancels: false,
             output_mode: None,
         };
         let request = runtime
@@ -1709,7 +1723,7 @@ pub(super) mod tests {
                 &FakeAssistant(Arc::clone(&log)),
                 request,
                 runtime.enabled_history().expect("settings"),
-                &CancelToken::never(),
+                &JobControl::never(),
             )
             .expect_err("the app the chord was pressed in is not in front");
 
@@ -1761,7 +1775,7 @@ pub(super) mod tests {
                     application: Some(ApplicationId::new("com.example.left-behind").expect("id")),
                     output_mode: OutputMode::InsertOrCopy,
                 },
-                &CancelToken::never(),
+                &JobControl::never(),
             )
             .expect_err("the named app is not in front");
 
@@ -1788,7 +1802,7 @@ pub(super) mod tests {
                 &FakeAssistant(Arc::clone(&log)),
                 request,
                 runtime.enabled_history().expect("settings"),
-                &CancelToken::never(),
+                &JobControl::never(),
             )
             .expect("a run that types nothing needs no app in front");
 
@@ -2380,6 +2394,7 @@ pub(super) mod tests {
             prompt: PromptChoice::Stored(PromptId::new("polish").expect("id")),
             application: None,
             tap_cancels: false,
+            escape_cancels: false,
             output_mode: None,
         })
     }
@@ -2395,7 +2410,7 @@ pub(super) mod tests {
             assistant,
             request,
             runtime.enabled_history().expect("settings"),
-            &CancelToken::never(),
+            &JobControl::never(),
         )
     }
 
@@ -2417,7 +2432,7 @@ pub(super) mod tests {
                 &FakeAssistant(Arc::clone(&log)),
                 request,
                 runtime.enabled_history().expect("settings"),
-                &CancelToken::never(),
+                &JobControl::never(),
             )
             .expect("the run replies");
 
@@ -2449,6 +2464,7 @@ pub(super) mod tests {
                 ),
                 application: None,
                 tap_cancels: false,
+                escape_cancels: false,
                 output_mode: None,
             })
             .expect("the run is admitted");
@@ -2461,7 +2477,7 @@ pub(super) mod tests {
                 &FakeAssistant(Arc::clone(&log)),
                 request,
                 runtime.enabled_history().expect("settings"),
-                &CancelToken::never(),
+                &JobControl::never(),
             )
             .expect("the run replies");
 
@@ -3184,7 +3200,7 @@ pub(super) mod tests {
     ) -> ChatStageKind {
         let job = job.into();
         let assistant_id = job.assistant_id;
-        runtime.execute(Ticket(ticket), ChatJob::Ask(job), CancelToken::never());
+        runtime.execute(Ticket(ticket), ChatJob::Ask(job), &JobControl::never());
         let mut steps = Vec::new();
         loop {
             let stage = events.recv().expect("a stage arrives");
@@ -3505,13 +3521,13 @@ pub(super) mod tests {
         let work = directory.path();
         let log = Arc::new(Mutex::new(Log::default()));
         let (runtime, events) = runtime_with(work, logging_assistants(&log));
-        let cancel = CancelToken::new();
-        cancel.cancel();
+        let control = JobControl::never();
+        control.cancel();
 
         runtime.execute(
             Ticket(1),
             ChatJob::Ask(request("hi", work, false).into()),
-            cancel,
+            &control,
         );
 
         let ended = events.recv().expect("the end arrives");
@@ -3773,13 +3789,15 @@ pub(super) mod tests {
         ) -> Self {
             let overrides = self.assistant_overrides.as_mut().expect("a test runtime");
             let (deliver_started, deliver_release) = (started.clone(), Arc::clone(&release));
-            overrides.execute = Box::new(move |_runtime, ticket, _job, cancel| {
+            overrides.execute = Box::new(move |runtime, ticket, job, control| {
                 let _ = started.send(ticket.0);
-                park(&release, &cancel);
+                if !park(&release, control.cancellation()) {
+                    runtime.cancel_unstarted(ticket, job.assistant_id());
+                }
             });
-            overrides.deliver = Some(Box::new(move |_call, cancel| {
+            overrides.deliver = Some(Box::new(move |_call, control| {
                 let _ = deliver_started.send(DELIVERY);
-                if park(&deliver_release, cancel) {
+                if park(&deliver_release, control.cancellation()) {
                     Ok(DeliveryOutcome::Inserted)
                 } else {
                     let _ = deliver_started.send(DELIVERY_CANCELLED);

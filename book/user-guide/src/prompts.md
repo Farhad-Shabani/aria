@@ -72,8 +72,8 @@ it. Aria keeps up to 16 prompts.
 3. Tap the Aria key (right Option, or Fn if you chose it) to stop. Aria
    transcribes your speech, runs the prompt, and types the result.
 
-To cancel while Aria works, tap the Aria key again. Pressing the shortcut
-again does nothing until the run ends.
+To cancel while Aria works, tap the Aria key again or press **Esc**. Pressing
+the shortcut again does nothing until the run ends.
 
 Aria types only into the app you were in when you started. Nothing is typed
 in these cases:

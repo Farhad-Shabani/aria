@@ -28,8 +28,8 @@ use aria_settings::{
 };
 use aria_voice::dictation::{
     CaptionSnapshot, CapturedMicrophone, DeliveryOutcome, DictationEvent, DictationOutcome,
-    DictationRequest, DictationResult, DictationRoute, DictationStage, GhostSnapshot, HeardSpeaker,
-    MicLevel, RecordingId, StopMode, TranscriptRoute,
+    DictationRequest, DictationResult, DictationRoute, DictationStage, EscapeRule, GhostSnapshot,
+    HeardSpeaker, MicLevel, RecordingId, StopMode, TranscriptRoute,
 };
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
@@ -857,6 +857,7 @@ impl From<PromptCall> for wire::RunPromptRequest {
                 .map(|application| application.as_str().to_owned())
                 .unwrap_or_default(),
             tap_cancels: call.tap_cancels,
+            escape_cancels: call.escape_cancels,
             output_mode: call
                 .output_mode
                 .map(|mode| wire::OutputMode::from(mode) as i32),
@@ -905,6 +906,7 @@ impl TryFrom<wire::RunPromptRequest> for PromptCall {
             prompt,
             application,
             tap_cancels: request.tap_cancels,
+            escape_cancels: request.escape_cancels,
             output_mode,
         })
     }
@@ -1632,6 +1634,18 @@ impl From<DictationRequest> for wire::StartDictationRequest {
             stop_mode: wire::StopMode::from(request.stop_mode) as i32,
             route: Some(route),
             project: project_to_wire(request.project),
+            // A client's dictation keeps Escape: the terminal stops on it.
+            escape_cancels: false,
+        }
+    }
+}
+
+impl From<&wire::StartDictationRequest> for EscapeRule {
+    fn from(request: &wire::StartDictationRequest) -> Self {
+        if request.escape_cancels {
+            Self::Cancels
+        } else {
+            Self::Passes
         }
     }
 }
@@ -4514,6 +4528,17 @@ mod tests {
     }
 
     #[test]
+    fn only_a_request_that_asks_for_it_is_cancelled_by_escape() {
+        let request = |escape_cancels| wire::StartDictationRequest {
+            escape_cancels,
+            ..wire::StartDictationRequest::from(DictationRequest::new(StopMode::Manual))
+        };
+
+        assert_eq!(EscapeRule::from(&request(true)), EscapeRule::Cancels);
+        assert_eq!(EscapeRule::from(&request(false)), EscapeRule::Passes);
+    }
+
+    #[test]
     fn a_request_without_a_route_is_refused() {
         let request = wire::StartDictationRequest {
             stop_mode: wire::StopMode::Manual as i32,
@@ -4746,6 +4771,7 @@ mod tests {
             route: Some(wire::start_dictation_request::Route::Deliver(
                 wire::DeliverRoute::default(),
             )),
+            ..Default::default()
         };
         assert_eq!(
             DictationRequest::try_from(disabled).unwrap().project,
@@ -4760,6 +4786,7 @@ mod tests {
                 route: Some(wire::start_dictation_request::Route::Deliver(
                     wire::DeliverRoute::default(),
                 )),
+                ..Default::default()
             };
             assert!(DictationRequest::try_from(request).is_err());
         }
@@ -5220,6 +5247,7 @@ mod tests {
                 prompt: Some(wire::run_prompt_request::Prompt::PromptId(id.to_owned())),
                 application_id: app.to_owned(),
                 tap_cancels: false,
+                escape_cancels: false,
                 output_mode: Some(wire::OutputMode::InsertOrCopy as i32),
             })
         };
@@ -5301,6 +5329,7 @@ mod tests {
                 prompt: PromptChoice::Stored(PromptId::new("summary").unwrap()),
                 application: None,
                 tap_cancels: false,
+                escape_cancels: false,
                 output_mode: None,
             },
             PromptCall {
@@ -5310,6 +5339,7 @@ mod tests {
                 ),
                 application: Some(ApplicationId::new("com.apple.mail".to_owned()).unwrap()),
                 tap_cancels: true,
+                escape_cancels: true,
                 output_mode: Some(OutputMode::Copy),
             },
         ] {

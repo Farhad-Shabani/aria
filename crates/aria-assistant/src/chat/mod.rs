@@ -258,6 +258,8 @@ pub struct PromptCall {
     pub application: Option<aria_settings::ApplicationId>,
     /// A tap of the Aria key cancels this run while it is in flight.
     pub tap_cancels: bool,
+    /// A bare Escape cancels this run while it is in flight.
+    pub escape_cancels: bool,
     /// How to type the result. `None` types nothing: the result arrives only
     /// in the reply.
     pub output_mode: Option<OutputMode>,
@@ -289,6 +291,7 @@ pub struct PromptRequest {
     pub model_id: Option<String>,
     pub application: Option<aria_settings::ApplicationId>,
     pub tap_cancels: bool,
+    pub escape_cancels: bool,
     pub output_mode: Option<OutputMode>,
 }
 

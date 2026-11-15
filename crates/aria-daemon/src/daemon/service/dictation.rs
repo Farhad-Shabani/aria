@@ -54,8 +54,10 @@ impl wire::dictation_service_server::DictationService for DictationRpc {
                 "no activity guard; an on-demand daemon may idle out"
             );
         }
-        let request = DictationRequest::try_from(request.into_inner())
-            .map_err(|error| invalid_request(METHOD, &error))?;
+        let request = request.into_inner();
+        let escape = EscapeRule::from(&request);
+        let request =
+            DictationRequest::try_from(request).map_err(|error| invalid_request(METHOD, &error))?;
 
         let (stages, receiver) = mpsc::channel(STAGE_CAPACITY);
         let events = self.runtime.emitter_for_call({
@@ -66,12 +68,7 @@ impl wire::dictation_service_server::DictationService for DictationRpc {
         });
         let pending = self
             .dictation
-            .submit(
-                request,
-                AutoStopRule::Setting,
-                EscapeRule::Passes,
-                Some(events),
-            )
+            .submit(request, AutoStopRule::Setting, escape, Some(events))
             .await
             .map_err(|error| super::failed(METHOD, &error))?;
 
@@ -137,8 +134,9 @@ mod tests {
     use crate::ipc::wire;
     use aria_kit::audio::canonical_fixture;
     use aria_settings::rpc::RpcErrorCode;
+    use aria_voice::dictation::EscapeRule;
     use aria_voice::dictation::testing::{
-        EDGE_WAIT, Edge, HEARD, RecordsUntilStopped, recording_started,
+        EDGE_WAIT, Edge, HEARD, PressSpy, RecordsUntilStopped, recording_started,
     };
 
     fn transcript_only(stop_mode: StopMode) -> DictationRequest {
@@ -252,16 +250,8 @@ mod tests {
 
         // A raw gRPC call, because a `DaemonSession` can't be dropped mid-press.
         client.block_on(async {
-            let channel = tonic::transport::Endpoint::from_shared(format!(
-                "unix://{}",
-                daemon.socket_path().display()
-            ))
-            .expect("the endpoint parses")
-            .connect()
-            .await
-            .expect("the daemon accepts");
             let mut dictation =
-                wire::dictation_service_client::DictationServiceClient::new(channel);
+                wire::dictation_service_client::DictationServiceClient::new(daemon.channel().await);
             let request = wire::StartDictationRequest::from(transcript_only(StopMode::Manual));
             let _abandoned = dictation.start(request).await.expect("the press starts");
             recording_started(&edges);
@@ -285,6 +275,38 @@ mod tests {
             );
         });
         drop(session);
+        daemon.stop();
+    }
+
+    #[test]
+    fn a_press_that_asks_for_it_is_cancelled_by_escape() {
+        let spy = PressSpy::default();
+        let daemon = HostedDaemon::scripted(spy.clone());
+        let client = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("the client runtime builds");
+
+        // A raw gRPC call, because a `DaemonSession` never asks for Escape.
+        client.block_on(async {
+            let mut dictation =
+                wire::dictation_service_client::DictationServiceClient::new(daemon.channel().await);
+            for escape_cancels in [true, false] {
+                let request = wire::StartDictationRequest {
+                    escape_cancels,
+                    ..wire::StartDictationRequest::from(transcript_only(StopMode::Manual))
+                };
+                let mut stages = dictation
+                    .start(request)
+                    .await
+                    .expect("the press starts")
+                    .into_inner();
+                while let Ok(Some(_)) = stages.message().await {}
+            }
+        });
+
+        let escapes: Vec<_> = spy.runs().iter().map(|(_, escape)| *escape).collect();
+        assert_eq!(escapes, [EscapeRule::Cancels, EscapeRule::Passes]);
         daemon.stop();
     }
 }

@@ -4,15 +4,15 @@
 /// run's call reports its failure, since a run that never started sends no
 /// event.
 enum PressClient {
-    /// Reads one press to its text. Nil for a stop-accepted and for a
-    /// recording that failed.
+    /// Reads one press to its text. Nil for a stop-accepted, and for a
+    /// recording that failed or that Escape cancelled.
     static func transcribe(
         projectDirectory: String?,
         onRecording: @escaping @MainActor (UInt64) -> Void
     ) async -> DictationClient.Transcript? {
         let outcome = try? await DictationClient.start(
             stop: .manual, projectDirectory: projectDirectory, timeout: DictationClient.pressTimeout,
-            onRecording: onRecording
+            escapeCancels: true, onRecording: onRecording
         )
         switch outcome {
         case .heard(let transcript): return transcript

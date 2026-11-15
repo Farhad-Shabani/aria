@@ -437,6 +437,10 @@ public nonisolated struct Aria_Daemon_V1_StartDictationRequest: Sendable {
     set {project = .projectVocabularyDisabled(newValue)}
   }
 
+  /// A bare Escape, pressed in any app, cancels this dictation. The app
+  /// doesn't receive that Escape.
+  public var escapeCancels: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   /// Where the text goes besides back to the caller. Required.
@@ -854,7 +858,7 @@ nonisolated extension Aria_Daemon_V1_DeliveryMode: SwiftProtobuf._ProtoNameProvi
 
 nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartDictationRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{4}\u{2}stop_mode\0\u{4}\u{3}project_directory\0\u{3}project_vocabulary_disabled\0\u{2}\u{3}deliver\0\u{3}transcript_only\0\u{3}history_only\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{4}\u{2}stop_mode\0\u{4}\u{3}project_directory\0\u{3}project_vocabulary_disabled\0\u{2}\u{3}deliver\0\u{3}transcript_only\0\u{3}history_only\0\u{3}escape_cancels\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -923,6 +927,7 @@ nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Messag
           self.route = .historyOnly(v)
         }
       }()
+      case 12: try { try decoder.decodeSingularBoolField(value: &self.escapeCancels) }()
       default: break
       }
     }
@@ -962,6 +967,9 @@ nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Messag
     }()
     case nil: break
     }
+    if self.escapeCancels != false {
+      try visitor.visitSingularBoolField(value: self.escapeCancels, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -969,6 +977,7 @@ nonisolated extension Aria_Daemon_V1_StartDictationRequest: SwiftProtobuf.Messag
     if lhs.stopMode != rhs.stopMode {return false}
     if lhs.route != rhs.route {return false}
     if lhs.project != rhs.project {return false}
+    if lhs.escapeCancels != rhs.escapeCancels {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

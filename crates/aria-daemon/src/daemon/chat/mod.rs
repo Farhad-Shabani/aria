@@ -2,6 +2,7 @@
 //! schedules it.
 
 mod actor;
+mod control;
 mod error;
 mod runtime;
 

@@ -2,14 +2,14 @@
 
 use super::{
     Cursor, DeliveryMode, DictationError, DictationEventEmitter, DictationExecutor,
-    DictationResult, DictationSettings, ExecutionControl, RecordingId, StopMode, Transcribed,
-    TranscriptSink, Utterance,
+    DictationResult, DictationSettings, EscapeRule, ExecutionControl, RecordingId, StopMode,
+    Transcribed, TranscriptSink, Utterance,
 };
 use crate::history::HistorySource;
 use crate::stt::{
     Hypothesis, Language, RecognitionAudio, Recognizer, Transcript, TranscriptionError,
 };
-use aria_kit::audio::{RecordingReader, SilenceDuration};
+use aria_kit::audio::{AutoStop, RecordingReader, SilenceDuration};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{OperationSource, TimedWord};
 use aria_kit::voice_activity::{VoiceActivityDetector, VoiceActivityError};
@@ -409,6 +409,57 @@ impl DictationExecutor for RecordsUntilStopped {
         _events: &DictationEventEmitter,
     ) -> Result<String, DictationError> {
         Err(DictationError::NoSpeech)
+    }
+}
+
+/// Records the auto-stop and Escape rule each press runs with, then
+/// ends the press with no speech.
+#[derive(Clone, Default)]
+pub struct PressSpy(Arc<Mutex<Vec<PressRun>>>);
+
+/// The auto-stop and Escape rule one press ran with.
+pub type PressRun = (Option<AutoStop>, EscapeRule);
+
+impl PressSpy {
+    pub fn runs(&self) -> Vec<PressRun> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl DictationExecutor for PressSpy {
+    fn execute(
+        &self,
+        settings: DictationSettings,
+        control: &Arc<ExecutionControl>,
+        _events: &DictationEventEmitter,
+    ) -> Result<DictationResult, DictationError> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((settings.auto_stop, control.escape()));
+        Err(DictationError::NoSpeech)
+    }
+
+    fn transcribe(
+        &self,
+        _recording: &mut RecordingReader,
+        _language: &Language,
+        _own_voice_only: bool,
+        _project: Option<&aria_settings::Directory>,
+        _cleanup: super::Cleanup,
+        _cancel: &CancelToken,
+    ) -> Result<Transcribed, DictationError> {
+        panic!("a press never retries history");
+    }
+
+    fn deliver_recording(
+        &self,
+        _recording: &mut RecordingReader,
+        _settings: DictationSettings,
+        _control: &Arc<ExecutionControl>,
+        _events: &DictationEventEmitter,
+    ) -> Result<String, DictationError> {
+        panic!("a press spy never delivers a relayed recording");
     }
 }
 

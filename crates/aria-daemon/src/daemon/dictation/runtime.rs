@@ -695,6 +695,7 @@ mod event_tests {
     use std::time::Duration;
 
     use crate::daemon::subscriptions::EVENT_BUFFER;
+    use aria_voice::dictation::testing::PressSpy;
 
     use super::*;
 
@@ -893,56 +894,14 @@ mod event_tests {
         ));
     }
 
-    /// Records the auto-stop and Escape rule each press runs with, then
-    /// ends the press.
-    type Run = (Option<aria_kit::audio::AutoStop>, EscapeRule);
-    struct PressSpy(Arc<std::sync::Mutex<Vec<Run>>>);
-
-    impl aria_voice::dictation::DictationExecutor for PressSpy {
-        fn execute(
-            &self,
-            settings: DictationSettings,
-            control: &Arc<aria_voice::dictation::ExecutionControl>,
-            _: &DictationEventEmitter,
-        ) -> Result<aria_voice::dictation::DictationResult, DictationError> {
-            self.0
-                .lock()
-                .unwrap()
-                .push((settings.auto_stop, control.escape()));
-            Err(DictationError::NoSpeech)
-        }
-
-        fn transcribe(
-            &self,
-            _: &mut RecordingReader,
-            _: &Language,
-            _: bool,
-            _: Option<&aria_settings::Directory>,
-            _: aria_voice::dictation::Cleanup,
-            _: &CancelToken,
-        ) -> Result<Transcribed, DictationError> {
-            panic!("a press never retries history");
-        }
-
-        fn deliver_recording(
-            &self,
-            _: &mut RecordingReader,
-            _: DictationSettings,
-            _: &Arc<aria_voice::dictation::ExecutionControl>,
-            _: &DictationEventEmitter,
-        ) -> Result<String, DictationError> {
-            panic!("this test never delivers a relayed recording");
-        }
-    }
-
     #[test]
     fn a_hold_runs_without_the_stored_auto_stop() {
         let directory = tempfile::tempdir().unwrap();
         let settings =
             Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
         let mut runtime = DictationRuntime::detached(settings);
-        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-        runtime.execute_with(Box::new(PressSpy(Arc::clone(&seen))));
+        let spy = PressSpy::default();
+        runtime.execute_with(Box::new(spy.clone()));
 
         for rule in [AutoStopRule::Setting, AutoStopRule::Off] {
             let _no_speech = runtime.execute(
@@ -954,12 +913,7 @@ mod event_tests {
             );
         }
 
-        let auto_stops: Vec<_> = seen
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(auto_stop, _)| *auto_stop)
-            .collect();
+        let auto_stops: Vec<_> = spy.runs().iter().map(|(auto_stop, _)| *auto_stop).collect();
         assert_eq!(
             auto_stops,
             [Some(aria_kit::audio::AutoStop::default()), None]
@@ -972,8 +926,8 @@ mod event_tests {
         let settings =
             Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
         let mut runtime = DictationRuntime::detached(settings);
-        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-        runtime.execute_with(Box::new(PressSpy(Arc::clone(&seen))));
+        let spy = PressSpy::default();
+        runtime.execute_with(Box::new(spy.clone()));
 
         for rule in [EscapeRule::Cancels, EscapeRule::Passes] {
             let _no_speech = runtime.execute(
@@ -985,12 +939,7 @@ mod event_tests {
             );
         }
 
-        let escapes: Vec<_> = seen
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(_, escape)| *escape)
-            .collect();
+        let escapes: Vec<_> = spy.runs().iter().map(|(_, escape)| *escape).collect();
         assert_eq!(escapes, [EscapeRule::Cancels, EscapeRule::Passes]);
     }
 }

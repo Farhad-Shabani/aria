@@ -65,8 +65,16 @@ impl HostedDaemon {
         aria_settings::default_path(self.paths.spool_dir())
     }
 
-    pub(in crate::daemon) fn socket_path(&self) -> &Path {
-        self.paths.socket_path()
+    /// A raw gRPC channel, for calls a `DaemonSession` can't make.
+    pub(in crate::daemon) async fn channel(&self) -> tonic::transport::Channel {
+        tonic::transport::Endpoint::from_shared(format!(
+            "unix://{}",
+            self.paths.socket_path().display()
+        ))
+        .expect("the endpoint parses")
+        .connect()
+        .await
+        .expect("the daemon accepts")
     }
 
     pub(in crate::daemon) fn stop(self) {

@@ -577,6 +577,10 @@ public nonisolated struct Aria_Daemon_V1_RunPromptRequest: Sendable {
   /// As on AskRequest: a tap of the Aria key cancels the run.
   public var tapCancels: Bool = false
 
+  /// A bare Escape, pressed in any app, cancels the run. The app doesn't
+  /// receive that Escape.
+  public var escapeCancels: Bool = false
+
   /// As on AskRequest. Absent: nothing is typed, and the result arrives only
   /// as the REPLIED event's text.
   public var outputMode: Aria_Daemon_V1_OutputMode {
@@ -853,7 +857,8 @@ public nonisolated struct Aria_Daemon_V1_CancelAskResponse: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// False when the ticket was unknown or already done.
+  /// False when the ticket was unknown, already done, or already typing its
+  /// reply, which it then types whole.
   public var wasPending: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -1580,7 +1585,7 @@ nonisolated extension Aria_Daemon_V1_ChatKey: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunPromptRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}prompt_id\0\u{3}application_id\0\u{3}tap_cancels\0\u{3}output_mode\0\u{3}history_entry_id\0\u{1}instructions\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}prompt_id\0\u{3}application_id\0\u{3}tap_cancels\0\u{3}output_mode\0\u{3}history_entry_id\0\u{1}instructions\0\u{3}escape_cancels\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1623,6 +1628,7 @@ nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, Sw
           self.prompt = .instructions(v)
         }
       }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.escapeCancels) }()
       default: break
       }
     }
@@ -1654,6 +1660,9 @@ nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, Sw
     try { if case .instructions(let v)? = self.prompt {
       try visitor.visitSingularStringField(value: v, fieldNumber: 7)
     } }()
+    if self.escapeCancels != false {
+      try visitor.visitSingularBoolField(value: self.escapeCancels, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1662,6 +1671,7 @@ nonisolated extension Aria_Daemon_V1_RunPromptRequest: SwiftProtobuf.Message, Sw
     if lhs.prompt != rhs.prompt {return false}
     if lhs.applicationID != rhs.applicationID {return false}
     if lhs.tapCancels != rhs.tapCancels {return false}
+    if lhs.escapeCancels != rhs.escapeCancels {return false}
     if lhs._outputMode != rhs._outputMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
