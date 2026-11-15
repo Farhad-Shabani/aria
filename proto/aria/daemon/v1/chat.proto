@@ -276,7 +276,8 @@ message CancelAskRequest {
 }
 
 message CancelAskResponse {
-  // False when the ticket was unknown or already done.
+  // False when the ticket was unknown, already done, or already typing its
+  // reply, which it then types whole.
   bool was_pending = 1;
 }
 

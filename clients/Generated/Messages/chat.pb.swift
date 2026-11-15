@@ -857,7 +857,8 @@ public nonisolated struct Aria_Daemon_V1_CancelAskResponse: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// False when the ticket was unknown or already done.
+  /// False when the ticket was unknown, already done, or already typing its
+  /// reply, which it then types whole.
   public var wasPending: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

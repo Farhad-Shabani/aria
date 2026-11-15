@@ -23,10 +23,9 @@ use aria_assistant::chat::{DeliverCall, PendingAsk, PromptRequest, SessionKey, T
 use aria_platform::delivery::{DeliveryError, DeliveryOutcome};
 use aria_settings::{ChatKey, ChatName};
 
-use super::super::operation::{
-    CallError, Reply, call, cancellable_call, operation_cancellation, panic_message,
-};
+use super::super::operation::{CallError, Reply, call, cancellable_call, panic_message};
 use super::super::tasks::Supervised;
+use super::control::JobControl;
 use super::error::ChatError;
 use super::runtime::{AskJob, ChatJob, ChatRuntime};
 
@@ -138,33 +137,32 @@ enum Control {
 /// list without a round trip, since every keystroke waits on the tap. A
 /// prompt run never waits in a lane, so each one is running.
 #[derive(Clone, Default)]
-struct EscapableRuns(Arc<Mutex<Vec<(Ticket, CancelToken)>>>);
+struct EscapableRuns(Arc<Mutex<Vec<Escapable>>>);
+
+/// A run Escape may cancel, and its control.
+type Escapable = (Ticket, Arc<JobControl>);
 
 impl EscapableRuns {
     /// Lists the run until the entry drops.
-    fn add(&self, ticket: Ticket, token: CancelToken) -> EscapableEntry {
-        self.lock().push((ticket, token));
+    fn add(&self, ticket: Ticket, control: Arc<JobControl>) -> EscapableEntry {
+        self.lock().push((ticket, control));
         EscapableEntry {
             runs: self.clone(),
             ticket,
         }
     }
 
-    /// Cancels the newest run not cancelled yet. `false` when none is left.
+    /// Cancels the newest run a cancel can still end. `false` when none is
+    /// left.
     fn cancel_newest(&self) -> bool {
-        let runs = self.lock();
-        let newest = runs
+        self.lock()
             .iter()
-            .filter(|(_, token)| !token.is_cancelled())
-            .max_by_key(|(ticket, _)| *ticket);
-        let Some((_, token)) = newest else {
-            return false;
-        };
-        token.cancel();
-        true
+            .filter(|(_, control)| control.is_open())
+            .max_by_key(|(ticket, _)| *ticket)
+            .is_some_and(|(_, control)| control.cancel())
     }
 
-    fn lock(&self) -> MutexGuard<'_, Vec<(Ticket, CancelToken)>> {
+    fn lock(&self) -> MutexGuard<'_, Vec<Escapable>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -272,7 +270,8 @@ impl ChatHandle {
         pending.wait().await
     }
 
-    /// Ends the job, running or waiting. `false` when it was neither.
+    /// Ends the job, running or waiting. `false` when it was neither, or
+    /// already typing.
     pub(in crate::daemon) async fn cancel(&self, ticket: Ticket) -> Result<bool, ChatCallError> {
         Ok(self.send_cancel(Cancel::Ticket(ticket)).await? > 0)
     }
@@ -289,7 +288,8 @@ impl ChatHandle {
     }
 
     /// Ends the chat's running ask and every ask waiting behind it.
-    /// Answers how many it ended. An ask already told to stop isn't counted.
+    /// Answers how many it ended. An ask already told to stop, or already
+    /// typing its reply, isn't counted.
     pub(in crate::daemon) async fn cancel_chat(
         &self,
         chat: &ChatKey,
@@ -377,12 +377,12 @@ impl Lane {
     }
 }
 
-/// The one job running in a lane, and what a cancel pulls to end it.
+/// The one job running in a lane, and how a cancel ends it.
 struct Running {
     ticket: Ticket,
     kind: Kind,
     tap_cancels: bool,
-    token: CancelToken,
+    control: Arc<JobControl>,
 }
 
 /// What a running job is, which decides what a chat's cancel or
@@ -481,13 +481,14 @@ impl ChatActor {
     }
 
     fn start(&mut self, key: Lane, ticket: Ticket, job: Job, shutdown: &CancellationToken) {
-        let token = match &job {
-            Job::Run(_) | Job::Delete(_) | Job::Rename(_) => CancelToken::new(),
+        let caller = match &job {
+            Job::Run(_) | Job::Delete(_) | Job::Rename(_) => CancelToken::never(),
             Job::Deliver(deliver) => deliver.cancellation.clone(),
         };
+        let control = Arc::new(JobControl::new(caller, shutdown.clone()));
         let escapable = job
             .escape_cancels()
-            .then(|| self.escapable.add(ticket, token.clone()));
+            .then(|| self.escapable.add(ticket, Arc::clone(&control)));
         let second = job.second_lane(&key);
         for lane in std::iter::once(&key).chain(&second) {
             self.running.insert(
@@ -496,26 +497,25 @@ impl ChatActor {
                     ticket,
                     kind: Kind::of(&job),
                     tap_cancels: job.tap_cancels(),
-                    token: token.clone(),
+                    control: Arc::clone(&control),
                 },
             );
         }
         let runtime = Arc::clone(&self.runtime);
-        let cancellation = operation_cancellation(token, shutdown.clone());
         self.jobs.spawn_blocking(move || {
             // Dropped however the job ends: done, panicked, or never run.
             let _escapable = escapable;
             match job {
                 Job::Run(job) => {
                     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        runtime.execute(ticket, job, cancellation);
+                        runtime.execute(ticket, job, &control);
                     }));
                     if let Err(panic) = outcome {
                         tracing::error!(%ticket, panic = panic_message(panic.as_ref()), "a chat job panicked");
                     }
                 }
                 Job::Deliver(DeliverJob { call, reply, .. }) => {
-                    reply.run("chat delivery", || runtime.deliver(&call, &cancellation));
+                    reply.run("chat delivery", || runtime.deliver(&call, &control));
                 }
                 Job::Delete(DeleteJob {
                     chat,
@@ -540,8 +540,9 @@ impl ChatActor {
         }
     }
 
-    /// A running job is pulled by its token and ends itself; a waiting one
-    /// is lifted out of its lane and ended here, since no job will.
+    /// A running job is cancelled through its control and ends itself; a
+    /// waiting one is lifted out of its lane and ended here, since no job
+    /// will.
     fn cancel(&mut self, target: Cancel) -> u32 {
         match target {
             Cancel::Ticket(ticket) => u32::from(self.cancel_ticket(ticket)),
@@ -554,8 +555,7 @@ impl ChatActor {
 
     fn cancel_ticket(&mut self, ticket: Ticket) -> bool {
         if let Some(job) = self.running.values().find(|job| job.ticket == ticket) {
-            job.token.cancel();
-            return true;
+            return job.control.cancel();
         }
         match self.take_waiting(ticket) {
             Some(job) => {
@@ -566,15 +566,14 @@ impl ChatActor {
         }
     }
 
-    /// Pulls the running ask's token, then ends every job waiting behind it.
+    /// Cancels the running ask, then ends every job waiting behind it.
     fn cancel_lane(&mut self, lane: &Lane) -> u32 {
         let running = self
             .running
             .get(lane)
-            .filter(|job| matches!(job.kind, Kind::Ask { .. }) && !job.token.is_cancelled());
+            .filter(|job| matches!(job.kind, Kind::Ask { .. }));
         let mut ended = 0;
-        if let Some(job) = running {
-            job.token.cancel();
+        if running.is_some_and(|job| job.control.cancel()) {
             ended += 1;
         }
         for (ticket, job) in self.lanes.remove(lane).into_iter().flatten() {
@@ -623,13 +622,14 @@ impl ChatActor {
         running.into_iter().chain(waiting).collect()
     }
 
-    /// The newest job a tap may end, running or waiting. A job already
-    /// told to stop is still winding down, so the next tap moves on.
+    /// The newest job a tap may end, running or waiting. A job already told
+    /// to stop is winding down, and one typing types to the end, so the next
+    /// tap moves on.
     fn tapped(&self) -> Option<Ticket> {
         let running = self
             .running
             .values()
-            .filter(|job| job.tap_cancels && !job.token.is_cancelled())
+            .filter(|job| job.tap_cancels && job.control.is_open())
             .map(|job| job.ticket);
         let waiting = self
             .lanes
@@ -1350,6 +1350,34 @@ mod tests {
         assert!(harness.handle.take_escape());
         assert_eq!(ended_within(&harness, older), Some(RpcErrorCode::Cancelled));
         assert!(!harness.handle.take_escape(), "nothing is left to end");
+
+        harness.shutdown.cancel();
+        harness.actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_run_that_started_typing_is_left_to_finish() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let harness = parking_harness(directory.path());
+
+        let typing = harness
+            .handle
+            .run_prompt(pressed_prompt())
+            .await
+            .expect("taken");
+        assert!(started_within(&harness.started, PATIENCE).is_some());
+        let control = Arc::clone(&harness.handle.escapable.lock()[0].1);
+        assert!(control.start_typing());
+
+        assert!(!harness.handle.take_escape(), "Escape goes to the app");
+        assert!(
+            !harness.handle.cancel_tapped().await.expect("answered"),
+            "a tap moves on"
+        );
+        assert!(
+            !harness.handle.cancel(typing).await.expect("answered"),
+            "nor does its ticket end it"
+        );
 
         harness.shutdown.cancel();
         harness.actor.await.expect("the actor drains");
