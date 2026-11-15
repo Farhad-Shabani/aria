@@ -438,6 +438,7 @@ impl ExecutionControl {
         self.stop_mode
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn escape(&self) -> EscapeRule {
         self.escape
     }
