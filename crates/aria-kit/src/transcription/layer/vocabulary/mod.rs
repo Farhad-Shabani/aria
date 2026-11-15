@@ -13,7 +13,6 @@ use super::symbol_words;
 const MAX_TERMS: usize = 100_000;
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_NAME_BYTES: usize = 256;
-const MAX_ALIASES: usize = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Term {
@@ -32,9 +31,42 @@ pub enum MatchError {
 }
 
 struct Candidate {
-    canonical: Option<String>,
+    name: Name,
     priority: u32,
     protected: bool,
+}
+
+enum Name {
+    Spelled(String),
+    // Only a symbol shows that words are a name, so a name without one
+    // keeps the speaker's casing.
+    Heard(String),
+    // No name wins a form two names share.
+    Shared,
+}
+
+impl Name {
+    fn new(canonical: &str, protected: bool) -> Self {
+        if protected && !has_symbol(canonical) {
+            Self::Heard(canonical.to_owned())
+        } else {
+            Self::Spelled(canonical.to_owned())
+        }
+    }
+
+    fn canonical(&self) -> Option<&str> {
+        match self {
+            Self::Spelled(canonical) | Self::Heard(canonical) => Some(canonical),
+            Self::Shared => None,
+        }
+    }
+
+    fn typed(&self) -> Option<&str> {
+        match self {
+            Self::Spelled(canonical) => Some(canonical),
+            Self::Heard(_) | Self::Shared => None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -95,12 +127,8 @@ impl Vocabulary {
                 return Err(MatchError::Cancelled);
             }
             validate_name(&term.canonical)?;
-            // Only a symbol shows that words are a name. So a name without
-            // one types as heard.
-            let has_symbol = term.canonical.chars().any(symbol_words::is_symbol);
             for (index, alias) in matching_forms(&term.canonical).enumerate() {
                 let protected = index == 0;
-                let typed = || (!protected || has_symbol).then(|| term.canonical.clone());
                 if cancel.is_cancelled() {
                     return Err(MatchError::Cancelled);
                 }
@@ -121,34 +149,32 @@ impl Vocabulary {
                 bucket.max_chars = bucket.max_chars.max(alias.chars().count());
                 match bucket.aliases.get_mut(&alias) {
                     Some(existing) if existing.protected => {
-                        if protected && existing.canonical.as_deref() != Some(&term.canonical) {
-                            existing.canonical = None;
+                        if protected && existing.name.canonical() != Some(&term.canonical) {
+                            existing.name = Name::Shared;
                         }
                     }
                     Some(existing) if protected || term.priority > existing.priority => {
-                        let canonical = typed();
-                        bytes += canonical.as_ref().map_or(0, String::len);
+                        bytes += term.canonical.len();
                         *existing = Candidate {
-                            canonical,
+                            name: Name::new(&term.canonical, protected),
                             priority: term.priority,
                             protected,
                         };
                     }
                     Some(existing)
                         if term.priority == existing.priority
-                            && existing.canonical.as_deref() != Some(&term.canonical) =>
+                            && existing.name.canonical() != Some(&term.canonical) =>
                     {
-                        existing.canonical = None;
+                        existing.name = Name::Shared;
                     }
                     Some(_) => {}
                     None => {
-                        let canonical = typed();
-                        bytes += alias.capacity() + canonical.as_ref().map_or(0, String::len);
+                        bytes += alias.capacity() + term.canonical.len();
                         let capacity = bucket.aliases.capacity();
                         bucket.aliases.insert(
                             alias,
                             Candidate {
-                                canonical,
+                                name: Name::new(&term.canonical, protected),
                                 priority: term.priority,
                                 protected,
                             },
@@ -172,9 +198,9 @@ impl Vocabulary {
                 .and_then(|first| matcher.index.get_mut(&first))
                 .and_then(|bucket| bucket.aliases.get_mut(&alias))
                 && !candidate.protected
-                && candidate.canonical.as_deref() != Some(canonical)
+                && candidate.name.canonical() != Some(canonical)
             {
-                candidate.canonical = None;
+                candidate.name = Name::Shared;
             }
         }
         if cancel.is_cancelled() {
@@ -350,10 +376,7 @@ impl Vocabulary {
             if let Some(start) = word_start.take() {
                 words.push(plain(start..position));
             }
-            let term = candidate
-                .canonical
-                .as_deref()
-                .unwrap_or(&text[position..end]);
+            let term = candidate.name.typed().unwrap_or(&text[position..end]);
             words.push(Word::claimed(position..end, Cow::Borrowed(term)));
             position = end;
         }
@@ -479,7 +502,7 @@ enum Said {
 
 // Every form says a symbol, so words alone never match a name.
 fn aliases(canonical: &str) -> Vec<String> {
-    if !canonical.chars().any(symbol_words::is_symbol) {
+    if !has_symbol(canonical) {
         return Vec::new();
     }
     let mut aliases = Vec::new();
@@ -508,8 +531,11 @@ fn aliases(canonical: &str) -> Vec<String> {
             }
         }
     }
-    aliases.truncate(MAX_ALIASES);
     aliases
+}
+
+fn has_symbol(name: &str) -> bool {
+    name.chars().any(symbol_words::is_symbol)
 }
 
 fn push_part(part: &str, said: Said, words: &mut Vec<String>) {
