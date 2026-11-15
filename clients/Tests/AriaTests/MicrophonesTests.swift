@@ -15,7 +15,8 @@ final class MicrophonesTests: XCTestCase {
         let choices = Microphones.choices(
             listed: list([builtIn, airPods], current: airPods.id), chosen: Microphones.automatic, names: [:])
 
-        XCTAssertEqual(choices.map(\.title), ["Automatic", "MacBook Pro Microphone", "AirPods Pro"])
+        XCTAssertEqual(
+            choices.map(\.title), ["Automatic", "System Default", "MacBook Pro Microphone", "AirPods Pro"])
     }
 
     func testAChosenDeviceThatIsGoneStaysByItsRememberedName() {
@@ -43,7 +44,7 @@ final class MicrophonesTests: XCTestCase {
     func testBeforeTheFirstListTheChoiceShowsWithoutAState() {
         let choices = Microphones.choices(listed: nil, chosen: airPods.id, names: [airPods.id: "AirPods Pro"])
 
-        XCTAssertEqual(choices.map(\.title), ["Automatic", "AirPods Pro"])
+        XCTAssertEqual(choices.map(\.title), ["Automatic", "System Default", "AirPods Pro"])
     }
 
     func testTheCaptionNamesWhatRecordsWhenTheChoiceDoesNot() {
@@ -51,6 +52,9 @@ final class MicrophonesTests: XCTestCase {
 
         XCTAssertEqual(
             Microphones.caption(listed: listed, chosen: Microphones.automatic, names: [:]),
+            "Records with MacBook Pro Microphone.")
+        XCTAssertEqual(
+            Microphones.caption(listed: listed, chosen: Microphones.systemDefault, names: [:]),
             "Records with MacBook Pro Microphone.")
         XCTAssertNil(Microphones.caption(listed: listed, chosen: builtIn.id, names: [:]))
         XCTAssertEqual(

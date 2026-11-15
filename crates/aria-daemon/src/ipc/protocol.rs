@@ -3505,7 +3505,11 @@ mod tests {
     fn a_microphone_round_trips_and_a_malformed_one_is_refused() {
         let device: aria_settings::Microphone =
             "coreaudio:BuiltInMicrophoneDevice".parse().unwrap();
-        for microphone in [aria_settings::Microphone::Automatic, device] {
+        for microphone in [
+            aria_settings::Microphone::Automatic,
+            aria_settings::Microphone::SystemDefault,
+            device,
+        ] {
             let snapshot = SettingsSnapshot {
                 settings: Settings {
                     microphone: microphone.clone(),

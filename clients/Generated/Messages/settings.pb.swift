@@ -451,10 +451,11 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
   /// Clears the value of `autoStopMs`. Subsequent reads from it will return its default value.
   public mutating func clearAutoStopMs() {_uniqueStorage()._autoStopMs = nil}
 
-  /// The input device to record on: "automatic" for the system default, or a
+  /// The input device to record on: "automatic" for an attached phone, else
+  /// the system default; "system_default", which never uses a phone; or a
   /// `Microphone.id` from `MicrophoneService.List`. A device that isn't
-  /// connected falls back to the system default; the value stays. Empty when
-  /// a phone reads it: a device id can name a person's headset.
+  /// connected falls back as "automatic"; the value stays. Empty when a
+  /// phone reads it: a device id can name a person's headset.
   public var microphone: String {
     get {_storage._microphone}
     set {_uniqueStorage()._microphone = newValue}
@@ -660,7 +661,8 @@ public nonisolated struct Aria_Daemon_V1_SettingsPatch: @unchecked Sendable {
   /// Clears the value of `autoStopMs`. Subsequent reads from it will return its default value.
   public mutating func clearAutoStopMs() {_uniqueStorage()._autoStopMs = nil}
 
-  /// "automatic" or a `Microphone.id`; see `Settings.microphone`.
+  /// "automatic", "system_default" or a `Microphone.id`; see
+  /// `Settings.microphone`.
   public var microphone: String {
     get {_storage._microphone ?? String()}
     set {_uniqueStorage()._microphone = newValue}

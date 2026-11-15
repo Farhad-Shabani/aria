@@ -56,7 +56,7 @@ pub(in crate::daemon) fn list_microphones() -> Result<Vec<InputDevice>, ListMicr
 /// The device `dictation.microphone` names, or `None` for the system default.
 pub(in crate::daemon) fn input(microphone: &aria_settings::Microphone) -> Option<InputDeviceId> {
     match microphone {
-        aria_settings::Microphone::Automatic => None,
+        aria_settings::Microphone::Automatic | aria_settings::Microphone::SystemDefault => None,
         aria_settings::Microphone::Device(id) => Some(InputDeviceId::new(id.as_str())),
     }
 }

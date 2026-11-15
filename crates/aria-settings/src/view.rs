@@ -387,6 +387,7 @@ mod tests {
         let file = |value: &str| format!("[dictation]\nmicrophone = \"{value}\"\n");
         for value in [
             "automatic",
+            "system_default",
             "coreaudio:BuiltInMicrophoneDevice",
             "alsa:hw:0,0",
         ] {

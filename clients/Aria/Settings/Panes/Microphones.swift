@@ -7,8 +7,9 @@ import os
 final class Microphones: ObservableObject {
     private static let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "Microphones")
 
-    /// The daemon's word for the system default.
+    /// The daemon's words for its two choices that aren't a device.
     static let automatic = "automatic"
+    static let systemDefault = "system_default"
     static let refreshInterval = Duration.seconds(2)
     /// Names of devices seen before, so a chosen one that isn't connected
     /// still shows by name. A presentation choice, so it stays in the app.
@@ -70,13 +71,16 @@ final class Microphones: ObservableObject {
         if names != before { defaults.set(names, forKey: Self.namesKey) }
     }
 
-    /// Automatic, then each connected device. A chosen device that isn't
-    /// connected stays listed, so the picker still shows the choice.
+    /// Automatic, System Default, then each connected device. A chosen device
+    /// that isn't connected stays listed, so the picker still shows the choice.
     static func choices(listed: MicrophoneList?, chosen: String, names: [String: String]) -> [Choice] {
-        var choices = [Choice(id: automatic, title: "Automatic")]
+        var choices = [
+            Choice(id: automatic, title: "Automatic"),
+            Choice(id: systemDefault, title: "System Default"),
+        ]
         let microphones = listed?.microphones ?? []
         choices += microphones.map { Choice(id: $0.id, title: $0.label) }
-        if chosen != automatic, !microphones.contains(where: { $0.id == chosen }) {
+        if !isWord(chosen), !microphones.contains(where: { $0.id == chosen }) {
             let name = names[chosen] ?? "Unknown Microphone"
             // Before the first list, whether it's connected is unknown.
             choices.append(Choice(id: chosen, title: listed == nil ? name : "\(name) (Not Connected)"))
@@ -99,9 +103,13 @@ final class Microphones: ObservableObject {
         guard let listed else { return nil }
         guard let currentID = listed.currentID else { return "No microphone is connected." }
         let current = listed.microphones.first { $0.id == currentID }?.label ?? "the system default"
-        if chosen == automatic { return "Records with \(current)." }
+        if isWord(chosen) { return "Records with \(current)." }
         if chosen == currentID { return nil }
         let name = names[chosen] ?? "The chosen microphone"
         return "\(name) isn’t connected, so Aria records with \(current)."
+    }
+
+    private static func isWord(_ chosen: String) -> Bool {
+        chosen == automatic || chosen == systemDefault
     }
 }
