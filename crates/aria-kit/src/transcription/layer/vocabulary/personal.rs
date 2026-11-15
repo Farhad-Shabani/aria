@@ -11,6 +11,7 @@ use super::{MatchError, is_word};
 
 /// What stored rules may cost in memory.
 const MAX_PERSONAL_BYTES: usize = 8 * 1024 * 1024;
+const MAX_RESPELLINGS: usize = 4;
 
 type Forms = HashMap<char, Vec<(Vec<char>, String)>>;
 
@@ -113,6 +114,37 @@ impl PersonalRules {
             .values()
             .flatten()
             .map(|(form, target)| (form.iter().collect(), target.as_str()))
+    }
+
+    pub(super) fn respellings(&self) -> Respellings {
+        let mut spellings_of: HashMap<Vec<char>, Vec<Vec<char>>> = HashMap::new();
+        for (spoken, target) in self.forms.values().flatten() {
+            let spoken: Vec<char> = collapse(&spoken.iter().collect::<String>())
+                .chars()
+                .collect();
+            let target: Vec<char> = collapse(&target.to_lowercase()).chars().collect();
+            if !spoken.is_empty() && !target.is_empty() && spoken != target {
+                spellings_of.entry(target).or_default().push(spoken);
+            }
+        }
+        let mut by_first: HashMap<char, Vec<Target>> = HashMap::new();
+        for (target, mut spellings) in spellings_of {
+            // Sorted, so the bound keeps the same respellings on every build.
+            // No form uses more spellings of one word than the bound.
+            spellings.sort_unstable();
+            spellings.dedup();
+            spellings.truncate(MAX_RESPELLINGS);
+            by_first
+                .entry(target[0])
+                .or_default()
+                .push(Target { target, spellings });
+        }
+        for targets in by_first.values_mut() {
+            targets.sort_unstable_by(|a, b| {
+                (b.target.len().cmp(&a.target.len())).then_with(|| a.target.cmp(&b.target))
+            });
+        }
+        Respellings { by_first }
     }
 
     #[cfg(test)]
@@ -443,6 +475,130 @@ const COMMON_TOKENS: &[&str] = &[
     "twenty",
 ];
 
+#[derive(Default)]
+pub(super) struct Respellings {
+    by_first: HashMap<char, Vec<Target>>,
+}
+
+struct Target {
+    target: Vec<char>,
+    spellings: Vec<Vec<char>>,
+}
+
+struct Run<'a> {
+    span: Range<usize>,
+    spellings: &'a [Vec<char>],
+}
+
+impl Respellings {
+    pub(super) fn is_empty(&self) -> bool {
+        self.by_first.is_empty()
+    }
+
+    // Every word gets its first spelling before any word gets a second, so
+    // pairs onto one word don't crowd out another word's.
+    pub(super) fn of(&self, form: &str) -> Vec<String> {
+        // With nothing to respell, the scan would only cost the build.
+        if self.is_empty() {
+            return Vec::new();
+        }
+        let chars: Vec<char> = form.chars().collect();
+        let runs = self.runs(&chars);
+        let mut respellings = Vec::new();
+        for depth in 0..MAX_RESPELLINGS {
+            for (index, run) in runs.iter().enumerate() {
+                if respellings.len() == MAX_RESPELLINGS {
+                    return respellings;
+                }
+                if let Some(spoken) = run.spellings.get(depth) {
+                    respellings.extend(respell(&chars, &runs, |other| {
+                        (other == index).then_some(spoken.as_slice())
+                    }));
+                }
+            }
+        }
+        if runs.len() > 1 && respellings.len() < MAX_RESPELLINGS {
+            respellings.extend(respell(&chars, &runs, |other| {
+                runs[other].spellings.first().map(Vec::as_slice)
+            }));
+        }
+        respellings
+    }
+
+    fn runs<'a>(&'a self, chars: &[char]) -> Vec<Run<'a>> {
+        let mut runs = Vec::new();
+        let mut position = 0;
+        while position < chars.len() {
+            let inside_word =
+                position > 0 && is_word(chars[position - 1]) && is_word(chars[position]);
+            let found = (!inside_word)
+                .then(|| self.by_first.get(&chars[position]))
+                .flatten()
+                .and_then(|targets| {
+                    targets.iter().find(|Target { target, spellings }| {
+                        let end = position + target.len();
+                        chars[position..].starts_with(target)
+                            && spellings.iter().any(|spoken| {
+                                fits(
+                                    position.checked_sub(1).map(|before| chars[before]),
+                                    spoken,
+                                    chars.get(end).copied(),
+                                )
+                            })
+                    })
+                });
+            let Some(Target { target, spellings }) = found else {
+                position += 1;
+                continue;
+            };
+            runs.push(Run {
+                span: position..position + target.len(),
+                spellings,
+            });
+            position += target.len();
+        }
+        runs
+    }
+}
+
+// A pair finds its spoken side in heard text only at word boundaries, as
+// `boundary` decides.
+fn fits(before: Option<char>, spoken: &[char], after: Option<char>) -> bool {
+    let word = |character: Option<char>| character.is_some_and(is_word);
+    word(before) != word(spoken.first().copied()) && word(spoken.last().copied()) != word(after)
+}
+
+fn respell<'a>(
+    chars: &[char],
+    runs: &[Run<'a>],
+    choose: impl Fn(usize) -> Option<&'a [char]>,
+) -> Option<String> {
+    let mut respelled = Vec::with_capacity(chars.len());
+    let mut spans = Vec::new();
+    let mut copied = 0;
+    for (index, run) in runs.iter().enumerate() {
+        let Some(spoken) = choose(index) else {
+            continue;
+        };
+        respelled.extend_from_slice(&chars[copied..run.span.start]);
+        spans.push(respelled.len()..respelled.len() + spoken.len());
+        respelled.extend_from_slice(spoken);
+        copied = run.span.end;
+    }
+    respelled.extend_from_slice(&chars[copied..]);
+    spans
+        .iter()
+        .all(|span| {
+            let before = span.start.checked_sub(1).map(|before| respelled[before]);
+            fits(
+                before,
+                &respelled[span.clone()],
+                respelled.get(span.end).copied(),
+            )
+        })
+        .then(|| respelled.into_iter().collect())
+}
+
 /// How a recognizer renders a compact term: digits as words, a hyphen as
 /// a break, a short letter run spelled out. Only a term with a digit
 /// expands; "to-do" as "to do" would rewrite everyday speech.
@@ -766,6 +922,16 @@ fn longest_match<E>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_form_gets_at_most_the_bound_of_respellings() {
+        let learned = (0..50)
+            .map(|index| (format!("arya{index}"), "aria".to_owned()))
+            .collect();
+        let rules = PersonalRules::new(vec![], learned);
+        let respellings = rules.respellings().of("aria dash kit");
+        assert_eq!(respellings.len(), MAX_RESPELLINGS);
+    }
 
     #[test]
     fn stored_rules_preserve_precedence_and_bound_preparation() {
