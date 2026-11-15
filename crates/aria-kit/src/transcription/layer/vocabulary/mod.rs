@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::Infallible;
 
@@ -30,10 +31,54 @@ pub enum MatchError {
     InvalidName,
 }
 
+// Weakest first: a form goes to the stronger origin whatever the priority.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Origin {
+    Spoken,
+    Written,
+}
+
 struct Candidate {
     name: Name,
     priority: u32,
-    protected: bool,
+    origin: Origin,
+}
+
+impl Candidate {
+    fn new(term: &Term, origin: Origin) -> Self {
+        Self {
+            name: Name::new(&term.canonical, origin),
+            priority: term.priority,
+            origin,
+        }
+    }
+
+    fn settle(&mut self, incoming: Self) -> usize {
+        let differs = self.name.canonical() != incoming.name.canonical();
+        match incoming.origin.cmp(&self.origin) {
+            Ordering::Less => 0,
+            Ordering::Greater => self.replace(incoming),
+            Ordering::Equal if self.origin == Origin::Written => {
+                if differs {
+                    self.name = Name::Shared;
+                }
+                0
+            }
+            Ordering::Equal if incoming.priority > self.priority => self.replace(incoming),
+            Ordering::Equal => {
+                if incoming.priority == self.priority && differs {
+                    self.name = Name::Shared;
+                }
+                0
+            }
+        }
+    }
+
+    fn replace(&mut self, incoming: Self) -> usize {
+        let bytes = incoming.name.canonical().map_or(0, str::len);
+        *self = incoming;
+        bytes
+    }
 }
 
 enum Name {
@@ -46,8 +91,8 @@ enum Name {
 }
 
 impl Name {
-    fn new(canonical: &str, protected: bool) -> Self {
-        if protected && !has_symbol(canonical) {
+    fn new(canonical: &str, origin: Origin) -> Self {
+        if origin == Origin::Written && !has_symbol(canonical) {
             Self::Heard(canonical.to_owned())
         } else {
             Self::Spelled(canonical.to_owned())
@@ -73,6 +118,19 @@ impl Name {
 struct Bucket {
     aliases: HashMap<String, Candidate>,
     max_chars: usize,
+}
+
+impl Bucket {
+    fn insert(&mut self, alias: String, candidate: Candidate) -> usize {
+        self.max_chars = self.max_chars.max(alias.chars().count());
+        let mut bytes = alias.capacity() + candidate.name.canonical().map_or(0, str::len);
+        let capacity = self.aliases.capacity();
+        self.aliases.insert(alias, candidate);
+        bytes += (self.aliases.capacity() - capacity)
+            * 2
+            * (std::mem::size_of::<(String, Candidate)>() + 1);
+        bytes
+    }
 }
 
 #[derive(Default)]
@@ -115,99 +173,101 @@ impl Vocabulary {
         if terms.len() > MAX_TERMS || personal.estimated_bytes() > MAX_SNAPSHOT_BYTES {
             return Err(MatchError::TooLarge);
         }
+        let mut matcher = Self::build(terms, &personal, cancel)?;
+        matcher.personal = personal;
+        Ok(matcher)
+    }
+
+    fn build(
+        terms: &[Term],
+        personal: &PersonalRules,
+        cancel: &CancelToken,
+    ) -> Result<Self, MatchError> {
         let mut matcher = Self {
             index: HashMap::new(),
-            personal,
+            personal: PersonalRules::default(),
             term_count: terms.len(),
-            estimated_bytes: 0,
+            estimated_bytes: std::mem::size_of::<Self>() + personal.estimated_bytes(),
         };
-        let mut bytes = std::mem::size_of::<Self>() + matcher.personal.estimated_bytes();
         for term in terms {
             if cancel.is_cancelled() {
                 return Err(MatchError::Cancelled);
             }
             validate_name(&term.canonical)?;
-            for (index, alias) in matching_forms(&term.canonical).enumerate() {
-                let protected = index == 0;
+            for (index, form) in matching_forms(&term.canonical).enumerate() {
                 if cancel.is_cancelled() {
                     return Err(MatchError::Cancelled);
                 }
-                let Some(first) = first_word(&alias) else {
-                    continue;
+                let origin = if index == 0 {
+                    Origin::Written
+                } else {
+                    Origin::Spoken
                 };
-                let capacity = matcher.index.capacity();
-                if let std::collections::hash_map::Entry::Vacant(entry) =
-                    matcher.index.entry(first.clone())
-                {
-                    bytes += first.capacity();
-                    entry.insert(Bucket::default());
-                }
-                bytes += (matcher.index.capacity() - capacity)
-                    * 2
-                    * (std::mem::size_of::<(String, Bucket)>() + 1);
-                let bucket = matcher.index.get_mut(&first).expect("inserted bucket");
-                bucket.max_chars = bucket.max_chars.max(alias.chars().count());
-                match bucket.aliases.get_mut(&alias) {
-                    Some(existing) if existing.protected => {
-                        if protected && existing.name.canonical() != Some(&term.canonical) {
-                            existing.name = Name::Shared;
-                        }
-                    }
-                    Some(existing) if protected || term.priority > existing.priority => {
-                        bytes += term.canonical.len();
-                        *existing = Candidate {
-                            name: Name::new(&term.canonical, protected),
-                            priority: term.priority,
-                            protected,
-                        };
-                    }
-                    Some(existing)
-                        if term.priority == existing.priority
-                            && existing.name.canonical() != Some(&term.canonical) =>
-                    {
-                        existing.name = Name::Shared;
-                    }
-                    Some(_) => {}
-                    None => {
-                        bytes += alias.capacity() + term.canonical.len();
-                        let capacity = bucket.aliases.capacity();
-                        bucket.aliases.insert(
-                            alias,
-                            Candidate {
-                                name: Name::new(&term.canonical, protected),
-                                priority: term.priority,
-                                protected,
-                            },
-                        );
-                        bytes += (bucket.aliases.capacity() - capacity)
-                            * 2
-                            * (std::mem::size_of::<(String, Candidate)>() + 1);
-                    }
-                }
-                if bytes > MAX_SNAPSHOT_BYTES {
-                    return Err(MatchError::TooLarge);
-                }
+                matcher.add(form, Candidate::new(term, origin))?;
             }
         }
-        for (alias, canonical) in matcher.personal.pairs() {
+        matcher.share_with_pairs(personal, cancel)?;
+        if cancel.is_cancelled() {
+            return Err(MatchError::Cancelled);
+        }
+        Ok(matcher)
+    }
+
+    fn add(&mut self, form: String, candidate: Candidate) -> Result<(), MatchError> {
+        let Some(bucket) = self.add_bucket(&form)? else {
+            return Ok(());
+        };
+        let bytes = match bucket.aliases.get_mut(&form) {
+            Some(existing) => existing.settle(candidate),
+            None => bucket.insert(form, candidate),
+        };
+        self.grow(bytes)
+    }
+
+    fn share_with_pairs(
+        &mut self,
+        personal: &PersonalRules,
+        cancel: &CancelToken,
+    ) -> Result<(), MatchError> {
+        for (alias, canonical) in personal.pairs() {
             if cancel.is_cancelled() {
                 return Err(MatchError::Cancelled);
             }
             let alias = normalize(&alias);
             if let Some(candidate) = first_word(&alias)
-                .and_then(|first| matcher.index.get_mut(&first))
+                .and_then(|first| self.index.get_mut(&first))
                 .and_then(|bucket| bucket.aliases.get_mut(&alias))
-                && !candidate.protected
+                && candidate.origin != Origin::Written
                 && candidate.name.canonical() != Some(canonical)
             {
                 candidate.name = Name::Shared;
             }
         }
-        if cancel.is_cancelled() {
-            return Err(MatchError::Cancelled);
+        Ok(())
+    }
+
+    fn add_bucket(&mut self, alias: &str) -> Result<Option<&mut Bucket>, MatchError> {
+        let Some(first) = first_word(alias) else {
+            return Ok(None);
+        };
+        let capacity = self.index.capacity();
+        let mut bytes = 0;
+        if !self.index.contains_key(&first) {
+            bytes += first.capacity();
+            self.index.insert(first.clone(), Bucket::default());
         }
-        matcher.estimated_bytes = bytes;
-        Ok(matcher)
+        bytes +=
+            (self.index.capacity() - capacity) * 2 * (std::mem::size_of::<(String, Bucket)>() + 1);
+        self.grow(bytes)?;
+        Ok(self.index.get_mut(&first))
+    }
+
+    fn grow(&mut self, bytes: usize) -> Result<(), MatchError> {
+        self.estimated_bytes += bytes;
+        if self.estimated_bytes > MAX_SNAPSHOT_BYTES {
+            return Err(MatchError::TooLarge);
+        }
+        Ok(())
     }
 
     pub fn term_count(&self) -> usize {
