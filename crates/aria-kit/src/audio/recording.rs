@@ -208,6 +208,13 @@ impl Recording {
         (reader, writer)
     }
 
+    /// A new recording's two ends, for audio recorded before.
+    pub(super) fn prerecorded() -> (RecordingReader, RecordingWriter) {
+        let (reader, writer) = ends();
+        writer.begin(RecordingSource::Prerecorded);
+        (reader, writer)
+    }
+
     #[cfg(not(target_family = "wasm"))]
     pub fn open_spooled(
         directory: &std::path::Path,
@@ -415,8 +422,7 @@ impl RecordingReader {
     /// A finished recording of canonical 16 kHz mono `samples`, held in
     /// memory.
     pub fn from_samples(samples: &[f32]) -> Self {
-        let (reader, mut writer) = ends();
-        writer.begin(RecordingSource::Prerecorded);
+        let (reader, mut writer) = Recording::prerecorded();
         writer.push(samples);
         writer.finish();
         reader
@@ -440,8 +446,7 @@ impl RecordingReader {
         spool_dir: &std::path::Path,
         samples: &[i16],
     ) -> Result<Self, CaptureError> {
-        let (recording, writer) = ends();
-        writer.begin(RecordingSource::Prerecorded);
+        let (recording, writer) = Recording::prerecorded();
         let mut spool = WavSpool::create(spool_dir, spool_room(samples.len()), &writer)?;
         spool.write_samples(samples)?;
         writer.close(spool.finish().map_err(CaptureError::from));

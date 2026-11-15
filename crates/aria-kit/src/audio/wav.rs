@@ -57,8 +57,7 @@ impl RecordingReader {
         check_declared_length(&reader, path, MAX_RECORDING_DURATION)?;
         let samples = collect_samples(reader, path)?;
 
-        let (recording, writer) = super::recording::ends();
-        writer.begin(super::RecordingSource::Prerecorded);
+        let (recording, writer) = super::Recording::prerecorded();
         writer.push_pcm16(&samples);
         let sample_count = samples.len() as u64;
         writer.close(Ok(RecordedAudio::borrowed(
