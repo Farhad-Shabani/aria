@@ -10,6 +10,9 @@ struct PaletteCommand: Equatable, Identifiable {
         case openSettings(SettingsPane?)
         case openSetup
         case showPhonePairing
+        case listMicrophones
+        /// A choice `Microphones.choices` lists, by the id the setting stores.
+        case useMicrophone(id: String)
         case showHistory(HistorySection)
         case clearHistory
         case newPrompt
@@ -28,6 +31,8 @@ struct PaletteCommand: Equatable, Identifiable {
     var key: PaletteKey?
     /// Search matches these as well as the title.
     var keywords: [String] = []
+    /// The choice the setting holds now. Its row shows a checkmark.
+    var isChosen = false
     let action: Action
 
     static let liveTranscript = PaletteCommand(
@@ -70,6 +75,14 @@ struct PaletteCommand: Equatable, Identifiable {
     static let pairPhone = PaletteCommand(
         id: "pair-phone", title: "Pair Your iPhone", symbol: SettingsPane.phone.symbol, number: nil, chord: nil,
         keywords: ["phone", "pairing", "qr code"], action: .showPhonePairing)
+    static let chooseMicrophone = PaletteCommand(
+        id: "choose-microphone", title: "Choose Microphone…", symbol: "mic", number: nil, chord: nil,
+        keywords: ["microphone", "input", "airpods"], action: .listMicrophones)
+    static func microphone(_ choice: Microphones.Choice, isChosen: Bool) -> PaletteCommand {
+        PaletteCommand(
+            id: "microphone-\(choice.id)", title: choice.title, symbol: isChosen ? "checkmark" : "mic", number: nil,
+            chord: nil, isChosen: isChosen, action: .useMicrophone(id: choice.id))
+    }
     static let setUp = PaletteCommand(
         id: "set-up", title: "Set Up Aria…", symbol: "wand.and.stars", number: nil, chord: nil,
         keywords: ["setup"], action: .openSetup)

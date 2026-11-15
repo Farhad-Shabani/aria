@@ -200,7 +200,8 @@ struct PaletteActions {
             case .runPrompt, .runOneOff: "Run Prompt"
             case .openSettings, .openSetup, .newPrompt: "Open"
             case .clearHistory: "Clear…"
-            case .showHistory, .showPhonePairing: "Show"
+            case .showHistory, .showPhonePairing, .listMicrophones: "Show"
+            case .useMicrophone: "Use"
             }
         case .some(let item):
             if typesOnReturn(item), let app { "Type into \(app)" } else { "Open" }

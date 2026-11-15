@@ -22,6 +22,8 @@ final class PaletteController: ObservableObject {
     let chats: Chats
     /// `nil` until the app tracks it.
     private(set) var phonePairing: PhonePairing?
+    /// Lists the devices only while the palette lists the microphones.
+    let microphones = Microphones()
 
     private let prompts: PromptHotkeys
     private let ask: PressController
@@ -46,6 +48,7 @@ final class PaletteController: ObservableObject {
     private var replyChange: AnyCancellable?
     private var promptsChange: AnyCancellable?
     private var setupChange: AnyCancellable?
+    private var microphonesChange: AnyCancellable?
     /// Where Edit Prompt finds a prompt. `nil` until the app tracks the settings.
     private var settings: DaemonSettings?
     /// The prompts that are on, in Settings order, as the settings last said.
@@ -142,6 +145,14 @@ final class PaletteController: ObservableObject {
         assistantChange = settings.$assistantName
             .removeDuplicates()
             .sink { [weak self] name in self?.model.assistantName = name }
+        microphonesChange = Publishers.CombineLatest(
+            microphones.$list, settings.$snapshot.compactMap { $0?.microphone }
+        )
+        .sink { [weak self] listed, chosen in
+            guard let self else { return }
+            let choices = Microphones.choices(listed: listed, chosen: chosen, names: microphones.names)
+            model.replace(microphones: choices, chosen: chosen)
+        }
     }
 
     /// The app scene owns the poller and phone pairing, so they arrive after init.
@@ -152,6 +163,9 @@ final class PaletteController: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] steps in self?.model.replace(setupSteps: steps) }
     }
+
+    /// `nil` until the settings arrive.
+    var chosenMicrophone: String? { settings?.snapshot?.microphone }
 
     func press() {
         switch gesture.press(isOpen: panel.isVisible, isBusy: { prompts.isBusy($0) }) {
@@ -200,6 +214,12 @@ final class PaletteController: ObservableObject {
             openSetup()
         case .showPhonePairing:
             model.show(.phonePairing)
+        case .listMicrophones:
+            model.listMicrophones()
+        case .useMicrophone(let id):
+            guard let settings, let snapshot = settings.snapshot else { return }
+            SettingsEditor(snapshot: snapshot, settings: settings).set(\.microphone, to: id)
+            close()
         }
     }
 

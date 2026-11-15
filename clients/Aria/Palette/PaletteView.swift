@@ -11,7 +11,7 @@ struct PaletteView: View {
             case .commands:
                 PaletteCommandsPage(
                     controller: controller, systemTranscription: systemTranscription, history: history,
-                    chats: controller.chats)
+                    chats: controller.chats, microphones: controller.microphones)
             case .liveTranscript:
                 PaletteLivePage(controller: controller, systemTranscription: systemTranscription, history: history)
             case .phonePairing:

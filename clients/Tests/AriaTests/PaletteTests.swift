@@ -56,6 +56,50 @@ final class PaletteTests: XCTestCase {
         XCTAssertEqual(model.commands.map(\.action), [.showPhonePairing])
     }
 
+    @MainActor private static let microphoneChoices = [
+        Microphones.Choice(id: Microphones.automatic, title: "Automatic"),
+        Microphones.Choice(id: Microphones.systemDefault, title: "System Default"),
+        Microphones.Choice(id: "airpods", title: "AirPods Pro"),
+    ]
+
+    func testSearchingForMicFindsChooseMicrophone() {
+        var model = openModel()
+        model.query = "mic"
+
+        XCTAssertEqual(model.commands.map(\.action), [.listMicrophones])
+    }
+
+    @MainActor func testListingMicrophonesSelectsAndMarksTheChosenOneAndSearchNarrowsThem() {
+        var model = openModel(history: [Self.entry(1, at: 100)])
+        model.replace(microphones: Self.microphoneChoices, chosen: "airpods")
+
+        model.listMicrophones()
+
+        XCTAssertEqual(
+            model.items.compactMap(\.command?.action),
+            Self.microphoneChoices.map { .useMicrophone(id: $0.id) })
+        XCTAssertEqual(model.selected?.command?.action, .useMicrophone(id: "airpods"))
+        XCTAssertEqual(model.selected?.spokenTitle, "AirPods Pro, chosen")
+        XCTAssertFalse(model.showsSectionPills)
+        XCTAssertNil(model.command(forNumber: 1), "digits stay with the search")
+        model.query = "system"
+        XCTAssertEqual(model.items.compactMap(\.command?.action), [.useMicrophone(id: Microphones.systemDefault)])
+    }
+
+    @MainActor func testEscapeDropsTheMicrophoneListAndReselectsItsCommandBeforeClosing() {
+        var model = openModel()
+        model.replace(microphones: Self.microphoneChoices, chosen: Microphones.automatic)
+        model.listMicrophones()
+        model.query = "air"
+
+        XCTAssertFalse(model.escape())
+        XCTAssertTrue(model.isListingMicrophones, "the search clears first")
+        XCTAssertFalse(model.escape())
+        XCTAssertFalse(model.isListingMicrophones)
+        XCTAssertEqual(model.selected?.command?.action, .listMicrophones)
+        XCTAssertTrue(model.escape())
+    }
+
     func testThePhonePairingPageCopiesALiveCodeAndTurnsPairingOnWhileItIsOff() {
         var model = openModel()
         model.show(.phonePairing)
