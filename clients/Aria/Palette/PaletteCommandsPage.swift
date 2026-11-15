@@ -5,6 +5,7 @@ struct PaletteCommandsPage: View {
     @ObservedObject var systemTranscription: SystemTranscriptionStatus
     @ObservedObject var history: HistoryState
     @ObservedObject var chats: Chats
+    @ObservedObject var microphones: Microphones
 
     var body: some View {
         PaletteBars {
@@ -65,6 +66,9 @@ struct PaletteCommandsPage: View {
             NSAccessibility.announce(SystemTranscriptionStatus.startFailure)
         }
         .announcingStopFailure(of: systemTranscription)
+        .task(id: controller.model.isListingMicrophones) {
+            if controller.model.isListingMicrophones { await microphones.run() }
+        }
     }
 
     private var searchField: some View {
@@ -77,6 +81,9 @@ struct PaletteCommandsPage: View {
                 PaletteTag(title: input.name, symbol: input.kind.symbol)
                     .help("Prompts run on this. Esc removes it.")
                     .accessibilityLabel("Prompt input: \(input.name)")
+            } else if controller.model.isListingMicrophones {
+                PaletteTag(title: SettingsRow.microphone.title, symbol: PaletteCommand.chooseMicrophone.symbol)
+                    .help("Esc shows everything again.")
             } else if let section = controller.model.section {
                 PaletteTag(title: section.historyTitle, symbol: nil)
                     .help("Esc shows everything again.")
@@ -138,6 +145,7 @@ struct PaletteCommandsPage: View {
     }
 
     private var placeholder: String {
+        if controller.model.isListingMicrophones { return "Search microphones" }
         if controller.model.input != nil { return "Search prompts" }
         if controller.model.section != nil { return "Search" }
         return controller.model.keepsHistory ? "Search commands and history" : "Search commands"
@@ -180,6 +188,18 @@ struct PaletteCommandsPage: View {
         }
     }
 
+    /// What Settings says under its microphone picker.
+    @ViewBuilder
+    private var microphoneNote: some View {
+        if let failure = microphones.failure {
+            NoticeText(notice: failure)
+        } else if let chosen = controller.chosenMicrophone,
+            let caption = Microphones.caption(listed: microphones.list, chosen: chosen, names: microphones.names)
+        {
+            Text(caption)
+        }
+    }
+
     private func thread(for entry: HistoryItem) -> PaletteThreadBadge? {
         guard entry.resultCount > 0 else { return nil }
         return PaletteThreadBadge(
@@ -189,7 +209,9 @@ struct PaletteCommandsPage: View {
 
     @ViewBuilder
     private var footerNote: some View {
-        if systemTranscription.isStarting {
+        if controller.model.isListingMicrophones {
+            microphoneNote
+        } else if systemTranscription.isStarting {
             PaletteFooterProgress("Starting…")
         } else if systemTranscription.didFailToStart {
             NoticeText(notice: SystemTranscriptionStatus.startFailure)

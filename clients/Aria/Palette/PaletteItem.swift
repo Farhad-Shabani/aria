@@ -19,6 +19,7 @@ enum PaletteItem: Identifiable, Equatable {
     /// Read aloud when the selection moves, since focus stays in the field.
     var spokenTitle: String {
         switch self {
+        case .command(let command) where command.isChosen: "\(command.title), chosen"
         case .command(let command): command.title
         case .entry(let entry) where entry.resultCount > 0:
             "\(entry.name), \(PromptResult.countLabel(entry.resultCount))"

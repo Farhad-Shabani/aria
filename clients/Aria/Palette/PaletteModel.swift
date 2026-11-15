@@ -60,6 +60,8 @@ struct PaletteModel: Equatable {
     /// The entry a prompt runs on, shown as a chip in the search field. The
     /// list holds only prompts meanwhile.
     private(set) var input: HistoryItem?
+    /// While true, the list holds only the microphone choices.
+    private(set) var isListingMicrophones = false
     private(set) var selectedIndex = 0 {
         didSet { if selectedIndex != oldValue { editFailure = nil } }
     }
@@ -104,6 +106,7 @@ struct PaletteModel: Equatable {
     /// The steps left in Finish Setting Up Aria.
     private(set) var setupSteps = 0
     private var prompts: [PaletteCommand] = []
+    private var microphones: [PaletteCommand] = []
     /// Already filtered by the query, newest day first.
     private var entries: [HistoryItem] = []
 
@@ -126,6 +129,7 @@ struct PaletteModel: Equatable {
         editFailure = nil
         renaming = nil
         input = nil
+        isListingMicrophones = false
         dropThread()
         leaveChat()
     }
@@ -142,6 +146,20 @@ struct PaletteModel: Equatable {
         let selectedID = selected?.id
         self.setupSteps = setupSteps
         reselect(selectedID)
+    }
+
+    /// Follows the devices and the setting while the palette is open. The selection stays on its row.
+    mutating func replace(microphones: [Microphones.Choice], chosen: String) {
+        let selectedID = selected?.id
+        self.microphones = microphones.map { .microphone($0, isChosen: $0.id == chosen) }
+        reselect(selectedID)
+    }
+
+    /// Lists the microphone choices, with the chosen one selected.
+    mutating func listMicrophones() {
+        isListingMicrophones = true
+        query = ""
+        selectedIndex = microphones.firstIndex(where: \.isChosen) ?? 0
     }
 
     private mutating func reselect(_ id: PaletteItem.ID?) {
@@ -211,6 +229,7 @@ struct PaletteModel: Equatable {
     mutating func attach(_ entry: HistoryItem) {
         guard canAttach else { return }
         input = entry
+        isListingMicrophones = false
         dropThread()
         page = .commands
         query = ""
@@ -236,6 +255,7 @@ struct PaletteModel: Equatable {
     }
 
     var commands: [PaletteCommand] {
+        if isListingMicrophones { return matching(microphones) }
         guard input == nil else {
             let instructions = query.trimmingCharacters(in: .whitespacesAndNewlines)
             return matching(prompts) + (instructions.isEmpty ? [] : [.oneOff(instructions)])
@@ -247,7 +267,7 @@ struct PaletteModel: Equatable {
     private var pageCommands: [PaletteCommand] {
         [isSystemTranscriptionRunning ? .liveTranscript : .newTranscription, .newDictation, .ask(assistantName)]
             + prompts
-            + (canAddPrompt ? [.newPrompt] : []) + [.pairPhone, .setUp, .settings]
+            + (canAddPrompt ? [.newPrompt] : []) + [.chooseMicrophone, .pairPhone, .setUp, .settings]
             + (setupSteps > 0 ? [.finishSetup] : [])
             + (keepsHistory ? HistorySection.allCases.map(PaletteCommand.history) + [.clearHistory] : [])
     }
@@ -263,7 +283,7 @@ struct PaletteModel: Equatable {
     /// With nothing typed, history entries take the commands' place: history
     /// loads page by page, so commands after it would never come into view.
     var items: [PaletteItem] {
-        guard input == nil else { return commands.map(PaletteItem.command) }
+        guard input == nil, !isListingMicrophones else { return commands.map(PaletteItem.command) }
         let entries = keepsHistory ? threaded(entries) : []
         guard section == nil else { return entries }
         guard !isShowingHistoryFirst else {
@@ -429,7 +449,9 @@ struct PaletteModel: Equatable {
     /// A digit runs a prompt only on the commands page with nothing typed, so
     /// digits can still be searched for.
     func command(forNumber number: Int) -> PaletteCommand? {
-        guard page == .commands, input != nil || section == nil, query.isEmpty else { return nil }
+        guard page == .commands, !isListingMicrophones, input != nil || section == nil, query.isEmpty else {
+            return nil
+        }
         return prompts.first { $0.number == number }
     }
 
@@ -443,13 +465,13 @@ struct PaletteModel: Equatable {
 
     /// A command's key runs it from the commands page, whatever is typed, while the page offers it.
     func command(pressing event: NSEvent) -> PaletteCommand? {
-        guard page == .commands, !isRenaming, input == nil else { return nil }
+        guard page == .commands, !isRenaming, input == nil, !isListingMicrophones else { return nil }
         return pageCommands.first { $0.key?.matches(event) == true }
     }
 
     /// The pills pick a section while history shows and no prompt input does.
     var showsSectionPills: Bool {
-        keepsHistory && input == nil
+        keepsHistory && input == nil && !isListingMicrophones
     }
 
     /// Moves to the next section pill, or the previous one, wrapping round
@@ -542,6 +564,12 @@ struct PaletteModel: Equatable {
         if foldThread() { return false }
         guard query.isEmpty else {
             query = ""
+            return false
+        }
+        if isListingMicrophones {
+            isListingMicrophones = false
+            let row = PaletteItem.command(.chooseMicrophone).id
+            selectedIndex = items.firstIndex { $0.id == row } ?? 0
             return false
         }
         if let input {
