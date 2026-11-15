@@ -7,7 +7,9 @@
 //!
 //! Some fields, terminals among them, report one caret offset however much
 //! text lands. When the second segment finds the caret still where the first
-//! began, only the field is checked from then on.
+//! began, the anchor checks only the field from then on. It waits for a slow
+//! app to move the caret, unless Accessibility cannot set the field's
+//! selection. Terminals answer so, and one look then decides.
 
 use std::time::{Duration, Instant};
 
@@ -155,9 +157,12 @@ impl Anchor {
             };
         };
         let settled = match self.tracking {
-            Tracking::Untested(_) | Tracking::Caret => {
-                wait_for_caret(deadline, || self.observe(ending, deadline))
+            Tracking::Untested(_) => {
+                let settable = element::is_selection_settable(&self.field, deadline);
+                let polls_until = first_check_polls_until(started, settable);
+                wait_for_caret(polls_until, || self.observe(ending, deadline))
             }
+            Tracking::Caret => wait_for_caret(deadline, || self.observe(ending, deadline)),
             Tracking::Field => self.observe_field(deadline),
         };
         // Past one poll, the app was still applying the last segment.
@@ -325,6 +330,14 @@ enum Settled {
     Left,
     /// Every read failed, which is no sign the caret moved.
     Unknown(&'static str),
+}
+
+fn first_check_polls_until(started: Instant, settable: Result<bool, &'static str>) -> Instant {
+    match settable {
+        Ok(false) => started,
+        // Unanswered counts as settable, so a slow app still gets its wait.
+        Ok(true) | Err(_) => started + CATCH_UP_BUDGET,
+    }
 }
 
 /// Polls until the caret sits after the typed text or clearly moved. Past
@@ -587,6 +600,34 @@ mod tests {
 
         assert_eq!(result, Settled::After(9));
         assert!(reads.next().is_none());
+    }
+
+    #[test]
+    fn only_a_selection_that_cannot_be_set_skips_the_first_wait() {
+        let started = Instant::now();
+
+        assert_eq!(first_check_polls_until(started, Ok(false)), started);
+        assert_eq!(
+            first_check_polls_until(started, Ok(true)),
+            started + CATCH_UP_BUDGET
+        );
+        assert_eq!(
+            first_check_polls_until(started, Err("unreadable")),
+            started + CATCH_UP_BUDGET
+        );
+    }
+
+    #[test]
+    fn a_deadline_already_past_gives_one_look() {
+        let mut reads = 0;
+
+        let result = wait_for_caret(Instant::now(), || {
+            reads += 1;
+            Ok(Verdict::Behind(4))
+        });
+
+        assert_eq!(result, Settled::Short(4));
+        assert_eq!(reads, 1);
     }
 
     #[test]
