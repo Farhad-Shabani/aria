@@ -85,18 +85,20 @@ enum EscapeCancelled {
     PromptRun,
 }
 
-/// A bare Escape cancels a dictation that allows it, else the newest
-/// prompt run a press started, whatever app is in front. `take_run` is
-/// asked only when no dictation took the Escape, so one Escape cancels one
-/// thing.
+/// A bare Escape goes to the active dictation, whatever app is in front.
+/// It cancels one that allows it, and one that doesn't leaves it to its
+/// client, such as a terminal that stops on Escape. With no dictation, it
+/// cancels the newest prompt run a press started.
 fn escape_cancelled(
     dictation: Option<ActiveDictation>,
     take_run: impl FnOnce() -> bool,
 ) -> Option<EscapeCancelled> {
-    if dictation.is_some_and(|dictation| dictation.take_escape()) {
-        return Some(EscapeCancelled::Dictation);
+    match dictation {
+        Some(dictation) => dictation
+            .take_escape()
+            .then_some(EscapeCancelled::Dictation),
+        None => take_run().then_some(EscapeCancelled::PromptRun),
     }
-    take_run().then_some(EscapeCancelled::PromptRun)
 }
 
 /// How a hold ended, sent to the task that owns its dictation.
@@ -468,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn an_escape_no_dictation_takes_cancels_the_run_a_press_started() {
+    fn an_escape_cancels_the_run_a_press_started_only_with_no_dictation() {
         let asked = Cell::new(false);
         let run = || {
             asked.set(true);
@@ -481,11 +483,12 @@ mod tests {
             escape_cancelled(Some(keyed.dictation), run),
             Some(EscapeCancelled::Dictation)
         );
-        assert!(!asked.get(), "one Escape cancels one thing");
         assert_eq!(
             escape_cancelled(Some(owned.dictation), run),
-            Some(EscapeCancelled::PromptRun)
+            None,
+            "its client owns Escape"
         );
+        assert!(!asked.get(), "a dictation's Escape never reaches a run");
         assert_eq!(
             escape_cancelled(None, run),
             Some(EscapeCancelled::PromptRun)

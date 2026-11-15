@@ -66,7 +66,8 @@ Text Aria already typed stays where it is.
 
 **Esc** also cancels an ask or a prompt while you speak it, and a prompt while
 it runs. Once Aria starts typing a prompt's result, it types all of it. While
-Aria shows an ask's reply, **Esc** goes to the Aria window.
+Aria shows an ask's reply, **Esc** goes to the Aria window. If a prompt is
+running then too, **Esc** cancels the prompt.
 
 **Esc** works in any app, and that app doesn't receive the key. **Esc** with
 Shift, Control, Option, or Command reaches the app.
