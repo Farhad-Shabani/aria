@@ -310,38 +310,31 @@ impl AgreementState {
         // Relative to this decode's window, so it is read before the trim
         // moves the window on.
         let skipped = skipped.map(|at| at - self.buffer_start);
-        if recording.reached_end() && available == recording.held_to() {
-            let finished = self.finish_after(confirmed)?;
-            let segment = finished.as_ref().and_then(|step| match &step.update {
-                Some(TranscriptUpdate::Finalized(segment)) => Some(segment),
-                _ => None,
-            });
-            log_step(
-                decoded,
-                decode_ms,
-                behind,
-                heard_count,
-                skipped,
-                segment,
-                settled,
-            );
-            return Ok(finished);
-        }
-        let tail = self.trim_when_due(&loudness, available, settled);
-        let segment = self.one_at_a_time(confirmed, tail);
+        let step = if recording.reached_end() && available == recording.held_to() {
+            self.finish_after(confirmed)?
+        } else {
+            let tail = self.trim_when_due(&loudness, available, settled);
+            self.one_at_a_time(confirmed, tail)
+                .map(|segment| ChunkStep {
+                    update: Some(TranscriptUpdate::Finalized(segment)),
+                    transcript: None,
+                })
+        };
+        // A step hands out one segment and parks any second for the next call.
+        let released = step.as_ref().and_then(|step| match &step.update {
+            Some(TranscriptUpdate::Finalized(segment)) => Some(segment),
+            _ => None,
+        });
         log_step(
             decoded,
             decode_ms,
             behind,
             heard_count,
             skipped,
-            segment.as_ref(),
+            [released, self.pending_segment.as_ref()],
             settled,
         );
-        Ok(segment.map(|segment| ChunkStep {
-            update: Some(TranscriptUpdate::Finalized(segment)),
-            transcript: None,
-        }))
+        Ok(step)
     }
 
     /// The decode's words at their stream positions, untimed when timings
@@ -1031,7 +1024,7 @@ fn log_step(
     behind: u64,
     heard: usize,
     skipped: Option<u64>,
-    segment: Option<&TranscriptSegment>,
+    released: [Option<&TranscriptSegment>; 2],
     settled: bool,
 ) {
     let millis = |samples: u64| canonical_duration(samples).as_millis();
@@ -1041,7 +1034,11 @@ fn log_step(
         behind_ms = millis(behind),
         heard,
         skipped_ms = skipped.map(millis),
-        words = segment.map_or(0, |segment| segment.as_str().split_whitespace().count()),
+        words = released
+            .into_iter()
+            .flatten()
+            .map(|segment| segment.as_str().split_whitespace().count())
+            .sum::<usize>(),
         settled,
         "decode step"
     );
