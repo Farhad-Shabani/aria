@@ -58,19 +58,19 @@ Turn this off with **Return sends** under **Settings → Dictation**.
 
 ## Cancel with Esc
 
-Press **Esc** to cancel a dictation you started with the Aria key or the
-[wake word](./wake-word.md). Aria stops recording and types nothing more. The
-status pill says **canceled**, and Aria doesn't save the dictation to history.
+Press **Esc** to cancel:
 
-Text Aria already typed stays where it is.
+- A dictation you started with the Aria key or the
+  [wake word](./wake-word.md). Aria types nothing more, and text it already
+  typed stays. The status pill says **canceled**, and Aria doesn't save the
+  dictation to history.
+- An ask or a prompt while you speak it.
+- A prompt while it runs. Once Aria starts typing the result, it types all
+  of it.
 
-**Esc** also cancels an ask or a prompt while you speak it, and a prompt while
-it runs. Once Aria starts typing a prompt's result, it types all of it. While
-Aria shows an ask's reply, **Esc** goes to the Aria window. If a prompt is
-running then too, **Esc** cancels the prompt.
-
-**Esc** works in any app, and that app doesn't receive the key. **Esc** with
-Shift, Control, Option, or Command reaches the app.
+**Esc** works in any app, and that app doesn't receive it. **Esc** with Shift,
+Control, Option, or Command reaches the app. While Aria shows an ask's reply,
+**Esc** goes to the Aria window, unless a prompt is running.
 
 A dictation you start in the terminal keeps its own keys. See
 [Stop by hand](./terminal-dictation.md#stop-by-hand).
