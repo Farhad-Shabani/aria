@@ -11,7 +11,7 @@ build-dir = "../../build/dev-guide"
 default-theme = "navy"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/Farhad-Shabani/aria"
-site-url = "/aria/dev-guide/"
+site-url = "/dev-guide/"
 
 [output.html.playground]
 runnable = false

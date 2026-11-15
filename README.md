@@ -4,9 +4,9 @@
 
 <p align="center">
   <strong><a href="https://github.com/Farhad-Shabani/aria/releases/latest/download/Aria.dmg" title="Download the macOS desktop app">Download</a></strong> |
-  <a href="https://ariacue.pages.dev/">Website</a> |
-  <a href="https://ariacue.pages.dev/user-guide/">Manual</a> |
-  <a href="https://ariacue.pages.dev/dev-guide/">Libraries</a>
+  <a href="https://ariavoice.dev/">Website</a> |
+  <a href="https://docs.ariavoice.dev/user-guide/">Manual</a> |
+  <a href="https://docs.ariavoice.dev/dev-guide/">Libraries</a>
 </p>
 
 <p align="center">
@@ -113,7 +113,7 @@ has no telemetry or crash reporting.
 History stays on your computer, readable only by your account. By default it
 keeps text up to 30 days, and audio only from failed transcriptions, for 24
 hours. Turn saving off under **Settings → Privacy**.
-[Privacy](https://ariacue.pages.dev/user-guide/privacy.html) covers every case.
+[Privacy](https://docs.ariavoice.dev/user-guide/privacy.html) covers every case.
 
 ## Engines
 
@@ -151,7 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-The [library guide](https://ariacue.pages.dev/dev-guide/) covers models,
+The [library guide](https://docs.ariavoice.dev/dev-guide/) covers models,
 audio formats, and the other crates.
 
 ## Build from source
