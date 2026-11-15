@@ -7,11 +7,12 @@ can become `aria-stt`. This is optional and off by default.
 
 ## Choose a folder
 
-Aria reads file and folder names and names found in local text. A `.gitignore`
-file does not prevent Aria from reading those files. Aria skips hidden files
-but does not check other files for secrets.
-Choose a folder you are comfortable letting Aria read. Names and their source
-locations stay in a private local cache.
+Aria reads file and folder names, never file contents. It skips hidden
+entries and anything a `.gitignore` inside the folder excludes. It keeps a
+name only when the name contains `.`, `-` or `_`, such as `Cargo.toml`. The
+name must also be short to say: six words at most, and one number of up to two
+digits. So `vex16.rs` stays, and `icon-1024-dark.png` doesn't.
+The names it keeps, and where they are, stay in a private local cache.
 
 Complete [setup](./installation.md#setup) and keep the background service running.
 In the Mac app, enable **Settings → Recognition → Use project vocabulary**
@@ -68,5 +69,8 @@ aria vocabulary forget "$PWD"
 This also removes overlapping parent and child caches. Disable corrections
 first if you do not want a later refresh to recreate them.
 
-If status reports `TooLarge`, choose a smaller folder. For how Aria stores
-other content, read [Privacy](./privacy.md).
+If status says `partial`, Aria stopped at a limit or skipped a folder it
+couldn't read. It kept the names nearest the top of the folder. To include
+deeper names, choose a smaller folder. If status reports `TooLarge`, choose a
+smaller folder too. For how Aria stores other content, read
+[Privacy](./privacy.md).
