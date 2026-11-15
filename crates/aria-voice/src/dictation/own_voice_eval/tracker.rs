@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 use super::{Truth, source_regions};
 use crate::config::SpeakerConfig;
 use crate::speaker::VoiceprintTracker;
-use aria_kit::audio::{AudioCapture, RecordingMode, ReplayPace, StopSignal, WavReplayCapture};
+use aria_kit::audio::{
+    AudioCapture, Inputs, RecordingMode, ReplayPace, StopSignal, WavReplayCapture,
+};
 
 /// The judgment of the latest turn, as the tracker shows it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -67,7 +69,11 @@ pub(super) fn evaluate(speaker: &SpeakerConfig, wav: &Path, truth: &Truth) -> (V
     )
     .expect("the fixture is canonical PCM16 audio");
     let mut recording = capture
-        .start(RecordingMode::UntilStopped, StopSignal::from_fn(|| false))
+        .start(
+            RecordingMode::UntilStopped,
+            Inputs::Local,
+            StopSignal::from_fn(|| false),
+        )
         .expect("the fixture opens");
     let (mut diarizer, segmenter) = super::tracking_models(speaker);
     let from = recording.held_from();

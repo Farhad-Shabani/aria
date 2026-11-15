@@ -19,7 +19,7 @@ use crate::audio::{RecordedAudio, RecordingReader, canonical_samples};
 use crate::primitives::file_inspection::{InspectedFile, InspectionError};
 
 use super::RecordingMode;
-use super::{AudioCapture, CaptureError};
+use super::{AudioCapture, CaptureError, Inputs};
 
 type Result<T> = std::result::Result<T, WavReplayError>;
 
@@ -70,6 +70,7 @@ impl AudioCapture for WavReplayCapture {
     fn start(
         &self,
         _mode: RecordingMode,
+        _inputs: Inputs,
         stop: StopSignal,
     ) -> std::result::Result<RecordingReader, CaptureError> {
         let mut recording = match self.pace {
@@ -191,7 +192,11 @@ mod tests {
         let capture = WavReplayCapture::new(directory.path(), MAXIMUM_DURATION, &fixture, PACE)
             .expect("fixture must load");
         let mut recording = capture
-            .start(RecordingMode::UntilStopped, StopSignal::never())
+            .start(
+                RecordingMode::UntilStopped,
+                Inputs::Local,
+                StopSignal::never(),
+            )
             .expect("replay must succeed");
         let audio = recording
             .finished_audio()
@@ -214,7 +219,11 @@ mod tests {
         .expect("fixture must load");
 
         let mut recording = capture
-            .start(RecordingMode::UntilStopped, StopSignal::never())
+            .start(
+                RecordingMode::UntilStopped,
+                Inputs::Local,
+                StopSignal::never(),
+            )
             .expect("replay must start");
         recording
             .fill_through(CHUNK_SAMPLES as u64)

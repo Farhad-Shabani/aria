@@ -676,7 +676,11 @@ where
         };
         let recording = self
             .capture
-            .start(mode, StopSignal::from_fn(move || guard.should_stop()))
+            .start(
+                mode,
+                settings.inputs,
+                StopSignal::from_fn(move || guard.should_stop()),
+            )
             .map_err(|error| map_capture_error(error, control))
             .map_err(|error| log_stage_error("recording", stage_started.elapsed(), error))?;
         tracing::info!(stage = "recording", "dictation stage started");
@@ -1754,6 +1758,7 @@ mod tests {
         Cadence, ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Stream, Streaming,
         Transcription,
     };
+    use aria_kit::audio::Inputs;
     use aria_kit::audio::{
         Recording, RecordingWriter, ReplayPace, WavReplayCapture, canonical_fixture, fixture_of,
     };
@@ -2090,6 +2095,7 @@ mod tests {
         fn start(
             &self,
             _mode: RecordingMode,
+            _inputs: Inputs,
             _stop: StopSignal,
         ) -> Result<RecordingReader, CaptureError> {
             let (recording, mut push) = Recording::open();
@@ -2527,10 +2533,11 @@ mod tests {
         fn start(
             &self,
             mode: RecordingMode,
+            inputs: Inputs,
             stop: StopSignal,
         ) -> Result<RecordingReader, CaptureError> {
             self.0.lock().unwrap().push(mode);
-            Finished(SPEECH.to_vec()).start(mode, stop)
+            Finished(SPEECH.to_vec()).start(mode, inputs, stop)
         }
     }
 
@@ -4010,6 +4017,7 @@ mod tests {
         fn start(
             &self,
             _mode: RecordingMode,
+            _inputs: Inputs,
             _stop: StopSignal,
         ) -> Result<RecordingReader, CaptureError> {
             let (recording, mut writer) = Recording::open();

@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
-use aria::audio::{AudioCapture, RecordingMode, ReplayPace, StopSignal, Stopper, WavReplayCapture};
+use aria::audio::{
+    AudioCapture, Inputs, RecordingMode, ReplayPace, StopSignal, Stopper, WavReplayCapture,
+};
 use aria_harness::{inputs, stats};
 use aria_stt::{CancelToken, EngineConfig};
 use aria_voice::stt::{Language, LanguageCode, Recognizer, Stream, Streaming, Transcription};
@@ -158,6 +160,7 @@ fn first_text_ms<T: Recognizer>(
     let started = now();
     let mut recording = capture.start(
         RecordingMode::UntilStopped,
+        Inputs::Local,
         StopSignal::from(stopper.clone()),
     )?;
     // Every exit after capture starts must stop replay, including initialization failures.

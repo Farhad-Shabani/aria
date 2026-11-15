@@ -1660,6 +1660,7 @@ impl TryFrom<wire::StartDictationRequest> for DictationRequest {
             stop_mode,
             route,
             project: project_from_wire(request.project)?,
+            inputs: aria_kit::audio::Inputs::Any,
         })
     }
 }
@@ -4350,6 +4351,7 @@ mod tests {
                 stop_mode: StopMode::Manual,
                 route,
                 project: aria_voice::vocabulary::Context::Default,
+                inputs: aria_kit::audio::Inputs::Any,
             };
 
             let sent = wire::StartDictationRequest::from(request.clone());

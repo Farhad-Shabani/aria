@@ -15,7 +15,7 @@ use crate::speaker::{
     Enrollment, EnrollmentError, Profile, ProfileError, ProfileStore, Replace, Role, SpeakerName,
 };
 use aria_kit::audio::{
-    AudioCapture, CaptureError, RecordingMode, SilenceDuration, StopSignal, WakeWordControl,
+    AudioCapture, CaptureError, Inputs, RecordingMode, SilenceDuration, StopSignal, WakeWordControl,
 };
 use aria_kit::backend::ModelError;
 use aria_kit::primitives::file_inspection::InspectionError;
@@ -407,6 +407,8 @@ impl<C: AudioCapture> Enroller<C> {
             RecordingMode::StopOnSilence {
                 trailing_silence: SilenceDuration::default(),
             },
+            // A voice profile is measured on the microphone that dictates.
+            Inputs::Local,
             giving_up.signal(),
         )?;
         events.emit(EnrollmentStage::Recording { index, of });
@@ -578,6 +580,7 @@ mod tests {
         fn start(
             &self,
             _mode: RecordingMode,
+            _inputs: Inputs,
             _stop: StopSignal,
         ) -> Result<RecordingReader, CaptureError> {
             unreachable!("these checks refuse before anything records")

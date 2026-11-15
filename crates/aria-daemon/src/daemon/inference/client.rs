@@ -1020,7 +1020,7 @@ mod tests {
     async fn a_whole_only_server_serves_streaming_dictation_under_its_own_engine() {
         use std::sync::Mutex;
 
-        use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
+        use aria_kit::audio::{AudioCapture, CaptureError, Inputs, RecordingMode, StopSignal};
         use aria_platform::delivery::OutputMode;
         use aria_settings::DeliveryMode;
         use aria_voice::dictation::testing::{CallLog, Loud, settings};
@@ -1033,6 +1033,7 @@ mod tests {
             fn start(
                 &self,
                 _: RecordingMode,
+                _: Inputs,
                 _: StopSignal,
             ) -> Result<RecordingReader, CaptureError> {
                 Ok(self.0.lock().unwrap().take().unwrap())
@@ -1081,7 +1082,7 @@ mod tests {
     async fn later_speech_does_not_validate_a_delayed_silence_guess() {
         use std::sync::Mutex;
 
-        use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, StopSignal};
+        use aria_kit::audio::{AudioCapture, CaptureError, Inputs, RecordingMode, StopSignal};
         use aria_kit::transcription::{ChunkStream, Emitted};
         use aria_platform::delivery::OutputMode;
         use aria_settings::DeliveryMode;
@@ -1095,6 +1096,7 @@ mod tests {
             fn start(
                 &self,
                 _: RecordingMode,
+                _: Inputs,
                 _: StopSignal,
             ) -> Result<RecordingReader, CaptureError> {
                 Ok(self.0.lock().unwrap().take().unwrap())

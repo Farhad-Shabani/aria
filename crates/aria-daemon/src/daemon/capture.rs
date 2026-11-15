@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::daemon::config::WakeConfig;
 use aria_kit::audio::{
-    AudioCapture, CaptureError, InputDevice, InputDeviceId, Microphone, PreparedMicrophone,
+    AudioCapture, CaptureError, InputDevice, InputDeviceId, Inputs, Microphone, PreparedMicrophone,
     RecordingMode, RecordingReader, StopSignal, WakeWordMonitor, WavReplayCapture,
 };
 use aria_primitives::error_chain;
@@ -108,11 +108,12 @@ impl AudioCapture for CaptureBackend {
     fn start(
         &self,
         mode: RecordingMode,
+        inputs: Inputs,
         stop: StopSignal,
     ) -> Result<RecordingReader, CaptureError> {
         match self {
-            Self::Microphone(capture) => capture.start(mode, stop),
-            Self::WavReplay(capture) => capture.start(mode, stop),
+            Self::Microphone(capture) => capture.start(mode, inputs, stop),
+            Self::WavReplay(capture) => capture.start(mode, inputs, stop),
         }
     }
 }

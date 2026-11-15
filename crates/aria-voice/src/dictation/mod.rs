@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::stt::Language;
-use aria_kit::audio::{AutoStop, SilenceDuration};
+use aria_kit::audio::{AutoStop, Inputs, SilenceDuration};
 use aria_settings::DeliveryMode;
 
 mod cursor;
@@ -111,6 +111,9 @@ pub struct DictationRequest {
     pub stop_mode: StopMode,
     pub route: DictationRoute,
     pub project: crate::vocabulary::Context,
+    /// A dictation the Mac's own microphone started, such as a wake word,
+    /// stays on the Mac.
+    pub inputs: Inputs,
 }
 
 impl DictationRequest {
@@ -119,6 +122,7 @@ impl DictationRequest {
             stop_mode,
             route: DictationRoute::Deliver(aria_settings::DictationOverrides::default()),
             project: crate::vocabulary::Context::Default,
+            inputs: Inputs::Any,
         }
     }
 }
@@ -136,6 +140,7 @@ pub struct DictationSettings {
     pub output_mode: OutputMode,
     pub delivery_mode: DeliveryMode,
     pub stop_mode: StopMode,
+    pub inputs: Inputs,
     pub silence_duration: SilenceDuration,
     pub auto_stop: Option<AutoStop>,
     pub own_voice_only: bool,

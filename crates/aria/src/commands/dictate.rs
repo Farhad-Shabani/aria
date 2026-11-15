@@ -52,6 +52,7 @@ pub(super) fn run(
                 })
             },
             project,
+            inputs: crate::audio::Inputs::Any,
         },
         |stage| recording.follow(stage),
     );

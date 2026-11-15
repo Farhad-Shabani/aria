@@ -192,6 +192,7 @@ impl DaemonSession {
                 stop_mode,
                 route: aria_voice::dictation::DictationRoute::TranscriptOnly,
                 project,
+                inputs: aria_kit::audio::Inputs::Any,
             },
             observe,
         )?;

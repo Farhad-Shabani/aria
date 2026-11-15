@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 use aria_kit::audio::{
-    AudioCapture, CaptureError, Recording, RecordingMode, RecordingReader, ReplayPace,
+    AudioCapture, CaptureError, Inputs, Recording, RecordingMode, RecordingReader, ReplayPace,
     ResampleError, StopSignal, WavError, WavReplayCapture, read_wav,
 };
 use aria_kit::primitives::error_chain;
@@ -409,7 +409,11 @@ fn wav_replay(
     pace: ReplayPace,
 ) -> Result<RecordingReader, ReplayError> {
     let replay = WavReplayCapture::new(spool_dir, MAXIMUM_UTTERANCE, &utterance.audio, pace)?;
-    Ok(replay.start(RecordingMode::UntilStopped, StopSignal::never())?)
+    Ok(replay.start(
+        RecordingMode::UntilStopped,
+        Inputs::Local,
+        StopSignal::never(),
+    )?)
 }
 
 /// A recording that releases one stride of audio per finished decode: the
