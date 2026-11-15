@@ -250,16 +250,8 @@ mod tests {
 
         // A raw gRPC call, because a `DaemonSession` can't be dropped mid-press.
         client.block_on(async {
-            let channel = tonic::transport::Endpoint::from_shared(format!(
-                "unix://{}",
-                daemon.socket_path().display()
-            ))
-            .expect("the endpoint parses")
-            .connect()
-            .await
-            .expect("the daemon accepts");
             let mut dictation =
-                wire::dictation_service_client::DictationServiceClient::new(channel);
+                wire::dictation_service_client::DictationServiceClient::new(daemon.channel().await);
             let request = wire::StartDictationRequest::from(transcript_only(StopMode::Manual));
             let _abandoned = dictation.start(request).await.expect("the press starts");
             recording_started(&edges);
@@ -297,16 +289,8 @@ mod tests {
 
         // A raw gRPC call, because a `DaemonSession` never asks for Escape.
         client.block_on(async {
-            let channel = tonic::transport::Endpoint::from_shared(format!(
-                "unix://{}",
-                daemon.socket_path().display()
-            ))
-            .expect("the endpoint parses")
-            .connect()
-            .await
-            .expect("the daemon accepts");
             let mut dictation =
-                wire::dictation_service_client::DictationServiceClient::new(channel);
+                wire::dictation_service_client::DictationServiceClient::new(daemon.channel().await);
             for escape_cancels in [true, false] {
                 let request = wire::StartDictationRequest {
                     escape_cancels,
