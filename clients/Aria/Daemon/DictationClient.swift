@@ -39,6 +39,7 @@ enum DictationClient {
         projectDirectory: String?,
         timeout: Duration,
         savesToHistory: Bool = false,
+        escapeCancels: Bool = false,
         onRecording: @escaping @MainActor (UInt64) -> Void = { _ in }
     ) async throws -> Outcome {
         var request = Aria_Daemon_V1_StartDictationRequest()
@@ -48,6 +49,7 @@ enum DictationClient {
             case .onSilence: .onSilence
             }
         request.route = savesToHistory ? .historyOnly(.init()) : .transcriptOnly(.init())
+        request.escapeCancels = escapeCancels
         if let projectDirectory {
             request.projectDirectory = projectDirectory
         }

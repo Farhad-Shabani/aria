@@ -552,6 +552,7 @@ impl ChatRuntime {
             model_id: snapshot.settings.model_id(assistant_id).map(str::to_owned),
             application: call.application,
             tap_cancels: call.tap_cancels,
+            escape_cancels: call.escape_cancels,
             output_mode: call.output_mode,
         })
     }
@@ -1501,6 +1502,7 @@ pub(super) mod tests {
             model_id: None,
             application: None,
             tap_cancels: false,
+            escape_cancels: false,
             output_mode: Some(OutputMode::InsertOrCopy),
         }
     }
@@ -1605,6 +1607,7 @@ pub(super) mod tests {
             prompt: PromptChoice::Stored(PromptId::new("polish").unwrap()),
             application: None,
             tap_cancels: false,
+            escape_cancels: false,
             output_mode: None,
         };
         assert_eq!(
@@ -1672,6 +1675,7 @@ pub(super) mod tests {
             prompt: PromptChoice::Stored(PromptId::new(id).expect("id")),
             application: None,
             tap_cancels: false,
+            escape_cancels: false,
             output_mode: None,
         };
         let request = runtime
@@ -2380,6 +2384,7 @@ pub(super) mod tests {
             prompt: PromptChoice::Stored(PromptId::new("polish").expect("id")),
             application: None,
             tap_cancels: false,
+            escape_cancels: false,
             output_mode: None,
         })
     }
@@ -2449,6 +2454,7 @@ pub(super) mod tests {
                 ),
                 application: None,
                 tap_cancels: false,
+                escape_cancels: false,
                 output_mode: None,
             })
             .expect("the run is admitted");
@@ -3773,9 +3779,11 @@ pub(super) mod tests {
         ) -> Self {
             let overrides = self.assistant_overrides.as_mut().expect("a test runtime");
             let (deliver_started, deliver_release) = (started.clone(), Arc::clone(&release));
-            overrides.execute = Box::new(move |_runtime, ticket, _job, cancel| {
+            overrides.execute = Box::new(move |runtime, ticket, job, cancel| {
                 let _ = started.send(ticket.0);
-                park(&release, &cancel);
+                if !park(&release, &cancel) {
+                    runtime.cancel_unstarted(ticket, job.assistant_id());
+                }
             });
             overrides.deliver = Some(Box::new(move |_call, cancel| {
                 let _ = deliver_started.send(DELIVERY);

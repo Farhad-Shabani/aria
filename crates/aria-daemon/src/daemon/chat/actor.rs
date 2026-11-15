@@ -5,13 +5,14 @@
 //! one after another, since a resumed CLI session can't take two turns at once. Every other job
 //! runs side by side. Typing takes turns in the runtime, so two texts never type into the same
 //! field at once. A run that types nothing waits for nobody. A cancel ends one job by ticket, or
-//! every ask in one chat. A delete runs only while no ask on the chat runs or waits, and holds
+//! every ask in one chat. A bare Escape ends a prompt run a press started, through a list the
+//! actor keeps, since the hotkey tap can't wait for the actor. A delete runs only while no ask on the chat runs or waits, and holds
 //! the chat's lane, so no reply saves after the delete. A rename holds the lanes of both names,
 //! so no ask starts under either name mid-rename. Daemon shutdown cancels what is running.
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use aria_kit::cancel::CancelToken;
 use tokio::sync::mpsc;
@@ -98,6 +99,17 @@ impl Job {
         }
     }
 
+    /// Only a prompt run: an ask's reply shows in the palette, which keeps
+    /// Escape for itself.
+    fn escape_cancels(&self) -> bool {
+        match self {
+            Self::Run(ChatJob::Prompt(request)) => request.escape_cancels,
+            Self::Run(ChatJob::Ask(_)) | Self::Deliver(_) | Self::Delete(_) | Self::Rename(_) => {
+                false
+            }
+        }
+    }
+
     /// A lane besides its own that the job holds while it runs.
     fn second_lane(&self, lane: &Lane) -> Option<Lane> {
         match self {
@@ -125,8 +137,43 @@ enum Control {
     Pending(SessionKey, Reply<Vec<PendingAsk>, Infallible>),
 }
 
+/// The running jobs a bare Escape may cancel. The actor keeps it; the
+/// hotkey tap reads it without a round trip, since every keystroke waits
+/// on the tap. A prompt run never waits in a lane, so each one is running.
+#[derive(Clone, Default)]
+struct EscapableRuns(Arc<Mutex<Vec<(Ticket, CancelToken)>>>);
+
+impl EscapableRuns {
+    fn add(&self, ticket: Ticket, token: CancelToken) {
+        self.lock().push((ticket, token));
+    }
+
+    fn remove(&self, ticket: Ticket) {
+        self.lock().retain(|(run, _)| *run != ticket);
+    }
+
+    /// Cancels the newest run not cancelled yet. `false` when none is left.
+    fn cancel_newest(&self) -> bool {
+        let runs = self.lock();
+        let newest = runs
+            .iter()
+            .filter(|(_, token)| !token.is_cancelled())
+            .max_by_key(|(ticket, _)| *ticket);
+        let Some((_, token)) = newest else {
+            return false;
+        };
+        token.cancel();
+        true
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Vec<(Ticket, CancelToken)>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 #[derive(Clone)]
 pub(in crate::daemon) struct ChatHandle {
+    escapable: EscapableRuns,
     submissions: mpsc::Sender<SubmitCommand>,
     controls: mpsc::Sender<Control>,
 }
@@ -223,6 +270,12 @@ impl ChatHandle {
         Ok(self.send_cancel(Cancel::Tapped).await? > 0)
     }
 
+    /// Ends the newest running job a bare Escape may end. `false` when none
+    /// is in flight. Answers at once, without the actor.
+    pub(in crate::daemon) fn take_escape(&self) -> bool {
+        self.escapable.cancel_newest()
+    }
+
     /// Ends the chat's running ask and every ask waiting behind it.
     /// Answers how many it ended. An ask already told to stop isn't counted.
     pub(in crate::daemon) async fn cancel_chat(
@@ -266,6 +319,7 @@ impl ChatHandle {
         let (submissions, _) = mpsc::channel(COMMAND_CAPACITY);
         let (controls, _) = mpsc::channel(COMMAND_CAPACITY);
         Self {
+            escapable: EscapableRuns::default(),
             submissions,
             controls,
         }
@@ -276,6 +330,7 @@ pub(in crate::daemon) struct ChatActor {
     submissions: mpsc::Receiver<SubmitCommand>,
     controls: mpsc::Receiver<Control>,
     runtime: Arc<ChatRuntime>,
+    escapable: EscapableRuns,
     next_ticket: u64,
     /// Jobs waiting behind the one running in their lane.
     lanes: HashMap<Lane, VecDeque<(Ticket, Job)>>,
@@ -345,8 +400,10 @@ impl Kind {
 pub(in crate::daemon) fn channel(runtime: Arc<ChatRuntime>) -> (ChatHandle, ChatActor) {
     let (submissions, submission_receiver) = mpsc::channel(COMMAND_CAPACITY);
     let (controls, control_receiver) = mpsc::channel(COMMAND_CAPACITY);
+    let escapable = EscapableRuns::default();
     (
         ChatHandle {
+            escapable: escapable.clone(),
             submissions,
             controls,
         },
@@ -354,6 +411,7 @@ pub(in crate::daemon) fn channel(runtime: Arc<ChatRuntime>) -> (ChatHandle, Chat
             submissions: submission_receiver,
             controls: control_receiver,
             runtime,
+            escapable,
             next_ticket: 1,
             lanes: HashMap::new(),
             running: HashMap::new(),
@@ -415,6 +473,9 @@ impl ChatActor {
             Job::Run(_) | Job::Delete(_) | Job::Rename(_) => CancelToken::new(),
             Job::Deliver(deliver) => deliver.cancellation.clone(),
         };
+        if job.escape_cancels() {
+            self.escapable.add(ticket, token.clone());
+        }
         let second = job.second_lane(&key);
         for lane in std::iter::once(&key).chain(&second) {
             self.running.insert(
@@ -592,7 +653,9 @@ impl ChatActor {
             }
         };
         for key in std::iter::once(held.lane).chain(held.second) {
-            self.running.remove(&key);
+            if let Some(job) = self.running.remove(&key) {
+                self.escapable.remove(job.ticket);
+            }
             let next = self
                 .lanes
                 .get(&key)
@@ -1244,6 +1307,69 @@ mod tests {
         );
     }
 
+    fn pressed_prompt() -> PromptRequest {
+        PromptRequest {
+            tap_cancels: true,
+            escape_cancels: true,
+            ..prompt(Some(OutputMode::InsertOrCopy))
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_escape_ends_the_newest_prompt_run_a_press_started() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let harness = parking_harness(directory.path());
+
+        let older = harness
+            .handle
+            .run_prompt(pressed_prompt())
+            .await
+            .expect("taken");
+        let newer = harness
+            .handle
+            .run_prompt(pressed_prompt())
+            .await
+            .expect("taken");
+        assert!(started_within(&harness.started, PATIENCE).is_some());
+        assert!(started_within(&harness.started, PATIENCE).is_some());
+
+        assert!(harness.handle.take_escape());
+        assert_eq!(ended_within(&harness, newer), Some(RpcErrorCode::Cancelled));
+        assert!(harness.handle.take_escape());
+        assert_eq!(ended_within(&harness, older), Some(RpcErrorCode::Cancelled));
+        assert!(!harness.handle.take_escape(), "nothing is left to end");
+
+        harness.shutdown.cancel();
+        harness.actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_escape_leaves_an_ask_and_a_prompt_run_no_press_marked_alone() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let harness = parking_harness(directory.path());
+
+        harness
+            .handle
+            .ask(pressed_job("1", directory.path()))
+            .await
+            .expect("the pressed ask is taken");
+        harness
+            .handle
+            .run_prompt(PromptRequest {
+                tap_cancels: true,
+                ..prompt(Some(OutputMode::InsertOrCopy))
+            })
+            .await
+            .expect("the tap-only prompt run is taken");
+        assert!(started_within(&harness.started, PATIENCE).is_some());
+        assert!(started_within(&harness.started, PATIENCE).is_some());
+
+        assert!(!harness.handle.take_escape());
+
+        harness.shutdown.cancel();
+        harness.actor.await.expect("the actor drains");
+    }
+
     fn prompt(output_mode: Option<OutputMode>) -> PromptRequest {
         PromptRequest {
             text: "hi".to_owned(),
@@ -1255,6 +1381,7 @@ mod tests {
             model_id: None,
             application: None,
             tap_cancels: false,
+            escape_cancels: false,
             output_mode,
         }
     }

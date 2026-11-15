@@ -180,6 +180,7 @@ enum ChatClient {
         request.promptID = promptID
         request.applicationID = application ?? ""
         request.tapCancels = true
+        request.escapeCancels = true
         request.outputMode = .insertOrCopy
         let sent = request
         return try await DaemonTransport.call { client, options in

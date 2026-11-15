@@ -1,7 +1,8 @@
 //! What each key means right now, and doing it. The router reads the
 //! meaning from the active dictation, then acts on that dictation. A stale
-//! read then fails instead of landing on the next one. The router asks a
-//! chat run's own actor, which owns that state.
+//! read then fails instead of landing on the next one. A tap asks a chat
+//! run's own actor, which owns that state. An Escape can't wait for the
+//! actor, so it reads the runs the actor lists for it.
 
 use super::super::chat::{ChatCallError, ChatHandle};
 use super::super::dictation::DictationRuntimeError;
@@ -77,14 +78,24 @@ fn return_action(
     }
 }
 
-/// A bare Escape cancels a dictation no client owns, whatever app is in
-/// front. It voids the Aria key's press too, so a hold it lands in ends
-/// cancelled and a tap's release starts nothing.
-fn escape_taken(dictation: Option<ActiveDictation>) -> Taken {
-    match dictation {
-        Some(dictation) if dictation.take_escape() => Taken::VoidingPress,
-        Some(_) | None => Taken::No,
+/// What a bare Escape cancelled.
+#[derive(Debug, PartialEq, Eq)]
+enum EscapeCancelled {
+    Dictation,
+    Run,
+}
+
+/// A bare Escape cancels a dictation that allows it, else the newest run
+/// a press started, whatever app is in front. `take_run` is asked only
+/// when no dictation took the Escape, so one Escape cancels one thing.
+fn escape_cancels(
+    dictation: Option<ActiveDictation>,
+    take_run: impl FnOnce() -> bool,
+) -> Option<EscapeCancelled> {
+    if dictation.is_some_and(|dictation| dictation.take_escape()) {
+        return Some(EscapeCancelled::Dictation);
     }
+    take_run().then_some(EscapeCancelled::Run)
 }
 
 /// How a hold ended, sent to the task that owns its dictation.
@@ -100,8 +111,7 @@ pub(super) struct Hold(oneshot::Sender<HoldEnd>);
 
 pub(super) struct KeyRouter {
     dictation: DictationHandle,
-    /// Cancels a run a client's press started, so a tap does not dictate
-    /// over it.
+    /// Cancels a run a client's press started, on a tap or an Escape.
     chat: ChatHandle,
     /// Reads the active dictation, and stops a hold's recording by id.
     runtime: Arc<DictationRuntime>,
@@ -159,17 +169,27 @@ impl KeyRouter {
                 ReturnAction::Take(dictation) if dictation.take_return() => Taken::KeepingPress,
                 ReturnAction::Take(_) | ReturnAction::Pass => Taken::No,
             },
-            BareKey::Escape => {
-                let taken = escape_taken(dictation);
-                if taken != Taken::No {
+            // A taken Escape voids the Aria key's press too, so a hold it
+            // lands in ends cancelled and a tap's release starts nothing.
+            BareKey::Escape => match escape_cancels(dictation, || self.chat.take_escape()) {
+                Some(EscapeCancelled::Dictation) => {
                     tracing::info!(
                         trigger = "hotkey",
                         status = "cancelled",
                         "escape cancelled the dictation"
                     );
+                    Taken::VoidingPress
                 }
-                taken
-            }
+                Some(EscapeCancelled::Run) => {
+                    tracing::info!(
+                        trigger = "hotkey",
+                        status = "cancelled",
+                        "escape cancelled the run a press started"
+                    );
+                    Taken::VoidingPress
+                }
+                None => Taken::No,
+            },
         }
     }
 
@@ -418,7 +438,7 @@ mod tests {
         let takes = |built: Option<ActiveDictationBuilder>| {
             let built = built.map(ActiveDictationBuilder::build);
             let dictation = built.as_ref().map(|built| built.dictation.clone());
-            escape_taken(dictation) == Taken::VoidingPress
+            escape_cancels(dictation, || false) == Some(EscapeCancelled::Dictation)
         };
         let keyed = || manual().with_escape_cancels();
         assert!(takes(Some(keyed().with_recording())));
@@ -444,6 +464,29 @@ mod tests {
             !takes(Some(keyed().with_recording().with_deadline_passed())),
             "it is out of time"
         );
+    }
+
+    #[test]
+    fn an_escape_no_dictation_takes_cancels_the_run_a_press_started() {
+        let asked = Cell::new(false);
+        let run = || {
+            asked.set(true);
+            true
+        };
+        let keyed = manual().with_escape_cancels().with_recording().build();
+        let owned = manual().with_recording().build();
+
+        assert_eq!(
+            escape_cancels(Some(keyed.dictation), run),
+            Some(EscapeCancelled::Dictation)
+        );
+        assert!(!asked.get(), "one Escape cancels one thing");
+        assert_eq!(
+            escape_cancels(Some(owned.dictation), run),
+            Some(EscapeCancelled::Run)
+        );
+        assert_eq!(escape_cancels(None, run), Some(EscapeCancelled::Run));
+        assert_eq!(escape_cancels(None, || false), None, "nothing is in flight");
     }
 
     #[test]

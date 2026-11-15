@@ -180,6 +180,9 @@ message RunPromptRequest {
   string application_id = 3;
   // As on AskRequest: a tap of the Aria key cancels the run.
   bool tap_cancels = 4;
+  // A bare Escape, pressed in any app, cancels the run. The app doesn't
+  // receive that Escape.
+  bool escape_cancels = 8;
   // As on AskRequest. Absent: nothing is typed, and the result arrives only
   // as the REPLIED event's text.
   optional OutputMode output_mode = 5;

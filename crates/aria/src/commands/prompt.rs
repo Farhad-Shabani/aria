@@ -248,6 +248,7 @@ fn run_prompt(home: &Path, args: RunArgs) -> anyhow::Result<()> {
         prompt,
         application: None,
         tap_cancels: false,
+        escape_cancels: false,
         output_mode: args.mode.map(Into::into),
     })?;
     eprintln!("running {}", pending.ticket());
