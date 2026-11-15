@@ -23,6 +23,7 @@ use crate::stt::{
 use crate::vocabulary::Vocabulary;
 use aria_kit::audio::{
     AudioCapture, CaptureError, RecordingMode, RecordingReader, RecordingSource, StopSignal,
+    canonical_duration,
 };
 use aria_platform::delivery::{Caret, Placement};
 use aria_primitives::error_chain;
@@ -591,7 +592,11 @@ where
                 .dictation_started(&settings, control)
                 .map_err(|error| stop_recording(control, map_sink_error(error, control)))
                 .map_err(|error| log_delivery_error(stage_started.elapsed(), error))?;
-            tracing::info!(stage = "transcription", "dictation stage started");
+            tracing::info!(
+                stage = "transcription",
+                audio_ms = recording.duration().as_millis(),
+                "dictation stage started"
+            );
             // Held only for the transcribing stage: the meter ends with
             // capture, and the pill has its next stage to draw by then.
             let meter = Meter::watching(&recording, control, events);
@@ -1148,7 +1153,6 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let first = self.written.is_empty();
         // Complete delivery types the decoder's own transcript, so joining
         // here would only make the caption disagree with it.
         let punctuated = if self.streaming {
@@ -1169,6 +1173,7 @@ impl<'a> Published<'a> {
         if self.failure.is_some() {
             return Ok(());
         }
+        let spoken_to = span.as_ref().map(|span| span.end);
         // History keeps no names for dictation: the ring shows them.
         let utterance = Utterance {
             text: &punctuated.text,
@@ -1177,18 +1182,24 @@ impl<'a> Published<'a> {
             span,
             spacing,
         };
+        let typing = Instant::now();
         if let Err(error) = sinks.segment(utterance) {
             let error = stopped_partway(map_sink_error(error, self.control), sinks);
             return Err(log_delivery_error(self.started_at.elapsed(), error));
         }
-        if self.streaming && first {
+        let typed_at = Instant::now();
+        self.announce(&punctuated.text, spacing, speaker, sinks);
+        if self.streaming {
+            // After the text and its announcement, so neither waits on the log.
             tracing::info!(
                 stage = "delivery",
-                elapsed_ms = self.started_at.elapsed().as_millis(),
-                "dictation first segment transcribed"
+                words = punctuated.text.split_whitespace().count(),
+                elapsed_ms = typed_at.duration_since(self.started_at).as_millis(),
+                typing_ms = typed_at.duration_since(typing).as_millis(),
+                spoken_to_ms = spoken_to.map(|end| canonical_duration(end).as_millis()),
+                "dictation segment typed"
             );
         }
-        self.announce(&punctuated.text, spacing, speaker, sinks);
         Ok(())
     }
 
@@ -5400,6 +5411,64 @@ mod tests {
                 "yeah"
             );
         }
+    }
+
+    #[test]
+    fn each_streamed_segment_logs_where_its_words_end() {
+        #[derive(Clone, Default)]
+        struct LogWriter(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for LogWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let writer = LogWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer({
+                let writer = writer.clone();
+                move || writer.clone()
+            })
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        // With one dispatch, the first thread to reach a callsite caches its
+        // interest for all. A second keeps tracing asking each one.
+        let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = streaming();
+        let mut published =
+            Published::new(&settings, no_terms(), &control, &events, Instant::now());
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
+        sinks.dictation_started(&settings, &control).unwrap();
+
+        for (text, end) in [("first part", 1_600), ("second part", 16_000)] {
+            let mut heard = heard(directory.path(), text);
+            heard.span = Some(0..end);
+            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+        }
+
+        let log = String::from_utf8(writer.0.lock().unwrap().clone()).unwrap();
+        let typed: Vec<_> = log
+            .lines()
+            .filter(|line| line.contains("dictation segment typed"))
+            .collect();
+        assert_eq!(typed.len(), 2, "{log}");
+        assert!(
+            typed[0].contains("words=2") && typed[0].contains("spoken_to_ms=100"),
+            "{log}"
+        );
+        assert!(
+            typed[1].contains("words=2") && typed[1].contains("spoken_to_ms=1000"),
+            "{log}"
+        );
     }
 
     #[test]

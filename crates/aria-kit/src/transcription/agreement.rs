@@ -307,13 +307,26 @@ impl AgreementState {
         let skipped = self.skipped_speech(&loudness, &heard);
         let (confirmed, settled) = self.agreement.agree(heard, skipped);
         let confirmed = self.commit(confirmed);
-        if recording.reached_end() && available == recording.held_to() {
-            return self.finish_after(confirmed);
-        }
-
         // Relative to this decode's window, so it is read before the trim
         // moves the window on.
         let skipped = skipped.map(|at| at - self.buffer_start);
+        if recording.reached_end() && available == recording.held_to() {
+            let finished = self.finish_after(confirmed)?;
+            let segment = finished.as_ref().and_then(|step| match &step.update {
+                Some(TranscriptUpdate::Finalized(segment)) => Some(segment),
+                _ => None,
+            });
+            log_step(
+                decoded,
+                decode_ms,
+                behind,
+                heard_count,
+                skipped,
+                segment,
+                settled,
+            );
+            return Ok(finished);
+        }
         let tail = self.trim_when_due(&loudness, available, settled);
         let segment = self.one_at_a_time(confirmed, tail);
         log_step(

@@ -29,7 +29,10 @@ impl<'scope> DecodeThread<'scope> {
             .name("aria-hearing-decoder".into())
             .spawn_scoped(scope, {
                 let board = Arc::clone(&board);
+                // Its lines name the press, as the spawner's do.
+                let press = tracing::Span::current();
                 move || {
+                    let _press = press.entered();
                     let _done = Done(&board);
                     decode(&mut operation, recording, previews, &board)
                 }

@@ -92,7 +92,10 @@ impl<'scope> TurnThread<'scope> {
             .spawn_scoped(scope, {
                 let board = Arc::clone(board);
                 let cancel = cancel.clone();
+                // Its lines name the press, as the spawner's do.
+                let press = tracing::Span::current();
                 move || {
+                    let _press = press.entered();
                     let mut done = Done {
                         board: &board,
                         ending: Ending::Panicked,
