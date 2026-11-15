@@ -542,6 +542,7 @@ mod tests {
             let outcome = coordinator
                 .execute(
                     settings(),
+                    aria_voice::dictation::EscapeRule::Passes,
                     CancelToken::never(),
                     &DictationEventEmitter::unsubscribed(),
                 )

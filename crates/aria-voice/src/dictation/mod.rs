@@ -31,7 +31,7 @@ pub use event::{
 pub use event::{DictationStage, HeardSpeaker};
 pub use execution::{
     ActiveDictation, DictationCoordinator, DictationError, DictationExecutor, DictationPolicy,
-    DictationPolicyError, ExecutionControl, Transcribed,
+    DictationPolicyError, EscapeRule, ExecutionControl, Transcribed,
 };
 use level::Meter;
 pub use level::MicLevel;

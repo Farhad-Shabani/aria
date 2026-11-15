@@ -116,6 +116,25 @@ pub(crate) enum KeyEvent {
     MouseDown,
 }
 
+/// A key pressed with no modifier that a dictation may take, so it never
+/// reaches the app in front.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BareKey {
+    Return,
+    Escape,
+}
+
+/// What became of a bare key the listener asked about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Taken {
+    /// Nothing took it, so it reaches the app.
+    No,
+    /// Swallowed. The Aria key's press goes on.
+    KeepingPress,
+    /// Swallowed, and the Aria key's press is void, as typing voids it.
+    VoidingPress,
+}
+
 /// What the key's press stream means. Other input while the key is down
 /// makes the press a shortcut, never a trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

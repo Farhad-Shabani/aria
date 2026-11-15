@@ -11,7 +11,9 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use aria_voice::dictation::{DictationEventEmitter, DictationOutcome, DictationRequest};
+use aria_voice::dictation::{
+    DictationEventEmitter, DictationOutcome, DictationRequest, EscapeRule,
+};
 
 use super::super::operation::{
     CallError, Pending, Reply, cancellable_call, operation_cancellation,
@@ -34,6 +36,7 @@ pub(in crate::daemon) type DictationCallError = CallError<DictationRuntimeError>
 struct DictationCommand {
     request: DictationRequest,
     auto_stop: AutoStopRule,
+    escape: EscapeRule,
     cancellation: CancelToken,
     /// Where this press announces its stages. `None` means the daemon's
     /// own emitter, which every press reaches anyway.
@@ -59,10 +62,11 @@ impl DictationHandle {
     pub(in crate::daemon) async fn start(
         &self,
         request: DictationRequest,
+        escape: EscapeRule,
     ) -> Result<DictationOutcome, DictationCallError> {
         // The guard in `pending` cancels the operation if this future is
         // dropped after the command went out.
-        self.submit(request, AutoStopRule::Setting, None)
+        self.submit(request, AutoStopRule::Setting, escape, None)
             .await?
             .wait()
             .await
@@ -75,11 +79,13 @@ impl DictationHandle {
         &self,
         request: DictationRequest,
         auto_stop: AutoStopRule,
+        escape: EscapeRule,
         events: Option<DictationEventEmitter>,
     ) -> Result<Pending<DictationOutcome, DictationRuntimeError>, DictationCallError> {
         let (command, pending) = cancellable_call(|cancellation, reply| DictationCommand {
             request,
             auto_stop,
+            escape,
             cancellation,
             events,
             reply,
@@ -96,10 +102,12 @@ impl DictationHandle {
     pub(in crate::daemon) fn start_blocking(
         &self,
         request: DictationRequest,
+        escape: EscapeRule,
     ) -> Result<DictationOutcome, DictationCallError> {
         let (command, pending) = cancellable_call(|cancellation, reply| DictationCommand {
             request,
             auto_stop: AutoStopRule::Setting,
+            escape,
             cancellation,
             events: None,
             reply,
@@ -156,6 +164,7 @@ impl DictationActor {
         let DictationCommand {
             request,
             auto_stop,
+            escape,
             cancellation,
             events,
             reply,
@@ -163,7 +172,7 @@ impl DictationActor {
         let runtime = Arc::clone(&self.runtime);
         let cancellation = operation_cancellation(cancellation, shutdown.clone());
         reply.answer_with(&mut self.jobs, "dictation", move || {
-            runtime.execute(request, auto_stop, cancellation, events.as_ref())
+            runtime.execute(request, auto_stop, escape, cancellation, events.as_ref())
         });
     }
 

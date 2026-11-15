@@ -424,6 +424,7 @@ pub struct ActiveDictationBuilder {
     stop_mode: StopMode,
     recording: bool,
     target_process: Option<u32>,
+    escape: super::EscapeRule,
     cancelled: bool,
     out_of_time: bool,
 }
@@ -442,6 +443,7 @@ impl ActiveDictationBuilder {
             stop_mode,
             recording: false,
             target_process: None,
+            escape: super::EscapeRule::Passes,
             cancelled: false,
             out_of_time: false,
         }
@@ -454,6 +456,11 @@ impl ActiveDictationBuilder {
 
     pub fn with_target_process(mut self, process: u32) -> Self {
         self.target_process = Some(process);
+        self
+    }
+
+    pub fn with_escape_cancels(mut self) -> Self {
+        self.escape = super::EscapeRule::Cancels;
         self
     }
 
@@ -474,8 +481,12 @@ impl ActiveDictationBuilder {
         } else {
             Duration::from_secs(5)
         };
-        let control =
-            ExecutionControl::for_test_lasting(self.stop_mode, cancellation.clone(), overall);
+        let control = ExecutionControl::for_test_lasting(
+            self.stop_mode,
+            self.escape,
+            cancellation.clone(),
+            overall,
+        );
         let recording = self.recording.then(|| {
             control
                 .start_recording(

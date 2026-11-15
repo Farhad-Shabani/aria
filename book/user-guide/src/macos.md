@@ -56,6 +56,20 @@ press **Return**. The status pill then says **return not sent**.
 **Output** set to **Copy to the clipboard**, **Return** always reaches the app.
 Turn this off with **Return sends** under **Settings → Dictation**.
 
+## Cancel with Esc
+
+Press **Esc** to cancel a dictation you started with the Aria key or the
+[wake word](./wake-word.md). Aria stops recording and types nothing more. The
+status pill says **canceled**, and Aria doesn't save the dictation to history.
+
+Text Aria already typed stays where it is.
+
+**Esc** works in any app, and that app doesn't receive the key. **Esc** with
+Shift, Control, Option, or Command reaches the app.
+
+A dictation you start in the terminal keeps its own keys. See
+[Stop by hand](./terminal-dictation.md#stop-by-hand).
+
 ## Ask or pick a prompt
 
 Settings calls the key you tap the **Aria key**: right Option, or Fn if you

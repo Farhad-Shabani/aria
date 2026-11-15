@@ -1,7 +1,7 @@
-//! What each key means right now, and doing it. The meaning is read from
-//! the active dictation alone, by two pure functions; the router then acts
-//! on that dictation, so a stale read fails instead of landing on the next
-//! one. A chat run is asked by its own actor, which owns that state.
+//! What each key means right now, and doing it. The router reads the
+//! meaning from the active dictation, then acts on that dictation. A stale
+//! read then fails instead of landing on the next one. The router asks a
+//! chat run's own actor, which owns that state.
 
 use super::super::chat::{ChatCallError, ChatHandle};
 use super::super::dictation::DictationRuntimeError;
@@ -11,9 +11,10 @@ use super::super::dictation::{
 use super::super::operation::CallError;
 use super::super::subscriptions::Subscriptions;
 use aria_platform::delivery::frontmost_process;
-use aria_platform::hotkey::{Combo, Press};
+use aria_platform::hotkey::{BareKey, Combo, Press, Taken};
 use aria_voice::dictation::{
-    ActiveDictation, DictationError, DictationOutcome, DictationRequest, DictationStage, StopMode,
+    ActiveDictation, DictationError, DictationOutcome, DictationRequest, DictationStage,
+    EscapeRule, StopMode,
 };
 use std::sync::Arc;
 use tokio::sync::{oneshot, watch};
@@ -73,6 +74,16 @@ fn return_action(
     match dictation.target_process() {
         Some(process) if front() == Some(process) => ReturnAction::Take(dictation),
         Some(_) | None => ReturnAction::Pass,
+    }
+}
+
+/// A bare Escape cancels a dictation no client owns, whatever app is in
+/// front. It voids the Aria key's press too, so a hold it lands in ends
+/// cancelled and a tap's release starts nothing.
+fn escape_taken(dictation: Option<ActiveDictation>) -> Taken {
+    match dictation {
+        Some(dictation) if dictation.take_escape() => Taken::VoidingPress,
+        Some(_) | None => Taken::No,
     }
 }
 
@@ -138,12 +149,27 @@ impl KeyRouter {
         }
     }
 
-    /// True when the Return is taken and must not reach the app. Runs
-    /// inside the hotkey tap, which every keystroke waits on.
-    pub(super) fn take_return(&self) -> bool {
-        match return_action(self.runtime.active_dictation(), frontmost_process) {
-            ReturnAction::Take(dictation) => dictation.take_return(),
-            ReturnAction::Pass => false,
+    /// What becomes of a bare key the person pressed. Runs inside the
+    /// hotkey tap, which every keystroke waits on.
+    pub(super) fn take(&self, key: BareKey) -> Taken {
+        let dictation = self.runtime.active_dictation();
+        match key {
+            // The press goes on: a taken Return stops the recording by itself.
+            BareKey::Return => match return_action(dictation, frontmost_process) {
+                ReturnAction::Take(dictation) if dictation.take_return() => Taken::KeepingPress,
+                ReturnAction::Take(_) | ReturnAction::Pass => Taken::No,
+            },
+            BareKey::Escape => {
+                let taken = escape_taken(dictation);
+                if taken != Taken::No {
+                    tracing::info!(
+                        trigger = "hotkey",
+                        status = "cancelled",
+                        "escape cancelled the dictation"
+                    );
+                }
+                taken
+            }
         }
     }
 
@@ -176,7 +202,7 @@ impl KeyRouter {
                 ),
                 Ok(false) => log_outcome(
                     dictation
-                        .start(DictationRequest::new(StopMode::Manual))
+                        .start(DictationRequest::new(StopMode::Manual), EscapeRule::Cancels)
                         .await,
                 ),
                 Err(error) => log_chat_unreached(error),
@@ -207,6 +233,7 @@ impl KeyRouter {
                 .submit(
                     DictationRequest::new(StopMode::Manual),
                     AutoStopRule::Off,
+                    EscapeRule::Cancels,
                     Some(events),
                 )
                 .await
@@ -384,6 +411,39 @@ mod tests {
         };
         assert!(takes(TYPED_PROCESS));
         assert!(!takes(TYPED_PROCESS + 1), "another app's Return is its own");
+    }
+
+    #[test]
+    fn an_escape_cancels_a_dictation_no_client_owns_until_it_ends() {
+        let takes = |built: Option<ActiveDictationBuilder>| {
+            let built = built.map(ActiveDictationBuilder::build);
+            let dictation = built.as_ref().map(|built| built.dictation.clone());
+            escape_taken(dictation) == Taken::VoidingPress
+        };
+        let keyed = || manual().with_escape_cancels();
+        assert!(takes(Some(keyed().with_recording())));
+        assert!(takes(Some(keyed())), "it transcribes or types still");
+        assert!(
+            takes(Some(
+                ActiveDictationBuilder::new(StopMode::OnSilence)
+                    .with_escape_cancels()
+                    .with_recording()
+            )),
+            "the wake word's"
+        );
+        assert!(!takes(None), "nothing dictates");
+        assert!(
+            !takes(Some(manual().with_recording())),
+            "its client owns Escape"
+        );
+        assert!(
+            !takes(Some(keyed().with_recording().with_cancellation())),
+            "it is ending"
+        );
+        assert!(
+            !takes(Some(keyed().with_recording().with_deadline_passed())),
+            "it is out of time"
+        );
     }
 
     #[test]

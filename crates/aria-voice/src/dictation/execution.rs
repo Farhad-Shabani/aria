@@ -307,18 +307,42 @@ enum ReturnState {
     Dropped,
 }
 
+/// Whether the person's Escape or the pipeline's result settled the
+/// dictation first. One value, so a late Escape never cancels a result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Settlement {
+    Open,
+    Cancelled,
+    Finished,
+}
+
 /// How long a terminal stage waits for capture to let go before it goes out
 /// anyway. Capture polls its stop every chunk, so this is only ever a
 /// backstop against a wedged worker.
 const CAPTURE_RELEASE_TIMEOUT: Duration = Duration::from_secs(2);
 const CAPTURE_RELEASE_POLL: Duration = Duration::from_millis(5);
 
+/// Whether a bare Escape cancels the dictation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EscapeRule {
+    /// No client owns it: the Aria key or the wake word started it.
+    Cancels,
+    /// The client that asked for it owns Escape, as the terminal does.
+    Passes,
+}
+
 /// Process-local control signals for one dictation execution.
 #[derive(Debug)]
 pub struct ExecutionControl {
     id: RecordingId,
     stop_mode: StopMode,
-    cancellation: CancelToken,
+    escape: EscapeRule,
+    /// The caller's cancellation. The dictation never fires it.
+    caller: CancelToken,
+    /// The person's Escape, raced against the result. `is_cancelled` reads
+    /// it with `caller`.
+    settlement: AtomicU8,
     deadline: Deadline,
     recording_state: AtomicU8,
     return_state: AtomicU8,
@@ -343,6 +367,7 @@ impl ExecutionControl {
     fn new(
         id: RecordingId,
         stop_mode: StopMode,
+        escape: EscapeRule,
         cancellation: CancelToken,
         deadline: Deadline,
         _sound_muting: SoundMuting,
@@ -350,7 +375,9 @@ impl ExecutionControl {
         Self {
             id,
             stop_mode,
-            cancellation,
+            escape,
+            caller: cancellation,
+            settlement: AtomicU8::new(Settlement::Open as u8),
             deadline,
             recording_state: AtomicU8::new(RecordingState::NotStarted as u8),
             return_state: AtomicU8::new(ReturnState::Unarmed as u8),
@@ -376,12 +403,18 @@ impl ExecutionControl {
         stop_mode: StopMode,
         cancellation: CancelToken,
     ) -> Arc<Self> {
-        Self::for_test_lasting(stop_mode, cancellation, Duration::from_secs(5))
+        Self::for_test_lasting(
+            stop_mode,
+            EscapeRule::Passes,
+            cancellation,
+            Duration::from_secs(5),
+        )
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn for_test_lasting(
         stop_mode: StopMode,
+        escape: EscapeRule,
         cancellation: CancelToken,
         overall: Duration,
     ) -> Arc<Self> {
@@ -389,6 +422,7 @@ impl ExecutionControl {
         Arc::new(Self::new(
             RecordingId(0),
             stop_mode,
+            escape,
             cancellation,
             policy.deadline(),
             SoundMuting::Never,
@@ -403,9 +437,39 @@ impl ExecutionControl {
         self.stop_mode
     }
 
-    /// Whether the caller cancelled the operation.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn escape(&self) -> EscapeRule {
+        self.escape
+    }
+
+    /// Whether the operation was cancelled, by its caller or by the
+    /// person's Escape.
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancellation.is_cancelled()
+        self.caller.is_cancelled()
+            || self.settlement.load(Ordering::Acquire) == Settlement::Cancelled as u8
+    }
+
+    /// Abandons the dictation. False when it was already ending, or its
+    /// result was in.
+    pub(crate) fn cancel(&self) -> bool {
+        !self.should_stop() && self.settle(Settlement::Cancelled)
+    }
+
+    /// Settles the dictation with its result. False when Escape cancelled
+    /// it first: the result is then dropped.
+    pub(crate) fn finish(&self) -> bool {
+        self.settle(Settlement::Finished)
+    }
+
+    fn settle(&self, settlement: Settlement) -> bool {
+        self.settlement
+            .compare_exchange(
+                Settlement::Open as u8,
+                settlement as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
     }
 
     /// Returns whether the operation has exhausted its total execution time.
@@ -647,6 +711,13 @@ impl ActiveDictation {
     pub fn take_return(&self) -> bool {
         self.control.take_return()
     }
+
+    /// Takes the person's Escape: the dictation types nothing more and saves
+    /// nothing. False when the key belongs to the app. A client owns Escape,
+    /// as the terminal does, or the dictation was ending or had its result.
+    pub fn take_escape(&self) -> bool {
+        self.control.escape == EscapeRule::Cancels && self.control.cancel()
+    }
 }
 
 /// A dictation holding Return back while its text is still coming.
@@ -782,14 +853,17 @@ where
     pub fn execute(
         &self,
         settings: DictationSettings,
+        escape: EscapeRule,
         cancellation: CancelToken,
         events: &DictationEventEmitter,
     ) -> Result<DictationOutcome, DictationError> {
-        let admission = self.admit(&settings, cancellation).inspect_err(|error| {
-            if matches!(error, DictationError::ApplicationExcluded) {
-                events.emit(DictationStage::Failed(error.into()));
-            }
-        })?;
+        let admission = self
+            .admit(&settings, escape, cancellation)
+            .inspect_err(|error| {
+                if matches!(error, DictationError::ApplicationExcluded) {
+                    events.emit(DictationStage::Failed(error.into()));
+                }
+            })?;
         match admission {
             Admission::Execute(control, _claim) => {
                 // Capture and the level meter log from their own threads,
@@ -809,11 +883,13 @@ where
     fn admit(
         &self,
         settings: &DictationSettings,
+        escape: EscapeRule,
         cancellation: CancelToken,
     ) -> Result<Admission, DictationError> {
         let control = Arc::new(ExecutionControl::new(
             RecordingId(self.next_recording.fetch_add(1, Ordering::Relaxed)),
             settings.stop_mode,
+            escape,
             cancellation,
             self.policy.deadline(),
             if self.sound_muting == SoundMuting::Allowed && settings.mute_sound {
@@ -880,6 +956,7 @@ where
         let control = Arc::new(ExecutionControl::new(
             RecordingId(self.next_recording.fetch_add(1, Ordering::Relaxed)),
             settings.stop_mode,
+            EscapeRule::Passes,
             cancellation,
             Deadline::never(),
             SoundMuting::Never,
@@ -1010,7 +1087,12 @@ mod tests {
         let running = {
             let coordinator = Arc::clone(&coordinator);
             thread::spawn(move || {
-                coordinator.execute(settings(StopMode::OnSilence), CancelToken::never(), &events)
+                coordinator.execute(
+                    settings(StopMode::OnSilence),
+                    EscapeRule::Passes,
+                    CancelToken::never(),
+                    &events,
+                )
             })
         };
         let id = recording_started(&recording);
@@ -1063,17 +1145,75 @@ mod tests {
     }
 
     #[test]
+    fn only_a_dictation_started_to_allow_it_takes_escape() {
+        for (escape, taken) in [(EscapeRule::Cancels, true), (EscapeRule::Passes, false)] {
+            let (coordinator, _recording, _events) = coordinator();
+            let _admitted = coordinator
+                .admit(&settings(StopMode::Manual), escape, CancelToken::never())
+                .unwrap();
+
+            let active = coordinator.microphone.active_dictation().unwrap();
+
+            assert_eq!(active.take_escape(), taken);
+        }
+    }
+
+    #[test]
+    fn an_escape_cancels_the_dictation_once() {
+        let (coordinator, _recording, _events) = coordinator();
+        let admitted = coordinator
+            .admit(
+                &settings(StopMode::Manual),
+                EscapeRule::Cancels,
+                CancelToken::never(),
+            )
+            .unwrap();
+        let Admission::Execute(control, _claim) = admitted else {
+            panic!("the microphone was free");
+        };
+        let active = coordinator.microphone.active_dictation().unwrap();
+
+        assert!(active.take_escape());
+
+        assert!(control.is_cancelled(), "its caller's token can never fire");
+        assert!(active.is_ending());
+        assert!(!active.take_escape(), "it was already ending");
+    }
+
+    #[test]
+    fn an_escape_after_the_result_cancels_nothing() {
+        let control = ExecutionControl::for_test_lasting(
+            StopMode::Manual,
+            EscapeRule::Cancels,
+            CancelToken::new(),
+            Duration::from_secs(5),
+        );
+        let active = ActiveDictation::new(Arc::clone(&control));
+
+        assert!(control.finish());
+
+        assert!(!active.take_escape(), "the key belongs to the app");
+        assert!(!control.is_cancelled());
+    }
+
+    #[test]
     fn a_cancelled_press_does_not_toggle_an_active_recording() {
         let (coordinator, recording, events) = coordinator();
         thread::scope(|scope| {
             let first = scope.spawn(|| {
-                coordinator.execute(settings(StopMode::Manual), CancelToken::never(), &events)
+                coordinator.execute(
+                    settings(StopMode::Manual),
+                    EscapeRule::Passes,
+                    CancelToken::never(),
+                    &events,
+                )
             });
             let id = recording_started(&recording);
             let cancellation = CancelToken::new();
             cancellation.cancel();
             let next = coordinator.execute(
                 settings(StopMode::Manual),
+                EscapeRule::Passes,
                 cancellation,
                 &DictationEventEmitter::unsubscribed(),
             );
@@ -1089,14 +1229,22 @@ mod tests {
         let (mut coordinator, _recording, _events) = coordinator();
         let cancellation = CancelToken::new();
         let first = coordinator
-            .admit(&settings(StopMode::Manual), cancellation.clone())
+            .admit(
+                &settings(StopMode::Manual),
+                EscapeRule::Passes,
+                cancellation.clone(),
+            )
             .unwrap();
         cancellation.cancel();
         let timeout = Duration::from_millis(20);
         Arc::get_mut(&mut coordinator).unwrap().policy = DictationPolicy::new(timeout).unwrap();
 
         let started = Instant::now();
-        let next = coordinator.admit(&settings(StopMode::Manual), CancelToken::never());
+        let next = coordinator.admit(
+            &settings(StopMode::Manual),
+            EscapeRule::Passes,
+            CancelToken::never(),
+        );
 
         assert!(matches!(next, Err(DictationError::OverallTimeout(actual)) if actual == timeout));
         assert!(started.elapsed() < Duration::from_millis(200));
@@ -1111,7 +1259,12 @@ mod tests {
         let running = {
             let coordinator = Arc::clone(&coordinator);
             thread::spawn(move || {
-                coordinator.execute(settings(StopMode::Manual), CancelToken::never(), &events)
+                coordinator.execute(
+                    settings(StopMode::Manual),
+                    EscapeRule::Passes,
+                    CancelToken::never(),
+                    &events,
+                )
             })
         };
         let id = recording_started(&recording);
@@ -1141,8 +1294,12 @@ mod tests {
         let (coordinator, recording, _events) = coordinator();
         let (events, stages) = announcing();
 
-        let refused =
-            coordinator.execute(excluded(StopMode::Manual), CancelToken::never(), &events);
+        let refused = coordinator.execute(
+            excluded(StopMode::Manual),
+            EscapeRule::Passes,
+            CancelToken::never(),
+            &events,
+        );
 
         assert!(matches!(refused, Err(DictationError::ApplicationExcluded)));
         assert_eq!(
@@ -1155,6 +1312,7 @@ mod tests {
             thread::spawn(move || {
                 coordinator.execute(
                     settings(StopMode::Manual),
+                    EscapeRule::Passes,
                     CancelToken::never(),
                     &DictationEventEmitter::unsubscribed(),
                 )
@@ -1174,13 +1332,19 @@ mod tests {
         let running = {
             let coordinator = Arc::clone(&coordinator);
             thread::spawn(move || {
-                coordinator.execute(settings(StopMode::Manual), CancelToken::never(), &events)
+                coordinator.execute(
+                    settings(StopMode::Manual),
+                    EscapeRule::Passes,
+                    CancelToken::never(),
+                    &events,
+                )
             })
         };
         recording_started(&recording);
 
         let stop = coordinator.execute(
             excluded(StopMode::Manual),
+            EscapeRule::Passes,
             CancelToken::never(),
             &DictationEventEmitter::unsubscribed(),
         );
@@ -1238,6 +1402,7 @@ mod tests {
         let control = Arc::new(ExecutionControl::new(
             RecordingId(0),
             StopMode::Manual,
+            EscapeRule::Passes,
             cancel.clone(),
             policy.deadline(),
             SoundMuting::Never,
@@ -1320,6 +1485,7 @@ mod tests {
         let mut control = ExecutionControl::new(
             RecordingId(0),
             StopMode::Manual,
+            EscapeRule::Passes,
             CancelToken::new(),
             Deadline::after(Duration::from_secs(5)),
             SoundMuting::Allowed,
@@ -1423,7 +1589,7 @@ mod tests {
             request.mute_sound = mute_sound;
 
             let Ok(Admission::Execute(control, _claim)) =
-                coordinator.admit(&request, CancelToken::never())
+                coordinator.admit(&request, EscapeRule::Passes, CancelToken::never())
             else {
                 panic!("the microphone is free");
             };
@@ -1445,10 +1611,12 @@ mod tests {
             } else {
                 Duration::from_secs(5)
             };
+            let cancellation = CancelToken::new();
             let control = Arc::new(ExecutionControl::new(
                 RecordingId(0),
                 StopMode::Manual,
-                CancelToken::new(),
+                EscapeRule::Passes,
+                cancellation.clone(),
                 Deadline::after(timeout),
                 SoundMuting::Never,
             ));
@@ -1463,7 +1631,7 @@ mod tests {
                 .unwrap();
             match ending {
                 "stop" => assert!(control.request_recording_stop()),
-                "cancel" => control.cancellation.cancel(),
+                "cancel" => cancellation.cancel(),
                 "deadline" => assert!(guard.should_stop()),
                 _ => {}
             }
@@ -1546,7 +1714,12 @@ mod tests {
         );
         let (events, stages) = announcing();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            coordinator.execute(settings(StopMode::Manual), CancelToken::new(), &events)
+            coordinator.execute(
+                settings(StopMode::Manual),
+                EscapeRule::Passes,
+                CancelToken::new(),
+                &events,
+            )
         }));
         assert!(result.is_err());
         assert_eq!(*writes.lock().unwrap(), [1, 0]);
