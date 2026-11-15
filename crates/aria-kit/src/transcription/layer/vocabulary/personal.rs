@@ -11,6 +11,7 @@ use super::{MatchError, is_word};
 
 /// What stored rules may cost in memory.
 const MAX_PERSONAL_BYTES: usize = 8 * 1024 * 1024;
+const MAX_RESPELLINGS: usize = 4;
 
 type Forms = HashMap<char, Vec<(Vec<char>, String)>>;
 
@@ -113,6 +114,38 @@ impl PersonalRules {
             .values()
             .flatten()
             .map(|(form, target)| (form.iter().collect(), target.as_str()))
+    }
+
+    pub(super) fn respellings(&self) -> Respellings {
+        let mut spellings_of: HashMap<Vec<char>, Vec<Vec<char>>> = HashMap::new();
+        for (spoken, target) in self.forms.values().flatten() {
+            let spoken: Vec<char> = collapse(&spoken.iter().collect::<String>())
+                .chars()
+                .collect();
+            let target: Vec<char> = collapse(&target.to_lowercase()).chars().collect();
+            if !spoken.is_empty() && !target.is_empty() && spoken != target {
+                spellings_of.entry(target).or_default().push(spoken);
+            }
+        }
+        let mut by_first: HashMap<char, Vec<Target>> = HashMap::new();
+        for (text, mut spellings) in spellings_of {
+            // Sorted, so the bound keeps the same respellings on every build.
+            // No form uses more spellings of one word than the bound.
+            spellings.sort_unstable();
+            spellings.dedup();
+            spellings.truncate(MAX_RESPELLINGS);
+            by_first
+                .entry(text[0])
+                .or_default()
+                .push(Target { text, spellings });
+        }
+        for targets in by_first.values_mut() {
+            // Longest first, so "new york" is found before "new".
+            targets.sort_unstable_by(|a, b| {
+                (b.text.len().cmp(&a.text.len())).then_with(|| a.text.cmp(&b.text))
+            });
+        }
+        Respellings { by_first }
     }
 
     #[cfg(test)]
@@ -443,6 +476,116 @@ const COMMON_TOKENS: &[&str] = &[
     "twenty",
 ];
 
+#[derive(Default)]
+pub(super) struct Respellings {
+    by_first: HashMap<char, Vec<Target>>,
+}
+
+struct Target {
+    text: Vec<char>,
+    spellings: Vec<Vec<char>>,
+}
+
+struct TargetSpan<'a> {
+    span: Range<usize>,
+    spellings: &'a [Vec<char>],
+}
+
+impl Respellings {
+    pub(super) fn is_empty(&self) -> bool {
+        self.by_first.is_empty()
+    }
+
+    pub(super) fn of(&self, form: &str) -> Vec<String> {
+        // With nothing to respell, the scan would only cost the build.
+        if self.is_empty() {
+            return Vec::new();
+        }
+        let chars: Vec<char> = form.chars().collect();
+        let found = self.targets_in(&chars);
+        let mut respellings = Vec::new();
+        // One word at a time: every word's first spelling, then every
+        // word's second, so pairs onto one word don't crowd out another's.
+        for nth in 0..MAX_RESPELLINGS {
+            for target in &found {
+                if let Some(spoken) = target.spellings.get(nth) {
+                    respellings.extend(respell(&chars, &[(target.span.clone(), spoken)]));
+                }
+            }
+        }
+        if found.len() > 1 {
+            let all: Vec<_> = found
+                .iter()
+                .map(|target| (target.span.clone(), &target.spellings[0]))
+                .collect();
+            respellings.extend(respell(&chars, &all));
+        }
+        respellings.truncate(MAX_RESPELLINGS);
+        respellings
+    }
+
+    fn targets_in<'a>(&'a self, chars: &[char]) -> Vec<TargetSpan<'a>> {
+        let mut found = Vec::new();
+        let mut position = 0;
+        while position < chars.len() {
+            match self.target_at(chars, position) {
+                Some(target) => {
+                    let end = position + target.text.len();
+                    found.push(TargetSpan {
+                        span: position..end,
+                        spellings: &target.spellings,
+                    });
+                    position = end;
+                }
+                None => position += 1,
+            }
+        }
+        found
+    }
+
+    fn target_at(&self, chars: &[char], position: usize) -> Option<&Target> {
+        let before = position.checked_sub(1).map(|index| chars[index]);
+        if before.is_some_and(is_word) && is_word(chars[position]) {
+            return None;
+        }
+        let targets = self.by_first.get(&chars[position])?;
+        targets.iter().find(|target| {
+            let after = chars.get(position + target.text.len()).copied();
+            chars[position..].starts_with(&target.text)
+                && target
+                    .spellings
+                    .iter()
+                    .any(|spoken| fits(before, spoken, after))
+        })
+    }
+}
+
+// A pair finds its spoken side in heard text only at word boundaries, as
+// `boundary` decides.
+fn fits(before: Option<char>, spoken: &[char], after: Option<char>) -> bool {
+    let word = |character: Option<char>| character.is_some_and(is_word);
+    word(before) != word(spoken.first().copied()) && word(spoken.last().copied()) != word(after)
+}
+
+fn respell(chars: &[char], replacements: &[(Range<usize>, &Vec<char>)]) -> Option<String> {
+    let mut respelled = Vec::with_capacity(chars.len());
+    let mut spans = Vec::new();
+    let mut copied = 0;
+    for (span, spoken) in replacements {
+        respelled.extend_from_slice(&chars[copied..span.start]);
+        spans.push(respelled.len()..respelled.len() + spoken.len());
+        respelled.extend_from_slice(spoken);
+        copied = span.end;
+    }
+    respelled.extend_from_slice(&chars[copied..]);
+    let all_fit = spans.iter().all(|span| {
+        let before = span.start.checked_sub(1).map(|index| respelled[index]);
+        let after = respelled.get(span.end).copied();
+        fits(before, &respelled[span.clone()], after)
+    });
+    all_fit.then(|| respelled.into_iter().collect())
+}
+
 /// How a recognizer renders a compact term: digits as words, a hyphen as
 /// a break, a short letter run spelled out. Only a term with a digit
 /// expands; "to-do" as "to do" would rewrite everyday speech.
@@ -766,6 +909,16 @@ fn longest_match<E>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_form_gets_at_most_the_bound_of_respellings() {
+        let learned = (0..50)
+            .map(|index| (format!("arya{index}"), "aria".to_owned()))
+            .collect();
+        let rules = PersonalRules::new(vec![], learned);
+        let respellings = rules.respellings().of("aria dash kit");
+        assert_eq!(respellings.len(), MAX_RESPELLINGS);
+    }
 
     #[test]
     fn stored_rules_preserve_precedence_and_bound_preparation() {
