@@ -1201,17 +1201,16 @@ impl<'a> Published<'a> {
             span,
             spacing,
         };
-        let typing = self.streaming.then(Instant::now);
+        let typing = Instant::now();
         if let Err(error) = sinks.segment(utterance) {
             let error = stopped_partway(map_sink_error(error, self.control), sinks);
             return Err(log_delivery_error(self.started_at.elapsed(), error));
         }
+        let typed_at = Instant::now();
         // Queued text lands later, on a retry, so it was not typed here.
-        let typed = typing
-            .filter(|_| !sinks.is_queueing())
-            .map(|typing| (typing, Instant::now()));
+        let typed = self.streaming && !sinks.is_queueing();
         self.announce(&punctuated.text, spacing, speaker, sinks);
-        if let Some((typing, typed_at)) = typed {
+        if typed {
             // After the text and its announcement, so neither waits on the log.
             tracing::info!(
                 stage = "delivery",
