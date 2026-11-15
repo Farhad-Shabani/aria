@@ -1723,6 +1723,8 @@ impl From<aria_voice::vocabulary::Status> for wire::VocabularyStatus {
             catalog_revision: status.catalog_revision,
             runtime_revision: status.runtime_revision,
             term_count: status.terms as u64,
+            found_count: status.found as u64,
+            partial: status.partial,
             error_category: status.error,
         }
     }
@@ -2294,12 +2296,19 @@ impl TryFrom<wire::VocabularyRequest> for Option<aria_settings::Directory> {
     }
 }
 
+const MAX_VOCABULARY_NAMES: u64 = 100_000;
+
 impl TryFrom<wire::VocabularyStatus> for aria_voice::vocabulary::Status {
     type Error = ProtocolError;
     fn try_from(status: wire::VocabularyStatus) -> Result<Self, Self::Error> {
         use aria_voice::vocabulary::State;
-        if status.term_count > 100_000 {
-            return Err(ProtocolError::InvalidVocabularyTerms(status.term_count));
+        for (field, count) in [
+            ("term count", status.term_count),
+            ("found count", status.found_count),
+        ] {
+            if count > MAX_VOCABULARY_NAMES {
+                return Err(ProtocolError::InvalidVocabularyCount(field, count));
+            }
         }
         let state = match wire::VocabularyState::try_from(status.state) {
             Ok(wire::VocabularyState::Ready) => State::Ready,
@@ -2320,6 +2329,8 @@ impl TryFrom<wire::VocabularyStatus> for aria_voice::vocabulary::Status {
             catalog_revision: status.catalog_revision,
             runtime_revision: status.runtime_revision,
             terms: status.term_count as usize,
+            found: status.found_count as usize,
+            partial: status.partial,
             error: status.error_category,
         })
     }
@@ -3493,8 +3504,8 @@ pub enum ProtocolError {
     InvalidInference,
     #[error("invalid history {0}")]
     InvalidHistory(&'static str),
-    #[error("invalid vocabulary term count {0}")]
-    InvalidVocabularyTerms(u64),
+    #[error("invalid vocabulary {0} {1}")]
+    InvalidVocabularyCount(&'static str, u64),
     #[error(transparent)]
     InvalidVocabularyDir(#[from] aria_settings::DirectoryError),
     #[error("invalid {field} value {value}")]
@@ -4739,6 +4750,32 @@ mod tests {
             Err(ProtocolError::InvalidApplicationOverrides(
                 OverrideError::IdCharacters
             ))
+        ));
+    }
+
+    #[test]
+    fn vocabulary_status_keeps_its_counts_and_bounds_them() {
+        use aria_voice::vocabulary::{State, Status};
+        let status = Status {
+            state: State::Ready,
+            catalog_revision: 3,
+            runtime_revision: 3,
+            terms: 2048,
+            found: 2665,
+            partial: true,
+            error: String::new(),
+        };
+        assert_eq!(
+            Status::try_from(wire::VocabularyStatus::from(status.clone())).unwrap(),
+            status
+        );
+        let oversized = wire::VocabularyStatus {
+            found_count: MAX_VOCABULARY_NAMES + 1,
+            ..wire::VocabularyStatus::from(status)
+        };
+        assert!(matches!(
+            Status::try_from(oversized),
+            Err(ProtocolError::InvalidVocabularyCount("found count", _))
         ));
     }
 

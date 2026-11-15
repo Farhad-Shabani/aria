@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use aria_kit::cancel::CancelToken;
+use aria_kit::cancel::{CancelToken, Deadline};
 use serde_json::{Value, json};
 
 use super::catalog::Catalog;
@@ -14,19 +14,17 @@ use super::collection;
 use super::extract::{Extractor, LocalExtractor};
 use super::{PersonalRules, Vocabulary, cache_key, discover, select};
 
-const FILES: &[(&str, &str)] = &[
-    ("java/Main.java", "class LedgerClient {} // ledger-api\n"),
-    (
-        "swift/Client.swift",
-        "let client = URLSession.shared // watch-link\n",
-    ),
-    ("rust/lib.rs", "// aria-kit\npub struct VoiceBridge;\n"),
-    ("python/task.py", "# batch_job\nclass QueueWorker: pass\n"),
-    ("web/page.html", "<p>design.tokens</p>\n"),
-    (
-        "notes/report.txt",
-        "Harbor-Plan Persephone URLSession sync-id sync_id\n",
-    ),
+const FILES: &[&str] = &[
+    "java/ledger-api/Main.java",
+    "swift/watch-link/Client.swift",
+    "rust/aria-kit/lib.rs",
+    "python/batch_job/task.py",
+    "web/design.tokens",
+    "notes/Harbor-Plan/report.txt",
+    "notes/Persephone/report.txt",
+    "notes/URLSession/report.txt",
+    "notes/sync-id/report.txt",
+    "notes/sync_id/report.txt",
 ];
 const STRUCTURED: &[(&str, &str)] = &[
     ("ledger dash api", "ledger-api"),
@@ -48,10 +46,10 @@ const NEGATIVES: &[&str] = &[
 
 fn fixture(parent: &Path) -> std::path::PathBuf {
     let root = parent.join("fixture");
-    for (relative, text) in FILES {
+    for relative in FILES {
         let path = root.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, text).unwrap();
+        fs::write(path, "").unwrap();
     }
     root
 }
@@ -97,16 +95,17 @@ fn measure(
     let mut cases = Value::Null;
     for _ in 0..repetitions {
         let started = Instant::now();
-        let discovery = discover::scan_cached(root, &cancel, &[], &mut LocalExtractor)
-            .map_err(|error| failure("cold_scan", scan_category(&error)))?;
+        let discovery =
+            discover::scan_cached(root, &[], &mut LocalExtractor, Deadline::never(), &cancel)
+                .map_err(|error| failure("cold_scan", scan_category(&error)))?;
         let cold_scan_us = started.elapsed().as_secs_f64() * 1e6;
         let started = Instant::now();
-        let terms = select::terms(&discovery.sources, &cancel)
+        let selection = select::terms(&discovery.sources, &cancel)
             .map_err(|error| failure("selection", selection_category(&error)))?;
         let select_us = started.elapsed().as_secs_f64() * 1e6;
         let started = Instant::now();
-        let matcher = Vocabulary::compile_with(&terms, PersonalRules::default(), &cancel).map_err(
-            |error| {
+        let matcher = Vocabulary::compile_with(&selection.terms, PersonalRules::default(), &cancel)
+            .map_err(|error| {
                 failure(
                     "compile",
                     match error {
@@ -115,8 +114,7 @@ fn measure(
                         super::MatchError::InvalidName => "invalid_name",
                     },
                 )
-            },
-        )?;
+            })?;
         let compile_us = started.elapsed().as_secs_f64() * 1e6;
         let started = Instant::now();
         catalog
@@ -130,25 +128,34 @@ fn measure(
             .ok_or_else(|| failure("catalog_load", "missing_scope"))?;
         let catalog_load_us = started.elapsed().as_secs_f64() * 1e6;
         let started = Instant::now();
-        let warm = discover::scan_cached(root, &cancel, &cached.sources, &mut LocalExtractor)
-            .map_err(|error| failure("cached_scan", scan_category(&error)))?;
+        let warm = discover::scan_cached(
+            root,
+            &cached.sources,
+            &mut LocalExtractor,
+            Deadline::never(),
+            &cancel,
+        )
+        .map_err(|error| failure("cached_scan", scan_category(&error)))?;
         let cached_scan_us = started.elapsed().as_secs_f64() * 1e6;
         if select::terms(&warm.sources, &cancel)
             .map_err(|error| failure("cached_selection", selection_category(&error)))?
-            != terms
+            != selection
         {
             return Err(failure("cached_selection", "selection_changed"));
         }
         counts = json!({
             "sources": discovery.sources.len(),
             "candidates": discovery.sources.iter().map(|source| source.candidates.len()).sum::<usize>(),
-            "selected": terms.len(),
+            "selected": selection.terms.len(),
+            "found": selection.found,
             "entries": discovery.coverage.entries,
             "bytes_read": discovery.coverage.bytes,
             "hidden": discovery.coverage.hidden,
             "symlinks": discovery.coverage.symlinks,
             "unsupported": discovery.coverage.unsupported,
-            "oversized": discovery.coverage.oversized,
+            "linked": discovery.coverage.linked,
+            "unreadable": discovery.coverage.unreadable,
+            "partial": discovery.coverage.completeness.is_partial(),
         });
         if fixed_cases {
             cases = case_counts(&matcher);
@@ -168,7 +175,6 @@ fn failure(stage: &str, category: &str) -> Value {
 
 fn scan_category(error: &collection::Error<super::extract::Error>) -> &'static str {
     match error {
-        collection::Error::TooLarge => "too_large",
         collection::Error::Cancelled => "cancelled",
         collection::Error::InvalidDirectory => "invalid_directory",
         collection::Error::Unstable => "unstable",
@@ -196,7 +202,9 @@ fn selection_category(error: &select::Error) -> &'static str {
 fn cooperative_cancellation(parent: &Path) -> Value {
     let root = parent.join("cancellation");
     fs::create_dir(&root).unwrap();
-    fs::write(root.join("large.txt"), "plainword ".repeat(6500)).unwrap();
+    for index in 0..2000 {
+        fs::write(root.join(format!("name-{index}.rs")), "").unwrap();
+    }
     let mut samples = Vec::new();
     for _ in 0..100 {
         let signalled = Arc::new(Mutex::new(None));
@@ -210,7 +218,10 @@ fn cooperative_cancellation(parent: &Path) -> Value {
                 false
             }
         });
-        assert!(discover::scan_cached(&root, &cancel, &[], &mut LocalExtractor).is_err());
+        assert!(
+            discover::scan_cached(&root, &[], &mut LocalExtractor, Deadline::never(), &cancel)
+                .is_err()
+        );
         samples.push(
             signalled
                 .lock()
@@ -234,13 +245,14 @@ fn folder_scope_and_conflicts_survive_catalog_reuse() {
     let temporary = tempfile::tempdir().unwrap();
     let root = fixture(temporary.path());
     let cancel = CancelToken::never();
-    let discovery = discover::scan_cached(&root, &cancel, &[], &mut LocalExtractor).unwrap();
-    let terms = select::terms(&discovery.sources, &cancel).unwrap();
-    let matcher = Vocabulary::compile(&terms, PersonalRules::default()).unwrap();
+    let discovery =
+        discover::scan_cached(&root, &[], &mut LocalExtractor, Deadline::never(), &cancel).unwrap();
+    let selection = select::terms(&discovery.sources, &cancel).unwrap();
+    let matcher = Vocabulary::compile(&selection.terms, PersonalRules::default()).unwrap();
     for (input, target) in STRUCTURED {
         assert_eq!(corrected(&matcher, input), *target);
     }
-    assert!(!terms.iter().any(|term| matches!(
+    assert!(!selection.terms.iter().any(|term| matches!(
         term.canonical.as_str(),
         "sync-id" | "sync_id" | "Persephone"
     )));
@@ -256,11 +268,24 @@ fn folder_scope_and_conflicts_survive_catalog_reuse() {
         .refresh_cancellable(&discovery, &key, &cancel)
         .unwrap();
     let cached = catalog.load(&discovery.root, &key).unwrap().unwrap();
-    let warm = discover::scan_cached(&root, &cancel, &cached.sources, &mut LocalExtractor).unwrap();
-    assert_eq!(select::terms(&warm.sources, &cancel).unwrap(), terms);
-    let child =
-        discover::scan_cached(&root.join("rust"), &cancel, &[], &mut LocalExtractor).unwrap();
-    let child_terms = select::terms(&child.sources, &cancel).unwrap();
+    let warm = discover::scan_cached(
+        &root,
+        &cached.sources,
+        &mut LocalExtractor,
+        Deadline::never(),
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(select::terms(&warm.sources, &cancel).unwrap(), selection);
+    let child = discover::scan_cached(
+        &root.join("rust"),
+        &[],
+        &mut LocalExtractor,
+        Deadline::never(),
+        &cancel,
+    )
+    .unwrap();
+    let child_terms = select::terms(&child.sources, &cancel).unwrap().terms;
     assert!(child_terms.iter().any(|term| term.canonical == "aria-kit"));
     assert!(
         !child_terms
@@ -270,7 +295,7 @@ fn folder_scope_and_conflicts_survive_catalog_reuse() {
 }
 
 #[test]
-fn selected_folder_budget_failure_reports_only_stage_and_category() {
+fn a_deep_selected_folder_reports_partial_counts() {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().join("scope");
     let mut nested = root.clone();
@@ -278,10 +303,8 @@ fn selected_folder_budget_failure_reports_only_stage_and_category() {
         nested.push("nested");
     }
     fs::create_dir_all(nested).unwrap();
-    assert_eq!(
-        measure(&root, &temporary.path().join("catalog"), 1, false).unwrap_err(),
-        json!({ "status": "failed", "stage": "cold_scan", "category": "too_large" })
-    );
+    let report = measure(&root, &temporary.path().join("catalog"), 1, false).unwrap();
+    assert_eq!(report["counts"]["partial"], json!(true));
 }
 
 #[test]
@@ -305,9 +328,9 @@ fn vocabulary_collection_benchmark() {
     });
     let report = json!({
         "diagnostic_only": true,
-        "fixture_version": 1,
+        "fixture_version": 2,
         "pipeline_key": cache_key(LocalExtractor.cache_key()).unwrap(),
-        "corpus": "six fixed Java, Swift, Rust, Python, web, and non-code fixtures; not held out",
+        "corpus": "ten fixed file and folder names across Java, Swift, Rust, Python, web, and notes; not held out",
         "limitations": "raw fixed-case counts, not population accuracy; cold means no extraction cache, not an OS cold filesystem; no real dictation latency or deployment acceptance claim",
         "fixed_fixtures": fixed,
         "selected_folder": selected,

@@ -6,7 +6,7 @@ use aria_primitives::error_chain;
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::{Directory, SettingsStore};
 use aria_voice::vocabulary::{
-    MatchError, PersonalRules, State, Status, Term, Vocabulary,
+    Completeness, MatchError, PersonalRules, State, Status, Term, Vocabulary,
     catalog::{self, Catalog},
     collection::{self, Collector},
     discover, select,
@@ -26,6 +26,9 @@ const LIVE_BYTES: usize = 128 * 1024 * 1024;
 // Cached sources, discovery output and compilation can coexist with admitted snapshots.
 const DISCOVERY_RESERVE: usize = 96 * 1024 * 1024;
 const REFRESH_BUDGET: Duration = Duration::from_secs(2);
+// The scan stops here, leaving the rest of the refresh budget for selection,
+// compilation, and the catalog.
+const SCAN_BUDGET: Duration = Duration::from_secs(1);
 
 type Reply = oneshot::Sender<Result<Status, Error>>;
 
@@ -74,7 +77,6 @@ impl From<catalog::Error> for Error {
 impl<E: std::error::Error + Send + Sync + 'static> From<collection::Error<E>> for Error {
     fn from(error: collection::Error<E>) -> Self {
         match error {
-            collection::Error::TooLarge => Self::TooLarge,
             collection::Error::Cancelled => Self::Busy,
             error => Self::unavailable(error),
         }
@@ -99,6 +101,14 @@ impl From<MatchError> for Error {
             MatchError::InvalidName => Self::Unavailable(None),
         }
     }
+}
+
+/// A compiled list and what status reports about it.
+struct Prepared {
+    matcher: Arc<Vocabulary>,
+    revision: u64,
+    found: usize,
+    partial: bool,
 }
 
 struct Entry {
@@ -395,10 +405,15 @@ impl Runtime {
         &self,
         directory: &Directory,
         root: &Path,
-        revision: u64,
-        matcher: Arc<Vocabulary>,
+        prepared: Prepared,
         cancel: &AtomicBool,
     ) -> Result<(), Error> {
+        let Prepared {
+            matcher,
+            revision,
+            found,
+            partial,
+        } = prepared;
         self.interrupted(cancel)?;
         let mut registry = self.registry();
         self.interrupted(cancel)?;
@@ -437,6 +452,8 @@ impl Runtime {
                     catalog_revision: revision,
                     runtime_revision: revision,
                     terms: matcher.term_count(),
+                    found,
+                    partial,
                     error: String::new(),
                 },
                 snapshot: Some(matcher),
@@ -646,13 +663,14 @@ impl<C: Collector> Worker<C> {
                         continue;
                     }
                     let deadline = Deadline::after(REFRESH_BUDGET);
+                    let scan = Deadline::after(SCAN_BUDGET);
                     let token = self.control(Arc::clone(&cancel), deadline);
                     let mut result = self
                         .reserve(DISCOVERY_RESERVE, directory.as_ref())
                         .and_then(|()| self.refresh_personal())
                         .and_then(|()| match directory.as_ref() {
                             Some(directory) => {
-                                self.refresh_project(directory, &cancel, &token, &mut catalog)
+                                self.refresh_project(directory, scan, &cancel, &token, &mut catalog)
                             }
                             None => Ok(Status {
                                 state: State::Ready,
@@ -819,6 +837,8 @@ impl<C: Collector> Worker<C> {
             entry.status.state = State::Unavailable;
             entry.status.runtime_revision = 0;
             entry.status.terms = 0;
+            entry.status.found = 0;
+            entry.status.partial = false;
             entry.status.error = "evicted".to_owned();
             registry.last_attempt.remove(&Some(oldest));
             drop(registry);
@@ -832,7 +852,11 @@ impl<C: Collector> Worker<C> {
         token: &CancelToken,
     ) -> Result<&'a mut Catalog, Error> {
         if catalog.is_none() {
-            *catalog = Some(Catalog::open(&self.directory, token.clone())?);
+            let opened = Catalog::open(&self.directory, token.clone())?;
+            if let Some(key) = &self.cache_key {
+                opened.remove_other_pipelines(key)?;
+            }
+            *catalog = Some(opened);
         }
         let catalog = catalog.as_mut().ok_or(Error::Unavailable(None))?;
         catalog.cancel_on(token.clone())?;
@@ -882,6 +906,7 @@ impl<C: Collector> Worker<C> {
     fn refresh_project(
         &mut self,
         directory: &Directory,
+        scan: Deadline,
         cancel: &AtomicBool,
         token: &CancelToken,
         catalog: &mut Option<Catalog>,
@@ -896,10 +921,21 @@ impl<C: Collector> Worker<C> {
         self.runtime.interrupted(cancel)?;
         let cached = self.catalog(catalog, token)?.load(&root, &key)?;
         if let Some(cached) = &cached {
-            let terms = select::terms(&cached.sources, token)?;
-            let matcher = self.compile(&terms, token)?;
-            self.runtime
-                .publish(directory, &root, cached.revision, matcher, cancel)?;
+            let selection = select::terms(&cached.sources, token)?;
+            let matcher = self.compile(&selection.terms, token)?;
+            // The catalog keeps no coverage, so a cached list reads as whole
+            // until the walk below replaces it.
+            self.runtime.publish(
+                directory,
+                &root,
+                Prepared {
+                    matcher,
+                    revision: cached.revision,
+                    found: selection.found,
+                    partial: false,
+                },
+                cancel,
+            )?;
             self.catalog(catalog, token)?
                 .remember_alias(directory.as_path(), &root)?;
         }
@@ -907,33 +943,51 @@ impl<C: Collector> Worker<C> {
             return Ok(self.runtime.catalog_status(Some(directory)));
         }
         self.reserve(DISCOVERY_RESERVE, Some(directory))?;
+        let cached_revision = cached.as_ref().map_or(0, |cached| cached.revision);
         let previous = cached.map(|cached| cached.sources).unwrap_or_default();
-        let discovery = self.collector.collect(directory, &previous, token)?;
+        let discovery = self.collector.collect(directory, &previous, scan, token)?;
         if discovery.root != root {
             tracing::warn!("vocabulary selection changed during discovery");
             return Err(Error::Unavailable(None));
         }
         drop(previous);
-        let terms = select::terms(&discovery.sources, token)?;
-        let matcher = self.compile(&terms, token)?;
+        let selection = select::terms(&discovery.sources, token)?;
+        let matcher = self.compile(&selection.terms, token)?;
         self.runtime.interrupted(cancel)?;
-        let revision = self
-            .catalog(catalog, token)?
-            .refresh_cancellable(&discovery, &key, token)?;
+        // How far a scan gets in time depends on the machine's load, so a
+        // short one goes live without replacing a longer stored scan.
+        let revision = if discovery.coverage.completeness == Completeness::OutOfTime {
+            cached_revision
+        } else {
+            self.catalog(catalog, token)?
+                .refresh_cancellable(&discovery, &key, token)?
+        };
         tracing::debug!(
             entries = discovery.coverage.entries,
             hidden = discovery.coverage.hidden,
             symlinks = discovery.coverage.symlinks,
             unsupported = discovery.coverage.unsupported,
-            oversized = discovery.coverage.oversized,
+            linked = discovery.coverage.linked,
+            unreadable = discovery.coverage.unreadable,
+            completeness = ?discovery.coverage.completeness,
             bytes = discovery.coverage.bytes,
+            found = selection.found,
             "vocabulary collection completed"
         );
         if token.is_cancelled() {
             return Err(Error::Busy);
         }
-        self.runtime
-            .publish(directory, &root, revision, matcher, cancel)?;
+        self.runtime.publish(
+            directory,
+            &root,
+            Prepared {
+                matcher,
+                revision,
+                found: selection.found,
+                partial: discovery.coverage.completeness.is_partial(),
+            },
+            cancel,
+        )?;
         Ok(self.runtime.catalog_status(Some(directory)))
     }
 
@@ -1080,6 +1134,15 @@ mod tests {
         )
     }
 
+    fn prepared(matcher: &Arc<Vocabulary>, revision: u64) -> Prepared {
+        Prepared {
+            matcher: Arc::clone(matcher),
+            revision,
+            found: 1,
+            partial: false,
+        }
+    }
+
     fn project(base: &Path, name: &str) -> Directory {
         let path = base.join(name);
         std::fs::create_dir_all(&path).unwrap();
@@ -1090,6 +1153,7 @@ mod tests {
     struct StaticCollector {
         root: PathBuf,
         previous_counts: Vec<usize>,
+        out_of_time: bool,
     }
 
     impl Collector for StaticCollector {
@@ -1103,6 +1167,7 @@ mod tests {
             &mut self,
             selected: &Directory,
             previous: &[Source],
+            _deadline: Deadline,
             _cancel: &CancelToken,
         ) -> Result<Discovery, collection::Error<Self::Error>> {
             self.previous_counts.push(previous.len());
@@ -1110,8 +1175,8 @@ mod tests {
                 selected: selected.as_path().to_path_buf(),
                 root: self.root.clone(),
                 sources: vec![Source {
-                    relative_path: "terms.txt".into(),
-                    kind: SourceKind::Text,
+                    relative_path: "aria-kit".into(),
+                    kind: SourceKind::DirectoryName,
                     fingerprint: [1; 32],
                     input_bytes: 8,
                     candidates: vec![Candidate {
@@ -1122,6 +1187,11 @@ mod tests {
                 coverage: Coverage {
                     entries: 1,
                     bytes: 8,
+                    completeness: if self.out_of_time {
+                        Completeness::OutOfTime
+                    } else {
+                        Completeness::Whole
+                    },
                     ..Coverage::default()
                 },
             })
@@ -1136,6 +1206,7 @@ mod tests {
         let collector = StaticCollector {
             root,
             previous_counts: Vec::new(),
+            out_of_time: false,
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
@@ -1150,8 +1221,13 @@ mod tests {
             let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
                 panic!("refresh expected")
             };
-            let result =
-                worker.refresh_project(&selected, &cancel, &CancelToken::never(), &mut catalog);
+            let result = worker.refresh_project(
+                &selected,
+                Deadline::never(),
+                &cancel,
+                &CancelToken::never(),
+                &mut catalog,
+            );
             worker.finished(Some(&selected), &cancel, &result);
             assert_eq!(result.unwrap().state, State::Ready);
         }
@@ -1171,6 +1247,7 @@ mod tests {
         let collector = StaticCollector {
             root: selected.as_path().canonicalize().unwrap(),
             previous_counts: Vec::new(),
+            out_of_time: false,
         };
         Runtime::new(base.join("catalog"), None, true, settings(base), collector)
     }
@@ -1184,9 +1261,56 @@ mod tests {
         let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
             panic!("refresh expected")
         };
-        let result = worker.refresh_project(selected, &cancel, &CancelToken::never(), &mut None);
+        let result = worker.refresh_project(
+            selected,
+            Deadline::never(),
+            &cancel,
+            &CancelToken::never(),
+            &mut None,
+        );
         worker.finished(Some(selected), &cancel, &result);
         result
+    }
+
+    #[test]
+    fn a_scan_out_of_time_goes_live_without_replacing_the_stored_one() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        let (runtime, mut worker) = static_runtime(temporary.path(), &selected);
+        let stored = refresh_once(&runtime, &mut worker, &selected).unwrap();
+        worker.collector.out_of_time = true;
+
+        let status = refresh_once(&runtime, &mut worker, &selected).unwrap();
+
+        assert_eq!(status.state, State::Ready);
+        assert!(status.partial);
+        assert_eq!(status.catalog_revision, stored.catalog_revision);
+    }
+
+    #[test]
+    fn a_refresh_removes_folders_an_earlier_pipeline_stored() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        let older = temporary.path().join("older-project");
+        let mut catalog =
+            Catalog::open(&temporary.path().join("catalog"), CancelToken::never()).unwrap();
+        let stored = Discovery {
+            selected: older.clone(),
+            root: older.clone(),
+            sources: Vec::new(),
+            coverage: Coverage::default(),
+        };
+        catalog
+            .refresh_cancellable(&stored, "scan3:older", &CancelToken::never())
+            .unwrap();
+        drop(catalog);
+        let (runtime, mut worker) = static_runtime(temporary.path(), &selected);
+
+        refresh_once(&runtime, &mut worker, &selected).unwrap();
+
+        let catalog =
+            Catalog::open(&temporary.path().join("catalog"), CancelToken::never()).unwrap();
+        assert!(catalog.load(&older, "scan3:older").unwrap().is_none());
     }
 
     #[test]
@@ -1278,6 +1402,7 @@ mod tests {
         let collector = StaticCollector {
             root: temporary.path().join("other-project"),
             previous_counts: Vec::new(),
+            out_of_time: false,
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
@@ -1291,8 +1416,13 @@ mod tests {
             panic!("refresh expected")
         };
         let mut catalog = None;
-        let result =
-            worker.refresh_project(&selected, &cancel, &CancelToken::never(), &mut catalog);
+        let result = worker.refresh_project(
+            &selected,
+            Deadline::never(),
+            &cancel,
+            &CancelToken::never(),
+            &mut catalog,
+        );
         worker.finished(Some(&selected), &cancel, &result);
         assert!(matches!(result, Err(Error::Unavailable(None))));
         assert_eq!(runtime.catalog_status(Some(&selected)).runtime_revision, 0);
@@ -1334,14 +1464,50 @@ mod tests {
             panic!("refresh expected")
         };
         let mut catalog = None;
-        let result =
-            worker.refresh_project(&configured, &cancel, &CancelToken::never(), &mut catalog);
+        let result = worker.refresh_project(
+            &configured,
+            Deadline::never(),
+            &cancel,
+            &CancelToken::never(),
+            &mut catalog,
+        );
         worker.finished(Some(&configured), &cancel, &result);
 
         let status = runtime.status(None).unwrap();
 
         assert_eq!(status.state, State::Ready);
         assert_eq!(status, runtime.catalog_status(Some(&configured)));
+    }
+
+    #[test]
+    fn a_scan_cut_short_publishes_a_ready_partial_list() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = project(root.path(), "aria-kit");
+        std::fs::write(selected.as_path().join("Cargo.toml"), "").unwrap();
+        let mut deep = selected.as_path().to_path_buf();
+        for _ in 0..17 {
+            deep.push("nested");
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        let (runtime, mut worker) = local_runtime(root.path());
+        runtime.prepare(Some(selected.clone()));
+        let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
+            panic!("refresh expected")
+        };
+
+        let status = worker
+            .refresh_project(
+                &selected,
+                Deadline::never(),
+                &cancel,
+                &CancelToken::never(),
+                &mut None,
+            )
+            .unwrap();
+
+        assert_eq!(status.state, State::Ready);
+        assert!(status.partial);
+        assert_eq!((status.terms, status.found), (3, 3));
     }
 
     #[test]
@@ -1594,9 +1760,10 @@ mod tests {
         std::os::unix::fs::symlink(selected.as_path(), &alias).unwrap();
         let discovery = discover::scan_cached(
             selected.as_path(),
-            &CancelToken::never(),
             &[],
             &mut LocalExtractor,
+            Deadline::never(),
+            &CancelToken::never(),
         )
         .unwrap();
         let key = cache_key(LocalExtractor.cache_key()).unwrap();
@@ -1625,6 +1792,32 @@ mod tests {
     }
 
     #[test]
+    fn an_evicted_list_reports_no_names() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = directory(&root.path().join("project"));
+        let (runtime, worker) = local_runtime(root.path());
+        runtime.prepare(Some(selected.clone()));
+        let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
+            panic!("refresh expected")
+        };
+        let matcher = Arc::new(Vocabulary::compile(&[], PersonalRules::default()).unwrap());
+        let prepared = Prepared {
+            partial: true,
+            ..prepared(&matcher, 1)
+        };
+        drop(matcher);
+        runtime
+            .publish(&selected, selected.as_path(), prepared, &cancel)
+            .unwrap();
+
+        let _ = worker.reserve(LIVE_BYTES, None);
+
+        let status = runtime.status(Some(selected)).unwrap();
+        assert_eq!(status.state, State::Unavailable);
+        assert_eq!((status.terms, status.found, status.partial), (0, 0, false));
+    }
+
+    #[test]
     fn obsolete_generation_cannot_publish_and_resource_failure_keeps_snapshot() {
         let root = tempfile::tempdir().unwrap();
         let selected = directory(&root.path().join("project"));
@@ -1647,8 +1840,7 @@ mod tests {
             .publish(
                 &selected,
                 selected.as_path(),
-                1,
-                Arc::clone(&matcher),
+                prepared(&matcher, 1),
                 &cancel,
             )
             .unwrap();
@@ -1667,7 +1859,12 @@ mod tests {
         runtime.registry.lock().unwrap().pending.clear();
         worker.await_idle(&AtomicBool::new(false)).unwrap();
         assert!(matches!(
-            runtime.publish(&selected, selected.as_path(), 2, matcher, &cancel),
+            runtime.publish(
+                &selected,
+                selected.as_path(),
+                prepared(&matcher, 2),
+                &cancel
+            ),
             Err(Error::Unavailable(None))
         ));
     }

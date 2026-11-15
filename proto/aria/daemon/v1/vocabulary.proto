@@ -20,6 +20,10 @@ message VocabularyStatus {
   uint64 catalog_revision = 2;
   uint64 runtime_revision = 3;
   uint64 term_count = 4;
+  // Names that passed the keep rules, before the cap trimmed them to term_count.
+  uint64 found_count = 6;
+  // The last walk stopped at a limit or skipped a folder it could not read.
+  bool partial = 7;
   // A safe error category, without paths or source content.
   string error_category = 5;
 }

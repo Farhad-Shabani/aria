@@ -9,7 +9,7 @@ use super::runtime_paths;
 pub(super) enum VocabularyCommand {
     /// Show whether a directory has a prepared vocabulary
     Status { directory: Option<PathBuf> },
-    /// Rescan local filenames and text to prepare a directory's vocabulary
+    /// Rescan file and folder names to prepare a directory's vocabulary
     Refresh { directory: Option<PathBuf> },
     /// Remove a directory's cached vocabulary
     Forget { directory: Option<PathBuf> },
@@ -30,8 +30,13 @@ pub(super) fn run(command: VocabularyCommand) -> anyhow::Result<()> {
         }
     };
     println!(
-        "{:?}: {} terms, catalog revision {}, runtime revision {}",
-        status.state, status.terms, status.catalog_revision, status.runtime_revision
+        "{:?}: {} of {} names{}, catalog revision {}, runtime revision {}",
+        status.state,
+        status.terms,
+        status.found,
+        if status.partial { ", partial" } else { "" },
+        status.catalog_revision,
+        status.runtime_revision
     );
     if status.state != aria_voice::vocabulary::State::Disabled && !status.error.is_empty() {
         anyhow::bail!(

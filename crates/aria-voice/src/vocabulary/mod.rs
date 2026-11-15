@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 pub(crate) const MAX_TERMS: usize = 100_000;
 pub(crate) const MAX_CANDIDATES: usize = 128;
-pub(crate) const MAX_TEXT_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_IGNORE_BYTES: usize = 64 * 1024;
 pub(crate) const SELECTED_TERMS: usize = 2048;
 pub(crate) const MAX_SOURCE_BYTES: usize = 32 * 1024 * 1024;
 
@@ -23,7 +23,6 @@ pub(crate) const MAX_SOURCE_BYTES: usize = 32 * 1024 * 1024;
 pub enum SourceKind {
     DirectoryName,
     FileName,
-    Text,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,8 +53,29 @@ pub struct Coverage {
     pub hidden: usize,
     pub symlinks: usize,
     pub unsupported: usize,
-    pub oversized: usize,
     pub bytes: usize,
+    /// Nested folders whose `.git` is a file: linked worktrees and submodules.
+    pub linked: usize,
+    pub unreadable: usize,
+    pub completeness: Completeness,
+}
+
+/// How much of the selected folder a scan listed. Ordered from most to least
+/// complete.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Completeness {
+    #[default]
+    Whole,
+    /// A limit, or a folder it could not read, left names out.
+    Partial,
+    /// The deadline passed, so a later scan of the same folder may find more.
+    OutOfTime,
+}
+
+impl Completeness {
+    pub fn is_partial(self) -> bool {
+        self != Self::Whole
+    }
 }
 
 pub(crate) fn source_bytes(source: &Source) -> usize {
@@ -74,7 +94,5 @@ pub fn cache_key(extractor_key: &str) -> Option<String> {
     {
         return None;
     }
-    Some(format!(
-        "scan3:select1:text{MAX_TEXT_BYTES}:candidates{MAX_CANDIDATES}:terms{SELECTED_TERMS}:{extractor_key}"
-    ))
+    Some(format!("names1:terms{SELECTED_TERMS}:{extractor_key}"))
 }
