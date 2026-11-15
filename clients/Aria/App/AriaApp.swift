@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct AriaApp: App {
-    private static let userGuide = "https://ariacue.pages.dev/user-guide/"
+    private static let userGuide = "https://ariavoice.dev/user-guide/"
 
     @StateObject private var poller: StatusPoller
     @StateObject private var phonePairing: PhonePairing
