@@ -30,6 +30,16 @@ pub(super) fn selection(
     Ok(selection)
 }
 
+pub(super) fn is_selection_settable(
+    field: &ax::UiElement,
+    deadline: Instant,
+) -> Result<bool, &'static str> {
+    limit(field, deadline)?;
+    field
+        .is_settable(ax::attr::selected_text_range())
+        .map_err(|_| "selection settability unreadable")
+}
+
 /// The field's length in UTF-16 units.
 pub(super) fn field_length(field: &ax::UiElement, deadline: Instant) -> Result<i64, &'static str> {
     limit(field, deadline)?;
