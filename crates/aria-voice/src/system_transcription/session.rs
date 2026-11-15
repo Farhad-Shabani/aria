@@ -516,7 +516,7 @@ mod tests {
         )
         .unwrap();
 
-        let written = transcribed(&[0.5; 32_000], "aria s t t", None, &vocabulary);
+        let written = transcribed(&[0.5; 32_000], "aria dash s t t", None, &vocabulary);
 
         assert!(written.contains("aria-stt"), "transcript was: {written:?}");
     }

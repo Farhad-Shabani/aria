@@ -24,7 +24,7 @@ const FILES: &[&str] = &[
     "notes/Persephone/report.txt",
     "notes/URLSession/report.txt",
     "notes/sync-id/report.txt",
-    "notes/sync_id/report.txt",
+    "other/Sync-Id/report.txt",
 ];
 const STRUCTURED: &[(&str, &str)] = &[
     ("ledger dash api", "ledger-api"),
@@ -37,9 +37,8 @@ const STRUCTURED: &[(&str, &str)] = &[
 const UNSUPPORTED: &[(&str, &str)] = &[("persefony", "Persephone"), ("url session", "URLSession")];
 const NEGATIVES: &[&str] = &[
     "ordinary prose stays ordinary",
-    "sync i d",
     "sync dash id",
-    "sync underscore id",
+    "sync hyphen id",
     "aria dot kit",
     "ledger-api",
 ];
@@ -254,7 +253,7 @@ fn folder_scope_and_conflicts_survive_catalog_reuse() {
     }
     assert!(!selection.terms.iter().any(|term| matches!(
         term.canonical.as_str(),
-        "sync-id" | "sync_id" | "Persephone"
+        "sync-id" | "Sync-Id" | "Persephone"
     )));
     for input in NEGATIVES.iter().copied().chain(["open aria dash", "kit"]) {
         assert_eq!(matcher.correct(input), None);
