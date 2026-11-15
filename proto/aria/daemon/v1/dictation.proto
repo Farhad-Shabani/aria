@@ -5,6 +5,7 @@ syntax = "proto3";
 package aria.daemon.v1;
 
 import "aria/daemon/v1/errors.proto";
+import "aria/daemon/v1/microphone.proto";
 
 service DictationService {
   // Record one utterance, transcribe, deliver. Progress arrives as it
@@ -91,7 +92,8 @@ message StopDictationResponse {
 }
 
 message DictationEvent {
-  // Set on DICTATION_STAGE_RECORDING: what `Stop` takes.
+  // Set on DICTATION_STAGE_RECORDING: what `Stop` takes. Set on
+  // DICTATION_STAGE_CAPTURING: the recording that started capturing.
   uint64 recording_id = 4;
   // Set on DICTATION_STAGE_RECORDING: how the press delivers. A request to
   // stream comes back COMPLETE where `SettingsSnapshot.streaming_unavailable`
@@ -121,6 +123,12 @@ message DictationEvent {
   uint32 word_count = 6;
   // Meaningful only when stage is DICTATION_STAGE_FAILED.
   ErrorCode error_code = 3;
+  // Set on DICTATION_STAGE_CAPTURING: what the recording captures from.
+  // Absent for audio recorded before, such as a replay.
+  oneof microphone {
+    MicrophoneDevice device = 11;
+    AttachedPhone phone = 12;
+  }
 }
 
 // What a press does with the current speaker's words.
@@ -198,6 +206,9 @@ enum DictationStage {
   // The person's Return was held back to press after the text, and never
   // pressed: Aria could not confirm the field. Comes after the terminal stage.
   DICTATION_STAGE_RETURN_DROPPED = 11;
+  // The microphone is live. Follows RECORDING once capture starts. A capture
+  // that fails to start sends none.
+  DICTATION_STAGE_CAPTURING = 12;
 }
 
 // Where delivered text went.

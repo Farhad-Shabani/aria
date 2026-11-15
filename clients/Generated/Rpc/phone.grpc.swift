@@ -892,7 +892,8 @@ extension Aria_Daemon_V1_PhoneMicrophoneService {
         /// > dropped, and a Stopped for an earlier recording is ignored. However it
         /// > ends, an ended stream also means stop. One phone is attached at a
         /// > time: a newer offer ends this stream without a status, as does a phone
-        /// > that sends no audio within 600 ms of Start.
+        /// > that sends no audio within 600 ms of Start, or one too far behind to
+        /// > take Stop.
         /// > Failures end the stream with a status carrying an RpcError:
         /// >   UNSUPPORTED - a press wouldn't record on a phone, now or once that
         /// >     changes: the Mac's microphone setting is "system_default", or names
@@ -953,7 +954,8 @@ extension Aria_Daemon_V1_PhoneMicrophoneService {
         /// > dropped, and a Stopped for an earlier recording is ignored. However it
         /// > ends, an ended stream also means stop. One phone is attached at a
         /// > time: a newer offer ends this stream without a status, as does a phone
-        /// > that sends no audio within 600 ms of Start.
+        /// > that sends no audio within 600 ms of Start, or one too far behind to
+        /// > take Stop.
         /// > Failures end the stream with a status carrying an RpcError:
         /// >   UNSUPPORTED - a press wouldn't record on a phone, now or once that
         /// >     changes: the Mac's microphone setting is "system_default", or names
@@ -1007,7 +1009,8 @@ extension Aria_Daemon_V1_PhoneMicrophoneService.ClientProtocol {
     /// > dropped, and a Stopped for an earlier recording is ignored. However it
     /// > ends, an ended stream also means stop. One phone is attached at a
     /// > time: a newer offer ends this stream without a status, as does a phone
-    /// > that sends no audio within 600 ms of Start.
+    /// > that sends no audio within 600 ms of Start, or one too far behind to
+    /// > take Stop.
     /// > Failures end the stream with a status carrying an RpcError:
     /// >   UNSUPPORTED - a press wouldn't record on a phone, now or once that
     /// >     changes: the Mac's microphone setting is "system_default", or names
@@ -1055,7 +1058,8 @@ extension Aria_Daemon_V1_PhoneMicrophoneService.ClientProtocol {
     /// > dropped, and a Stopped for an earlier recording is ignored. However it
     /// > ends, an ended stream also means stop. One phone is attached at a
     /// > time: a newer offer ends this stream without a status, as does a phone
-    /// > that sends no audio within 600 ms of Start.
+    /// > that sends no audio within 600 ms of Start, or one too far behind to
+    /// > take Stop.
     /// > Failures end the stream with a status carrying an RpcError:
     /// >   UNSUPPORTED - a press wouldn't record on a phone, now or once that
     /// >     changes: the Mac's microphone setting is "system_default", or names

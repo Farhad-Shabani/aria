@@ -27,6 +27,15 @@ message ListMicrophonesResponse {
 
 message AttachedPhone {}
 
+// A Mac input device a recording captures from.
+message MicrophoneDevice {
+  // As `Microphone.id` names it.
+  string id = 1;
+  // The device is an iPhone's microphone, which the Mac uses through
+  // Continuity.
+  bool on_iphone = 2;
+}
+
 message Microphone {
   // What `Settings.microphone` takes to choose this device. Stable while
   // the device stays connected.

@@ -10,7 +10,7 @@ use aria_assistant::chat::{
 };
 use aria_assistant::prompts::{NewSource, PromptContents, PromptDraft, PromptSource};
 use aria_kit::audio::{
-    AutoStop, AutoStopError, InputDevice, SilenceDuration, SilenceDurationError,
+    AutoStop, AutoStopError, InputDevice, InputDeviceId, SilenceDuration, SilenceDurationError,
 };
 use aria_kit::synthesis::{
     SpeakingRate, SpeakingRateError, SpeechText, SpeechTextError, Voice, VoiceError,
@@ -27,9 +27,9 @@ use aria_settings::{
     StreamingUnavailable, StreamingUnavailableOutput, UpdateResult,
 };
 use aria_voice::dictation::{
-    CaptionSnapshot, DeliveryOutcome, DictationEvent, DictationOutcome, DictationRequest,
-    DictationResult, DictationRoute, DictationStage, GhostSnapshot, HeardSpeaker, MicLevel,
-    RecordingId, StopMode, TranscriptRoute,
+    CaptionSnapshot, CapturedMicrophone, DeliveryOutcome, DictationEvent, DictationOutcome,
+    DictationRequest, DictationResult, DictationRoute, DictationStage, GhostSnapshot, HeardSpeaker,
+    MicLevel, RecordingId, StopMode, TranscriptRoute,
 };
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
@@ -3182,6 +3182,7 @@ impl From<DictationStage> for wire::DictationEvent {
         let mut heard = wire::HeardSpeaker::Unspecified;
         let mut delivery_mode = wire::DeliveryMode::Unspecified;
         let mut transcript_route = wire::TranscriptRoute::Unspecified;
+        let mut microphone = None;
         let (code, error) = match stage {
             DictationStage::Recording {
                 id,
@@ -3192,6 +3193,25 @@ impl From<DictationStage> for wire::DictationEvent {
                 delivery_mode = wire::DeliveryMode::from(delivery);
                 transcript_route = wire::TranscriptRoute::from(route);
                 (wire::DictationStage::Recording, 0)
+            }
+            DictationStage::Capturing {
+                id,
+                microphone: captured,
+            } => {
+                use wire::dictation_event::Microphone;
+                recording = id.0;
+                microphone = match captured {
+                    CapturedMicrophone::Device { id, on_iphone } => {
+                        Some(Microphone::Device(wire::MicrophoneDevice {
+                            id: id.to_string(),
+                            on_iphone,
+                        }))
+                    }
+                    // The daemon pushes in only the attached phone's audio.
+                    CapturedMicrophone::Pushed => Some(Microphone::Phone(wire::AttachedPhone {})),
+                    CapturedMicrophone::Prerecorded => None,
+                };
+                (wire::DictationStage::Capturing, 0)
             }
             DictationStage::Transcribing => (wire::DictationStage::Transcribing, 0),
             DictationStage::Delivering => (wire::DictationStage::Delivering, 0),
@@ -3241,6 +3261,7 @@ impl From<DictationStage> for wire::DictationEvent {
             heard: heard as i32,
             delivery_mode: delivery_mode as i32,
             route: transcript_route as i32,
+            microphone,
         }
     }
 }
@@ -3255,6 +3276,20 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
                 delivery: decode_enum::<wire::DeliveryMode>(event.delivery_mode, "delivery mode")?,
                 route: decode_enum::<wire::TranscriptRoute>(event.route, "transcript route")?,
             }),
+            Ok(wire::DictationStage::Capturing) => {
+                use wire::dictation_event::Microphone;
+                Ok(Self::Capturing {
+                    id: RecordingId(event.recording_id),
+                    microphone: match &event.microphone {
+                        Some(Microphone::Device(device)) => CapturedMicrophone::Device {
+                            id: InputDeviceId::new(device.id.as_str()),
+                            on_iphone: device.on_iphone,
+                        },
+                        Some(Microphone::Phone(_)) => CapturedMicrophone::Pushed,
+                        None => CapturedMicrophone::Prerecorded,
+                    },
+                })
+            }
             Ok(wire::DictationStage::Transcribing) => Ok(Self::Transcribing),
             Ok(wire::DictationStage::Delivering) => Ok(Self::Delivering),
             Ok(wire::DictationStage::SegmentTranscribed) => Ok(Self::SegmentTranscribed {
@@ -4003,6 +4038,21 @@ mod tests {
                 delivery: DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::HistoryOnly,
             },
+            DictationStage::Capturing {
+                id: RecordingId(7),
+                microphone: CapturedMicrophone::Device {
+                    id: InputDeviceId::new("coreaudio:iphone"),
+                    on_iphone: true,
+                },
+            },
+            DictationStage::Capturing {
+                id: RecordingId(7),
+                microphone: CapturedMicrophone::Pushed,
+            },
+            DictationStage::Capturing {
+                id: RecordingId(7),
+                microphone: CapturedMicrophone::Prerecorded,
+            },
             DictationStage::Transcribing,
             DictationStage::Delivering,
             DictationStage::Delivered {
@@ -4054,6 +4104,36 @@ mod tests {
                 stage
             );
         }
+    }
+
+    #[test]
+    fn capturing_names_a_mac_device_and_pushed_audio_as_the_phone() {
+        use wire::dictation_event::Microphone;
+        let on = |microphone| {
+            wire::DictationEvent::from(DictationStage::Capturing {
+                id: RecordingId(3),
+                microphone,
+            })
+        };
+
+        let device = on(CapturedMicrophone::Device {
+            id: InputDeviceId::new("coreaudio:usb"),
+            on_iphone: false,
+        });
+        let phone = on(CapturedMicrophone::Pushed);
+
+        assert_eq!(device.recording_id, 3);
+        assert_eq!(
+            device.microphone,
+            Some(Microphone::Device(wire::MicrophoneDevice {
+                id: "coreaudio:usb".to_owned(),
+                on_iphone: false,
+            }))
+        );
+        assert_eq!(
+            phone.microphone,
+            Some(Microphone::Phone(wire::AttachedPhone {}))
+        );
     }
 
     #[test]

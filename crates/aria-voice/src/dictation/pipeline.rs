@@ -21,7 +21,9 @@ use crate::stt::{
     TranscriptionError,
 };
 use crate::vocabulary::Vocabulary;
-use aria_kit::audio::{AudioCapture, CaptureError, RecordingMode, RecordingReader, StopSignal};
+use aria_kit::audio::{
+    AudioCapture, CaptureError, RecordingMode, RecordingReader, RecordingSource, StopSignal,
+};
 use aria_platform::delivery::{Caret, Placement};
 use aria_primitives::error_chain;
 use aria_segmentation::pyannote::Pyannote;
@@ -33,7 +35,7 @@ use super::{
     DictationResult, DictationSettings, DictationStage, ExecutionControl, GhostSnapshot,
     HeardSpeaker, StopMode, Transcribed, TranscriptSink, Utterance,
 };
-use super::{Cleanup, Meter, Rewrites, rewrites};
+use super::{CapturedMicrophone, Cleanup, Meter, Rewrites, rewrites};
 
 /// Records a press, hears it, and publishes each segment to its sinks.
 /// Where the text goes — history, the cursor — is the sinks' business.
@@ -683,6 +685,13 @@ where
             )
             .map_err(|error| map_capture_error(error, control))
             .map_err(|error| log_stage_error("recording", stage_started.elapsed(), error))?;
+        match recording.source() {
+            Some(source) => events.emit(DictationStage::Capturing {
+                id: control.recording_id(),
+                microphone: captured_microphone(source),
+            }),
+            None => tracing::warn!(stage = "recording", "capture started with no source"),
+        }
         tracing::info!(stage = "recording", "dictation stage started");
         Ok(recording)
     }
@@ -1653,6 +1662,18 @@ fn check_execution(control: &ExecutionControl) -> Result<(), DictationError> {
     Ok(())
 }
 
+/// Asks the OS whether a device is an iPhone, so no client has to.
+fn captured_microphone(source: RecordingSource) -> CapturedMicrophone {
+    match source {
+        RecordingSource::Device(id) => {
+            let on_iphone = aria_platform::microphone::is_continuity_iphone(&id);
+            CapturedMicrophone::Device { id, on_iphone }
+        }
+        RecordingSource::Pushed => CapturedMicrophone::Pushed,
+        RecordingSource::Prerecorded => CapturedMicrophone::Prerecorded,
+    }
+}
+
 /// The press ends while transcribing, so the recording stage is logged from
 /// what the reader saw rather than from when this runs.
 fn log_capture_stage(recording: &RecordingReader, stage_started: Instant) {
@@ -2567,6 +2588,75 @@ mod tests {
 
             assert_eq!(*capture.0.lock().unwrap(), [expected]);
         }
+    }
+
+    /// Refuses to start, as a microphone that won't open does.
+    struct Unopened;
+
+    impl AudioCapture for Unopened {
+        fn start(
+            &self,
+            _mode: RecordingMode,
+            _inputs: Inputs,
+            _stop: StopSignal,
+        ) -> Result<RecordingReader, CaptureError> {
+            Err(CaptureError::SourceGone)
+        }
+    }
+
+    #[test]
+    fn capturing_follows_recording_once_capture_starts() {
+        let log = CallLog::default();
+        let (_directory, replay) = capture();
+        let pipeline = DictationPipeline::new(
+            replay,
+            Transcription::complete_samples(Answering("hello")),
+            (log.history(), log.cursor()),
+        );
+        let (events, stages) = stage_events();
+
+        pipeline
+            .run_observed(
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                &events,
+            )
+            .expect("the press completes");
+
+        let stages: Vec<_> = stages.try_iter().take(2).collect();
+        let [
+            DictationStage::Recording { id, .. },
+            DictationStage::Capturing {
+                id: captured,
+                microphone,
+            },
+        ] = stages.as_slice()
+        else {
+            panic!("expected Recording then Capturing, got {stages:?}");
+        };
+        assert_eq!(captured, id);
+        assert_eq!(*microphone, CapturedMicrophone::Prerecorded);
+    }
+
+    #[test]
+    fn a_capture_that_fails_to_start_announces_no_capturing() {
+        let log = CallLog::default();
+        let pipeline = DictationPipeline::new(
+            Unopened,
+            Transcription::complete_samples(Answering("hello")),
+            (log.history(), log.cursor()),
+        );
+        let (events, stages) = stage_events();
+
+        let _failed = pipeline.run_observed(
+            settings(DeliveryMode::Complete, OutputMode::Insert),
+            &events,
+        );
+
+        assert!(
+            !stages
+                .try_iter()
+                .any(|stage| matches!(stage, DictationStage::Capturing { .. }))
+        );
     }
 
     /// The relay goes through this path, so a change to how a press reaches

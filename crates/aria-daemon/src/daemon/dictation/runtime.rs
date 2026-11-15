@@ -295,6 +295,7 @@ impl DictationRuntime {
                 && !matches!(
                     stage,
                     DictationStage::SpeakerChanged(_)
+                        | DictationStage::Capturing { .. }
                         | DictationStage::SegmentQueued
                         | DictationStage::ReturnDropped
                 )
@@ -749,7 +750,7 @@ mod event_tests {
     }
 
     #[test]
-    fn voice_updates_and_queued_segments_reach_subscribers_without_changing_call_progress() {
+    fn overlay_stages_reach_subscribers_without_changing_call_progress() {
         let directory = tempfile::tempdir().unwrap();
         let settings =
             Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
@@ -762,9 +763,15 @@ mod event_tests {
         let events = runtime.emitter_for_call(move |stage| call.send(stage).unwrap());
         let operation = runtime.operation_emitter(Some(&events));
         let voice = DictationStage::SpeakerChanged(aria_voice::dictation::HeardSpeaker::KeptOut);
+        let capturing = DictationStage::Capturing {
+            id: aria_voice::dictation::RecordingId(1),
+            microphone: aria_voice::dictation::CapturedMicrophone::Prerecorded,
+        };
+        operation.emit(capturing.clone());
         operation.emit(voice.clone());
         operation.emit(DictationStage::SegmentQueued);
         operation.emit(DictationStage::Transcribing);
+        assert_eq!(received.recv().unwrap(), DictationEvent::Stage(capturing));
         assert_eq!(received.recv().unwrap(), DictationEvent::Stage(voice));
         assert_eq!(
             received.recv().unwrap(),

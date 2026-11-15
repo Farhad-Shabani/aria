@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crate::audio::capture::modes::{CaptureProgress, CaptureRecording};
 use crate::audio::recording::{self, RecordingWriter};
 use crate::audio::spool::WavSpool;
-use crate::audio::{CaptureError, RecordingReader, StopSignal};
+use crate::audio::{CaptureError, RecordingReader, RecordingSource, StopSignal};
 use crate::voice_activity::VoiceActivityDetector;
 
 use super::{MicrophoneError, RecordingMode};
@@ -61,7 +61,7 @@ impl<V: VoiceActivityDetector + Send + 'static> PushedCapture<V> {
             maximum_duration: self.maximum_duration,
         };
         let vad = Arc::clone(&self.vad);
-        writer.begin();
+        writer.begin(RecordingSource::Pushed);
         thread::Builder::new()
             .name("aria-pushed-capture".to_owned())
             .spawn(move || session.run(spool, &first, &vad, writer, stop, finished))
@@ -280,6 +280,17 @@ mod tests {
         let audio = finished_audio(recording).expect("the recording finishes");
 
         assert_eq!(audio, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_pushed_recording_names_its_source() {
+        let harness = Harness::new();
+        let (_feed, recording) = harness.start(RecordingMode::UntilStopped, StopSignal::never());
+
+        assert_eq!(
+            recording.expect("audio arrived").source(),
+            Some(RecordingSource::Pushed)
+        );
     }
 
     #[test]

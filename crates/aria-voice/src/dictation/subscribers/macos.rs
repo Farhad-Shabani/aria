@@ -78,7 +78,9 @@ impl Cue {
                 | RpcErrorCode::ApplicationExcluded,
             ) => Some(Self::Stop),
             DictationStage::Failed(_) => Some(Self::Error),
-            DictationStage::Transcribing
+            // The start cue played at the press.
+            DictationStage::Capturing { .. }
+            | DictationStage::Transcribing
             | DictationStage::Delivering
             | DictationStage::SegmentTranscribed { .. }
             | DictationStage::SegmentDelivered

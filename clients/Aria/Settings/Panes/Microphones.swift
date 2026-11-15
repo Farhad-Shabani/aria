@@ -80,7 +80,7 @@ final class Microphones: ObservableObject {
         ]
         let microphones = listed?.microphones ?? []
         choices += microphones.map { Choice(id: $0.id, title: $0.label) }
-        if !isWord(chosen), !microphones.contains(where: { $0.id == chosen }) {
+        if isDevice(chosen), !microphones.contains(where: { $0.id == chosen }) {
             let name = names[chosen] ?? "Unknown Microphone"
             // Before the first list, whether it's connected is unknown.
             choices.append(Choice(id: chosen, title: listed == nil ? name : "\(name) (Not Connected)"))
@@ -108,14 +108,14 @@ final class Microphones: ObservableObject {
             case .phone: "your iPhone"
             case .device(let id): listed.microphones.first { $0.id == id }?.label ?? "the system default"
             }
-        if !isWord(chosen), !listed.microphones.contains(where: { $0.id == chosen }) {
+        if isDevice(chosen), !listed.microphones.contains(where: { $0.id == chosen }) {
             let name = names[chosen] ?? "The chosen microphone"
             return "\(name) isn’t connected, so Aria records with \(recorder)."
         }
         return "Records with \(recorder)."
     }
 
-    private static func isWord(_ chosen: String) -> Bool {
-        chosen == automatic || chosen == systemDefault
+    private static func isDevice(_ chosen: String) -> Bool {
+        chosen != automatic && chosen != systemDefault
     }
 }

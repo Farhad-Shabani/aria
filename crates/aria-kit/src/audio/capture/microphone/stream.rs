@@ -11,9 +11,9 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample, SupportedStreamConfig};
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::audio::samples_at;
+use crate::audio::{InputDeviceId, samples_at};
 
-use super::devices::{InputDeviceId, open_target};
+use super::devices::open_target;
 use super::resampling::SampleRateConverter;
 use super::worker::IdleObservation;
 use super::{MicrophoneError, Result};

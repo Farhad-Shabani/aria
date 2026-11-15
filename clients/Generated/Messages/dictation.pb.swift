@@ -140,6 +140,10 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
   /// The person's Return was held back to press after the text, and never
   /// pressed: Aria could not confirm the field. Comes after the terminal stage.
   case returnDropped // = 11
+
+  /// The microphone is live. Follows RECORDING once capture starts. A capture
+  /// that fails to start sends none.
+  case capturing // = 12
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -160,6 +164,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     case 9: self = .speakerChanged
     case 10: self = .segmentQueued
     case 11: self = .returnDropped
+    case 12: self = .capturing
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -178,6 +183,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     case .speakerChanged: return 9
     case .segmentQueued: return 10
     case .returnDropped: return 11
+    case .capturing: return 12
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -196,6 +202,7 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
     .speakerChanged,
     .segmentQueued,
     .returnDropped,
+    .capturing,
   ]
 
 }
@@ -618,7 +625,8 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// Set on DICTATION_STAGE_RECORDING: what `Stop` takes.
+  /// Set on DICTATION_STAGE_RECORDING: what `Stop` takes. Set on
+  /// DICTATION_STAGE_CAPTURING: the recording that started capturing.
   public var recordingID: UInt64 = 0
 
   /// Set on DICTATION_STAGE_RECORDING: how the press delivers. A request to
@@ -658,7 +666,35 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   /// Meaningful only when stage is DICTATION_STAGE_FAILED.
   public var errorCode: Aria_Daemon_V1_ErrorCode = .unspecified
 
+  /// Set on DICTATION_STAGE_CAPTURING: what the recording captures from.
+  /// Absent for audio recorded before, such as a replay.
+  public var microphone: Aria_Daemon_V1_DictationEvent.OneOf_Microphone? = nil
+
+  public var device: Aria_Daemon_V1_MicrophoneDevice {
+    get {
+      if case .device(let v)? = microphone {return v}
+      return Aria_Daemon_V1_MicrophoneDevice()
+    }
+    set {microphone = .device(newValue)}
+  }
+
+  public var phone: Aria_Daemon_V1_AttachedPhone {
+    get {
+      if case .phone(let v)? = microphone {return v}
+      return Aria_Daemon_V1_AttachedPhone()
+    }
+    set {microphone = .phone(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  /// Set on DICTATION_STAGE_CAPTURING: what the recording captures from.
+  /// Absent for audio recorded before, such as a replay.
+  public nonisolated enum OneOf_Microphone: Equatable, Sendable {
+    case device(Aria_Daemon_V1_MicrophoneDevice)
+    case phone(Aria_Daemon_V1_AttachedPhone)
+
+  }
 
   public init() {}
 }
@@ -797,7 +833,7 @@ nonisolated extension Aria_Daemon_V1_HeardSpeaker: SwiftProtobuf._ProtoNameProvi
 }
 
 nonisolated extension Aria_Daemon_V1_DictationStage: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DICTATION_STAGE_UNSPECIFIED\0\u{1}DICTATION_STAGE_RECORDING\0\u{1}DICTATION_STAGE_TRANSCRIBING\0\u{1}DICTATION_STAGE_DELIVERING\0\u{1}DICTATION_STAGE_DELIVERED\0\u{1}DICTATION_STAGE_CANCELLED\0\u{1}DICTATION_STAGE_FAILED\0\u{1}DICTATION_STAGE_SEGMENT_TRANSCRIBED\0\u{1}DICTATION_STAGE_SEGMENT_DELIVERED\0\u{1}DICTATION_STAGE_SPEAKER_CHANGED\0\u{1}DICTATION_STAGE_SEGMENT_QUEUED\0\u{1}DICTATION_STAGE_RETURN_DROPPED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DICTATION_STAGE_UNSPECIFIED\0\u{1}DICTATION_STAGE_RECORDING\0\u{1}DICTATION_STAGE_TRANSCRIBING\0\u{1}DICTATION_STAGE_DELIVERING\0\u{1}DICTATION_STAGE_DELIVERED\0\u{1}DICTATION_STAGE_CANCELLED\0\u{1}DICTATION_STAGE_FAILED\0\u{1}DICTATION_STAGE_SEGMENT_TRANSCRIBED\0\u{1}DICTATION_STAGE_SEGMENT_DELIVERED\0\u{1}DICTATION_STAGE_SPEAKER_CHANGED\0\u{1}DICTATION_STAGE_SEGMENT_QUEUED\0\u{1}DICTATION_STAGE_RETURN_DROPPED\0\u{1}DICTATION_STAGE_CAPTURING\0")
 }
 
 nonisolated extension Aria_Daemon_V1_DeliveryOutcome: SwiftProtobuf._ProtoNameProviding {
@@ -1234,7 +1270,7 @@ nonisolated extension Aria_Daemon_V1_StopDictationResponse: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DictationEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{3}speaker_name\0\u{1}heard\0\u{3}delivery_mode\0\u{1}route\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{3}speaker_name\0\u{1}heard\0\u{3}delivery_mode\0\u{1}route\0\u{1}device\0\u{1}phone\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1252,12 +1288,42 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
       case 8: try { try decoder.decodeSingularEnumField(value: &self.heard) }()
       case 9: try { try decoder.decodeSingularEnumField(value: &self.deliveryMode) }()
       case 10: try { try decoder.decodeSingularEnumField(value: &self.route) }()
+      case 11: try {
+        var v: Aria_Daemon_V1_MicrophoneDevice?
+        var hadOneofValue = false
+        if let current = self.microphone {
+          hadOneofValue = true
+          if case .device(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.microphone = .device(v)
+        }
+      }()
+      case 12: try {
+        var v: Aria_Daemon_V1_AttachedPhone?
+        var hadOneofValue = false
+        if let current = self.microphone {
+          hadOneofValue = true
+          if case .phone(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.microphone = .phone(v)
+        }
+      }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if self.stage != .unspecified {
       try visitor.visitSingularEnumField(value: self.stage, fieldNumber: 1)
     }
@@ -1288,6 +1354,17 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
     if self.route != .unspecified {
       try visitor.visitSingularEnumField(value: self.route, fieldNumber: 10)
     }
+    switch self.microphone {
+    case .device?: try {
+      guard case .device(let v)? = self.microphone else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    }()
+    case .phone?: try {
+      guard case .phone(let v)? = self.microphone else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+    }()
+    case nil: break
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1302,6 +1379,7 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
     if lhs.outcome != rhs.outcome {return false}
     if lhs.wordCount != rhs.wordCount {return false}
     if lhs.errorCode != rhs.errorCode {return false}
+    if lhs.microphone != rhs.microphone {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

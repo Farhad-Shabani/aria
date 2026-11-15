@@ -1,34 +1,16 @@
 //! Which input device a recording uses: the chosen one while it's connected,
 //! else the system default.
 
-use std::fmt;
-
 use cpal::traits::{DeviceTrait, HostTrait};
 
 use super::{MicrophoneError, Result};
+use crate::audio::InputDeviceId;
 
-/// An input device's stable identity, in cpal's `host:device` form.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct InputDeviceId(String);
-
-impl InputDeviceId {
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    fn of(device: &cpal::Device) -> Option<Self> {
-        device.id().ok().map(|id| Self(id.to_string()))
-    }
-}
-
-impl fmt::Display for InputDeviceId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
+fn device_id(device: &cpal::Device) -> Option<InputDeviceId> {
+    device
+        .id()
+        .ok()
+        .map(|id| InputDeviceId::new(id.to_string()))
 }
 
 /// A connected device that can record.
@@ -83,22 +65,19 @@ pub(super) fn system_default() -> Option<InputDeviceId> {
     cpal::default_host()
         .default_input_device()
         .as_ref()
-        .and_then(InputDeviceId::of)
+        .and_then(device_id)
 }
 
 // A device that vanishes mid-listing has no identity or name to read. It is
 // gone, so it is left out rather than failing the list.
 fn connected(host: &cpal::Host) -> Result<Vec<(cpal::Device, InputDevice)>> {
-    let default = host
-        .default_input_device()
-        .as_ref()
-        .and_then(InputDeviceId::of);
+    let default = host.default_input_device().as_ref().and_then(device_id);
     let devices = host
         .input_devices()
         .map_err(|source| MicrophoneError::ListDevices(Box::new(source)))?;
     Ok(devices
         .filter_map(|device| {
-            let id = InputDeviceId::of(&device)?;
+            let id = device_id(&device)?;
             let name = device.description().ok()?.name().to_owned();
             let system_default = default.as_ref() == Some(&id);
             Some((

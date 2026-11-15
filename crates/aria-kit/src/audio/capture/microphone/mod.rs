@@ -20,7 +20,8 @@ use crate::wake_word::WakeWordDetector;
 
 use super::{AudioCapture, Inputs, MicrophoneError, RecordingMode};
 
-pub use devices::{InputDevice, InputDeviceId, input_devices, is_connected, resolve_input};
+use crate::audio::InputDeviceId;
+pub use devices::{InputDevice, input_devices, is_connected, resolve_input};
 pub use stream::check_default_input_device;
 pub use wake_word::{
     WakeWordControl, WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
