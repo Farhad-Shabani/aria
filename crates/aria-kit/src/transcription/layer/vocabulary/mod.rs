@@ -256,7 +256,7 @@ impl Vocabulary {
             }
             let alias = normalize(&alias);
             if let Some(candidate) = first_word(&alias)
-                .and_then(|first| self.index.get_mut(&first))
+                .and_then(|first| self.index.get_mut(first.as_ref()))
                 .and_then(|bucket| bucket.aliases.get_mut(&alias))
                 && candidate.origin != Origin::Written
                 && candidate.name.canonical() != Some(canonical)
@@ -268,7 +268,7 @@ impl Vocabulary {
     }
 
     fn add_bucket(&mut self, alias: &str) -> Result<Option<&mut Bucket>, MatchError> {
-        let Some(first) = first_word(alias) else {
+        let Some(first) = first_word(alias).map(Cow::into_owned) else {
             return Ok(None);
         };
         let capacity = self.index.capacity();
@@ -442,7 +442,7 @@ impl Vocabulary {
                 continue;
             }
             let matched = if !continues_word(text[..position].chars().rev()) {
-                match first_word(rest).and_then(|first| self.index.get(&first)) {
+                match first_word(rest).and_then(|first| self.index.get(first.as_ref())) {
                     Some(bucket) => self.find(text, position, bucket, check)?,
                     None => None,
                 }
@@ -533,21 +533,25 @@ fn is_word(character: char) -> bool {
     character.is_alphanumeric() || character == '_'
 }
 
-fn first_word(text: &str) -> Option<String> {
+fn first_word(text: &str) -> Option<Cow<'_, str>> {
     let first = text.chars().next()?;
     if first.is_whitespace() {
         return None;
     }
     if !is_word(first) {
-        return Some(first.to_string());
+        return Some(Cow::Borrowed(&text[..first.len_utf8()]));
     }
-    Some(
-        text.chars()
-            .take_while(|c| is_word(*c))
+    let word = &text[..text.find(|c| !is_word(c)).unwrap_or(text.len())];
+    // Matching looks up every word it reads, and most are lowercase already.
+    if word.chars().all(|c| c.to_lowercase().eq([c])) {
+        return Some(Cow::Borrowed(word));
+    }
+    Some(Cow::Owned(
+        word.chars()
             .flat_map(char::to_lowercase)
             .take_while(|c| is_word(*c))
             .collect(),
-    )
+    ))
 }
 
 pub fn matching_forms(canonical: &str) -> impl Iterator<Item = String> {
