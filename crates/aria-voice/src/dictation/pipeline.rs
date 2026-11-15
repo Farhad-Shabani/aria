@@ -23,6 +23,7 @@ use crate::stt::{
 use crate::vocabulary::Vocabulary;
 use aria_kit::audio::{
     AudioCapture, CaptureError, RecordingMode, RecordingReader, RecordingSource, StopSignal,
+    canonical_duration,
 };
 use aria_platform::delivery::{Caret, Placement};
 use aria_primitives::error_chain;
@@ -591,7 +592,11 @@ where
                 .dictation_started(&settings, control)
                 .map_err(|error| stop_recording(control, map_sink_error(error, control)))
                 .map_err(|error| log_delivery_error(stage_started.elapsed(), error))?;
-            tracing::info!(stage = "transcription", "dictation stage started");
+            tracing::info!(
+                stage = "transcription",
+                audio_ms = recording.duration().as_millis(),
+                "dictation stage started"
+            );
             // Held only for the transcribing stage: the meter ends with
             // capture, and the pill has its next stage to draw by then.
             let meter = Meter::watching(&recording, control, events);
@@ -946,6 +951,10 @@ impl SegmentEnds {
         self.words.finish()
     }
 
+    fn is_holding(&self) -> bool {
+        self.held_since.is_some()
+    }
+
     /// Whether the held words have waited [`HELD_WAIT`] by `now`.
     fn is_overdue(&self, now: Instant) -> bool {
         self.held_since
@@ -1076,8 +1085,22 @@ impl<'a> Published<'a> {
         if segment.corrected.text.is_empty() {
             return Ok(());
         }
-        self.type_text(segment, heard.window.start, heard.span, speaker, sinks)
-            .or_else(|error| self.undelivered(error))
+        // Words held back end the span, so the typed ones end earlier, at a
+        // point no one tracks.
+        let spoken_to = heard
+            .span
+            .as_ref()
+            .filter(|_| !self.ends.is_holding())
+            .map(|span| span.end);
+        self.type_text(
+            segment,
+            heard.window.start,
+            heard.span,
+            spoken_to,
+            speaker,
+            sinks,
+        )
+        .or_else(|error| self.undelivered(error))
     }
 
     /// A streamed delivery that failed stops the press, which still drains
@@ -1101,7 +1124,8 @@ impl<'a> Published<'a> {
             return Ok(());
         };
         let held = self.correct(held);
-        self.type_text(&held, self.heard_to, None, None, sinks)
+        // Held words close the last segment, so they end where it was heard to.
+        self.type_text(&held, self.heard_to, None, Some(self.heard_to), None, sinks)
             .or_else(|error| self.undelivered(error))
     }
 
@@ -1141,6 +1165,7 @@ impl<'a> Published<'a> {
         segment: &CorrectedSegment,
         at: u64,
         span: Option<std::ops::Range<u64>>,
+        spoken_to: Option<u64>,
         speaker: Option<SpeakerName>,
         sinks: &mut S,
     ) -> Result<(), DictationError>
@@ -1148,7 +1173,6 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let first = self.written.is_empty();
         // Complete delivery types the decoder's own transcript, so joining
         // here would only make the caption disagree with it.
         let punctuated = if self.streaming {
@@ -1177,18 +1201,26 @@ impl<'a> Published<'a> {
             span,
             spacing,
         };
+        let typing = Instant::now();
         if let Err(error) = sinks.segment(utterance) {
             let error = stopped_partway(map_sink_error(error, self.control), sinks);
             return Err(log_delivery_error(self.started_at.elapsed(), error));
         }
-        if self.streaming && first {
+        let typed_at = Instant::now();
+        // Queued text lands later, on a retry, so it was not typed here.
+        let typed = self.streaming && !sinks.is_queueing();
+        self.announce(&punctuated.text, spacing, speaker, sinks);
+        if typed {
+            // After the text and its announcement, so neither waits on the log.
             tracing::info!(
                 stage = "delivery",
-                elapsed_ms = self.started_at.elapsed().as_millis(),
-                "dictation first segment transcribed"
+                words = punctuated.text.split_whitespace().count(),
+                elapsed_ms = typed_at.duration_since(self.started_at).as_millis(),
+                typing_ms = typed_at.duration_since(typing).as_millis(),
+                spoken_to_ms = spoken_to.map(|end| canonical_duration(end).as_millis()),
+                "dictation segment typed"
             );
         }
-        self.announce(&punctuated.text, spacing, speaker, sinks);
         Ok(())
     }
 
@@ -2093,6 +2125,49 @@ mod tests {
         aria_kit::transcription::next_heard(&mut operation, &mut recording)
             .unwrap()
             .unwrap()
+    }
+
+    struct CapturedLogs {
+        lines: Arc<Mutex<Vec<u8>>>,
+        _subscriber: tracing::subscriber::DefaultGuard,
+        // With one dispatch, the first thread to reach a callsite caches its
+        // interest for all. A second keeps tracing asking each one.
+        _second: tracing::Dispatch,
+    }
+
+    #[derive(Clone)]
+    struct LogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl CapturedLogs {
+        fn start(max: tracing::Level) -> Self {
+            let lines = Arc::new(Mutex::new(Vec::new()));
+            let writer = LogWriter(Arc::clone(&lines));
+            let subscriber = tracing_subscriber::fmt()
+                .without_time()
+                .with_ansi(false)
+                .with_max_level(max)
+                .with_writer(move || writer.clone())
+                .finish();
+            Self {
+                lines,
+                _subscriber: tracing::subscriber::set_default(subscriber),
+                _second: tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()),
+            }
+        }
+
+        fn text(&self) -> String {
+            String::from_utf8(self.lines.lock().unwrap().clone()).unwrap()
+        }
     }
 
     /// Joins every `deliver:` entry into what the focused field ends up holding.
@@ -3708,29 +3783,7 @@ mod tests {
 
     #[test]
     fn cleanup_failure_retains_deterministic_text_and_reports_only_its_category() {
-        #[derive(Clone)]
-        struct LogWriter(Arc<Mutex<Vec<u8>>>);
-        impl std::io::Write for LogWriter {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let diagnostics = Arc::new(Mutex::new(Vec::new()));
-        let writer = LogWriter(Arc::clone(&diagnostics));
-        let subscriber = tracing_subscriber::fmt()
-            .without_time()
-            .with_ansi(false)
-            .with_max_level(tracing::Level::WARN)
-            .with_writer(move || writer.clone())
-            .finish();
-        let _subscriber = tracing::subscriber::set_default(subscriber);
-        // With one dispatch, the first thread to reach a callsite caches its
-        // interest for all. A second keeps tracing asking each one.
-        let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        let diagnostics = CapturedLogs::start(tracing::Level::WARN);
         let (_directory, capture) = capture();
         let log = CallLog::default();
         let layer = FinalLayer(|text: &mut String, _: &CancelToken| {
@@ -3755,7 +3808,7 @@ mod tests {
         let log = log.entries();
         assert!(log.contains(&format!("completed:{}", result.text)));
         assert!(log.contains(&format!("deliver:{}", result.text)));
-        let diagnostics = String::from_utf8(diagnostics.lock().unwrap().clone()).unwrap();
+        let diagnostics = diagnostics.text();
         assert_eq!(diagnostics.lines().count(), 1);
         assert!(diagnostics.contains("category=\"timeout\""));
         assert!(!diagnostics.contains("Alice"));
@@ -5400,6 +5453,41 @@ mod tests {
                 "yeah"
             );
         }
+    }
+
+    #[test]
+    fn each_streamed_segment_logs_where_its_words_end() {
+        let captured = CapturedLogs::start(tracing::Level::INFO);
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = streaming();
+        let mut published =
+            Published::new(&settings, no_terms(), &control, &events, Instant::now());
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
+        sinks.dictation_started(&settings, &control).unwrap();
+
+        for (text, end) in [("first part", 1_600), ("second part", 16_000)] {
+            let mut heard = heard(directory.path(), text);
+            heard.span = Some(0..end);
+            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+        }
+
+        let log = captured.text();
+        let typed: Vec<_> = log
+            .lines()
+            .filter(|line| line.contains("dictation segment typed"))
+            .collect();
+        assert_eq!(typed.len(), 2, "{log}");
+        assert!(
+            typed[0].contains("words=2") && typed[0].contains("spoken_to_ms=100"),
+            "{log}"
+        );
+        assert!(
+            typed[1].contains("words=2") && typed[1].contains("spoken_to_ms=1000"),
+            "{log}"
+        );
     }
 
     #[test]
