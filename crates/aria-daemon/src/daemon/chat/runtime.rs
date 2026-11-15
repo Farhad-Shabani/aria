@@ -68,6 +68,15 @@ impl ChatJob {
             Self::Prompt(request) => request.tap_cancels,
         }
     }
+
+    /// Only a prompt run: an ask's reply shows in the palette, which keeps
+    /// Escape for itself.
+    pub(in crate::daemon) fn escape_cancels(&self) -> bool {
+        match self {
+            Self::Ask(_) => false,
+            Self::Prompt(request) => request.escape_cancels,
+        }
+    }
 }
 
 /// An ask on its way through its chat's lane: its model bound and

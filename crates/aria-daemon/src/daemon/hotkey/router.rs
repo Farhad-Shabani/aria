@@ -82,20 +82,21 @@ fn return_action(
 #[derive(Debug, PartialEq, Eq)]
 enum EscapeCancelled {
     Dictation,
-    Run,
+    PromptRun,
 }
 
-/// A bare Escape cancels a dictation that allows it, else the newest run
-/// a press started, whatever app is in front. `take_run` is asked only
-/// when no dictation took the Escape, so one Escape cancels one thing.
-fn escape_cancels(
+/// A bare Escape cancels a dictation that allows it, else the newest
+/// prompt run a press started, whatever app is in front. `take_run` is
+/// asked only when no dictation took the Escape, so one Escape cancels one
+/// thing.
+fn escape_cancelled(
     dictation: Option<ActiveDictation>,
     take_run: impl FnOnce() -> bool,
 ) -> Option<EscapeCancelled> {
     if dictation.is_some_and(|dictation| dictation.take_escape()) {
         return Some(EscapeCancelled::Dictation);
     }
-    take_run().then_some(EscapeCancelled::Run)
+    take_run().then_some(EscapeCancelled::PromptRun)
 }
 
 /// How a hold ended, sent to the task that owns its dictation.
@@ -171,7 +172,7 @@ impl KeyRouter {
             },
             // A taken Escape voids the Aria key's press too, so a hold it
             // lands in ends cancelled and a tap's release starts nothing.
-            BareKey::Escape => match escape_cancels(dictation, || self.chat.take_escape()) {
+            BareKey::Escape => match escape_cancelled(dictation, || self.chat.take_escape()) {
                 Some(EscapeCancelled::Dictation) => {
                     tracing::info!(
                         trigger = "hotkey",
@@ -180,7 +181,7 @@ impl KeyRouter {
                     );
                     Taken::VoidingPress
                 }
-                Some(EscapeCancelled::Run) => {
+                Some(EscapeCancelled::PromptRun) => {
                     tracing::info!(
                         trigger = "hotkey",
                         status = "cancelled",
@@ -438,7 +439,7 @@ mod tests {
         let takes = |built: Option<ActiveDictationBuilder>| {
             let built = built.map(ActiveDictationBuilder::build);
             let dictation = built.as_ref().map(|built| built.dictation.clone());
-            escape_cancels(dictation, || false) == Some(EscapeCancelled::Dictation)
+            escape_cancelled(dictation, || false) == Some(EscapeCancelled::Dictation)
         };
         let keyed = || manual().with_escape_cancels();
         assert!(takes(Some(keyed().with_recording())));
@@ -477,16 +478,23 @@ mod tests {
         let owned = manual().with_recording().build();
 
         assert_eq!(
-            escape_cancels(Some(keyed.dictation), run),
+            escape_cancelled(Some(keyed.dictation), run),
             Some(EscapeCancelled::Dictation)
         );
         assert!(!asked.get(), "one Escape cancels one thing");
         assert_eq!(
-            escape_cancels(Some(owned.dictation), run),
-            Some(EscapeCancelled::Run)
+            escape_cancelled(Some(owned.dictation), run),
+            Some(EscapeCancelled::PromptRun)
         );
-        assert_eq!(escape_cancels(None, run), Some(EscapeCancelled::Run));
-        assert_eq!(escape_cancels(None, || false), None, "nothing is in flight");
+        assert_eq!(
+            escape_cancelled(None, run),
+            Some(EscapeCancelled::PromptRun)
+        );
+        assert_eq!(
+            escape_cancelled(None, || false),
+            None,
+            "nothing is in flight"
+        );
     }
 
     #[test]

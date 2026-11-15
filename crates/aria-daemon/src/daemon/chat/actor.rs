@@ -99,14 +99,10 @@ impl Job {
         }
     }
 
-    /// Only a prompt run: an ask's reply shows in the palette, which keeps
-    /// Escape for itself.
     fn escape_cancels(&self) -> bool {
         match self {
-            Self::Run(ChatJob::Prompt(request)) => request.escape_cancels,
-            Self::Run(ChatJob::Ask(_)) | Self::Deliver(_) | Self::Delete(_) | Self::Rename(_) => {
-                false
-            }
+            Self::Run(job) => job.escape_cancels(),
+            Self::Deliver(_) | Self::Delete(_) | Self::Rename(_) => false,
         }
     }
 
@@ -137,19 +133,21 @@ enum Control {
     Pending(SessionKey, Reply<Vec<PendingAsk>, Infallible>),
 }
 
-/// The running jobs a bare Escape may cancel. The actor keeps it; the
-/// hotkey tap reads it without a round trip, since every keystroke waits
-/// on the tap. A prompt run never waits in a lane, so each one is running.
+/// The running jobs a bare Escape may cancel. The actor lists each one as
+/// it starts, and the job's entry leaves with it. The hotkey tap reads the
+/// list without a round trip, since every keystroke waits on the tap. A
+/// prompt run never waits in a lane, so each one is running.
 #[derive(Clone, Default)]
 struct EscapableRuns(Arc<Mutex<Vec<(Ticket, CancelToken)>>>);
 
 impl EscapableRuns {
-    fn add(&self, ticket: Ticket, token: CancelToken) {
+    /// Lists the run until the entry drops.
+    fn add(&self, ticket: Ticket, token: CancelToken) -> EscapableEntry {
         self.lock().push((ticket, token));
-    }
-
-    fn remove(&self, ticket: Ticket) {
-        self.lock().retain(|(run, _)| *run != ticket);
+        EscapableEntry {
+            runs: self.clone(),
+            ticket,
+        }
     }
 
     /// Cancels the newest run not cancelled yet. `false` when none is left.
@@ -168,6 +166,20 @@ impl EscapableRuns {
 
     fn lock(&self) -> MutexGuard<'_, Vec<(Ticket, CancelToken)>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// One run's place in [`EscapableRuns`], held by the job itself.
+struct EscapableEntry {
+    runs: EscapableRuns,
+    ticket: Ticket,
+}
+
+impl Drop for EscapableEntry {
+    fn drop(&mut self) {
+        self.runs
+            .lock()
+            .retain(|(ticket, _)| *ticket != self.ticket);
     }
 }
 
@@ -473,9 +485,9 @@ impl ChatActor {
             Job::Run(_) | Job::Delete(_) | Job::Rename(_) => CancelToken::new(),
             Job::Deliver(deliver) => deliver.cancellation.clone(),
         };
-        if job.escape_cancels() {
-            self.escapable.add(ticket, token.clone());
-        }
+        let escapable = job
+            .escape_cancels()
+            .then(|| self.escapable.add(ticket, token.clone()));
         let second = job.second_lane(&key);
         for lane in std::iter::once(&key).chain(&second) {
             self.running.insert(
@@ -491,6 +503,8 @@ impl ChatActor {
         let runtime = Arc::clone(&self.runtime);
         let cancellation = operation_cancellation(token, shutdown.clone());
         self.jobs.spawn_blocking(move || {
+            // Dropped however the job ends: done, panicked, or never run.
+            let _escapable = escapable;
             match job {
                 Job::Run(job) => {
                     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -653,9 +667,7 @@ impl ChatActor {
             }
         };
         for key in std::iter::once(held.lane).chain(held.second) {
-            if let Some(job) = self.running.remove(&key) {
-                self.escapable.remove(job.ticket);
-            }
+            self.running.remove(&key);
             let next = self
                 .lanes
                 .get(&key)
@@ -1341,6 +1353,23 @@ mod tests {
 
         harness.shutdown.cancel();
         harness.actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_escape_after_shutdown_finds_no_run() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let harness = parking_harness(directory.path());
+
+        harness
+            .handle
+            .run_prompt(pressed_prompt())
+            .await
+            .expect("taken");
+        assert!(started_within(&harness.started, PATIENCE).is_some());
+
+        harness.shutdown.cancel();
+        harness.actor.await.expect("the actor drains");
+        assert!(!harness.handle.take_escape(), "the drained run is gone");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

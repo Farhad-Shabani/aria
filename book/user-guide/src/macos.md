@@ -64,9 +64,9 @@ status pill says **canceled**, and Aria doesn't save the dictation to history.
 
 Text Aria already typed stays where it is.
 
-**Esc** also cancels an ask or a prompt while you speak it. A prompt's run
-stays open to **Esc** until Aria starts typing its result. While Aria shows an
-ask's reply, **Esc** goes to the Aria window.
+**Esc** also cancels an ask or a prompt while you speak it, and a prompt while
+it runs. Once Aria starts typing a prompt's result, it types all of it. While
+Aria shows an ask's reply, **Esc** goes to the Aria window.
 
 **Esc** works in any app, and that app doesn't receive the key. **Esc** with
 Shift, Control, Option, or Command reaches the app.
