@@ -29,7 +29,7 @@ impl<'scope> DecodeThread<'scope> {
             .name("aria-hearing-decoder".into())
             .spawn_scoped(scope, {
                 let board = Arc::clone(&board);
-                // Its lines name the press, as the spawner's do.
+                // A new thread starts outside the press's span.
                 let press = tracing::Span::current();
                 move || {
                     let _press = press.entered();
