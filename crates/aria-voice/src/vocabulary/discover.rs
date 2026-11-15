@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{self, Read};
@@ -279,10 +279,18 @@ impl<E: Extractor> Scanner<'_, E> {
         let Ok(reader) = Dir::read_from(directory) else {
             return Ok(None);
         };
-        let mut names = Vec::new();
-        let mut budget_spent = false;
+        let remaining = MAX_ENTRIES - self.coverage.entries;
+        let limit = remaining.min(DIRECTORY_ENTRIES);
+        // Keeps the smallest names, so a cut listing doesn't depend on the
+        // order the file system returns entries in.
+        let mut names = BinaryHeap::new();
+        let mut cut = false;
         for entry in reader {
             check_cancelled(self.cancel)?;
+            self.stop_if_late();
+            if self.stopped {
+                break;
+            }
             let Ok(entry) = entry else {
                 self.coverage.unreadable += 1;
                 self.mark(Completeness::Partial);
@@ -292,20 +300,28 @@ impl<E: Extractor> Scanner<'_, E> {
             if name == b"." || name == b".." {
                 continue;
             }
-            if names.len() == DIRECTORY_ENTRIES {
-                self.mark(Completeness::Partial);
+            if limit == 0 {
+                cut = true;
                 break;
             }
-            if self.coverage.entries == MAX_ENTRIES {
-                budget_spent = true;
-                break;
+            let name = OsString::from_vec(name.to_vec());
+            if names.len() < limit {
+                names.push(name);
+                continue;
             }
-            self.coverage.entries += 1;
-            names.push(OsString::from_vec(name.to_vec()));
+            cut = true;
+            if names.peek().is_some_and(|largest| name < *largest) {
+                names.pop();
+                names.push(name);
+            }
         }
-        names.sort_unstable();
+        let budget_spent = cut && remaining <= DIRECTORY_ENTRIES;
+        if cut {
+            self.mark(Completeness::Partial);
+        }
+        self.coverage.entries += names.len();
         Ok(Some(Listing {
-            names,
+            names: names.into_sorted_vec(),
             budget_spent,
         }))
     }
@@ -951,6 +967,7 @@ mod tests {
                 .count(),
             DIRECTORY_ENTRIES
         );
+        assert!(!paths.contains(Path::new("wide").join(item(DIRECTORY_ENTRIES)).as_path()));
         assert_eq!(result.coverage.completeness, Completeness::Partial);
     }
 
