@@ -1,7 +1,7 @@
-//! What each key means right now, and doing it. The meaning is read from
-//! the active dictation alone, by pure functions; the router then acts
-//! on that dictation, so a stale read fails instead of landing on the next
-//! one. A chat run is asked by its own actor, which owns that state.
+//! What each key means right now, and doing it. The router reads the
+//! meaning from the active dictation, then acts on that dictation. A stale
+//! read then fails instead of landing on the next one. The router asks a
+//! chat run's own actor, which owns that state.
 
 use super::super::chat::{ChatCallError, ChatHandle};
 use super::super::dictation::DictationRuntimeError;
@@ -154,7 +154,7 @@ impl KeyRouter {
     pub(super) fn take(&self, key: BareKey) -> Taken {
         let dictation = self.runtime.active_dictation();
         match key {
-            // The press goes on: a taken Return ends the dictation by itself.
+            // The press goes on: a taken Return stops the recording by itself.
             BareKey::Return => match return_action(dictation, frontmost_process) {
                 ReturnAction::Take(dictation) if dictation.take_return() => Taken::KeepingPress,
                 ReturnAction::Take(_) | ReturnAction::Pass => Taken::No,

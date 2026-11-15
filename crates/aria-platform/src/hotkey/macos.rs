@@ -2,7 +2,7 @@
 //! clicks, plus an active one that sees every key. The active one keeps
 //! Fn's macOS action from running while Fn is the Aria key, swallows a
 //! Return or an Escape a dictation takes, and reports the typing that voids
-//! a hold.
+//! the Aria key's press.
 //!
 //! Everything runs on the caller's thread. The tap callbacks only ever
 //! execute inside [`CFRunLoop::run_in_mode`] on that same thread, so the

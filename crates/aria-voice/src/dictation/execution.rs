@@ -326,8 +326,7 @@ const CAPTURE_RELEASE_POLL: Duration = Duration::from_millis(5);
 /// Whether a bare Escape cancels the dictation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EscapeRule {
-    /// No client owns it, so nothing else could cancel it: the Aria key or
-    /// the wake word started it.
+    /// No client owns it: the Aria key or the wake word started it.
     Cancels,
     /// The client that asked for it owns Escape, as the terminal does.
     Passes,
@@ -341,8 +340,8 @@ pub struct ExecutionControl {
     escape: EscapeRule,
     /// The caller's cancellation. The dictation never fires it.
     caller: CancelToken,
-    /// The person's Escape, raced against the result. With `caller`, the
-    /// whole cancellation, read only through `is_cancelled`.
+    /// The person's Escape, raced against the result. `is_cancelled` reads
+    /// it with `caller`.
     settlement: AtomicU8,
     deadline: Deadline,
     recording_state: AtomicU8,
@@ -714,8 +713,8 @@ impl ActiveDictation {
     }
 
     /// Takes the person's Escape: the dictation types nothing more and saves
-    /// nothing. False when a client owns Escape, as the terminal does, or the
-    /// dictation was ending or had its result: the key belongs to the app.
+    /// nothing. False when the key belongs to the app. A client owns Escape,
+    /// as the terminal does, or the dictation was ending or had its result.
     pub fn take_escape(&self) -> bool {
         self.control.escape == EscapeRule::Cancels && self.control.cancel()
     }
