@@ -3331,9 +3331,9 @@ mod tests {
             PersonalRules::default(),
         )
         .unwrap();
-        let underscore = Vocabulary::compile(
+        let capitals = Vocabulary::compile(
             &[Term {
-                canonical: "aria_stt".into(),
+                canonical: "Aria-STT".into(),
                 priority: 1,
             }],
             PersonalRules::default(),
@@ -3346,14 +3346,14 @@ mod tests {
                 capture,
                 Transcription::agreement(
                     Cadence::from_millis(100, 20_000),
-                    Answering("aria s t t"),
+                    Answering("aria dash s t t"),
                 ),
                 log.history(),
             );
             let cases: [(Option<&Vocabulary>, &str); 4] = [
                 (Some(&hyphen), "aria-stt"),
-                (Some(&underscore), "aria_stt"),
-                (None, "aria s t t"),
+                (Some(&capitals), "Aria-STT"),
+                (None, "aria dash s t t"),
                 (Some(&hyphen), "aria-stt"),
             ];
             for (matcher, expected) in cases {

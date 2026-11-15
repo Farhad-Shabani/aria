@@ -437,11 +437,10 @@ fn normalize(text: &str) -> String {
         .to_lowercase()
 }
 
-/// How a recognizer writes `character` in a term, as "dash" in "aria dash
-/// stt". Dictation's symbol words say "hyphen" for `-` instead.
-fn spoken_symbol(character: char) -> Option<&'static str> {
+// A recognizer writes "dash" for `-`, and dictation says "hyphen".
+fn spoken_symbol(character: char, hyphen: &'static str) -> Option<&'static str> {
     match character {
-        '-' => Some("dash"),
+        '-' => Some(hyphen),
         _ => symbol_words::word(character),
     }
 }
@@ -450,47 +449,34 @@ fn no_check(_: usize) -> Result<(), Infallible> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum Said {
+    Whole,
+    Words,
+    Letters,
+}
+
+// Every form says a symbol, so ordinary speech never matches a name.
 fn aliases(canonical: &str) -> Vec<String> {
     let mut aliases = Vec::new();
-    for punctuation in [true, false] {
-        for spell_letters in [false, true] {
-            if !punctuation
-                && (!spell_letters
-                    || !canonical.split(|c| spoken_symbol(c).is_some()).any(|part| {
-                        !part.is_empty()
-                            && part.len() <= 3
-                            && part.chars().all(|c| c.is_ascii_alphabetic())
-                    }))
-            {
-                continue;
-            }
-            let mut parts = Vec::new();
-            let mut word = String::new();
-            let push_word = |word: &mut String, parts: &mut Vec<String>| {
-                if word.is_empty() {
-                    return;
-                }
-                if spell_letters && word.len() <= 3 && word.chars().all(|c| c.is_ascii_alphabetic())
-                {
-                    parts.extend(word.chars().map(|c| c.to_string()));
-                } else {
-                    parts.push(word.clone());
-                }
-                word.clear();
-            };
+    for hyphen in ["dash"].into_iter().chain(symbol_words::word('-')) {
+        for said in [Said::Whole, Said::Words, Said::Letters] {
+            let mut words: Vec<String> = Vec::new();
+            let mut part = String::new();
+            let mut has_symbol = false;
             for character in canonical.chars() {
-                if let Some(spoken) = spoken_symbol(character) {
-                    push_word(&mut word, &mut parts);
-                    if punctuation {
-                        parts.push(spoken.to_owned());
-                    }
-                } else {
-                    word.extend(character.to_lowercase());
-                }
+                let Some(symbol) = spoken_symbol(character, hyphen) else {
+                    part.push(character);
+                    continue;
+                };
+                push_part(&part, said, &mut words);
+                part.clear();
+                words.push(symbol.to_owned());
+                has_symbol = true;
             }
-            push_word(&mut word, &mut parts);
-            let alias = normalize(&parts.join(" "));
-            if alias != canonical.to_lowercase() && !aliases.contains(&alias) {
+            push_part(&part, said, &mut words);
+            let alias = normalize(&words.join(" "));
+            if has_symbol && alias != canonical.to_lowercase() && !aliases.contains(&alias) {
                 aliases.push(alias);
             }
         }
@@ -499,8 +485,45 @@ fn aliases(canonical: &str) -> Vec<String> {
     aliases
 }
 
+fn push_part(part: &str, said: Said, words: &mut Vec<String>) {
+    if part.is_empty() {
+        return;
+    }
+    match said {
+        Said::Letters if part.len() <= 3 && part.chars().all(|c| c.is_ascii_alphabetic()) => {
+            words.extend(part.chars().map(|c| c.to_ascii_lowercase().to_string()));
+        }
+        Said::Words => words.extend(spoken_words(part).into_iter().map(str::to_lowercase)),
+        Said::Whole | Said::Letters => words.push(part.to_lowercase()),
+    }
+}
+
+fn spoken_words(part: &str) -> Vec<&str> {
+    let characters: Vec<(usize, char)> = part.char_indices().collect();
+    let mut words = Vec::new();
+    let mut start = 0;
+    for index in 1..characters.len() {
+        let (offset, character) = characters[index];
+        let previous = characters[index - 1].1;
+        let lower_follows = characters
+            .get(index + 1)
+            .is_some_and(|(_, next)| next.is_lowercase());
+        if previous.is_numeric() != character.is_numeric()
+            || (previous.is_lowercase() && character.is_uppercase())
+            || (previous.is_uppercase() && character.is_uppercase() && lower_follows)
+        {
+            words.push(&part[start..offset]);
+            start = offset;
+        }
+    }
+    words.push(&part[start..]);
+    words
+}
+
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     #[test]
@@ -548,9 +571,34 @@ mod tests {
             Some("aria-stt and Cargo.toml".into())
         );
         assert_eq!(vocabulary.correct("kubernets"), None);
+    }
 
-        let vocabulary = Vocabulary::new(["aria-stt".to_owned(), "aria_stt".to_owned()]).unwrap();
-        assert_eq!(vocabulary.correct("aria s t t"), None);
+    #[rstest]
+    #[case::hyphen_names_a_dash("aria hyphen stt", "aria-stt")]
+    #[case::camel_case_part_as_words("open app delegate dot swift", "open AppDelegate.swift")]
+    #[case::acronym_part_as_words("html parser dot swift", "HTMLParser.swift")]
+    #[case::spelled_part_beside_a_symbol("ARIA dash S T T", "aria-stt")]
+    fn spoken_forms_type_the_stored_name(#[case] heard: &str, #[case] typed: &str) {
+        let vocabulary =
+            Vocabulary::new(["aria-stt", "AppDelegate.swift", "HTMLParser.swift"]).unwrap();
+        assert_eq!(vocabulary.correct(heard).as_deref(), Some(typed));
+    }
+
+    #[rstest]
+    #[case::spelled_letters("aria s t t")]
+    #[case::words_alone("app delegate swift")]
+    fn a_form_with_no_symbol_word_stays_as_heard(#[case] heard: &str) {
+        let vocabulary = Vocabulary::new(["aria-stt", "AppDelegate.swift"]).unwrap();
+        assert_eq!(vocabulary.correct(heard), None);
+    }
+
+    #[rstest]
+    #[case::hyphen_after_a_capital("Aria hyphen kit", "aria-kit")]
+    #[case::extension_in_capitals("main dot RS", "main.rs")]
+    fn dictated_names_keep_the_stored_casing(#[case] heard: &str, #[case] typed: &str) {
+        let vocabulary = Vocabulary::new(["aria-kit", "main.rs"]).unwrap();
+        let corrected = vocabulary.correct_spoken(heard, "").map(|c| c.text);
+        assert_eq!(corrected.as_deref(), Some(typed));
     }
 
     #[test]
@@ -611,7 +659,11 @@ mod tests {
         );
         assert_eq!(matcher.correct("aria dot stt"), None);
         let matcher = compile(&["CI/CD"], PersonalRules::default());
-        assert_eq!(matcher.correct("run c i c d"), Some("run CI/CD".to_owned()));
+        assert_eq!(
+            matcher.correct("run c i slash c d"),
+            Some("run CI/CD".to_owned())
+        );
+        assert_eq!(matcher.correct("run c i c d"), None);
         assert_eq!(matcher.correct("xaria dash stt aria dash sttx"), None);
     }
 
@@ -644,23 +696,27 @@ mod tests {
 
     #[test]
     fn collisions_are_protected_and_specific_scope_wins() {
-        let matcher = compile(&["aria-stt", "aria_stt"], PersonalRules::default());
-        assert_eq!(matcher.correct("aria s t t"), None);
+        let names = ["AppDelegate.swift", "app delegate.swift"];
+        let matcher = compile(&names, PersonalRules::default());
+        assert_eq!(matcher.correct("app delegate dot swift"), None);
         let matcher = Vocabulary::compile(
             &[
                 Term {
-                    canonical: "aria-stt".into(),
+                    canonical: names[0].into(),
                     priority: 2,
                 },
                 Term {
-                    canonical: "aria_stt".into(),
+                    canonical: names[1].into(),
                     priority: 1,
                 },
             ],
             PersonalRules::default(),
         )
         .unwrap();
-        assert_eq!(matcher.correct("aria s t t"), Some("aria-stt".into()));
+        assert_eq!(
+            matcher.correct("app delegate dot swift"),
+            Some(names[0].into())
+        );
         let personal = PersonalRules::new(vec![], vec![("aria dash stt".into(), "another".into())]);
         let matcher = compile(&["aria-stt"], personal);
         assert_eq!(matcher.correct("aria dash stt"), None);

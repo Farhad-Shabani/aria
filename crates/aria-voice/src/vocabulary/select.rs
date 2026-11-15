@@ -261,7 +261,7 @@ mod tests {
     fn collisions_below_the_cap_remove_both_names() {
         let mut names = generated(SELECTED_TERMS);
         names.push("aria-stt".to_owned());
-        names.push("aria_stt".to_owned());
+        names.push("Aria-STT".to_owned());
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         let selected = terms(&[source("one", &names)], &CancelToken::never()).unwrap();
         assert_eq!(selected.found, SELECTED_TERMS);
