@@ -10,12 +10,7 @@ can become `aria-stt`. This is optional and off by default.
 Aria reads file and folder names in that folder, never file contents. It
 skips hidden files and folders, and anything a `.gitignore` inside the folder
 excludes. It keeps a name only when it contains `.`, `-` or `_` and is short
-to say:
-
-- It has six words at most. `AppDelegate.swift` counts as three.
-- It has at most one number, of up to two digits.
-
-So Aria keeps `Cargo.toml` and `vex16.rs`, and skips `README` and
+to say. So Aria keeps `Cargo.toml` and `vex16.rs`, and skips `README` and
 `icon-1024-dark.png`. It stores the names it keeps, and their paths, in
 `~/.aria/vocabulary` on your computer.
 
@@ -37,9 +32,9 @@ aria vocabulary status
 ```
 
 You should see a line that starts with `Ready`, such as
-`Ready: 784 of 784 names`. If it starts with `Refreshing`, run
-`aria vocabulary status` again. Then dictate a name from the folder and check
-its spelling. For example, “cargo dot toml” types `Cargo.toml`.
+`Ready: 784 of 784 names`. For other results, see
+[Read the status](#read-the-status). Then dictate a name from the folder and
+check its spelling. For example, “cargo dot toml” types `Cargo.toml`.
 
 If two names sound the same, such as `aria-stt` and `aria_stt`, Aria corrects
 neither.
@@ -66,18 +61,18 @@ folder. It also gives the assistant that folder to work in. The assistant may
 send project content to cloud services. Read
 [Chat with an assistant](./chat.md) first.
 
-Transcription doesn't use project vocabulary. Live dictation corrects each
-finalized segment on its own, so a name split across two segments may stay
-unchanged.
+Transcription doesn't use project vocabulary. Live dictation types what you
+say in parts and corrects each part on its own. A name split across two parts
+may stay unchanged.
 
 ## Read the status
 
 `aria vocabulary status` prints how many names Aria uses, out of the names it
-found. Aria uses at most 2,048 names, nearest the top of the folder first.
+found.
 
 | Status shows | Meaning | What to do |
 |---|---|---|
-| `Ready` | Aria corrects names from the folder. | Nothing. |
+| `Ready` | Aria corrects names from the folder. It uses at most 2,048, nearest the top of the folder first. | Nothing. |
 | `Refreshing` | Aria is reading the folder. | Run `aria vocabulary status` again. |
 | `partial` | Aria stopped at a limit, or skipped a folder it couldn't read. It kept the names nearest the top. | To include deeper names, choose a smaller folder. |
 | `TooLarge` | The folder's names don't fit Aria's limits. | Choose a smaller folder. |
