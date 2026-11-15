@@ -16,20 +16,54 @@ message VocabularyRequest {
 }
 
 message VocabularyStatus {
-  VocabularyState state = 1;
-  uint64 catalog_revision = 2;
-  uint64 runtime_revision = 3;
-  uint64 term_count = 4;
-  // A safe error category, without paths or source content.
-  string error_category = 5;
+  oneof status {
+    // Project vocabulary is off, or no folder is chosen.
+    VocabularyDisabled disabled = 8;
+    VocabularyFolder folder = 9;
+  }
 }
 
-enum VocabularyState {
-  VOCABULARY_STATE_UNSPECIFIED = 0;
-  VOCABULARY_STATE_READY = 1;
-  VOCABULARY_STATE_REFRESHING = 2;
-  VOCABULARY_STATE_STALE = 3;
-  VOCABULARY_STATE_UNAVAILABLE = 4;
-  VOCABULARY_STATE_TOO_LARGE = 5;
-  VOCABULARY_STATE_DISABLED = 6;
+message VocabularyDisabled {}
+
+message VocabularyFolder {
+  // Absent before the first scan, and after eviction or a forget.
+  VocabularyList list = 1;
+  VocabularyActivity activity = 2;
+}
+
+// The list dictation uses now.
+message VocabularyList {
+  // The catalog generation it came from. Absent when the catalog didn't keep
+  // the scan.
+  optional uint64 catalog_revision = 1;
+  uint64 term_count = 2;
+  // Names that passed the keep rules, before the cap left term_count.
+  uint64 found_count = 3;
+  // Unspecified for a list loaded from the catalog, which doesn't keep it.
+  VocabularyCompleteness completeness = 4;
+  // Personal rules changed after it was compiled.
+  bool stale = 5;
+}
+
+enum VocabularyCompleteness {
+  VOCABULARY_COMPLETENESS_UNSPECIFIED = 0;
+  VOCABULARY_COMPLETENESS_WHOLE = 1;
+  // A limit, or a folder Aria couldn't read, left names out.
+  VOCABULARY_COMPLETENESS_PARTIAL = 2;
+  // The scan's deadline passed, so a later scan may find more.
+  VOCABULARY_COMPLETENESS_OUT_OF_TIME = 3;
+}
+
+enum VocabularyActivity {
+  VOCABULARY_ACTIVITY_UNSPECIFIED = 0;
+  VOCABULARY_ACTIVITY_IDLE = 1;
+  VOCABULARY_ACTIVITY_REFRESHING = 2;
+  VOCABULARY_ACTIVITY_REMOVING = 3;
+  // The last refresh exceeded a resource limit.
+  VOCABULARY_ACTIVITY_LIMIT_REACHED = 4;
+  VOCABULARY_ACTIVITY_REFRESH_FAILED = 5;
+  // The list was dropped to free memory.
+  VOCABULARY_ACTIVITY_EVICTED = 6;
+  // A forget couldn't remove the folder's stored names.
+  VOCABULARY_ACTIVITY_REMOVAL_FAILED = 7;
 }

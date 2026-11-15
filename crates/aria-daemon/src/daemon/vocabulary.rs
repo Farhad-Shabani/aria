@@ -6,7 +6,7 @@ use aria_primitives::error_chain;
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::{Directory, SettingsStore};
 use aria_voice::vocabulary::{
-    MatchError, PersonalRules, State, Status, Term, Vocabulary,
+    Activity, Completeness, Failure, List, MatchError, PersonalRules, Status, Term, Vocabulary,
     catalog::{self, Catalog},
     collection::{self, Collector},
     discover, select,
@@ -26,6 +26,9 @@ const LIVE_BYTES: usize = 128 * 1024 * 1024;
 // Cached sources, discovery output and compilation can coexist with admitted snapshots.
 const DISCOVERY_RESERVE: usize = 96 * 1024 * 1024;
 const REFRESH_BUDGET: Duration = Duration::from_secs(2);
+// The scan stops here, leaving the rest of the refresh budget for selection,
+// compilation, and the catalog.
+const SCAN_BUDGET: Duration = Duration::from_secs(1);
 
 type Reply = oneshot::Sender<Result<Status, Error>>;
 
@@ -74,7 +77,6 @@ impl From<catalog::Error> for Error {
 impl<E: std::error::Error + Send + Sync + 'static> From<collection::Error<E>> for Error {
     fn from(error: collection::Error<E>) -> Self {
         match error {
-            collection::Error::TooLarge => Self::TooLarge,
             collection::Error::Cancelled => Self::Busy,
             error => Self::unavailable(error),
         }
@@ -101,12 +103,52 @@ impl From<MatchError> for Error {
     }
 }
 
-struct Entry {
-    snapshot: Option<Arc<Vocabulary>>,
-    root: Option<PathBuf>,
+/// A compiled list and what status reports about it.
+struct Prepared {
+    matcher: Arc<Vocabulary>,
+    catalog_revision: Option<u64>,
+    found: usize,
+    completeness: Option<Completeness>,
+}
+
+/// The list dictation uses for a folder.
+struct Live {
+    matcher: Arc<Vocabulary>,
+    /// The personal rules revision it was compiled with.
     personal_revision: u64,
-    status: Status,
+    catalog_revision: Option<u64>,
+    found: usize,
+    completeness: Option<Completeness>,
+}
+
+impl Live {
+    fn list(&self, personal_revision: u64) -> List {
+        List {
+            catalog_revision: self.catalog_revision,
+            terms: self.matcher.term_count(),
+            found: self.found,
+            completeness: self.completeness,
+            is_stale: self.personal_revision != personal_revision,
+        }
+    }
+}
+
+struct Entry {
+    live: Option<Live>,
+    root: Option<PathBuf>,
+    activity: Activity,
     used: Instant,
+}
+
+impl Entry {
+    fn new(activity: Activity) -> Self {
+        Self {
+            live: None,
+            root: None,
+            activity,
+            used: Instant::now(),
+        }
+    }
 }
 
 struct Registry {
@@ -232,9 +274,11 @@ impl Runtime {
             let matcher = entry
                 .and_then(|entry| {
                     entry.used = Instant::now();
-                    (entry.personal_revision == revision)
-                        .then(|| entry.snapshot.clone())
-                        .flatten()
+                    entry
+                        .live
+                        .as_ref()
+                        .filter(|live| live.personal_revision == revision)
+                        .map(|live| Arc::clone(&live.matcher))
                 })
                 .unwrap_or_else(|| Arc::clone(&registry.personal));
             if let Err(error) = self.enqueue(&mut registry, directory.cloned(), None, false) {
@@ -263,11 +307,10 @@ impl Runtime {
             .map_err(Error::unavailable)?
             .settings;
         let directory = requested.or(settings.vocabulary_dir);
-        let mut status = self.catalog_status(directory.as_ref());
         if !settings.vocabulary_enabled {
-            status.state = State::Disabled;
+            return Ok(Status::Disabled);
         }
-        Ok(status)
+        Ok(self.catalog_status(directory.as_ref()))
     }
 
     /// The folder a change applies to: the one named, else the configured one.
@@ -286,33 +329,41 @@ impl Runtime {
 
     fn catalog_status(&self, directory: Option<&Directory>) -> Status {
         let Some(directory) = directory else {
-            return Status {
-                state: State::Disabled,
-                ..Status::default()
-            };
+            return Status::Disabled;
         };
         let registry = self.registry();
         if !registry.removals.is_empty() {
-            return Status {
-                state: State::Unavailable,
-                error: "removal".into(),
-                ..Status::default()
+            let activity = if registry
+                .removals
+                .values()
+                .any(|state| *state == RemovalState::Pending)
+            {
+                Activity::Removing
+            } else {
+                Activity::Failed(Failure::Removal)
+            };
+            return Status::Folder {
+                list: None,
+                activity,
             };
         }
-        registry
-            .entries
-            .get(directory)
-            .map(|entry| entry.status.clone())
-            .unwrap_or_else(|| {
-                if registry.pending.contains_key(&Some(directory.clone())) {
-                    Status {
-                        state: State::Refreshing,
-                        ..Status::default()
-                    }
+        match registry.entries.get(directory) {
+            Some(entry) => Status::Folder {
+                list: entry
+                    .live
+                    .as_ref()
+                    .map(|live| live.list(registry.personal_revision)),
+                activity: entry.activity,
+            },
+            None => Status::Folder {
+                list: None,
+                activity: if registry.pending.contains_key(&Some(directory.clone())) {
+                    Activity::Refreshing
                 } else {
-                    Status::default()
-                }
-            })
+                    Activity::Idle
+                },
+            },
+        }
     }
 
     pub(super) async fn refresh(&self, requested: Option<Directory>) -> Result<Status, Error> {
@@ -362,12 +413,8 @@ impl Runtime {
             registry.pending.clear();
             registry.last_attempt.clear();
             for entry in registry.entries.values_mut() {
-                if entry.status.state == State::Refreshing {
-                    entry.status.state = if entry.snapshot.is_some() {
-                        State::Stale
-                    } else {
-                        State::Unavailable
-                    };
+                if entry.activity == Activity::Refreshing {
+                    entry.activity = Activity::Idle;
                 }
             }
             let retired: Vec<_> = registry
@@ -383,9 +430,11 @@ impl Runtime {
                 })
                 .map(|(_, entry)| entry)
                 .collect();
-            registry
-                .retired
-                .extend(retired.into_iter().filter_map(|entry| entry.snapshot));
+            registry.retired.extend(
+                retired
+                    .into_iter()
+                    .filter_map(|entry| entry.live.map(|live| live.matcher)),
+            );
             self.interrupt.store(true, Ordering::Release);
         };
         response.await.map_err(|_| Error::Unavailable(None))?
@@ -395,10 +444,15 @@ impl Runtime {
         &self,
         directory: &Directory,
         root: &Path,
-        revision: u64,
-        matcher: Arc<Vocabulary>,
+        prepared: Prepared,
         cancel: &AtomicBool,
     ) -> Result<(), Error> {
+        let Prepared {
+            matcher,
+            catalog_revision,
+            found,
+            completeness,
+        } = prepared;
         self.interrupted(cancel)?;
         let mut registry = self.registry();
         self.interrupted(cancel)?;
@@ -432,16 +486,15 @@ impl Runtime {
         let retired = registry.entries.insert(
             directory.clone(),
             Entry {
-                status: Status {
-                    state: State::Ready,
-                    catalog_revision: revision,
-                    runtime_revision: revision,
-                    terms: matcher.term_count(),
-                    error: String::new(),
-                },
-                snapshot: Some(matcher),
+                live: Some(Live {
+                    matcher,
+                    personal_revision,
+                    catalog_revision,
+                    found,
+                    completeness,
+                }),
                 root: Some(root.to_path_buf()),
-                personal_revision,
+                activity: Activity::Idle,
                 used: Instant::now(),
             },
         );
@@ -522,15 +575,8 @@ impl Runtime {
             registry
                 .entries
                 .entry(directory)
-                .or_insert_with(|| Entry {
-                    snapshot: None,
-                    root: None,
-                    personal_revision: 0,
-                    status: Status::default(),
-                    used: Instant::now(),
-                })
-                .status
-                .state = State::Refreshing;
+                .or_insert_with(|| Entry::new(Activity::Refreshing))
+                .activity = Activity::Refreshing;
         }
         Ok(())
     }
@@ -646,17 +692,18 @@ impl<C: Collector> Worker<C> {
                         continue;
                     }
                     let deadline = Deadline::after(REFRESH_BUDGET);
+                    let scan = Deadline::after(SCAN_BUDGET);
                     let token = self.control(Arc::clone(&cancel), deadline);
                     let mut result = self
                         .reserve(DISCOVERY_RESERVE, directory.as_ref())
                         .and_then(|()| self.refresh_personal())
                         .and_then(|()| match directory.as_ref() {
                             Some(directory) => {
-                                self.refresh_project(directory, &cancel, &token, &mut catalog)
+                                self.refresh_project(directory, scan, &cancel, &token, &mut catalog)
                             }
-                            None => Ok(Status {
-                                state: State::Ready,
-                                ..Status::default()
+                            None => Ok(Status::Folder {
+                                list: None,
+                                activity: Activity::Idle,
                             }),
                         });
                     if deadline.expired() {
@@ -772,7 +819,10 @@ impl<C: Collector> Worker<C> {
             .map(|(_, entry)| entry)
             .collect();
         drop(retired);
-        Ok(Status::default())
+        Ok(Status::Folder {
+            list: None,
+            activity: Activity::Idle,
+        })
     }
 
     fn await_idle(&self, cancel: &AtomicBool) -> Result<(), Error> {
@@ -805,9 +855,9 @@ impl<C: Collector> Worker<C> {
                 .filter(|(key, entry)| {
                     Some(*key) != protected
                         && entry
-                            .snapshot
+                            .live
                             .as_ref()
-                            .is_some_and(|snapshot| Arc::strong_count(snapshot) == 1)
+                            .is_some_and(|live| Arc::strong_count(&live.matcher) == 1)
                 })
                 .min_by_key(|(_, entry)| entry.used)
                 .map(|(key, _)| key.clone());
@@ -815,11 +865,8 @@ impl<C: Collector> Worker<C> {
                 return Err(Error::TooLarge);
             };
             let entry = registry.entries.get_mut(&oldest).expect("selected entry");
-            let retired = entry.snapshot.take();
-            entry.status.state = State::Unavailable;
-            entry.status.runtime_revision = 0;
-            entry.status.terms = 0;
-            entry.status.error = "evicted".to_owned();
+            let retired = entry.live.take();
+            entry.activity = Activity::Failed(Failure::Evicted);
             registry.last_attempt.remove(&Some(oldest));
             drop(registry);
             drop(retired);
@@ -832,7 +879,11 @@ impl<C: Collector> Worker<C> {
         token: &CancelToken,
     ) -> Result<&'a mut Catalog, Error> {
         if catalog.is_none() {
-            *catalog = Some(Catalog::open(&self.directory, token.clone())?);
+            let opened = Catalog::open(&self.directory, token.clone())?;
+            if let Some(key) = &self.cache_key {
+                opened.remove_other_pipelines(key)?;
+            }
+            *catalog = Some(opened);
         }
         let catalog = catalog.as_mut().ok_or(Error::Unavailable(None))?;
         catalog.cancel_on(token.clone())?;
@@ -868,11 +919,6 @@ impl<C: Collector> Worker<C> {
             .push((Arc::downgrade(&matcher), matcher.estimated_bytes()));
         let retired = std::mem::replace(&mut registry.personal, matcher);
         registry.personal_revision = registry.personal_revision.wrapping_add(1);
-        for entry in registry.entries.values_mut() {
-            if entry.snapshot.is_some() {
-                entry.status.state = State::Stale;
-            }
-        }
         drop(registry);
         drop(retired);
         self.personal = rules;
@@ -882,6 +928,7 @@ impl<C: Collector> Worker<C> {
     fn refresh_project(
         &mut self,
         directory: &Directory,
+        scan: Deadline,
         cancel: &AtomicBool,
         token: &CancelToken,
         catalog: &mut Option<Catalog>,
@@ -896,10 +943,20 @@ impl<C: Collector> Worker<C> {
         self.runtime.interrupted(cancel)?;
         let cached = self.catalog(catalog, token)?.load(&root, &key)?;
         if let Some(cached) = &cached {
-            let terms = select::terms(&cached.sources, token)?;
-            let matcher = self.compile(&terms, token)?;
-            self.runtime
-                .publish(directory, &root, cached.revision, matcher, cancel)?;
+            let selection = select::terms(&cached.sources, token)?;
+            let matcher = self.compile(&selection.terms, token)?;
+            self.runtime.publish(
+                directory,
+                &root,
+                Prepared {
+                    matcher,
+                    catalog_revision: Some(cached.revision),
+                    found: selection.found,
+                    // The catalog doesn't keep it.
+                    completeness: None,
+                },
+                cancel,
+            )?;
             self.catalog(catalog, token)?
                 .remember_alias(directory.as_path(), &root)?;
         }
@@ -908,32 +965,51 @@ impl<C: Collector> Worker<C> {
         }
         self.reserve(DISCOVERY_RESERVE, Some(directory))?;
         let previous = cached.map(|cached| cached.sources).unwrap_or_default();
-        let discovery = self.collector.collect(directory, &previous, token)?;
+        let discovery = self.collector.collect(directory, &previous, scan, token)?;
         if discovery.root != root {
             tracing::warn!("vocabulary selection changed during discovery");
             return Err(Error::Unavailable(None));
         }
         drop(previous);
-        let terms = select::terms(&discovery.sources, token)?;
-        let matcher = self.compile(&terms, token)?;
+        let selection = select::terms(&discovery.sources, token)?;
+        let matcher = self.compile(&selection.terms, token)?;
         self.runtime.interrupted(cancel)?;
-        let revision = self
-            .catalog(catalog, token)?
-            .refresh_cancellable(&discovery, &key, token)?;
+        // How far a scan gets in time depends on the machine's load, so a
+        // short one goes live without replacing a longer stored scan.
+        let catalog_revision = if discovery.coverage.completeness == Completeness::OutOfTime {
+            None
+        } else {
+            Some(
+                self.catalog(catalog, token)?
+                    .refresh_cancellable(&discovery, &key, token)?,
+            )
+        };
         tracing::debug!(
             entries = discovery.coverage.entries,
             hidden = discovery.coverage.hidden,
             symlinks = discovery.coverage.symlinks,
             unsupported = discovery.coverage.unsupported,
-            oversized = discovery.coverage.oversized,
-            bytes = discovery.coverage.bytes,
+            linked = discovery.coverage.linked,
+            unreadable = discovery.coverage.unreadable,
+            completeness = ?discovery.coverage.completeness,
+            ignore_bytes = discovery.coverage.ignore_bytes,
+            found = selection.found,
             "vocabulary collection completed"
         );
         if token.is_cancelled() {
             return Err(Error::Busy);
         }
-        self.runtime
-            .publish(directory, &root, revision, matcher, cancel)?;
+        self.runtime.publish(
+            directory,
+            &root,
+            Prepared {
+                matcher,
+                catalog_revision,
+                found: selection.found,
+                completeness: Some(discovery.coverage.completeness),
+            },
+            cancel,
+        )?;
         Ok(self.runtime.catalog_status(Some(directory)))
     }
 
@@ -1010,33 +1086,18 @@ impl<C: Collector> Worker<C> {
                             .map(|(key, _)| key.clone());
                         evicted = oldest.and_then(|oldest| registry.entries.remove(&oldest));
                     }
-                    registry.entries.insert(
-                        directory.clone(),
-                        Entry {
-                            snapshot: None,
-                            root: None,
-                            personal_revision: 0,
-                            status: Status::default(),
-                            used: Instant::now(),
-                        },
-                    );
+                    registry
+                        .entries
+                        .insert(directory.clone(), Entry::new(Activity::Idle));
                 }
                 if let Some(entry) =
                     directory.and_then(|directory| registry.entries.get_mut(directory))
                 {
-                    entry.status.state = if matches!(error, Error::TooLarge) {
-                        State::TooLarge
-                    } else if entry.snapshot.is_some() {
-                        State::Stale
+                    entry.activity = Activity::Failed(if matches!(error, Error::TooLarge) {
+                        Failure::Limit
                     } else {
-                        State::Unavailable
-                    };
-                    entry.status.error = if matches!(error, Error::TooLarge) {
-                        "limit"
-                    } else {
-                        "refresh"
-                    }
-                    .to_owned();
+                        Failure::Refresh
+                    });
                 }
             }
         }
@@ -1080,6 +1141,32 @@ mod tests {
         )
     }
 
+    fn prepared(matcher: &Arc<Vocabulary>, revision: u64) -> Prepared {
+        Prepared {
+            matcher: Arc::clone(matcher),
+            catalog_revision: Some(revision),
+            found: 1,
+            completeness: Some(Completeness::Whole),
+        }
+    }
+
+    /// A folder whose current list dictation uses.
+    fn is_ready(status: &Status) -> bool {
+        matches!(
+            status,
+            Status::Folder { list: Some(list), activity: Activity::Idle } if !list.is_stale
+        )
+    }
+
+    fn list(status: &Status) -> &List {
+        match status {
+            Status::Folder {
+                list: Some(list), ..
+            } => list,
+            other => panic!("no list in {other:?}"),
+        }
+    }
+
     fn project(base: &Path, name: &str) -> Directory {
         let path = base.join(name);
         std::fs::create_dir_all(&path).unwrap();
@@ -1090,6 +1177,7 @@ mod tests {
     struct StaticCollector {
         root: PathBuf,
         previous_counts: Vec<usize>,
+        out_of_time: bool,
     }
 
     impl Collector for StaticCollector {
@@ -1103,6 +1191,7 @@ mod tests {
             &mut self,
             selected: &Directory,
             previous: &[Source],
+            _deadline: Deadline,
             _cancel: &CancelToken,
         ) -> Result<Discovery, collection::Error<Self::Error>> {
             self.previous_counts.push(previous.len());
@@ -1110,8 +1199,8 @@ mod tests {
                 selected: selected.as_path().to_path_buf(),
                 root: self.root.clone(),
                 sources: vec![Source {
-                    relative_path: "terms.txt".into(),
-                    kind: SourceKind::Text,
+                    relative_path: "aria-kit".into(),
+                    kind: SourceKind::DirectoryName,
                     fingerprint: [1; 32],
                     input_bytes: 8,
                     candidates: vec![Candidate {
@@ -1121,7 +1210,12 @@ mod tests {
                 }],
                 coverage: Coverage {
                     entries: 1,
-                    bytes: 8,
+                    ignore_bytes: 8,
+                    completeness: if self.out_of_time {
+                        Completeness::OutOfTime
+                    } else {
+                        Completeness::Whole
+                    },
                     ..Coverage::default()
                 },
             })
@@ -1136,6 +1230,7 @@ mod tests {
         let collector = StaticCollector {
             root,
             previous_counts: Vec::new(),
+            out_of_time: false,
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
@@ -1150,10 +1245,15 @@ mod tests {
             let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
                 panic!("refresh expected")
             };
-            let result =
-                worker.refresh_project(&selected, &cancel, &CancelToken::never(), &mut catalog);
+            let result = worker.refresh_project(
+                &selected,
+                Deadline::never(),
+                &cancel,
+                &CancelToken::never(),
+                &mut catalog,
+            );
             worker.finished(Some(&selected), &cancel, &result);
-            assert_eq!(result.unwrap().state, State::Ready);
+            assert!(is_ready(&result.unwrap()));
         }
         assert_eq!(worker.collector.previous_counts, [0, 1]);
 
@@ -1171,6 +1271,7 @@ mod tests {
         let collector = StaticCollector {
             root: selected.as_path().canonicalize().unwrap(),
             previous_counts: Vec::new(),
+            out_of_time: false,
         };
         Runtime::new(base.join("catalog"), None, true, settings(base), collector)
     }
@@ -1184,9 +1285,69 @@ mod tests {
         let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
             panic!("refresh expected")
         };
-        let result = worker.refresh_project(selected, &cancel, &CancelToken::never(), &mut None);
+        let result = worker.refresh_project(
+            selected,
+            Deadline::never(),
+            &cancel,
+            &CancelToken::never(),
+            &mut None,
+        );
         worker.finished(Some(selected), &cancel, &result);
         result
+    }
+
+    #[test]
+    fn a_scan_out_of_time_goes_live_without_replacing_the_stored_one() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        let (runtime, mut worker) = static_runtime(temporary.path(), &selected);
+        let stored = refresh_once(&runtime, &mut worker, &selected).unwrap();
+        worker.collector.out_of_time = true;
+
+        let status = refresh_once(&runtime, &mut worker, &selected).unwrap();
+
+        assert!(is_ready(&status));
+        assert_eq!(list(&status).completeness, Some(Completeness::OutOfTime));
+        assert_eq!(list(&status).catalog_revision, None);
+        let catalog =
+            Catalog::open(&temporary.path().join("catalog"), CancelToken::never()).unwrap();
+        let root = selected.as_path().canonicalize().unwrap();
+        assert_eq!(
+            Some(
+                catalog
+                    .load(&root, "test-collector-1")
+                    .unwrap()
+                    .unwrap()
+                    .revision
+            ),
+            list(&stored).catalog_revision
+        );
+    }
+
+    #[test]
+    fn a_refresh_removes_folders_an_earlier_pipeline_stored() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        let older = temporary.path().join("older-project");
+        let mut catalog =
+            Catalog::open(&temporary.path().join("catalog"), CancelToken::never()).unwrap();
+        let stored = Discovery {
+            selected: older.clone(),
+            root: older.clone(),
+            sources: Vec::new(),
+            coverage: Coverage::default(),
+        };
+        catalog
+            .refresh_cancellable(&stored, "scan3:older", &CancelToken::never())
+            .unwrap();
+        drop(catalog);
+        let (runtime, mut worker) = static_runtime(temporary.path(), &selected);
+
+        refresh_once(&runtime, &mut worker, &selected).unwrap();
+
+        let catalog =
+            Catalog::open(&temporary.path().join("catalog"), CancelToken::never()).unwrap();
+        assert!(catalog.load(&older, "scan3:older").unwrap().is_none());
     }
 
     #[test]
@@ -1205,8 +1366,8 @@ mod tests {
 
         let result = refresh_once(&runtime, &mut worker, &selected);
 
-        assert_eq!(result.unwrap().state, State::Ready);
-        assert_eq!(runtime.status(Some(selected)).unwrap().state, State::Ready);
+        assert!(is_ready(&result.unwrap()));
+        assert!(is_ready(&runtime.status(Some(selected)).unwrap()));
     }
 
     #[test]
@@ -1278,6 +1439,7 @@ mod tests {
         let collector = StaticCollector {
             root: temporary.path().join("other-project"),
             previous_counts: Vec::new(),
+            out_of_time: false,
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
@@ -1291,11 +1453,19 @@ mod tests {
             panic!("refresh expected")
         };
         let mut catalog = None;
-        let result =
-            worker.refresh_project(&selected, &cancel, &CancelToken::never(), &mut catalog);
+        let result = worker.refresh_project(
+            &selected,
+            Deadline::never(),
+            &cancel,
+            &CancelToken::never(),
+            &mut catalog,
+        );
         worker.finished(Some(&selected), &cancel, &result);
         assert!(matches!(result, Err(Error::Unavailable(None))));
-        assert_eq!(runtime.catalog_status(Some(&selected)).runtime_revision, 0);
+        assert!(matches!(
+            runtime.catalog_status(Some(&selected)),
+            Status::Folder { list: None, .. }
+        ));
         assert_eq!(
             runtime
                 .snapshot(Some(&selected))
@@ -1334,14 +1504,50 @@ mod tests {
             panic!("refresh expected")
         };
         let mut catalog = None;
-        let result =
-            worker.refresh_project(&configured, &cancel, &CancelToken::never(), &mut catalog);
+        let result = worker.refresh_project(
+            &configured,
+            Deadline::never(),
+            &cancel,
+            &CancelToken::never(),
+            &mut catalog,
+        );
         worker.finished(Some(&configured), &cancel, &result);
 
         let status = runtime.status(None).unwrap();
 
-        assert_eq!(status.state, State::Ready);
+        assert!(is_ready(&status));
         assert_eq!(status, runtime.catalog_status(Some(&configured)));
+    }
+
+    #[test]
+    fn a_scan_cut_short_publishes_a_ready_partial_list() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = project(root.path(), "aria-kit");
+        std::fs::write(selected.as_path().join("Cargo.toml"), "").unwrap();
+        let mut deep = selected.as_path().to_path_buf();
+        for _ in 0..17 {
+            deep.push("nested");
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        let (runtime, mut worker) = local_runtime(root.path());
+        runtime.prepare(Some(selected.clone()));
+        let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
+            panic!("refresh expected")
+        };
+
+        let status = worker
+            .refresh_project(
+                &selected,
+                Deadline::never(),
+                &cancel,
+                &CancelToken::never(),
+                &mut None,
+            )
+            .unwrap();
+
+        assert!(is_ready(&status));
+        assert_eq!(list(&status).completeness, Some(Completeness::Partial));
+        assert_eq!((list(&status).terms, list(&status).found), (3, 3));
     }
 
     #[test]
@@ -1358,7 +1564,7 @@ mod tests {
 
         let status = runtime.status(Some(selected)).unwrap();
 
-        assert_eq!(status.state, State::Disabled);
+        assert_eq!(status, Status::Disabled);
     }
 
     #[tokio::test]
@@ -1426,10 +1632,7 @@ mod tests {
         let (runtime, worker) = local_runtime(root.path());
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(worker.run(shutdown.clone()));
-        assert_eq!(
-            runtime.refresh(Some(a.clone())).await.unwrap().state,
-            State::Ready
-        );
+        assert!(is_ready(&runtime.refresh(Some(a.clone())).await.unwrap()));
         runtime.refresh(Some(b.clone())).await.unwrap();
         {
             let snapshot = runtime.snapshot(Some(&a));
@@ -1445,7 +1648,14 @@ mod tests {
         }
         std::fs::rename(a.as_path(), root.path().join("moved")).unwrap();
         assert!(runtime.refresh(Some(a.clone())).await.is_err());
-        assert_eq!(runtime.catalog_status(Some(&a)).state, State::Stale);
+        let status = runtime.catalog_status(Some(&a));
+        assert!(matches!(
+            status,
+            Status::Folder {
+                list: Some(_),
+                activity: Activity::Failed(Failure::Refresh)
+            }
+        ));
         assert_eq!(
             runtime
                 .snapshot(Some(&a))
@@ -1594,9 +1804,10 @@ mod tests {
         std::os::unix::fs::symlink(selected.as_path(), &alias).unwrap();
         let discovery = discover::scan_cached(
             selected.as_path(),
-            &CancelToken::never(),
             &[],
             &mut LocalExtractor,
+            Deadline::never(),
+            &CancelToken::never(),
         )
         .unwrap();
         let key = cache_key(LocalExtractor.cache_key()).unwrap();
@@ -1625,6 +1836,48 @@ mod tests {
     }
 
     #[test]
+    fn a_list_built_before_a_rules_change_reads_as_stale() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = project(temporary.path(), "project");
+        let (runtime, mut worker) = static_runtime(temporary.path(), &selected);
+        refresh_once(&runtime, &mut worker, &selected).unwrap();
+
+        runtime.registry().personal_revision += 1;
+
+        let status = runtime.catalog_status(Some(&selected));
+        assert!(list(&status).is_stale);
+        assert!(!is_ready(&status));
+    }
+
+    #[test]
+    fn an_evicted_list_reports_no_names() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = directory(&root.path().join("project"));
+        let (runtime, worker) = local_runtime(root.path());
+        runtime.prepare(Some(selected.clone()));
+        let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
+            panic!("refresh expected")
+        };
+        let matcher = Arc::new(Vocabulary::compile(&[], PersonalRules::default()).unwrap());
+        let prepared = prepared(&matcher, 1);
+        drop(matcher);
+        runtime
+            .publish(&selected, selected.as_path(), prepared, &cancel)
+            .unwrap();
+
+        let _ = worker.reserve(LIVE_BYTES, None);
+
+        let status = runtime.status(Some(selected)).unwrap();
+        assert_eq!(
+            status,
+            Status::Folder {
+                list: None,
+                activity: Activity::Failed(Failure::Evicted)
+            }
+        );
+    }
+
+    #[test]
     fn obsolete_generation_cannot_publish_and_resource_failure_keeps_snapshot() {
         let root = tempfile::tempdir().unwrap();
         let selected = directory(&root.path().join("project"));
@@ -1647,8 +1900,7 @@ mod tests {
             .publish(
                 &selected,
                 selected.as_path(),
-                1,
-                Arc::clone(&matcher),
+                prepared(&matcher, 1),
                 &cancel,
             )
             .unwrap();
@@ -1667,7 +1919,12 @@ mod tests {
         runtime.registry.lock().unwrap().pending.clear();
         worker.await_idle(&AtomicBool::new(false)).unwrap();
         assert!(matches!(
-            runtime.publish(&selected, selected.as_path(), 2, matcher, &cancel),
+            runtime.publish(
+                &selected,
+                selected.as_path(),
+                prepared(&matcher, 2),
+                &cancel
+            ),
             Err(Error::Unavailable(None))
         ));
     }

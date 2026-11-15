@@ -1,6 +1,6 @@
 use std::io;
 
-use aria_kit::cancel::CancelToken;
+use aria_kit::cancel::{CancelToken, Deadline};
 
 use super::{Discovery, Source};
 use aria_settings::Directory;
@@ -10,11 +10,14 @@ pub trait Collector: Send + 'static {
 
     fn cache_key(&self) -> Option<String>;
 
-    // Partial evidence must not replace a complete cached generation.
+    // A scan cut short by a limit or by `deadline` returns `Ok` with a
+    // partial `coverage.completeness`. An error leaves the cached generation
+    // in place.
     fn collect(
         &mut self,
         selected: &Directory,
         previous: &[Source],
+        deadline: Deadline,
         cancel: &CancelToken,
     ) -> Result<Discovery, Error<Self::Error>>;
 }
@@ -23,11 +26,9 @@ pub trait Collector: Send + 'static {
 pub enum Error<E> {
     #[error("vocabulary discovery requires an absolute directory")]
     InvalidDirectory,
-    #[error("vocabulary discovery exceeded a resource limit")]
-    TooLarge,
     #[error("vocabulary discovery was cancelled")]
     Cancelled,
-    #[error("project files changed during vocabulary discovery")]
+    #[error("the selected folder was replaced during vocabulary discovery")]
     Unstable,
     #[error("vocabulary extractor returned invalid output")]
     InvalidOutput,

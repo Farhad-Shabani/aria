@@ -15,25 +15,26 @@ workspace = true
 test-support = [ "aria-kit/test-support" ]
 
 [dependencies]
-aria-kit          = { workspace = true, features = [ "microphone", "playback" ] }
-aria-platform     = { workspace = true, features = [ "sqlite" ] }
-aria-primitives   = { workspace = true }
-aria-provider     = { workspace = true }
-aria-segmentation = { workspace = true }
-aria-settings     = { workspace = true }
-aria-speaker      = { workspace = true }
-aria-stt          = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "whisper", "whisper-candle" ] }
-aria-tts          = { workspace = true, features = [ "kokoro", "qwen", "system" ] }
-ignore            = "0.4"
-rusqlite          = { workspace = true }
-rustix            = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
-serde             = { workspace = true }
-serde_json        = { workspace = true }
-sha2              = { workspace = true }
-tempfile          = { workspace = true }
-thiserror         = { workspace = true }
-time              = { workspace = true }
-tracing           = { workspace = true }
+aria-kit              = { workspace = true, features = [ "microphone", "playback" ] }
+aria-platform         = { workspace = true, features = [ "sqlite" ] }
+aria-primitives       = { workspace = true }
+aria-provider         = { workspace = true }
+aria-segmentation     = { workspace = true }
+aria-settings         = { workspace = true }
+aria-speaker          = { workspace = true }
+aria-stt              = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "whisper", "whisper-candle" ] }
+aria-tts              = { workspace = true, features = [ "kokoro", "qwen", "system" ] }
+ignore                = "0.4"
+rusqlite              = { workspace = true }
+rustix                = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
+serde                 = { workspace = true }
+serde_json            = { workspace = true }
+sha2                  = { workspace = true }
+tempfile              = { workspace = true }
+thiserror             = { workspace = true }
+time                  = { workspace = true }
+tracing               = { workspace = true }
+unicode-normalization = "0.1"
 
 # The MLX sidecar requires child processes, which iOS forbids.
 [target.'cfg(not(target_os = "ios"))'.dependencies]

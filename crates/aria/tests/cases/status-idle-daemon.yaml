@@ -16,7 +16,7 @@ expect:
         - "not transcribing"
     - run: [vocabulary, status]
       stdout_contains:
-        - "Disabled: 0 terms"
+        - "Disabled"
     - run: [say, --stop]
       stdout_contains:
         - "nothing was playing"

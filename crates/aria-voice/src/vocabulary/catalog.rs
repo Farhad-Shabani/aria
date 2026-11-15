@@ -203,7 +203,6 @@ impl Catalog {
                 kind: match row.get::<_, u8>(2)? {
                     0 => SourceKind::DirectoryName,
                     1 => SourceKind::FileName,
-                    2 => SourceKind::Text,
                     _ => return Err(Error::InvalidData),
                 },
                 fingerprint: row
@@ -286,6 +285,16 @@ impl Catalog {
         Ok(())
     }
 
+    /// Removes every folder another pipeline stored, so names an earlier
+    /// version took, such as words from file contents, don't outlive it.
+    pub fn remove_other_pipelines(&self, key: &str) -> Result<(), Error> {
+        check_cancelled(&self.cancelled)?;
+        validate_key(key)?;
+        self.connection
+            .execute("DELETE FROM projects WHERE pipeline_key!=?1", [key])?;
+        Ok(())
+    }
+
     pub fn refresh_cancellable(
         &mut self,
         discovery: &Discovery,
@@ -340,12 +349,12 @@ impl Catalog {
         let coverage = &discovery.coverage;
         transaction.execute(
             "INSERT INTO projects(root,revision,pipeline_key,accessed,entries,hidden,symlinks,unsupported,oversized,bytes)
-             VALUES(?1,1,?2,unixepoch(),?3,?4,?5,?6,?7,?8)
+             VALUES(?1,1,?2,unixepoch(),?3,?4,?5,?6,0,?7)
              ON CONFLICT(root) DO UPDATE SET revision=revision+1,pipeline_key=excluded.pipeline_key,
              accessed=excluded.accessed,entries=excluded.entries,hidden=excluded.hidden,
              symlinks=excluded.symlinks,unsupported=excluded.unsupported,oversized=excluded.oversized,bytes=excluded.bytes",
             params![bytes(&discovery.root),key,sql_integer(coverage.entries)?,sql_integer(coverage.hidden)?,sql_integer(coverage.symlinks)?,
-                sql_integer(coverage.unsupported)?,sql_integer(coverage.oversized)?,sql_integer(coverage.bytes)?],
+                sql_integer(coverage.unsupported)?,sql_integer(coverage.ignore_bytes)?],
         )?;
         let (project, revision): (i64, i64) = transaction.query_row(
             "SELECT id,revision FROM projects WHERE root=?1",
@@ -541,13 +550,38 @@ mod tests {
                 },
                 Source {
                     relative_path: "notes.txt".into(),
-                    kind: SourceKind::Text,
+                    kind: SourceKind::DirectoryName,
                     fingerprint: [2; 32],
                     input_bytes: 0,
                     candidates: vec![],
                 },
             ],
         }
+    }
+
+    #[test]
+    fn folders_another_pipeline_stored_are_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut catalog =
+            Catalog::open(&temp.path().join("catalog"), CancelToken::never()).unwrap();
+        let old = discovery(&temp.path().join("old-project"));
+        let current = discovery(&temp.path().join("current-project"));
+        catalog
+            .refresh_cancellable(&old, "pipeline-a", &CancelToken::never())
+            .unwrap();
+        catalog
+            .refresh_cancellable(&current, "pipeline-b", &CancelToken::never())
+            .unwrap();
+
+        catalog.remove_other_pipelines("pipeline-b").unwrap();
+
+        assert!(catalog.load(&old.root, "pipeline-a").unwrap().is_none());
+        assert!(catalog.load(&current.root, "pipeline-b").unwrap().is_some());
+        let sources: i64 = catalog
+            .connection
+            .query_row("SELECT count(*) FROM sources", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(sources, 2);
     }
 
     #[test]
@@ -562,7 +596,7 @@ mod tests {
         );
         input.sources.push(Source {
             relative_path: "other.txt".into(),
-            kind: SourceKind::Text,
+            kind: SourceKind::DirectoryName,
             fingerprint: [3; 32],
             input_bytes: 12,
             candidates: vec![
@@ -648,7 +682,7 @@ mod tests {
         input.sources = (0..=MAX_TERMS / MAX_CANDIDATES)
             .map(|index| Source {
                 relative_path: format!("source-{index}.txt").into(),
-                kind: SourceKind::Text,
+                kind: SourceKind::DirectoryName,
                 fingerprint: [1; 32],
                 input_bytes: MAX_CANDIDATES * 16,
                 candidates: (0..MAX_CANDIDATES)
@@ -682,7 +716,7 @@ mod tests {
         let mut input = discovery(&temp.path().join("project"));
         input.sources.truncate(1);
         let source = &mut input.sources[0];
-        source.kind = SourceKind::Text;
+        source.kind = SourceKind::DirectoryName;
         source.input_bytes = (MAX_CANDIDATES + 1) * 16;
         source.candidates = (0..=MAX_CANDIDATES)
             .map(|rank| {
