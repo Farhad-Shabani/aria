@@ -1037,6 +1037,7 @@ fn dictate(speaker: &SpeakerConfig, wav: &Path, parakeet: &Arc<Parakeet>, press:
         settings,
         &ExecutionControl::for_test_lasting(
             StopMode::Manual,
+            crate::dictation::EscapeRule::Passes,
             CancelToken::new(),
             Duration::from_secs(120),
         ),

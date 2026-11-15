@@ -453,8 +453,9 @@ where
             control.await_capture_release();
             events.emit(DictationStage::ended_by(error.into()));
         }
-        // After the terminal stage, so the overlay shows it last.
-        if control.return_dropped() {
+        // After the terminal stage, so the overlay shows it last. A
+        // cancelled press says only that: nobody waits on its Return.
+        if control.return_dropped() && !control.is_cancelled() {
             events.emit(DictationStage::ReturnDropped);
         }
         result
@@ -486,7 +487,7 @@ where
         if let Err(error) = &result {
             events.emit(DictationStage::ended_by(error.into()));
         }
-        if control.return_dropped() {
+        if control.return_dropped() && !control.is_cancelled() {
             events.emit(DictationStage::ReturnDropped);
         }
         result
@@ -633,7 +634,14 @@ where
                 text: transcript.into_text(),
                 own_voice,
             })
-        })();
+        })()
+        .and_then(|result| {
+            if control.finish() {
+                Ok(result)
+            } else {
+                Err(DictationError::Cancelled)
+            }
+        });
         if result.is_err() {
             control.request_recording_stop();
         }
@@ -5456,6 +5464,211 @@ mod tests {
 
         assert!(rewritten.is_err());
         assert!(published.ends.words.is_holding());
+    }
+
+    #[test]
+    fn a_cancelled_streaming_press_types_nothing_it_still_held() {
+        /// Hears "it is twenty", whose "twenty" waits for what follows, and
+        /// is cancelled once "it is" was typed.
+        struct CancelledAfterTyping {
+            active: crate::dictation::ActiveDictation,
+            typed: CallLog,
+        }
+
+        impl Recognizer for CancelledAfterTyping {
+            fn validate_language(
+                &self,
+                _: &Language,
+                _: &CancelToken,
+            ) -> Result<(), TranscriptionError> {
+                Ok(())
+            }
+
+            fn recognize_with(
+                &self,
+                _: RecognitionAudio<'_>,
+                _: &Language,
+                _: &CancelToken,
+            ) -> Result<Hypothesis, TranscriptionError> {
+                panic!("native stream expected")
+            }
+
+            fn open_stream(
+                &self,
+                _: &Language,
+                _: &CancelToken,
+            ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
+                struct Chunks {
+                    fed: bool,
+                    active: crate::dictation::ActiveDictation,
+                    typed: CallLog,
+                }
+                impl ChunkStream for Chunks {
+                    fn chunk_samples(&self) -> usize {
+                        16_000
+                    }
+                    fn feed(&mut self, _: &[f32]) -> Result<Emitted, TranscriptionError> {
+                        if !std::mem::replace(&mut self.fed, true) {
+                            return Ok(Emitted {
+                                words: Hypothesis::new("it is twenty"),
+                                joins_previous: false,
+                            });
+                        }
+                        let waited = Instant::now();
+                        while delivered(&self.typed.entries()).is_empty() {
+                            assert!(waited.elapsed() < Duration::from_secs(5), "nothing typed");
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        self.active.cancel();
+                        Err(TranscriptionError::Cancelled)
+                    }
+                }
+                Ok(Some(Box::new(Chunks {
+                    fed: false,
+                    active: self.active.clone(),
+                    typed: self.typed.clone(),
+                })))
+            }
+        }
+
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let log = CallLog::default();
+        let (_directory, capture) = judged_capture();
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::stream(
+                Stream::Native,
+                CancelledAfterTyping {
+                    active: crate::dictation::ActiveDictation::new(Arc::clone(&control)),
+                    typed: log.clone(),
+                },
+            ),
+            (log.history(), log.cursor()),
+        );
+
+        let result = pipeline.execute(
+            streaming(),
+            &control,
+            &DictationEventEmitter::unsubscribed(),
+            None,
+        );
+
+        assert!(matches!(result, Err(DictationError::Cancelled)));
+        assert_eq!(delivered(&log.entries()), "it is");
+    }
+
+    #[test]
+    fn a_cancelled_press_says_nothing_of_its_return() {
+        struct CancelledAfterReturn;
+
+        impl TranscriptSink for CancelledAfterReturn {
+            type Error = DictationError;
+
+            fn segment(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
+                Ok(())
+            }
+
+            fn completed(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
+                Ok(())
+            }
+
+            fn dictation_started(
+                &mut self,
+                _settings: &DictationSettings,
+                control: &Arc<ExecutionControl>,
+            ) -> Result<(), DictationError> {
+                let _armed = control.arm_return(1);
+                assert!(control.take_return());
+                assert!(crate::dictation::ActiveDictation::new(Arc::clone(control)).cancel());
+                Ok(())
+            }
+        }
+
+        let (events, stages) = stage_events();
+        let (_directory, capture) = capture();
+        let log = CallLog::default();
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::complete_samples(Answering("hello")),
+            (log.history(), CancelledAfterReturn),
+        );
+
+        let result = pipeline.run_observed(streaming(), &events);
+        drop(events);
+
+        assert!(matches!(result, Err(DictationError::Cancelled)));
+        assert_eq!(stages.iter().last(), Some(DictationStage::Cancelled));
+    }
+
+    #[test]
+    fn an_escape_once_the_text_is_typed_still_cancels_what_is_left() {
+        #[derive(Default)]
+        struct CancelledOnceTyped {
+            control: Option<Arc<ExecutionControl>>,
+            finished: Arc<Mutex<Vec<bool>>>,
+        }
+
+        impl TranscriptSink for CancelledOnceTyped {
+            type Error = DictationError;
+
+            fn segment(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
+                Ok(())
+            }
+
+            fn completed(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
+                let control = Arc::clone(self.control.as_ref().unwrap());
+                assert!(crate::dictation::ActiveDictation::new(control).cancel());
+                Ok(())
+            }
+
+            fn dictation_started(
+                &mut self,
+                _settings: &DictationSettings,
+                control: &Arc<ExecutionControl>,
+            ) -> Result<(), DictationError> {
+                self.control = Some(Arc::clone(control));
+                Ok(())
+            }
+
+            fn recording_finished(
+                &mut self,
+                _recording: &mut RecordingReader,
+                result: Result<(), &DictationError>,
+            ) {
+                self.finished.lock().unwrap().push(result.is_ok());
+            }
+        }
+
+        let sink = CancelledOnceTyped::default();
+        let finished = Arc::clone(&sink.finished);
+        let (events, stages) = stage_events();
+        let (_directory, capture) = capture();
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::complete_samples(Answering("hello")),
+            sink,
+        );
+
+        let result = pipeline.run_observed(
+            settings(DeliveryMode::Complete, OutputMode::Insert),
+            &events,
+        );
+        drop(events);
+
+        assert!(matches!(result, Err(DictationError::Cancelled)));
+        assert_eq!(*finished.lock().unwrap(), [false], "history saves nothing");
+        assert_eq!(stages.iter().last(), Some(DictationStage::Cancelled));
+    }
+
+    #[test]
+    fn an_escape_after_the_result_cancels_nothing() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let active = crate::dictation::ActiveDictation::new(Arc::clone(&control));
+
+        assert!(control.finish());
+
+        assert!(!active.cancel(), "the key belongs to the app");
+        assert!(!control.is_cancelled());
     }
 
     #[test]
