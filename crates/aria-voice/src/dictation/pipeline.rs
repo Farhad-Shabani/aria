@@ -1107,12 +1107,15 @@ impl<'a> Published<'a> {
     }
 
     /// Publishes what the last segment still owes once nothing follows: its
-    /// held words, then its closing mark.
+    /// held words, then its closing mark. A cancelled press owes nothing.
     fn publish_ends<S>(&mut self, sinks: &mut S) -> Result<(), DictationError>
     where
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
+        if self.control.is_cancelled() {
+            return Ok(());
+        }
         let held = self.publish_held(sinks);
         self.close_last_sentence(sinks);
         held
@@ -5346,6 +5349,25 @@ mod tests {
                 "."
             ]
         );
+    }
+
+    #[test]
+    fn a_cancelled_press_owes_no_closing_period() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = streaming();
+        let log = CallLog::default();
+        let mut history = log.history();
+        let mut published =
+            Published::new(&settings, no_terms(), &control, &events, Instant::now());
+        let heard = heard(directory.path(), "we should.");
+        publish_whole(&mut published, heard, "we should.", &mut history).unwrap();
+        assert!(crate::dictation::ActiveDictation::new(Arc::clone(&control)).cancel());
+
+        published.publish_ends(&mut history).unwrap();
+
+        assert_eq!(segments(&log), ["segment:we should"]);
     }
 
     #[test]
