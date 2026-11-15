@@ -11,7 +11,7 @@ use super::super::dictation::{
 use super::super::operation::CallError;
 use super::super::subscriptions::Subscriptions;
 use aria_platform::delivery::frontmost_process;
-use aria_platform::hotkey::{BareKey, Combo, Press};
+use aria_platform::hotkey::{BareKey, Combo, Press, Taken};
 use aria_voice::dictation::{
     ActiveDictation, DictationError, DictationOutcome, DictationRequest, DictationStage,
     EscapeRule, StopMode,
@@ -37,15 +37,6 @@ enum PressAction {
 enum ReturnAction {
     /// The dictation types into the app in front: the Return ends its
     /// recording and is pressed after the rest of the text.
-    Take(ActiveDictation),
-    /// The key belongs to the app.
-    Pass,
-}
-
-/// What a bare Escape the person pressed means.
-enum EscapeAction {
-    /// The dictation is cancelled: it types nothing more, whatever app is
-    /// in front.
     Take(ActiveDictation),
     /// The key belongs to the app.
     Pass,
@@ -86,14 +77,13 @@ fn return_action(
     }
 }
 
-/// Only a dictation no client owns is cancelled: a client that asked for
-/// one reads Escape itself, as the terminal does to stop.
-fn escape_action(dictation: Option<ActiveDictation>) -> EscapeAction {
+/// A bare Escape cancels a dictation no client owns, whatever app is in
+/// front. It voids the Aria key's press too, so a hold it lands in ends
+/// cancelled and a tap's release starts nothing.
+fn escape_taken(dictation: Option<ActiveDictation>) -> Taken {
     match dictation {
-        Some(dictation) if dictation.escape_cancels() && !dictation.is_ending() => {
-            EscapeAction::Take(dictation)
-        }
-        Some(_) | None => EscapeAction::Pass,
+        Some(dictation) if dictation.take_escape() => Taken::VoidingPress,
+        Some(_) | None => Taken::No,
     }
 }
 
@@ -159,29 +149,27 @@ impl KeyRouter {
         }
     }
 
-    /// True when the key is taken and must not reach the app. Runs inside
-    /// the hotkey tap, which every keystroke waits on.
-    pub(super) fn take(&self, key: BareKey) -> bool {
+    /// What becomes of a bare key the person pressed. Runs inside the
+    /// hotkey tap, which every keystroke waits on.
+    pub(super) fn take(&self, key: BareKey) -> Taken {
         let dictation = self.runtime.active_dictation();
         match key {
+            // The press goes on: a taken Return ends the dictation by itself.
             BareKey::Return => match return_action(dictation, frontmost_process) {
-                ReturnAction::Take(dictation) => dictation.take_return(),
-                ReturnAction::Pass => false,
+                ReturnAction::Take(dictation) if dictation.take_return() => Taken::KeepingPress,
+                ReturnAction::Take(_) | ReturnAction::Pass => Taken::No,
             },
-            BareKey::Escape => match escape_action(dictation) {
-                EscapeAction::Take(dictation) => {
-                    let cancelled = dictation.cancel();
-                    if cancelled {
-                        tracing::info!(
-                            trigger = "hotkey",
-                            status = "cancelled",
-                            "escape cancelled the dictation"
-                        );
-                    }
-                    cancelled
+            BareKey::Escape => {
+                let taken = escape_taken(dictation);
+                if taken != Taken::No {
+                    tracing::info!(
+                        trigger = "hotkey",
+                        status = "cancelled",
+                        "escape cancelled the dictation"
+                    );
                 }
-                EscapeAction::Pass => false,
-            },
+                taken
+            }
         }
     }
 
@@ -430,7 +418,7 @@ mod tests {
         let takes = |built: Option<ActiveDictationBuilder>| {
             let built = built.map(ActiveDictationBuilder::build);
             let dictation = built.as_ref().map(|built| built.dictation.clone());
-            matches!(escape_action(dictation), EscapeAction::Take(_))
+            escape_taken(dictation) == Taken::VoidingPress
         };
         let keyed = || manual().with_escape_cancels();
         assert!(takes(Some(keyed().with_recording())));

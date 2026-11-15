@@ -339,9 +339,10 @@ pub struct ExecutionControl {
     id: RecordingId,
     stop_mode: StopMode,
     escape: EscapeRule,
-    /// The caller's cancellation, which this dictation cannot fire.
-    cancellation: CancelToken,
-    /// Cancelled from inside, by the person's Escape, or finished first.
+    /// The caller's cancellation. The dictation never fires it.
+    caller: CancelToken,
+    /// The person's Escape, raced against the result. With `caller`, the
+    /// whole cancellation, read only through `is_cancelled`.
     settlement: AtomicU8,
     deadline: Deadline,
     recording_state: AtomicU8,
@@ -376,7 +377,7 @@ impl ExecutionControl {
             id,
             stop_mode,
             escape,
-            cancellation,
+            caller: cancellation,
             settlement: AtomicU8::new(Settlement::Open as u8),
             deadline,
             recording_state: AtomicU8::new(RecordingState::NotStarted as u8),
@@ -444,13 +445,13 @@ impl ExecutionControl {
     /// Whether the operation was cancelled, by its caller or by the
     /// person's Escape.
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancellation.is_cancelled()
+        self.caller.is_cancelled()
             || self.settlement.load(Ordering::Acquire) == Settlement::Cancelled as u8
     }
 
     /// Abandons the dictation. False when it was already ending, or its
     /// result was in.
-    fn cancel(&self) -> bool {
+    pub(crate) fn cancel(&self) -> bool {
         !self.should_stop() && self.settle(Settlement::Cancelled)
     }
 
@@ -711,16 +712,11 @@ impl ActiveDictation {
         self.control.take_return()
     }
 
-    /// Whether a bare Escape cancels it. False when a client asked for the
-    /// dictation: that client owns Escape, as the terminal does.
-    pub fn escape_cancels(&self) -> bool {
-        self.control.escape == EscapeRule::Cancels
-    }
-
-    /// Abandons the dictation: it types nothing more and saves nothing.
-    /// False when it was already ending, or had finished.
-    pub fn cancel(&self) -> bool {
-        self.control.cancel()
+    /// Takes the person's Escape: the dictation types nothing more and saves
+    /// nothing. False when a client owns Escape, as the terminal does, or the
+    /// dictation was ending or had its result: the key belongs to the app.
+    pub fn take_escape(&self) -> bool {
+        self.control.escape == EscapeRule::Cancels && self.control.cancel()
     }
 }
 
@@ -1149,8 +1145,8 @@ mod tests {
     }
 
     #[test]
-    fn escape_cancels_only_a_dictation_started_to_allow_it() {
-        for escape in [EscapeRule::Cancels, EscapeRule::Passes] {
+    fn only_a_dictation_started_to_allow_it_takes_escape() {
+        for (escape, taken) in [(EscapeRule::Cancels, true), (EscapeRule::Passes, false)] {
             let (coordinator, _recording, _events) = coordinator();
             let _admitted = coordinator
                 .admit(&settings(StopMode::Manual), escape, CancelToken::never())
@@ -1158,17 +1154,17 @@ mod tests {
 
             let active = coordinator.microphone.active_dictation().unwrap();
 
-            assert_eq!(active.escape_cancels(), escape == EscapeRule::Cancels);
+            assert_eq!(active.take_escape(), taken);
         }
     }
 
     #[test]
-    fn a_cancel_from_a_key_ends_the_dictation_once() {
+    fn an_escape_cancels_the_dictation_once() {
         let (coordinator, _recording, _events) = coordinator();
         let admitted = coordinator
             .admit(
                 &settings(StopMode::Manual),
-                EscapeRule::Passes,
+                EscapeRule::Cancels,
                 CancelToken::never(),
             )
             .unwrap();
@@ -1177,11 +1173,27 @@ mod tests {
         };
         let active = coordinator.microphone.active_dictation().unwrap();
 
-        assert!(active.cancel());
+        assert!(active.take_escape());
 
         assert!(control.is_cancelled(), "its caller's token can never fire");
         assert!(active.is_ending());
-        assert!(!active.cancel(), "it was already ending");
+        assert!(!active.take_escape(), "it was already ending");
+    }
+
+    #[test]
+    fn an_escape_after_the_result_cancels_nothing() {
+        let control = ExecutionControl::for_test_lasting(
+            StopMode::Manual,
+            EscapeRule::Cancels,
+            CancelToken::new(),
+            Duration::from_secs(5),
+        );
+        let active = ActiveDictation::new(Arc::clone(&control));
+
+        assert!(control.finish());
+
+        assert!(!active.take_escape(), "the key belongs to the app");
+        assert!(!control.is_cancelled());
     }
 
     #[test]
@@ -1599,11 +1611,12 @@ mod tests {
             } else {
                 Duration::from_secs(5)
             };
+            let cancellation = CancelToken::new();
             let control = Arc::new(ExecutionControl::new(
                 RecordingId(0),
                 StopMode::Manual,
                 EscapeRule::Passes,
-                CancelToken::new(),
+                cancellation.clone(),
                 Deadline::after(timeout),
                 SoundMuting::Never,
             ));
@@ -1618,7 +1631,7 @@ mod tests {
                 .unwrap();
             match ending {
                 "stop" => assert!(control.request_recording_stop()),
-                "cancel" => control.cancellation.cancel(),
+                "cancel" => cancellation.cancel(),
                 "deadline" => assert!(guard.should_stop()),
                 _ => {}
             }

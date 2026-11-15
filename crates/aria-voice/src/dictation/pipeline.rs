@@ -5363,7 +5363,7 @@ mod tests {
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let heard = heard(directory.path(), "we should.");
         publish_whole(&mut published, heard, "we should.", &mut history).unwrap();
-        assert!(crate::dictation::ActiveDictation::new(Arc::clone(&control)).cancel());
+        assert!(control.cancel());
 
         published.publish_ends(&mut history).unwrap();
 
@@ -5493,7 +5493,7 @@ mod tests {
         /// Hears "it is twenty", whose "twenty" waits for what follows, and
         /// is cancelled once "it is" was typed.
         struct CancelledAfterTyping {
-            active: crate::dictation::ActiveDictation,
+            active: Arc<ExecutionControl>,
             typed: CallLog,
         }
 
@@ -5522,7 +5522,7 @@ mod tests {
             ) -> Result<Option<Box<dyn ChunkStream>>, TranscriptionError> {
                 struct Chunks {
                     fed: bool,
-                    active: crate::dictation::ActiveDictation,
+                    active: Arc<ExecutionControl>,
                     typed: CallLog,
                 }
                 impl ChunkStream for Chunks {
@@ -5561,7 +5561,7 @@ mod tests {
             Transcription::stream(
                 Stream::Native,
                 CancelledAfterTyping {
-                    active: crate::dictation::ActiveDictation::new(Arc::clone(&control)),
+                    active: Arc::clone(&control),
                     typed: log.clone(),
                 },
             ),
@@ -5601,7 +5601,7 @@ mod tests {
             ) -> Result<(), DictationError> {
                 let _armed = control.arm_return(1);
                 assert!(control.take_return());
-                assert!(crate::dictation::ActiveDictation::new(Arc::clone(control)).cancel());
+                assert!(control.cancel());
                 Ok(())
             }
         }
@@ -5639,7 +5639,7 @@ mod tests {
 
             fn completed(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
                 let control = Arc::clone(self.control.as_ref().unwrap());
-                assert!(crate::dictation::ActiveDictation::new(control).cancel());
+                assert!(control.cancel());
                 Ok(())
             }
 
@@ -5680,17 +5680,6 @@ mod tests {
         assert!(matches!(result, Err(DictationError::Cancelled)));
         assert_eq!(*finished.lock().unwrap(), [false], "history saves nothing");
         assert_eq!(stages.iter().last(), Some(DictationStage::Cancelled));
-    }
-
-    #[test]
-    fn an_escape_after_the_result_cancels_nothing() {
-        let control = ExecutionControl::for_test(StopMode::Manual);
-        let active = crate::dictation::ActiveDictation::new(Arc::clone(&control));
-
-        assert!(control.finish());
-
-        assert!(!active.cancel(), "the key belongs to the app");
-        assert!(!control.is_cancelled());
     }
 
     #[test]

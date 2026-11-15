@@ -25,7 +25,9 @@ use objc2_core_graphics::{
 };
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults};
 
-use super::{AriaKey, BareKey, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press, PressDetector};
+use super::{
+    AriaKey, BareKey, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press, PressDetector, Taken,
+};
 use crate::accessibility::{self, Trust};
 use crate::delivery::RETURN_VIRTUAL_KEY;
 
@@ -168,15 +170,9 @@ fn bare_key(key: AriaKey, key_code: i64, flags: u64) -> Option<BareKey> {
 
 /// Typing while the Aria key is down voids its press. Not the keystrokes
 /// streaming delivery posts, which carry its process id. Not Fn's own key.
-/// Not a taken Return, which ends the dictation by itself. A taken Escape
-/// does void it, so the release after a cancel starts nothing.
-fn voids_the_press(key_code: i64, synthetic: bool, taken: bool) -> bool {
-    match key_code {
-        _ if synthetic => false,
-        GLOBE_KEY_CODE => false,
-        ESCAPE_KEY_CODE => true,
-        _ => !taken,
-    }
+/// Not a key taken to keep the press.
+fn voids_the_press(key_code: i64, synthetic: bool, taken: Taken) -> bool {
+    !synthetic && key_code != GLOBE_KEY_CODE && taken != Taken::KeepingPress
 }
 
 /// Only the person's own key ends a dictation: the Return delivery posts
@@ -204,7 +200,7 @@ pub struct MacOsHotkeyListener;
 /// callbacks run inside the run-loop slices `listen` drives.
 struct TapState<'a> {
     key: AriaKey,
-    take: &'a dyn Fn(BareKey) -> bool,
+    take: &'a dyn Fn(BareKey) -> Taken,
     /// The key codes of the taken keys still down: their repeats and
     /// releases are swallowed too, and no other key's.
     taken_keys: RefCell<Vec<i64>>,
@@ -216,7 +212,7 @@ struct TapState<'a> {
 }
 
 impl<'a> TapState<'a> {
-    fn new(key: AriaKey, take: &'a dyn Fn(BareKey) -> bool) -> Self {
+    fn new(key: AriaKey, take: &'a dyn Fn(BareKey) -> Taken) -> Self {
         Self {
             key,
             take,
@@ -227,9 +223,9 @@ impl<'a> TapState<'a> {
         }
     }
 
-    /// True when a Return, keypad Enter or Escape key event must not reach
-    /// the app.
-    fn swallows(&self, event_type: CGEventType, event: &CGEvent) -> bool {
+    /// What becomes of a Return, keypad Enter or Escape key event. A taken
+    /// key's repeats and release are swallowed with it.
+    fn handle(&self, event_type: CGEventType, event: &CGEvent) -> Taken {
         let key_code =
             CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventKeycode);
         let flags = CGEvent::flags(Some(event)).0;
@@ -240,19 +236,19 @@ impl<'a> TapState<'a> {
         match key_handling(key_phase(event_type, event), bare, synthetic, swallowing) {
             KeyHandling::Ask(key) => {
                 let taken = (self.take)(key);
-                if taken && !swallowing {
+                if taken != Taken::No && !swallowing {
                     self.taken_keys.borrow_mut().push(key_code);
                 }
                 taken
             }
-            KeyHandling::Swallow => true,
+            KeyHandling::Swallow => Taken::KeepingPress,
             KeyHandling::End => {
                 self.taken_keys
                     .borrow_mut()
                     .retain(|taken| *taken != key_code);
-                true
+                Taken::KeepingPress
             }
-            KeyHandling::Pass => false,
+            KeyHandling::Pass => Taken::No,
         }
     }
 
@@ -324,11 +320,12 @@ impl MacOsHotkeyListener {
     }
 
     /// `take` runs inside the tap callback for each bare Return or Escape
-    /// the person presses, and the key is swallowed when it returns true.
+    /// the person presses. Its answer says whether the key is swallowed, and
+    /// whether it voids the Aria key's press.
     /// It must not block: every key event waits on it.
     pub fn listen(
         key: AriaKey,
-        take: impl Fn(BareKey) -> bool,
+        take: impl Fn(BareKey) -> Taken,
         events: impl Fn(ListenerEvent),
         should_stop: impl Fn() -> bool,
     ) {
@@ -721,20 +718,20 @@ unsafe extern "C-unwind" fn blocker_callback(
         CGEventType::KeyDown | CGEventType::KeyUp => {
             let key_code =
                 CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventKeycode);
-            let held = match key_code {
-                GLOBE_KEY_CODE => state.key == AriaKey::Fn,
+            let taken = match key_code {
+                GLOBE_KEY_CODE if state.key == AriaKey::Fn => Taken::KeepingPress,
                 RETURN_KEY_CODE | KEYPAD_ENTER_KEY_CODE | ESCAPE_KEY_CODE => {
-                    state.swallows(event_type, event)
+                    state.handle(event_type, event)
                 }
-                _ => false,
+                _ => Taken::No,
             };
             let synthetic =
                 CGEvent::integer_value_field(Some(event), CGEventField::EventSourceUnixProcessID)
                     != 0;
-            if event_type == CGEventType::KeyDown && voids_the_press(key_code, synthetic, held) {
+            if event_type == CGEventType::KeyDown && voids_the_press(key_code, synthetic, taken) {
                 state.feed(KeyEvent::KeyDown);
             }
-            if held {
+            if taken != Taken::No {
                 return std::ptr::null_mut();
             }
         }
@@ -819,13 +816,16 @@ mod tests {
     }
 
     #[test]
-    fn a_taken_escape_voids_the_aria_keys_press_and_a_taken_return_does_not() {
-        assert!(voids_the_press(ESCAPE_KEY_CODE, false, true));
-        assert!(!voids_the_press(RETURN_KEY_CODE, false, true));
-        assert!(!voids_the_press(KEYPAD_ENTER_KEY_CODE, false, true));
-        assert!(voids_the_press(RETURN_KEY_CODE, false, false));
-        assert!(!voids_the_press(ESCAPE_KEY_CODE, true, false));
-        assert!(!voids_the_press(GLOBE_KEY_CODE, false, false));
+    fn only_a_key_taken_to_keep_the_press_leaves_it_whole() {
+        assert!(!voids_the_press(
+            RETURN_KEY_CODE,
+            false,
+            Taken::KeepingPress
+        ));
+        assert!(voids_the_press(ESCAPE_KEY_CODE, false, Taken::VoidingPress));
+        assert!(voids_the_press(ESCAPE_KEY_CODE, false, Taken::No));
+        assert!(!voids_the_press(ESCAPE_KEY_CODE, true, Taken::No));
+        assert!(!voids_the_press(GLOBE_KEY_CODE, false, Taken::No));
     }
 
     #[test]
@@ -931,12 +931,12 @@ mod tests {
         } else {
             CGEventType::KeyUp
         };
-        state.swallows(event_type, &event)
+        state.handle(event_type, &event) != Taken::No
     }
 
     #[test]
     fn each_taken_key_is_swallowed_until_its_own_release() {
-        let take = |_| true;
+        let take = |_| Taken::KeepingPress;
         let state = TapState::new(AriaKey::RightOption, &take);
 
         assert!(swallowed(&state, RETURN_KEY_CODE, true), "Return is taken");
@@ -951,7 +951,7 @@ mod tests {
 
     #[test]
     fn a_key_nothing_takes_reaches_the_app() {
-        let take = |_| false;
+        let take = |_| Taken::No;
         let state = TapState::new(AriaKey::RightOption, &take);
 
         assert!(!swallowed(&state, ESCAPE_KEY_CODE, true));
@@ -960,7 +960,7 @@ mod tests {
 
     #[test]
     fn only_the_taken_keys_release_is_swallowed() {
-        let take = |_| true;
+        let take = |_| Taken::KeepingPress;
         let state = TapState::new(AriaKey::RightOption, &take);
 
         assert!(

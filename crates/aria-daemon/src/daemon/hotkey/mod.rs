@@ -9,7 +9,7 @@ use super::dictation::{DictationHandle, DictationRuntime};
 use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
-use aria_platform::hotkey::{AriaKey, BareKey, ListenerEvent, PlatformHotkeyListener};
+use aria_platform::hotkey::{AriaKey, BareKey, ListenerEvent, PlatformHotkeyListener, Taken};
 use router::{Hold, KeyRouter};
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -18,7 +18,7 @@ use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
 
 /// The blocking platform listener; tests swap in a fake.
-type Listener = fn(AriaKey, &dyn Fn(BareKey) -> bool, &dyn Fn(ListenerEvent), &dyn Fn() -> bool);
+type Listener = fn(AriaKey, &dyn Fn(BareKey) -> Taken, &dyn Fn(ListenerEvent), &dyn Fn() -> bool);
 
 pub(super) struct HotkeyTrigger {
     key: watch::Receiver<AriaKey>,
