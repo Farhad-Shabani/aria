@@ -11,6 +11,7 @@ use std::borrow::Borrow;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread::Scope;
+use std::time::Duration;
 
 use aria_kit::audio::{RecordingReader, canonical_samples};
 use aria_kit::backend::BackendError;
@@ -47,6 +48,36 @@ pub(crate) enum Event {
     /// A wake that decided nothing new. A caller with work of its own, such
     /// as text waiting for its field, gets a turn during silence.
     Idle,
+}
+
+/// Whether the speaker paused long enough that nothing more follows the
+/// words held so far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pause {
+    Heard,
+    /// Speech goes on, words wait to be decided, or the decoder has not
+    /// read up to the silence.
+    NotYet,
+    /// No detector judges the audio, and no words wait to be decided.
+    Unjudged,
+}
+
+/// Whether words have yet to reach the caller: undecided at the gate, or
+/// released and queued behind another event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Words {
+    Out,
+    Waiting,
+}
+
+fn words(gate: &Gate, events: &VecDeque<Event>) -> Words {
+    let queued = events
+        .iter()
+        .any(|event| matches!(event, Event::Released(_)));
+    match gate.has_undecided_words() || queued {
+        true => Words::Waiting,
+        false => Words::Out,
+    }
 }
 
 pub(crate) struct Ended {
@@ -182,6 +213,27 @@ fn held_speech_before(speech: &SpeechMap, at: u64) -> bool {
     speech.speech_before(at) > 0
 }
 
+/// Whether the last `wait` of the audio `speech` scored is silent, with
+/// the decoder past its start but not past what was scored, and every word
+/// out. Any word said before that silence has then reached the caller.
+fn paused(speech: Option<&SpeechMap>, read_to: u64, words: Words, wait: Duration) -> Pause {
+    if words == Words::Waiting {
+        return Pause::NotYet;
+    }
+    let Some(speech) = speech.filter(|speech| !speech.is_broken()) else {
+        return Pause::Unjudged;
+    };
+    let reached = speech.reached();
+    let Some(silent_from) = reached.checked_sub(canonical_samples(wait)) else {
+        return Pause::NotYet;
+    };
+    if (silent_from..=reached).contains(&read_to) && speech.speech(&(silent_from..reached)) == 0 {
+        Pause::Heard
+    } else {
+        Pause::NotYet
+    }
+}
+
 fn held_speech(speech: &SpeechMap) -> bool {
     if held_speech_before(speech, speech.reached()) {
         return true;
@@ -207,6 +259,8 @@ pub(crate) struct Hearing<'scope> {
     done: bool,
     /// The earliest audio the decoder may still send a segment from.
     retained_from: u64,
+    /// Where the decoder has read to.
+    read_to: u64,
 }
 
 impl<'scope> Hearing<'scope> {
@@ -279,6 +333,7 @@ impl<'scope> Hearing<'scope> {
             shown: None,
             done: false,
             retained_from: from,
+            read_to: from,
         })
     }
 
@@ -296,6 +351,7 @@ impl<'scope> Hearing<'scope> {
                 Wake::Decoded(decoded) => {
                     self.take(decoded.update, decoded.read_to)?;
                     self.retained_from = decoded.retained_from;
+                    self.read_to = decoded.read_to;
                 }
                 Wake::Snapshot => {}
                 Wake::DecoderDone => self.done = true,
@@ -328,10 +384,11 @@ impl<'scope> Hearing<'scope> {
         }
     }
 
-    /// Whether the gate still holds words it hasn't decided: a held
-    /// segment, or provisional text.
-    pub(crate) fn has_undecided_words(&self) -> bool {
-        self.gate.has_undecided_words()
+    /// Whether the speaker has paused for `wait`, as the audio shows.
+    pub(crate) fn pause(&self, wait: Duration) -> Pause {
+        let snapshot = self.turns.as_ref().map(|_| self.board.snapshot());
+        let speech = snapshot.as_ref().map(|snapshot| &*snapshot.speech);
+        paused(speech, self.read_to, words(&self.gate, &self.events), wait)
     }
 
     /// Waits for both threads, and decides what is still held.
@@ -479,7 +536,7 @@ mod tests {
     use aria_kit::audio::Recording;
     use aria_kit::speaker::{LevelSegmenter, VoiceprintTracker};
     use aria_kit::transcription::{
-        OperationSource, OperationStep, TranscriptSegment, TranscriptUpdate,
+        Heard, OperationSource, OperationStep, TranscriptSegment, TranscriptUpdate,
     };
     use aria_kit::voice_activity::SpeechDetector;
 
@@ -589,6 +646,89 @@ mod tests {
             },
         );
         unblock.join().unwrap();
+    }
+
+    const WAIT: Duration = Duration::from_millis(1500);
+
+    /// Where anyone spoke in `seconds`, each loud or quiet.
+    fn speech(seconds: &[bool]) -> SpeechMap {
+        let mut detector = SpeechDetector::new(Loud, 0);
+        for &loud in seconds {
+            let level = if loud { 0.5 } else { 0.0 };
+            detector.hear(&[level; SECOND as usize]).unwrap();
+        }
+        detector.map().clone()
+    }
+
+    #[test]
+    fn held_words_wait_while_speech_goes_on() {
+        let map = speech(&[true, true, true]);
+        assert_eq!(
+            paused(Some(&map), 3 * SECOND, Words::Out, WAIT),
+            Pause::NotYet
+        );
+    }
+
+    #[test]
+    fn a_pause_in_the_audio_releases_held_words() {
+        let map = speech(&[true, false, false]);
+        assert_eq!(
+            paused(Some(&map), 3 * SECOND, Words::Out, WAIT),
+            Pause::Heard
+        );
+    }
+
+    #[test]
+    fn a_decoder_behind_the_pause_keeps_words_held() {
+        let map = speech(&[true, false, false]);
+        assert_eq!(paused(Some(&map), SECOND, Words::Out, WAIT), Pause::NotYet);
+    }
+
+    #[test]
+    fn a_speech_map_behind_the_decoder_keeps_words_held() {
+        let map = speech(&[true, false, false]);
+        assert_eq!(
+            paused(Some(&map), 4 * SECOND, Words::Out, WAIT),
+            Pause::NotYet
+        );
+    }
+
+    #[test]
+    fn undecided_words_keep_words_held_through_a_pause() {
+        let map = speech(&[true, false, false]);
+        assert_eq!(
+            paused(Some(&map), 3 * SECOND, Words::Waiting, WAIT),
+            Pause::NotYet
+        );
+    }
+
+    #[test]
+    fn a_released_segment_still_queued_keeps_words_waiting() {
+        let gate = Gate::new(Admission::Everyone, 0);
+        let segment = TranscriptSegment::new("hyphen kit", Some(0..SECOND)).unwrap();
+        let released = Released {
+            heard: Heard {
+                segment,
+                span: Some(0..SECOND),
+                window: 0..SECOND,
+            },
+            speaker: None,
+            embedding: None,
+        };
+        let mut events = VecDeque::from([Event::Preview(String::new()), Event::Idle]);
+        assert_eq!(words(&gate, &events), Words::Out);
+        events.push_back(Event::Released(released));
+        assert_eq!(words(&gate, &events), Words::Waiting);
+    }
+
+    #[test]
+    fn a_broken_speech_map_leaves_the_pause_unjudged() {
+        let mut map = speech(&[true, false, false]);
+        map.break_off();
+        assert_eq!(
+            paused(Some(&map), 3 * SECOND, Words::Out, WAIT),
+            Pause::Unjudged
+        );
     }
 
     #[test]

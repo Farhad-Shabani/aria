@@ -13,7 +13,7 @@ use aria_kit::transcription::{
 use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector};
 
 use crate::hearing::{
-    Board, Decoding, Event, Hearing, HearingError, TrackingError, hear_saved, hear_to_end,
+    Board, Decoding, Event, Hearing, HearingError, Pause, TrackingError, hear_saved, hear_to_end,
 };
 use crate::speaker::{Diarizer, Label, Profile, SpeakerName, VoiceprintTracker};
 use crate::stt::{
@@ -808,9 +808,7 @@ where
                 .map_err(|error| failed(error, &mut published))?
             {
                 act(event, &mut published, sinks)?;
-                if !hearing.has_undecided_words() {
-                    published.publish_overdue(Instant::now(), sinks)?;
-                }
+                published.publish_after_pause(hearing.pause(HELD_WAIT), Instant::now(), sinks)?;
             }
             let mut ended = hearing
                 .finish()
@@ -974,8 +972,10 @@ impl SegmentEnds {
 /// The least time between two tries of queued text.
 const QUEUE_RETRY: Duration = Duration::from_millis(250);
 
-/// How long held words wait for more speech. After a pause this long the
-/// speaker has moved on, and typing the words beats holding them back.
+/// How long a pause in the audio held words wait through for more speech,
+/// or how long they wait when no detector hears the audio. After a pause
+/// this long the speaker has moved on, and typing the words beats holding
+/// them back.
 const HELD_WAIT: Duration = Duration::from_millis(1500);
 
 /// What one dictation has put out so far, with the events and logs each
@@ -1129,15 +1129,26 @@ impl<'a> Published<'a> {
             .or_else(|error| self.undelivered(error))
     }
 
-    /// Publishes the held words once they have waited [`HELD_WAIT`] by
-    /// `now`. Complete delivery types nothing before the press ends, so its
-    /// held words wait for that.
-    fn publish_overdue<S>(&mut self, now: Instant, sinks: &mut S) -> Result<(), DictationError>
+    /// Publishes the held words once the speaker has paused. With no audio
+    /// to judge the pause by, they wait [`HELD_WAIT`] by `now`. Complete
+    /// delivery types nothing before the press ends, so its held words wait
+    /// for that.
+    fn publish_after_pause<S>(
+        &mut self,
+        pause: Pause,
+        now: Instant,
+        sinks: &mut S,
+    ) -> Result<(), DictationError>
     where
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        if !self.streaming || !self.ends.is_overdue(now) {
+        let paused = match pause {
+            Pause::Heard => true,
+            Pause::NotYet => false,
+            Pause::Unjudged => self.ends.is_overdue(now),
+        };
+        if !self.streaming || !paused {
             return Ok(());
         }
         self.publish_held(sinks)
@@ -5631,12 +5642,34 @@ mod tests {
             holding_twenty(directory.path(), &settings, &control, &events, &mut sinks);
 
         published
-            .publish_overdue(Instant::now(), &mut sinks)
+            .publish_after_pause(Pause::NotYet, Instant::now() + HELD_WAIT, &mut sinks)
             .unwrap();
         assert_eq!(segments(&log), ["segment:it is"]);
 
         published
-            .publish_overdue(Instant::now() + HELD_WAIT, &mut sinks)
+            .publish_after_pause(Pause::Heard, Instant::now(), &mut sinks)
+            .unwrap();
+        assert_eq!(segments(&log), ["segment:it is", "segment:20"]);
+    }
+
+    #[test]
+    fn without_a_speech_map_held_words_wait_out_the_clock() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
+        let mut published =
+            holding_twenty(directory.path(), &settings, &control, &events, &mut sinks);
+
+        published
+            .publish_after_pause(Pause::Unjudged, Instant::now(), &mut sinks)
+            .unwrap();
+        assert_eq!(segments(&log), ["segment:it is"]);
+
+        published
+            .publish_after_pause(Pause::Unjudged, Instant::now() + HELD_WAIT, &mut sinks)
             .unwrap();
         assert_eq!(segments(&log), ["segment:it is", "segment:20"]);
     }
@@ -5880,7 +5913,7 @@ mod tests {
             holding_twenty(directory.path(), &settings, &control, &events, &mut sinks);
 
         published
-            .publish_overdue(Instant::now() + HELD_WAIT, &mut sinks)
+            .publish_after_pause(Pause::Heard, Instant::now() + HELD_WAIT, &mut sinks)
             .unwrap();
 
         assert_eq!(segments(&log), ["segment:it is"]);
