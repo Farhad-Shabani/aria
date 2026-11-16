@@ -1,6 +1,6 @@
 <h1 align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Farhad-Shabani/aria/main/assets/brand/aria-lockup-inline-animated-dark.svg"><img src="https://raw.githubusercontent.com/Farhad-Shabani/aria/main/assets/brand/aria-lockup-inline-animated.svg" width="280" alt="Aria"></picture></h1>
 
-<p align="center"><b>Talk to your AI assistants without sending them your audio.</b></p>
+<p align="center"><b>A local-first voice assistant for the shortest path from thought to action.</b></p>
 
 <p align="center">
   <strong><a href="https://github.com/Farhad-Shabani/aria/releases/latest/download/Aria.dmg" title="Download the macOS desktop app">Download</a></strong> |
