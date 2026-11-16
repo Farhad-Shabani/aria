@@ -134,6 +134,19 @@ impl Bucket {
             * (std::mem::size_of::<(String, Candidate)>() + 1);
         bytes
     }
+
+    // A form typed as heard types the same split or whole, so it never waits.
+    fn begins_a_spelled_form(&self, said: &str) -> bool {
+        if said.chars().count() >= self.max_chars {
+            return false;
+        }
+        self.aliases.iter().any(|(alias, candidate)| {
+            candidate.name.typed().is_some()
+                && alias
+                    .strip_prefix(said)
+                    .is_some_and(|rest| rest.starts_with(' '))
+        })
+    }
 }
 
 #[derive(Default)]
@@ -256,7 +269,7 @@ impl Vocabulary {
             }
             let alias = normalize(&alias);
             if let Some(candidate) = first_word(&alias)
-                .and_then(|first| self.index.get_mut(&first))
+                .and_then(|first| self.index.get_mut(first.as_ref()))
                 .and_then(|bucket| bucket.aliases.get_mut(&alias))
                 && candidate.origin != Origin::Written
                 && candidate.name.canonical() != Some(canonical)
@@ -268,7 +281,7 @@ impl Vocabulary {
     }
 
     fn add_bucket(&mut self, alias: &str) -> Result<Option<&mut Bucket>, MatchError> {
-        let Some(first) = first_word(alias) else {
+        let Some(first) = first_word(alias).map(Cow::into_owned) else {
             return Ok(None);
         };
         let capacity = self.index.capacity();
@@ -390,6 +403,36 @@ impl Vocabulary {
         self.personal.defer_waiting_forms(text, claimed);
     }
 
+    // A name matches only within one text, so a text ending on a name's start
+    // holds it: "open aria" may go on as "hyphen kit".
+    pub(super) fn defer_waiting_names(
+        &self,
+        text: &str,
+        max_words: usize,
+        claimed: &mut Claimed<'_>,
+    ) {
+        if self.index.is_empty() {
+            return;
+        }
+        let begins_a_name = |start: usize| {
+            let said = &text[start..];
+            !continues_word(text[..start].chars().rev())
+                && first_word(said)
+                    .and_then(|first| self.index.get(first.as_ref()))
+                    .is_some_and(|bucket| bucket.begins_a_spelled_form(&normalize(said)))
+        };
+        let words = claimed.words();
+        // A claimed span can hold several words, so count words, not spans.
+        let earliest = words[words.len().saturating_sub(max_words)..]
+            .iter()
+            .map(|word| word.span.start)
+            .filter(|&start| text[start..].split_whitespace().nth(max_words).is_none())
+            .find(|&start| begins_a_name(start));
+        if let Some(start) = earliest {
+            claimed.defer_at(start);
+        }
+    }
+
     /// `text` with each claim typed, and personal rules applied to the
     /// spans nothing claimed.
     fn typed<E>(
@@ -442,7 +485,7 @@ impl Vocabulary {
                 continue;
             }
             let matched = if !continues_word(text[..position].chars().rev()) {
-                match first_word(rest).and_then(|first| self.index.get(&first)) {
+                match first_word(rest).and_then(|first| self.index.get(first.as_ref())) {
                     Some(bucket) => self.find(text, position, bucket, check)?,
                     None => None,
                 }
@@ -533,21 +576,25 @@ fn is_word(character: char) -> bool {
     character.is_alphanumeric() || character == '_'
 }
 
-fn first_word(text: &str) -> Option<String> {
+fn first_word(text: &str) -> Option<Cow<'_, str>> {
     let first = text.chars().next()?;
     if first.is_whitespace() {
         return None;
     }
     if !is_word(first) {
-        return Some(first.to_string());
+        return Some(Cow::Borrowed(&text[..first.len_utf8()]));
     }
-    Some(
-        text.chars()
-            .take_while(|c| is_word(*c))
+    let word = &text[..text.find(|c| !is_word(c)).unwrap_or(text.len())];
+    // Most words are lowercase already, so skip the allocation.
+    if word.chars().all(|c| c.to_lowercase().eq([c])) {
+        return Some(Cow::Borrowed(word));
+    }
+    Some(Cow::Owned(
+        word.chars()
             .flat_map(char::to_lowercase)
             .take_while(|c| is_word(*c))
             .collect(),
-    )
+    ))
 }
 
 pub fn matching_forms(canonical: &str) -> impl Iterator<Item = String> {
