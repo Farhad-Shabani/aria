@@ -42,7 +42,7 @@ tokio-util   = { version = "0.7", features = [ "rt" ] }
 x11rb        = { version = "0.13", features = [ "xtest" ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-cidre                 = { workspace = true, features = [ "ax", "core_audio", "dispatch", "macos_14_2" ] }
+cidre                 = { workspace = true, features = [ "ax", "dispatch", "macos_14_2" ] }
 objc2                 = { workspace = true }
 objc2-app-kit         = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }

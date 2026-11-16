@@ -64,9 +64,8 @@ pub enum DictationStage {
 /// What a live recording captures from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapturedMicrophone {
-    /// An input device, and whether it is an iPhone's microphone the Mac
-    /// uses through Continuity.
-    Device { id: InputDeviceId, on_iphone: bool },
+    /// An input device.
+    Device { id: InputDeviceId },
     /// Audio pushed in as it arrives.
     Pushed,
     /// Audio recorded earlier, such as a replay.

@@ -94,10 +94,6 @@ public nonisolated struct Aria_Daemon_V1_MicrophoneDevice: Sendable {
   /// As `Microphone.id` names it.
   public var id: String = String()
 
-  /// The device is an iPhone's microphone, which the Mac uses through
-  /// Continuity.
-  public var onIphone: Bool = false
-
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -231,7 +227,7 @@ nonisolated extension Aria_Daemon_V1_AttachedPhone: SwiftProtobuf.Message, Swift
 
 nonisolated extension Aria_Daemon_V1_MicrophoneDevice: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MicrophoneDevice"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}on_iphone\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -240,7 +236,6 @@ nonisolated extension Aria_Daemon_V1_MicrophoneDevice: SwiftProtobuf.Message, Sw
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
-      case 2: try { try decoder.decodeSingularBoolField(value: &self.onIphone) }()
       default: break
       }
     }
@@ -250,15 +245,11 @@ nonisolated extension Aria_Daemon_V1_MicrophoneDevice: SwiftProtobuf.Message, Sw
     if !self.id.isEmpty {
       try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
     }
-    if self.onIphone != false {
-      try visitor.visitSingularBoolField(value: self.onIphone, fieldNumber: 2)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_MicrophoneDevice, rhs: Aria_Daemon_V1_MicrophoneDevice) -> Bool {
     if lhs.id != rhs.id {return false}
-    if lhs.onIphone != rhs.onIphone {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

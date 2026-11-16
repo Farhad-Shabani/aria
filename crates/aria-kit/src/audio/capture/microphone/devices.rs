@@ -1,7 +1,22 @@
 //! Which input device a recording uses: the chosen one while it's connected,
 //! else the system default.
+//!
+//! An iPhone's Continuity microphone is never listed, chosen, or opened.
+//! Holding it open wakes the iPhone's microphone whenever the phone comes
+//! near, with no app on the phone in front. While one is the system default,
+//! a built-in microphone stands in for it.
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(not(target_os = "macos"))]
+mod other;
 
 use cpal::traits::{DeviceTrait, HostTrait};
+
+#[cfg(target_os = "macos")]
+use macos::transport;
+#[cfg(not(target_os = "macos"))]
+use other::transport;
 
 use super::{MicrophoneError, Result};
 use crate::audio::InputDeviceId;
@@ -13,15 +28,17 @@ fn device_id(device: &cpal::Device) -> Option<InputDeviceId> {
         .map(|id| InputDeviceId::new(id.to_string()))
 }
 
-/// A connected device that can record.
+/// A connected device that can record, other than an iPhone's microphone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputDevice {
     pub id: InputDeviceId,
     pub name: String,
+    /// The system default, or the device standing in for an iPhone default.
     pub system_default: bool,
 }
 
-/// Every connected input device, without opening any of them.
+/// Every connected input device but an iPhone's microphone, without opening
+/// any of them.
 pub fn input_devices() -> Result<Vec<InputDevice>> {
     Ok(connected(&cpal::default_host())?
         .into_iter()
@@ -55,41 +72,103 @@ pub(super) fn open_target(wanted: Option<&InputDeviceId>) -> Result<(cpal::Devic
     Ok((device, listed.id))
 }
 
-/// Whether the device `id` names is connected. Opens nothing.
+/// Whether the device `id` names is connected and listed. Opens nothing.
 pub fn is_connected(id: &InputDeviceId) -> bool {
     connected(&cpal::default_host())
         .is_ok_and(|inputs| inputs.iter().any(|(_, device)| device.id == *id))
 }
 
+/// The id [`resolve_input`] falls back to. The idle worker asks every 100 ms,
+/// so the full listing runs only while an iPhone is the OS default.
 pub(super) fn system_default() -> Option<InputDeviceId> {
-    cpal::default_host()
-        .default_input_device()
-        .as_ref()
-        .and_then(device_id)
+    let host = cpal::default_host();
+    let id = host.default_input_device().as_ref().and_then(device_id)?;
+    if transport(&id) != Transport::ContinuityIphone {
+        return Some(id);
+    }
+    listed_default(&host).map(|(_, device)| device.id)
+}
+
+/// The device [`resolve_input`] falls back to.
+pub(super) fn system_default_device() -> Option<cpal::Device> {
+    listed_default(&cpal::default_host()).map(|(device, _)| device)
+}
+
+fn listed_default(host: &cpal::Host) -> Option<(cpal::Device, InputDevice)> {
+    connected(host)
+        .ok()?
+        .into_iter()
+        .find(|(_, device)| device.system_default)
+}
+
+/// How a device reaches the computer, as far as choosing one cares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Transport {
+    ContinuityIphone,
+    BuiltIn,
+    Other,
+}
+
+struct Found<D> {
+    device: D,
+    id: InputDeviceId,
+    name: String,
+    transport: Transport,
 }
 
 // A device that vanishes mid-listing has no identity or name to read. It is
 // gone, so it is left out rather than failing the list.
 fn connected(host: &cpal::Host) -> Result<Vec<(cpal::Device, InputDevice)>> {
-    let default = host.default_input_device().as_ref().and_then(device_id);
+    let os_default = host.default_input_device().as_ref().and_then(device_id);
     let devices = host
         .input_devices()
         .map_err(|source| MicrophoneError::ListDevices(Box::new(source)))?;
-    Ok(devices
-        .filter_map(|device| {
-            let id = device_id(&device)?;
-            let name = device.description().ok()?.name().to_owned();
-            let system_default = default.as_ref() == Some(&id);
-            Some((
-                device,
-                InputDevice {
-                    id,
-                    name,
-                    system_default,
-                },
-            ))
+    let found = devices.filter_map(|device| {
+        let id = device_id(&device)?;
+        let name = device.description().ok()?.name().to_owned();
+        let transport = transport(&id);
+        Some(Found {
+            device,
+            id,
+            name,
+            transport,
         })
-        .collect())
+    });
+    Ok(listed(found, os_default.as_ref()))
+}
+
+/// Leaves out iPhone microphones. When the OS default isn't listed, as when
+/// it is an iPhone, a built-in microphone stands in, else the first listed.
+fn listed<D>(
+    found: impl IntoIterator<Item = Found<D>>,
+    os_default: Option<&InputDeviceId>,
+) -> Vec<(D, InputDevice)> {
+    let kept: Vec<Found<D>> = found
+        .into_iter()
+        .filter(|found| found.transport != Transport::ContinuityIphone)
+        .collect();
+    let default = os_default.and_then(|os_default| {
+        kept.iter()
+            .position(|found| found.id == *os_default)
+            .or_else(|| {
+                kept.iter()
+                    .position(|found| found.transport == Transport::BuiltIn)
+            })
+            .or_else(|| (!kept.is_empty()).then_some(0))
+    });
+    kept.into_iter()
+        .enumerate()
+        .map(|(index, found)| {
+            (
+                found.device,
+                InputDevice {
+                    id: found.id,
+                    name: found.name,
+                    system_default: default == Some(index),
+                },
+            )
+        })
+        .collect()
 }
 
 /// What the idle worker does about the device it holds.
@@ -164,6 +243,68 @@ mod tests {
         ];
 
         assert_eq!(resolve_input(None, &devices), Some(&devices[1]));
+    }
+
+    fn found(id: &str, transport: Transport) -> Found<()> {
+        Found {
+            device: (),
+            id: InputDeviceId::new(id),
+            name: id.to_owned(),
+            transport,
+        }
+    }
+
+    fn listed_devices(found: Vec<Found<()>>, os_default: &str) -> Vec<InputDevice> {
+        listed(found, Some(&id(os_default)))
+            .into_iter()
+            .map(|(_, device)| device)
+            .collect()
+    }
+
+    #[test]
+    fn an_iphone_microphone_is_never_listed() {
+        let listed = listed_devices(
+            vec![
+                found("coreaudio:iphone", Transport::ContinuityIphone),
+                found("coreaudio:built-in", Transport::BuiltIn),
+            ],
+            "coreaudio:built-in",
+        );
+
+        assert_eq!(listed, [device("coreaudio:built-in", true)]);
+    }
+
+    #[test]
+    fn a_built_in_microphone_stands_in_for_an_iphone_default() {
+        let listed = listed_devices(
+            vec![
+                found("coreaudio:usb", Transport::Other),
+                found("coreaudio:iphone", Transport::ContinuityIphone),
+                found("coreaudio:built-in", Transport::BuiltIn),
+            ],
+            "coreaudio:iphone",
+        );
+
+        assert_eq!(
+            listed,
+            [
+                device("coreaudio:usb", false),
+                device("coreaudio:built-in", true)
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_built_in_microphone_the_first_stands_in() {
+        let listed = listed_devices(
+            vec![
+                found("coreaudio:iphone", Transport::ContinuityIphone),
+                found("coreaudio:usb", Transport::Other),
+            ],
+            "coreaudio:iphone",
+        );
+
+        assert_eq!(listed, [device("coreaudio:usb", true)]);
     }
 
     #[test]

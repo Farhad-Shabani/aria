@@ -11,7 +11,7 @@ final class Microphones: ObservableObject {
     static let automatic = "automatic"
     static let systemDefault = "system_default"
     static let refreshInterval = Duration.seconds(2)
-    /// Names of devices seen before, so a chosen one that isn't connected
+    /// Names of devices seen before, so a chosen one that isn't listed
     /// still shows by name. A presentation choice, so it stays in the app.
     static let namesKey = "aria.microphoneNames"
 
@@ -71,8 +71,8 @@ final class Microphones: ObservableObject {
         if names != before { defaults.set(names, forKey: Self.namesKey) }
     }
 
-    /// Automatic, System Default, then each connected device. A chosen device
-    /// that isn't connected stays listed, so the picker still shows the choice.
+    /// Automatic, System Default, then each listed device. A chosen device
+    /// that isn't listed, such as an iPhone mic, stays so the picker shows it.
     static func choices(listed: MicrophoneList?, chosen: String, names: [String: String]) -> [Choice] {
         var choices = [
             Choice(id: automatic, title: "Automatic"),
@@ -83,7 +83,7 @@ final class Microphones: ObservableObject {
         if isDevice(chosen), !microphones.contains(where: { $0.id == chosen }) {
             let name = names[chosen] ?? "Unknown Microphone"
             // Before the first list, whether it's connected is unknown.
-            choices.append(Choice(id: chosen, title: listed == nil ? name : "\(name) (Not Connected)"))
+            choices.append(Choice(id: chosen, title: listed == nil ? name : "\(name) (Not Available)"))
         }
         return choices
     }
@@ -110,7 +110,7 @@ final class Microphones: ObservableObject {
             }
         if isDevice(chosen), !listed.microphones.contains(where: { $0.id == chosen }) {
             let name = names[chosen] ?? "The chosen microphone"
-            return "\(name) isn’t connected, so Aria records with \(recorder)."
+            return "\(name) isn’t available, so Aria records with \(recorder)."
         }
         return "Records with \(recorder)."
     }

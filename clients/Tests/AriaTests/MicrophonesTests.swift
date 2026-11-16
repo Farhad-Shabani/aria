@@ -24,13 +24,13 @@ final class MicrophonesTests: XCTestCase {
             listed: list([builtIn], current: builtIn.id), chosen: airPods.id,
             names: [airPods.id: "AirPods Pro"])
 
-        XCTAssertEqual(choices.last, Microphones.Choice(id: airPods.id, title: "AirPods Pro (Not Connected)"))
+        XCTAssertEqual(choices.last, Microphones.Choice(id: airPods.id, title: "AirPods Pro (Not Available)"))
     }
 
     func testAChosenDeviceNeverSeenIsAnUnknownMicrophone() {
         let choices = Microphones.choices(listed: list([builtIn], current: builtIn.id), chosen: airPods.id, names: [:])
 
-        XCTAssertEqual(choices.last?.title, "Unknown Microphone (Not Connected)")
+        XCTAssertEqual(choices.last?.title, "Unknown Microphone (Not Available)")
     }
 
     func testAFailureSaysWhatWentWrongAndWhatToDo() {
@@ -59,7 +59,7 @@ final class MicrophonesTests: XCTestCase {
         XCTAssertNil(Microphones.caption(listed: listed, chosen: builtIn.id, names: [:]))
         XCTAssertEqual(
             Microphones.caption(listed: listed, chosen: airPods.id, names: [airPods.id: "AirPods Pro"]),
-            "AirPods Pro isn’t connected, so Aria records with MacBook Pro Microphone.")
+            "AirPods Pro isn’t available, so Aria records with MacBook Pro Microphone.")
         XCTAssertEqual(
             Microphones.caption(listed: list([], current: nil), chosen: Microphones.automatic, names: [:]),
             "No microphone is connected.")
@@ -73,7 +73,7 @@ final class MicrophonesTests: XCTestCase {
             "Records with your iPhone.")
         XCTAssertEqual(
             Microphones.caption(listed: listed, chosen: airPods.id, names: [airPods.id: "AirPods Pro"]),
-            "AirPods Pro isn’t connected, so Aria records with your iPhone.")
+            "AirPods Pro isn’t available, so Aria records with your iPhone.")
     }
 
     func testARefreshRemembersEachDevicesName() async throws {

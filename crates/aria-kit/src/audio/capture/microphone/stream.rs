@@ -7,13 +7,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample, SupportedStreamConfig};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::audio::{InputDeviceId, samples_at};
 
-use super::devices::open_target;
+use super::devices::{open_target, system_default_device};
 use super::resampling::SampleRateConverter;
 use super::worker::IdleObservation;
 use super::{MicrophoneError, Result};
@@ -40,9 +40,7 @@ pub(super) struct LiveStream {
 /// a stream, because that triggers the permission prompt. Returns the device
 /// name.
 pub fn check_default_input_device() -> Result<String> {
-    let device = cpal::default_host()
-        .default_input_device()
-        .ok_or(MicrophoneError::NoInputDevice)?;
+    let device = system_default_device().ok_or(MicrophoneError::NoInputDevice)?;
     // Not `Display`: it panics if the description fails, which happens when
     // the device was unplugged after it was chosen.
     let description = device

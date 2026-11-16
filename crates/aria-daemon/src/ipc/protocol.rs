@@ -3261,10 +3261,9 @@ impl From<DictationStage> for wire::DictationEvent {
                 use wire::dictation_event::Microphone;
                 recording = id.0;
                 microphone = match captured {
-                    CapturedMicrophone::Device { id, on_iphone } => {
+                    CapturedMicrophone::Device { id } => {
                         Some(Microphone::Device(wire::MicrophoneDevice {
                             id: id.to_string(),
-                            on_iphone,
                         }))
                     }
                     // The daemon pushes in only the attached phone's audio.
@@ -3343,7 +3342,6 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
                     microphone: match &event.microphone {
                         Some(Microphone::Device(device)) => CapturedMicrophone::Device {
                             id: InputDeviceId::new(device.id.as_str()),
-                            on_iphone: device.on_iphone,
                         },
                         Some(Microphone::Phone(_)) => CapturedMicrophone::Pushed,
                         None => CapturedMicrophone::Prerecorded,
@@ -4101,8 +4099,7 @@ mod tests {
             DictationStage::Capturing {
                 id: RecordingId(7),
                 microphone: CapturedMicrophone::Device {
-                    id: InputDeviceId::new("coreaudio:iphone"),
-                    on_iphone: true,
+                    id: InputDeviceId::new("coreaudio:usb"),
                 },
             },
             DictationStage::Capturing {
@@ -4178,7 +4175,6 @@ mod tests {
 
         let device = on(CapturedMicrophone::Device {
             id: InputDeviceId::new("coreaudio:usb"),
-            on_iphone: false,
         });
         let phone = on(CapturedMicrophone::Pushed);
 
@@ -4187,7 +4183,6 @@ mod tests {
             device.microphone,
             Some(Microphone::Device(wire::MicrophoneDevice {
                 id: "coreaudio:usb".to_owned(),
-                on_iphone: false,
             }))
         );
         assert_eq!(

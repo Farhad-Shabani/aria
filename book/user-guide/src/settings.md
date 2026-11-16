@@ -18,7 +18,8 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
   [**Return** stop and send](./macos.md#stop-and-send-with-return).
   **Microphone** set to **Automatic** records with the system's default input.
   A microphone you choose records while it's connected. While it isn't, Aria
-  records with the default input.
+  records with the default input. Aria doesn't use the iPhone microphone that
+  macOS offers through Continuity.
 - **Recognition** sets the language, voice filtering, project vocabulary,
   and where speech recognition runs.
 - **Shortcuts** chooses right Option or Fn for the Aria key. It also sets
