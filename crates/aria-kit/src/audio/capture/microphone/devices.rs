@@ -1,5 +1,5 @@
 //! Which input device a recording uses: the chosen one while it's connected,
-//! else the system default.
+//! else the fallback, which is the system default.
 //!
 //! An iPhone's Continuity microphone is never listed, chosen, or opened.
 //! Holding it open wakes the iPhone's microphone whenever the phone comes
@@ -33,8 +33,9 @@ fn device_id(device: &cpal::Device) -> Option<InputDeviceId> {
 pub struct InputDevice {
     pub id: InputDeviceId,
     pub name: String,
-    /// The system default, or the device standing in for an iPhone default.
-    pub system_default: bool,
+    /// The device a recording uses while no chosen one is available: the
+    /// system default, or the one standing in for an iPhone default.
+    pub fallback: bool,
 }
 
 /// Every connected input device but an iPhone's microphone, without opening
@@ -46,15 +47,15 @@ pub fn input_devices() -> Result<Vec<InputDevice>> {
         .collect())
 }
 
-/// The device a recording uses: `wanted` while it's connected, else the
-/// system default. `None` when nothing can record.
+/// The device a recording uses: `wanted` while it's available, else the
+/// fallback. `None` when nothing can record.
 pub fn resolve_input<'devices>(
     wanted: Option<&InputDeviceId>,
     devices: &'devices [InputDevice],
 ) -> Option<&'devices InputDevice> {
     wanted
         .and_then(|wanted| devices.iter().find(|device| device.id == *wanted))
-        .or_else(|| devices.iter().find(|device| device.system_default))
+        .or_else(|| devices.iter().find(|device| device.fallback))
 }
 
 /// The cpal device [`resolve_input`] picks, and its id. Opens nothing.
@@ -72,33 +73,34 @@ pub(super) fn open_target(wanted: Option<&InputDeviceId>) -> Result<(cpal::Devic
     Ok((device, listed.id))
 }
 
-/// Whether the device `id` names is connected and listed. Opens nothing.
-pub fn is_connected(id: &InputDeviceId) -> bool {
+/// Whether the device `id` names is connected and Aria may record on it, as
+/// it never may on an iPhone's microphone. Opens nothing.
+pub fn is_available(id: &InputDeviceId) -> bool {
     connected(&cpal::default_host())
         .is_ok_and(|inputs| inputs.iter().any(|(_, device)| device.id == *id))
 }
 
 /// The id [`resolve_input`] falls back to. The idle worker asks every 100 ms,
 /// so the full listing runs only while an iPhone is the OS default.
-pub(super) fn system_default() -> Option<InputDeviceId> {
+pub(super) fn fallback() -> Option<InputDeviceId> {
     let host = cpal::default_host();
     let id = host.default_input_device().as_ref().and_then(device_id)?;
     if transport(&id) != Transport::ContinuityIphone {
         return Some(id);
     }
-    listed_default(&host).map(|(_, device)| device.id)
+    listed_fallback(&host).map(|(_, device)| device.id)
 }
 
 /// The device [`resolve_input`] falls back to.
-pub(super) fn system_default_device() -> Option<cpal::Device> {
-    listed_default(&cpal::default_host()).map(|(device, _)| device)
+pub(super) fn fallback_device() -> Option<cpal::Device> {
+    listed_fallback(&cpal::default_host()).map(|(device, _)| device)
 }
 
-fn listed_default(host: &cpal::Host) -> Option<(cpal::Device, InputDevice)> {
+fn listed_fallback(host: &cpal::Host) -> Option<(cpal::Device, InputDevice)> {
     connected(host)
         .ok()?
         .into_iter()
-        .find(|(_, device)| device.system_default)
+        .find(|(_, device)| device.fallback)
 }
 
 /// How a device reaches the computer, as far as choosing one cares.
@@ -147,7 +149,7 @@ fn listed<D>(
         .into_iter()
         .filter(|found| found.transport != Transport::ContinuityIphone)
         .collect();
-    let default = os_default.and_then(|os_default| {
+    let fallback = os_default.and_then(|os_default| {
         kept.iter()
             .position(|found| found.id == *os_default)
             .or_else(|| {
@@ -164,7 +166,7 @@ fn listed<D>(
                 InputDevice {
                     id: found.id,
                     name: found.name,
-                    system_default: default == Some(index),
+                    fallback: fallback == Some(index),
                 },
             )
         })
@@ -184,12 +186,12 @@ pub(super) enum Follow {
 pub(super) fn follow(
     wanted: Option<&InputDeviceId>,
     held: &InputDeviceId,
-    default: Option<&InputDeviceId>,
+    fallback: Option<&InputDeviceId>,
 ) -> Follow {
     if wanted == Some(held) {
         return Follow::Stay;
     }
-    if default != Some(held) {
+    if fallback != Some(held) {
         return Follow::Reopen;
     }
     if wanted.is_some() {
@@ -202,11 +204,11 @@ pub(super) fn follow(
 mod tests {
     use super::*;
 
-    fn device(id: &str, system_default: bool) -> InputDevice {
+    fn device(id: &str, fallback: bool) -> InputDevice {
         InputDevice {
             id: InputDeviceId::new(id),
             name: id.to_owned(),
-            system_default,
+            fallback,
         }
     }
 
@@ -215,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn a_connected_choice_wins_over_the_system_default() {
+    fn a_connected_choice_wins_over_the_fallback() {
         let devices = [
             device("coreaudio:airpods", true),
             device("coreaudio:built-in", false),
@@ -227,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_choice_falls_back_to_the_system_default() {
+    fn a_missing_choice_takes_the_fallback() {
         let devices = [device("coreaudio:built-in", true)];
 
         let resolved = resolve_input(Some(&id("coreaudio:airpods")), &devices);
@@ -236,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn no_choice_takes_the_system_default() {
+    fn no_choice_takes_the_fallback() {
         let devices = [
             device("coreaudio:usb", false),
             device("coreaudio:built-in", true),
@@ -313,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn a_held_choice_stays_when_the_default_moves() {
+    fn a_held_choice_stays_when_the_fallback_moves() {
         let held = id("coreaudio:built-in");
 
         let next = follow(Some(&held), &held, Some(&id("coreaudio:airpods")));
@@ -322,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn a_held_fallback_follows_the_default() {
+    fn a_held_fallback_moves_with_the_fallback() {
         let next = follow(
             Some(&id("coreaudio:usb")),
             &id("coreaudio:built-in"),
@@ -342,14 +344,14 @@ mod tests {
     }
 
     #[test]
-    fn clearing_the_choice_leaves_a_device_that_is_not_the_default() {
+    fn clearing_the_choice_leaves_a_device_that_is_not_the_fallback() {
         let next = follow(None, &id("coreaudio:usb"), Some(&id("coreaudio:built-in")));
 
         assert_eq!(next, Follow::Reopen);
     }
 
     #[test]
-    fn no_choice_on_the_default_stays() {
+    fn no_choice_on_the_fallback_stays() {
         let held = id("coreaudio:built-in");
 
         assert_eq!(follow(None, &held, Some(&held)), Follow::Stay);

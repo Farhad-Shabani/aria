@@ -17,8 +17,8 @@ use crate::voice_activity::VoiceActivityError;
 #[cfg(feature = "microphone")]
 pub use microphone::{
     InputDevice, Microphone, MicrophoneBuilder, PreparedMicrophone, WakeWordControl, WakeWordEvent,
-    WakeWordFailure, WakeWordMonitor, WakeWordSuspension, check_default_input_device,
-    input_devices, is_connected, resolve_input,
+    WakeWordFailure, WakeWordMonitor, WakeWordSuspension, check_fallback_input_device,
+    input_devices, is_available, resolve_input,
 };
 #[cfg(feature = "microphone")]
 pub use pushed::PushedCapture;

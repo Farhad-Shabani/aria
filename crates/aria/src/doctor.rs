@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use crate::audio::{WavReplayCapture, check_default_input_device};
+use crate::audio::{WavReplayCapture, check_fallback_input_device};
 use crate::primitives::error_chain;
 use aria_daemon::RELAY_SERVICE_TYPE;
 use aria_daemon::config::{DaemonConfig, RelayConfig, WakeConfig, WakeWordOverride};
@@ -157,7 +157,7 @@ fn audio_capture(config: Option<&DictationConfig>) -> Check {
 
 fn capture_source(capture: &CaptureConfig, recording_timeout: Duration) -> Check {
     match capture {
-        CaptureConfig::Microphone => match check_default_input_device() {
+        CaptureConfig::Microphone => match check_fallback_input_device() {
             Ok(device) => Check::ok(AUDIO_CAPTURE, device),
             Err(error) => Check::failed(AUDIO_CAPTURE, error_chain(&error)),
         },

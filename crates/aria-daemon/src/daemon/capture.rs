@@ -9,7 +9,7 @@ use crate::daemon::config::WakeConfig;
 use aria_kit::audio::{
     AudioCapture, CaptureError, InputDevice, InputDeviceId, Inputs, Microphone, MicrophoneError,
     PreparedMicrophone, PushedCapture, RecordingMode, RecordingReader, StopSignal, WakeWordMonitor,
-    WavReplayCapture, is_connected,
+    WavReplayCapture, is_available,
 };
 use aria_kit::voice_activity::SileroVad;
 use aria_primitives::error_chain;
@@ -49,8 +49,8 @@ pub(in crate::daemon) enum CaptureBackend {
 
 pub(in crate::daemon) struct PhoneInput {
     phones: Arc<PhoneMicrophone>,
-    /// Whether a chosen Mac device is connected, which decides the phone.
-    connected: fn(&InputDeviceId) -> bool,
+    /// Whether a chosen Mac device is available, which decides the phone.
+    available: fn(&InputDeviceId) -> bool,
     capture: PushedCapture<SileroVad>,
 }
 
@@ -93,7 +93,7 @@ impl PhoneInput {
         let vad = SileroVad::load().map_err(MicrophoneError::VoiceActivity)?;
         Ok(Self {
             phones,
-            connected: is_connected,
+            available: is_available,
             capture: PushedCapture::new(spool_dir, recording_timeout, vad),
         })
     }
@@ -106,8 +106,8 @@ impl PhoneInput {
         stop: StopSignal,
     ) -> Started {
         let attached = self.phones.is_attached();
-        if target(preference, inputs, attached, self.connected) == Target::Mac {
-            // A connected chosen device outranks the phone, which then
+        if target(preference, inputs, attached, self.available) == Target::Mac {
+            // An available chosen device outranks the phone, which then
             // waits awake for nothing.
             if attached && inputs == Inputs::Any {
                 self.phones.dismiss();
@@ -154,7 +154,7 @@ impl PhoneInput {
     /// doesn't wait awake for nothing.
     fn apply(&self, preference: &aria_settings::Microphone) {
         if self.phones.is_attached()
-            && target(preference, Inputs::Any, true, self.connected) == Target::Mac
+            && target(preference, Inputs::Any, true, self.available) == Target::Mac
         {
             self.phones.dismiss();
         }
@@ -199,7 +199,7 @@ impl From<&ListMicrophonesError> for RpcErrorCode {
     }
 }
 
-/// Every connected input device. Opens none of them.
+/// Every input device Aria may record on. Opens none of them.
 pub(in crate::daemon) fn list_microphones() -> Result<Vec<InputDevice>, ListMicrophonesError> {
     aria_kit::audio::input_devices().map_err(ListMicrophonesError)
 }
@@ -419,8 +419,8 @@ mod tests {
             Self::with_devices(|_| false)
         }
 
-        /// `connected` stands in for the Mac's devices.
-        fn with_devices(connected: fn(&InputDeviceId) -> bool) -> Self {
+        /// `available` stands in for the Mac's devices.
+        fn with_devices(available: fn(&InputDeviceId) -> bool) -> Self {
             let directory = tempfile::tempdir().expect("a temp dir");
             let phones = PhoneMicrophone::new();
             let (setting, _) = watch::channel(Preference::Automatic);
@@ -430,7 +430,7 @@ mod tests {
                 Duration::from_secs(60),
             )
             .expect("silero loads");
-            input.connected = connected;
+            input.available = available;
             Self {
                 _directory: directory,
                 input: Arc::new(input),
