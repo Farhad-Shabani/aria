@@ -19,7 +19,7 @@ workspace = true
 ignored = [ "ort" ]
 
 [features]
-microphone = [ "dep:cpal", "dep:rtrb", "dep:rustix", "silero" ]
+microphone = [ "dep:cidre", "dep:cpal", "dep:rtrb", "dep:rustix", "silero" ]
 playback   = [ "dep:cpal" ]
 silero     = [ "dep:ort", "dep:silero" ]
 # Exposes test fixtures to downstream crates' tests.
@@ -43,6 +43,10 @@ rustix   = { workspace = true, features = [ "fs", "process" ], optional = true }
 ort      = { workspace = true, optional = true }
 silero   = { version = "=0.6.0", optional = true }
 tempfile = { workspace = true }
+
+# Tells an iPhone's Continuity microphone apart, which capture never opens.
+[target.'cfg(target_os = "macos")'.dependencies]
+cidre = { workspace = true, features = [ "core_audio", "dispatch", "macos_14_2" ], optional = true }
 
 [dev-dependencies]
 rstest     = { version = "0.28", default-features = false }

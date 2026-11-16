@@ -23,13 +23,12 @@ extension Pill {
         }
     }
 
-    /// Whether a recording captures from an iPhone, by its CAPTURING event:
-    /// the attached phone, or an iPhone's microphone through Continuity.
+    /// Whether a recording captures from the attached iPhone, by its
+    /// CAPTURING event.
     static func capturesFromIPhone(_ event: Aria_Daemon_V1_DictationEvent) -> Bool {
         switch event.microphone {
         case .phone: true
-        case .device(let device): device.onIphone
-        case nil: false
+        case .device, nil: false
         }
     }
 }

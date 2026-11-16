@@ -7,13 +7,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample, SupportedStreamConfig};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::audio::{InputDeviceId, samples_at};
 
-use super::devices::open_target;
+use super::devices::{fallback_device, open_target};
 use super::resampling::SampleRateConverter;
 use super::worker::IdleObservation;
 use super::{MicrophoneError, Result};
@@ -36,13 +36,11 @@ pub(super) struct LiveStream {
     errors: Receiver<cpal::Error>,
 }
 
-/// Checks the default microphone as `LiveStream::open` does, without opening
+/// Checks the fallback microphone as `LiveStream::open` does, without opening
 /// a stream, because that triggers the permission prompt. Returns the device
 /// name.
-pub fn check_default_input_device() -> Result<String> {
-    let device = cpal::default_host()
-        .default_input_device()
-        .ok_or(MicrophoneError::NoInputDevice)?;
+pub fn check_fallback_input_device() -> Result<String> {
+    let device = fallback_device().ok_or(MicrophoneError::NoInputDevice)?;
     // Not `Display`: it panics if the description fails, which happens when
     // the device was unplugged after it was chosen.
     let description = device
@@ -53,8 +51,8 @@ pub fn check_default_input_device() -> Result<String> {
 }
 
 impl LiveStream {
-    /// Opens the device `wanted` names while it's connected, else the
-    /// system default.
+    /// Opens the device `wanted` names while it's available, else the
+    /// fallback.
     pub(super) fn open(wanted: Option<&InputDeviceId>) -> Result<Self> {
         let (device, id) = open_target(wanted)?;
         let config = select_input_config(&device)?;

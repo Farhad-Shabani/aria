@@ -21,8 +21,8 @@ use crate::wake_word::WakeWordDetector;
 use super::{AudioCapture, Inputs, MicrophoneError, RecordingMode};
 
 use crate::audio::InputDeviceId;
-pub use devices::{InputDevice, input_devices, is_connected, resolve_input};
-pub use stream::check_default_input_device;
+pub use devices::{InputDevice, input_devices, is_available, resolve_input};
+pub use stream::check_fallback_input_device;
 pub use wake_word::{
     WakeWordControl, WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
 };
@@ -51,7 +51,7 @@ impl Microphone {
         }
     }
 
-    /// Records on `input` while it's connected, else the system default.
+    /// Records on `input` while it's available, else the fallback.
     /// `None` follows the system default. A recording in progress keeps its
     /// device; the next one uses the new choice.
     pub fn use_input(&self, input: Option<InputDeviceId>) -> Result<()> {

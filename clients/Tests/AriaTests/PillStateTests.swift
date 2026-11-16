@@ -174,9 +174,7 @@ final class PillStateTests: XCTestCase {
 
         event.phone = Aria_Daemon_V1_AttachedPhone()
         XCTAssertTrue(Pill.capturesFromIPhone(event))
-        event.device = .with { $0.onIphone = true }
-        XCTAssertTrue(Pill.capturesFromIPhone(event))
-        event.device = .with { $0.onIphone = false }
+        event.device = Aria_Daemon_V1_MicrophoneDevice()
         XCTAssertFalse(Pill.capturesFromIPhone(event))
         event.microphone = nil
         XCTAssertFalse(Pill.capturesFromIPhone(event))

@@ -1701,13 +1701,9 @@ fn check_execution(control: &ExecutionControl) -> Result<(), DictationError> {
     Ok(())
 }
 
-/// Asks the OS whether a device is an iPhone, so no client has to.
 fn captured_microphone(source: RecordingSource) -> CapturedMicrophone {
     match source {
-        RecordingSource::Device(id) => {
-            let on_iphone = aria_platform::microphone::is_continuity_iphone(&id);
-            CapturedMicrophone::Device { id, on_iphone }
-        }
+        RecordingSource::Device(id) => CapturedMicrophone::Device { id },
         RecordingSource::Pushed => CapturedMicrophone::Pushed,
         RecordingSource::Prerecorded => CapturedMicrophone::Prerecorded,
     }

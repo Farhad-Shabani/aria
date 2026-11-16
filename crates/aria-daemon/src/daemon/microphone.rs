@@ -1,7 +1,7 @@
 //! Which microphone a press records on: the one rule the capture, the
 //! microphone list, and the phone stream all read.
 
-use aria_kit::audio::{InputDevice, InputDeviceId, Inputs, is_connected, resolve_input};
+use aria_kit::audio::{InputDevice, InputDeviceId, Inputs, is_available, resolve_input};
 use aria_settings::Microphone;
 
 /// Where one recording runs.
@@ -11,13 +11,13 @@ pub(super) enum Target {
     Phone,
 }
 
-/// The one rule for which microphone records. `connected` asks whether a
-/// chosen Mac device is connected; it runs only when the answer matters.
+/// The one rule for which microphone records. `available` asks whether a
+/// chosen Mac device is available; it runs only when the answer matters.
 pub(super) fn target(
     preference: &Microphone,
     inputs: Inputs,
     attached: bool,
-    connected: impl FnOnce(&InputDeviceId) -> bool,
+    available: impl FnOnce(&InputDeviceId) -> bool,
 ) -> Target {
     if inputs == Inputs::Local || !attached {
         return Target::Mac;
@@ -26,7 +26,7 @@ pub(super) fn target(
         Microphone::Automatic => Target::Phone,
         Microphone::SystemDefault => Target::Mac,
         Microphone::Device(_) => match input(preference) {
-            Some(id) if connected(&id) => Target::Mac,
+            Some(id) if available(&id) => Target::Mac,
             _ => Target::Phone,
         },
     }
@@ -35,7 +35,7 @@ pub(super) fn target(
 /// Whether a press would record on an attached phone now, by the rule a
 /// recording uses. Lists the audio devices when a Mac device is chosen.
 pub(in crate::daemon) fn admits_phone(preference: &Microphone) -> bool {
-    target(preference, Inputs::Any, true, is_connected) == Target::Phone
+    target(preference, Inputs::Any, true, is_available) == Target::Phone
 }
 
 /// For a capture that never records on a phone, such as a WAV replay.
@@ -57,8 +57,8 @@ pub(in crate::daemon) fn current(
     attached: bool,
     devices: &[InputDevice],
 ) -> Option<CurrentMicrophone> {
-    let connected = |id: &InputDeviceId| devices.iter().any(|device| device.id == *id);
-    match target(preference, Inputs::Any, attached, connected) {
+    let available = |id: &InputDeviceId| devices.iter().any(|device| device.id == *id);
+    match target(preference, Inputs::Any, attached, available) {
         Target::Phone => Some(CurrentMicrophone::Phone),
         Target::Mac => resolve_input(input(preference).as_ref(), devices)
             .map(|device| CurrentMicrophone::Device(device.id.clone())),
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn the_preference_and_the_caller_pick_the_microphone() {
-        let connected = |_: &InputDeviceId| true;
+        let available = |_: &InputDeviceId| true;
         let missing = |_: &InputDeviceId| false;
         let usb = device("coreaudio:usb");
         let cases = [
@@ -96,12 +96,12 @@ mod tests {
         ];
         for (preference, inputs, attached, expected) in cases {
             assert_eq!(
-                target(&preference, inputs, attached, connected),
+                target(&preference, inputs, attached, available),
                 expected,
                 "{preference:?} {inputs:?} attached={attached}"
             );
         }
-        assert_eq!(target(&usb, Inputs::Any, true, connected), Target::Mac);
+        assert_eq!(target(&usb, Inputs::Any, true, available), Target::Mac);
         assert_eq!(target(&usb, Inputs::Any, true, missing), Target::Phone);
         assert_eq!(target(&usb, Inputs::Local, true, missing), Target::Mac);
     }
@@ -127,12 +127,12 @@ mod tests {
         let builtin = InputDevice {
             id: InputDeviceId::new("coreaudio:builtin"),
             name: "MacBook Pro Microphone".to_owned(),
-            system_default: true,
+            fallback: true,
         };
         let usb = InputDevice {
             id: InputDeviceId::new("coreaudio:usb"),
             name: "USB Microphone".to_owned(),
-            system_default: false,
+            fallback: false,
         };
         let devices = [builtin.clone(), usb.clone()];
         let on = |device: &InputDevice| Some(CurrentMicrophone::Device(device.id.clone()));

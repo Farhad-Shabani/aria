@@ -42,7 +42,7 @@ const PRE_PRESS_SAMPLES: usize = 16_000;
 
 pub(super) enum Command {
     Record(RecordCommand),
-    /// Records on this device while it's connected, else the system default.
+    /// Records on this device while it's available, else the fallback.
     UseInput(Option<InputDeviceId>),
     SuspendWakeWord,
     ResumeWakeWord,
@@ -122,7 +122,7 @@ where
 struct Worker<V, I> {
     spool_dir: PathBuf,
     maximum_duration: Duration,
-    /// The chosen device. `None` follows the system default.
+    /// The chosen device. `None` follows the fallback.
     input: Option<InputDeviceId>,
     vad: V,
     monitor: I,
@@ -279,7 +279,7 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
         let reopen = match devices::follow(
             self.input.as_ref(),
             live.device(),
-            devices::system_default().as_ref(),
+            devices::fallback().as_ref(),
         ) {
             Follow::Stay => false,
             Follow::Reopen => true,
@@ -298,7 +298,7 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
             return false;
         }
         self.check_chosen_after = now + CHOSEN_CHECK_INTERVAL;
-        self.input.as_ref().is_some_and(devices::is_connected)
+        self.input.as_ref().is_some_and(devices::is_available)
     }
 
     /// Drops the held stream and the pre-press audio gathered from it, so
