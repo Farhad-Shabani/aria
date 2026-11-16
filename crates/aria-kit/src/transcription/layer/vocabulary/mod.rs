@@ -135,8 +135,7 @@ impl Bucket {
         bytes
     }
 
-    // A form that types as heard types the same whether its words come
-    // together or not.
+    // A form typed as heard types the same split or whole, so it never waits.
     fn begins_a_spelled_form(&self, said: &str) -> bool {
         if said.chars().count() >= self.max_chars {
             return false;
@@ -404,9 +403,8 @@ impl Vocabulary {
         self.personal.defer_waiting_forms(text, claimed);
     }
 
-    // A name matches only once all its words are in one text, so the words a
-    // text ends on wait while they begin one: "open aria" may go on as "open
-    // aria hyphen kit". More than `max_words` would be typed, not held.
+    // A name matches only within one text, so a text ending on a name's start
+    // holds it: "open aria" may go on as "hyphen kit".
     pub(super) fn defer_waiting_names(
         &self,
         text: &str,
@@ -424,7 +422,7 @@ impl Vocabulary {
                     .is_some_and(|bucket| bucket.begins_a_spelled_form(&normalize(said)))
         };
         let words = claimed.words();
-        // A claimed span can hold several words, so the window counts words.
+        // A claimed span can hold several words, so count words, not spans.
         let earliest = words[words.len().saturating_sub(max_words)..]
             .iter()
             .map(|word| word.span.start)
@@ -587,7 +585,7 @@ fn first_word(text: &str) -> Option<Cow<'_, str>> {
         return Some(Cow::Borrowed(&text[..first.len_utf8()]));
     }
     let word = &text[..text.find(|c| !is_word(c)).unwrap_or(text.len())];
-    // Matching looks up every word it reads, and most are lowercase already.
+    // Most words are lowercase already, so skip the allocation.
     if word.chars().all(|c| c.to_lowercase().eq([c])) {
         return Some(Cow::Borrowed(word));
     }

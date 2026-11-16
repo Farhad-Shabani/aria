@@ -20,8 +20,7 @@ const MAX_HELD_WORDS: usize = 8;
 ///   which of its words more speech may still change, and which spans a cut
 ///   must not split. A step defers its words as it claims them or in
 ///   `Step::defer`, and the hold follows it.
-/// - The vocabulary decides which words begin a name that types a
-///   spelling, and defers them before any step does.
+/// - The vocabulary defers the start of a name typed in its own spelling.
 /// - `DeferredWords` holds the deferred words a segment ends on, at most
 ///   `MAX_HELD_WORDS`, and releases them ahead of the next segment.
 /// - `sentences::goes_on` decides whether a closing mark drops, for a
@@ -527,7 +526,6 @@ mod tests {
         assert_eq!(streamed(&pieces, &crowded()), "visit new york.five");
     }
 
-    /// Names with a symbol, and the pair arya → aria, which respells one.
     fn names() -> Vocabulary {
         let terms = ["aria-kit", "AppDelegate.swift"].map(|canonical| Term {
             canonical: canonical.to_owned(),
@@ -537,7 +535,6 @@ mod tests {
         Vocabulary::compile(&terms, PersonalRules::new(vec![], pair)).unwrap()
     }
 
-    /// Every way to cut each sentence into two or three segments.
     #[rstest]
     #[case("open aria dash kit now")]
     #[case("open aria hyphen kit now")]

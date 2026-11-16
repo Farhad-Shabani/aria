@@ -50,20 +50,16 @@ pub(crate) enum Event {
     Idle,
 }
 
-/// Whether the speaker paused long enough that nothing more follows the
-/// words held so far.
+/// Whether the speaker paused long enough to release held words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pause {
     Heard,
-    /// Speech goes on, words wait to be decided, or the decoder has not
-    /// read up to the silence.
     NotYet,
-    /// No detector judges the audio, and no words wait to be decided.
+    /// No usable speech map, and every word is out.
     Unjudged,
 }
 
-/// Whether words have yet to reach the caller: undecided at the gate, or
-/// released and queued behind another event.
+/// Whether any word is still undecided at the gate or queued as released.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Words {
     Out,
@@ -213,9 +209,8 @@ fn held_speech_before(speech: &SpeechMap, at: u64) -> bool {
     speech.speech_before(at) > 0
 }
 
-/// Whether the last `wait` of the audio `speech` scored is silent, with
-/// the decoder past its start but not past what was scored, and every word
-/// out. Any word said before that silence has then reached the caller.
+/// The decoder must have read into the silence, and the map must have
+/// scored all it read.
 fn paused(speech: Option<&SpeechMap>, read_to: u64, words: Words, wait: Duration) -> Pause {
     if words == Words::Waiting {
         return Pause::NotYet;
@@ -259,7 +254,6 @@ pub(crate) struct Hearing<'scope> {
     done: bool,
     /// The earliest audio the decoder may still send a segment from.
     retained_from: u64,
-    /// Where the decoder has read to.
     read_to: u64,
 }
 
@@ -384,7 +378,6 @@ impl<'scope> Hearing<'scope> {
         }
     }
 
-    /// Whether the speaker has paused for `wait`, as the audio shows.
     pub(crate) fn pause(&self, wait: Duration) -> Pause {
         let snapshot = self.turns.as_ref().map(|_| self.board.snapshot());
         let speech = snapshot.as_ref().map(|snapshot| &*snapshot.speech);
@@ -650,7 +643,7 @@ mod tests {
 
     const WAIT: Duration = Duration::from_millis(1500);
 
-    /// Where anyone spoke in `seconds`, each loud or quiet.
+    /// A speech map with one loud or quiet second per entry.
     fn speech(seconds: &[bool]) -> SpeechMap {
         let mut detector = SpeechDetector::new(Loud, 0);
         for &loud in seconds {

@@ -972,10 +972,8 @@ impl SegmentEnds {
 /// The least time between two tries of queued text.
 const QUEUE_RETRY: Duration = Duration::from_millis(250);
 
-/// How long a pause in the audio held words wait through for more speech,
-/// or how long they wait when no detector hears the audio. After a pause
-/// this long the speaker has moved on, and typing the words beats holding
-/// them back.
+/// How long the audio stays silent before held words go out, or, with no
+/// detector, how long they wait. By then the speaker has moved on.
 const HELD_WAIT: Duration = Duration::from_millis(1500);
 
 /// What one dictation has put out so far, with the events and logs each
@@ -1129,10 +1127,8 @@ impl<'a> Published<'a> {
             .or_else(|error| self.undelivered(error))
     }
 
-    /// Publishes the held words once the speaker has paused. With no audio
-    /// to judge the pause by, they wait [`HELD_WAIT`] by `now`. Complete
-    /// delivery types nothing before the press ends, so its held words wait
-    /// for that.
+    /// With no audio to judge, held words wait [`HELD_WAIT`] by `now`.
+    /// Complete delivery holds them to the end of the press.
     fn publish_after_pause<S>(
         &mut self,
         pause: Pause,
