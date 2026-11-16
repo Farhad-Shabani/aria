@@ -1108,6 +1108,7 @@ impl<C: Collector> Worker<C> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::log::testing::CapturedLogs;
     use super::*;
     use aria_voice::vocabulary::extract::{self, Extractor, LocalExtractor, TextInput};
     use aria_voice::vocabulary::{
@@ -1391,20 +1392,6 @@ mod tests {
         assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::Internal);
     }
 
-    #[derive(Clone, Default)]
-    struct Captured(Arc<Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Captured {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
     #[test]
     fn a_refresh_whose_requester_left_logs_its_failure() {
         let temporary = tempfile::tempdir().unwrap();
@@ -1412,23 +1399,16 @@ mod tests {
         let (_runtime, worker) = static_runtime(temporary.path(), &selected);
         let (reply, receiver) = oneshot::channel();
         drop(receiver);
-        let captured = Captured::default();
-        let sink = captured.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || sink.clone())
-            .with_ansi(false)
-            .finish();
+        let logs = CapturedLogs::start();
 
-        tracing::subscriber::with_default(subscriber, || {
-            worker.conclude(
-                Some(&selected),
-                &AtomicBool::new(false),
-                Err(Error::Unavailable(None)),
-                Some(reply),
-            );
-        });
+        worker.conclude(
+            Some(&selected),
+            &AtomicBool::new(false),
+            Err(Error::Unavailable(None)),
+            Some(reply),
+        );
 
-        let log = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        let log = logs.text();
         assert!(log.contains("requester gone"), "{log}");
     }
 

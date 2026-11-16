@@ -332,6 +332,59 @@ pub enum DaemonLogError {
 }
 
 #[cfg(test)]
+pub(in crate::daemon) mod testing {
+    use std::io;
+    use std::sync::{Arc, Mutex};
+
+    /// What this thread logs while the value lives, for a test to read back.
+    pub(in crate::daemon) struct CapturedLogs {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        _subscriber: tracing::subscriber::DefaultGuard,
+        // With one dispatch, the first thread to reach a callsite caches its
+        // interest for all. A second keeps tracing asking each one.
+        _second: tracing::Dispatch,
+    }
+
+    impl CapturedLogs {
+        pub(in crate::daemon) fn start() -> Self {
+            let bytes = Arc::new(Mutex::new(Vec::new()));
+            let sink = Sink(Arc::clone(&bytes));
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(move || sink.clone())
+                .with_ansi(false)
+                .finish();
+            Self {
+                bytes,
+                _subscriber: tracing::subscriber::set_default(subscriber),
+                _second: tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()),
+            }
+        }
+
+        pub(in crate::daemon) fn text(&self) -> String {
+            let bytes = self.bytes.lock().expect("the captured log").clone();
+            String::from_utf8(bytes).expect("the log is text")
+        }
+    }
+
+    #[derive(Clone)]
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .expect("the captured log")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
