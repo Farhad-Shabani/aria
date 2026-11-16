@@ -134,6 +134,20 @@ impl Bucket {
             * (std::mem::size_of::<(String, Candidate)>() + 1);
         bytes
     }
+
+    // A form that types as heard types the same whether its words come
+    // together or not.
+    fn begins_a_spelled_form(&self, said: &str) -> bool {
+        if said.chars().count() >= self.max_chars {
+            return false;
+        }
+        self.aliases.iter().any(|(alias, candidate)| {
+            candidate.name.typed().is_some()
+                && alias
+                    .strip_prefix(said)
+                    .is_some_and(|rest| rest.starts_with(' '))
+        })
+    }
 }
 
 #[derive(Default)]
@@ -388,6 +402,37 @@ impl Vocabulary {
 
     pub(super) fn defer_waiting_forms(&self, text: &str, claimed: &mut Claimed<'_>) {
         self.personal.defer_waiting_forms(text, claimed);
+    }
+
+    // A name matches only once all its words are in one text, so the words a
+    // text ends on wait while they begin one: "open aria" may go on as "open
+    // aria hyphen kit". More than `max_words` would be typed, not held.
+    pub(super) fn defer_waiting_names(
+        &self,
+        text: &str,
+        max_words: usize,
+        claimed: &mut Claimed<'_>,
+    ) {
+        if self.index.is_empty() {
+            return;
+        }
+        let begins_a_name = |start: usize| {
+            let said = &text[start..];
+            !continues_word(text[..start].chars().rev())
+                && first_word(said)
+                    .and_then(|first| self.index.get(first.as_ref()))
+                    .is_some_and(|bucket| bucket.begins_a_spelled_form(&normalize(said)))
+        };
+        let words = claimed.words();
+        // A claimed span can hold several words, so the window counts words.
+        let earliest = words[words.len().saturating_sub(max_words)..]
+            .iter()
+            .map(|word| word.span.start)
+            .filter(|&start| text[start..].split_whitespace().nth(max_words).is_none())
+            .find(|&start| begins_a_name(start));
+        if let Some(start) = earliest {
+            claimed.defer_at(start);
+        }
     }
 
     /// `text` with each claim typed, and personal rules applied to the

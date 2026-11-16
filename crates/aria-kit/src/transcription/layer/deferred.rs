@@ -7,10 +7,11 @@ use super::Vocabulary;
 const MAX_HELD_WORDS: usize = 8;
 
 /// Holds a segment's last words while the next segment may still change
-/// them: a spoken symbol it may join, or a number it may go on.
+/// them: a spoken symbol it may join, a number it may go on, or a name it
+/// may complete.
 ///
-/// Streaming can split "user underscore id" or "twenty one" across
-/// segments. Correct what [`hold`](Self::hold) releases with
+/// Streaming can split "user underscore id", "twenty one" or "aria hyphen
+/// kit" across segments. Correct what [`hold`](Self::hold) releases with
 /// [`Vocabulary::correct_spoken`], after the text already typed.
 ///
 /// Who decides what:
@@ -19,6 +20,8 @@ const MAX_HELD_WORDS: usize = 8;
 ///   which of its words more speech may still change, and which spans a cut
 ///   must not split. A step defers its words as it claims them or in
 ///   `Step::defer`, and the hold follows it.
+/// - The vocabulary decides which words begin a name that types a
+///   spelling, and defers them before any step does.
 /// - `DeferredWords` holds the deferred words a segment ends on, at most
 ///   `MAX_HELD_WORDS`, and releases them ahead of the next segment.
 /// - `sentences::goes_on` decides whether a closing mark drops, for a
@@ -522,6 +525,82 @@ mod tests {
     fn a_symbol_opening_a_segment_joins_the_last_word_of_a_term() {
         let pieces = [("visit new york", None), ("dot five", None)];
         assert_eq!(streamed(&pieces, &crowded()), "visit new york.five");
+    }
+
+    /// Names with a symbol, and the pair arya → aria, which respells one.
+    fn names() -> Vocabulary {
+        let terms = ["aria-kit", "AppDelegate.swift"].map(|canonical| Term {
+            canonical: canonical.to_owned(),
+            priority: 1,
+        });
+        let pair = vec![("arya".to_owned(), "aria".to_owned())];
+        Vocabulary::compile(&terms, PersonalRules::new(vec![], pair)).unwrap()
+    }
+
+    /// Every way to cut each sentence into two or three segments.
+    #[rstest]
+    #[case("open aria dash kit now")]
+    #[case("open aria hyphen kit now")]
+    #[case("open app delegate dot swift now")]
+    #[case::through_a_pair("open arya hyphen kit now")]
+    fn any_split_types_a_name_whole(#[case] heard: &str) {
+        let vocabulary = names();
+        let whole = vocabulary.correct_spoken(heard, "").unwrap().text;
+        let words: Vec<&str> = heard.split(' ').collect();
+        for first in 1..words.len() {
+            for second in first..words.len() {
+                let pieces = [&words[..first], &words[first..second], &words[second..]]
+                    .map(|piece| piece.join(" "));
+                let pieces: Vec<(&str, Option<bool>)> = pieces
+                    .iter()
+                    .filter(|piece| !piece.is_empty())
+                    .map(|piece| (piece.as_str(), None))
+                    .collect();
+                assert_eq!(streamed(&pieces, &vocabulary), whole, "{pieces:?}");
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::capitalized(&[("Aria", None), ("hyphen kit", None)], "aria-kit")]
+    #[case::marks(&[("Open Aria.", None), ("Hyphen kit now.", Some(false))], "Open aria-kit now.")]
+    fn a_name_joins_across_cased_segments(
+        #[case] pieces: &[(&str, Option<bool>)],
+        #[case] typed: &str,
+    ) {
+        assert_eq!(streamed(pieces, &names()), typed);
+    }
+
+    #[test]
+    fn a_name_start_is_held_within_max_words_spoken_words() {
+        let vocabulary = Vocabulary::new(["a-b-c-d-e-f", "b-c", "d-e-g"]).unwrap();
+        let heard = "x a dash b dash c dash d dash e";
+        let from = vocabulary.spoken_deferred_from(heard, MAX_HELD_WORDS);
+        assert_eq!(&heard[..from], "x a dash b dash c dash ");
+    }
+
+    #[rstest]
+    #[case::first_word("open aria", "open ")]
+    #[case::two_words("open app delegate", "open ")]
+    #[case::up_to_a_symbol("open aria dash", "open ")]
+    #[case::whole_name("open aria dash kit", "open aria dash kit")]
+    #[case::through_a_pair("open arya", "open ")]
+    #[case::no_name_starts("open area", "open area")]
+    fn a_segment_holds_the_start_of_a_spelled_name(#[case] heard: &str, #[case] typed: &str) {
+        let vocabulary = names();
+        let from = vocabulary.spoken_deferred_from(heard, MAX_HELD_WORDS);
+        assert_eq!(&heard[..from], typed);
+    }
+
+    #[test]
+    fn the_start_of_a_name_typed_as_heard_is_released() {
+        let vocabulary = Vocabulary::new(["New York City"]).unwrap();
+        let mut words = DeferredWords::default();
+        assert_eq!(
+            words.hold("visit new york", None, &vocabulary).text,
+            "visit new york"
+        );
+        assert!(words.finish().is_none());
     }
 
     #[test]

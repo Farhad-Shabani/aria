@@ -162,14 +162,17 @@ impl Vocabulary {
     /// [`DeferredWords`](super::DeferredWords) holds.
     ///
     /// Only the steps before the first join claim, because more speech may
-    /// still undo a join. Then every step defers more words until the cut
-    /// stays put, or until more than `max_words` are deferred, which a hold
-    /// types rather than holds.
+    /// still undo a join. Names defer the start of one the text ends on.
+    /// Then every step defers more words until the cut stays put, or until
+    /// more than `max_words` are deferred, which a hold types rather than
+    /// holds.
     pub(super) fn spoken_deferred_from(&self, text: &str, max_words: usize) -> usize {
         let unjoined = SPOKEN.iter().take_while(|step| !step.joins()).count();
         let mut claimed = self.claimed_spoken(text, 0, |claimed| {
             claim_each(&SPOKEN[..unjoined], text, self, claimed);
         });
+        // Where a name begins doesn't move with the cut, so it is found once.
+        self.defer_waiting_names(text, max_words, &mut claimed);
         loop {
             let from = claimed.deferred_from();
             for step in SPOKEN {
