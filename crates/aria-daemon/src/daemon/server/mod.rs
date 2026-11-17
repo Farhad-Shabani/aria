@@ -31,7 +31,7 @@ use super::host::DaemonLifetime;
 use super::hotkey::HotkeyTrigger;
 use super::memory::MemoryBacklog;
 use super::service::{
-    ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, MicrophoneRpc,
+    ChatRpc, DictationRpc, EventsService, HistoryRpc, HistoryWorker, HotkeyRpc, MicrophoneRpc,
     PairingAdminRpc, SettingsRpc, SpeakerRpc, SpeechRpc, SystemTranscriptionRpc, VocabularyRpc,
 };
 use super::settings::SettingsActor;
@@ -293,6 +293,7 @@ pub(super) struct Services {
     pub(super) chat: ChatRpc,
     pub(super) system_transcription: SystemTranscriptionRpc,
     pub(super) settings: SettingsRpc,
+    pub(super) hotkey: HotkeyRpc,
     pub(super) vocabulary: VocabularyRpc,
     pub(super) speaker: SpeakerRpc,
     pub(super) microphone: MicrophoneRpc,
@@ -325,6 +326,9 @@ async fn build_router(
         .await;
     health_reporter
         .set_serving::<wire::settings_service_server::SettingsServiceServer<SettingsRpc>>()
+        .await;
+    health_reporter
+        .set_serving::<wire::hotkey_service_server::HotkeyServiceServer<HotkeyRpc>>()
         .await;
     health_reporter
         .set_serving::<wire::speaker_service_server::SpeakerServiceServer<SpeakerRpc>>()
@@ -379,6 +383,9 @@ async fn build_router(
         )
         .add_service(wire::settings_service_server::SettingsServiceServer::new(
             services.settings,
+        ))
+        .add_service(wire::hotkey_service_server::HotkeyServiceServer::new(
+            services.hotkey,
         ))
         .add_service(wire::speaker_service_server::SpeakerServiceServer::new(
             services.speaker,
@@ -707,6 +714,7 @@ mod tests {
                 wire::speech_service_server::SpeechServiceServer::<SpeechRpc>::NAME,
                 wire::chat_service_server::ChatServiceServer::<ChatRpc>::NAME,
                 wire::settings_service_server::SettingsServiceServer::<SettingsRpc>::NAME,
+                wire::hotkey_service_server::HotkeyServiceServer::<HotkeyRpc>::NAME,
                 wire::history_service_server::HistoryServiceServer::<HistoryRpc>::NAME,
                 wire::system_transcription_service_server::SystemTranscriptionServiceServer::<
                     SystemTranscriptionRpc,

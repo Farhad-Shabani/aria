@@ -16,7 +16,7 @@ use aria_kit::synthesis::{
     SpeakingRate, SpeakingRateError, SpeechText, SpeechTextError, Voice, VoiceError,
 };
 use aria_platform::delivery::{OutputMode, Placement, Rect};
-use aria_platform::hotkey::{AriaKey, Combo};
+use aria_platform::hotkey::{AriaKey, Combo, HotkeyState};
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{
@@ -356,6 +356,34 @@ impl TryFrom<wire::GetSettingsStatusResponse> for SettingsStatus {
             .status
             .map(Self::from)
             .ok_or(ProtocolError::MissingBody("settings status"))
+    }
+}
+
+impl From<Option<HotkeyState>> for wire::GetHotkeyStatusResponse {
+    fn from(state: Option<HotkeyState>) -> Self {
+        let state = match state {
+            None => wire::HotkeyState::Unspecified,
+            Some(HotkeyState::Armed) => wire::HotkeyState::Armed,
+            Some(HotkeyState::AwaitingPermission) => wire::HotkeyState::AwaitingPermission,
+            Some(HotkeyState::AwaitingListenAccess) => wire::HotkeyState::AwaitingListenAccess,
+            Some(HotkeyState::Refused) => wire::HotkeyState::Refused,
+            Some(HotkeyState::KeyUnavailable) => wire::HotkeyState::KeyUnavailable,
+        };
+        Self {
+            state: state.into(),
+        }
+    }
+}
+
+/// None while the daemon doesn't know, and for a state newer than this build.
+pub(crate) fn hotkey_state(response: &wire::GetHotkeyStatusResponse) -> Option<HotkeyState> {
+    match response.state() {
+        wire::HotkeyState::Unspecified => None,
+        wire::HotkeyState::Armed => Some(HotkeyState::Armed),
+        wire::HotkeyState::AwaitingPermission => Some(HotkeyState::AwaitingPermission),
+        wire::HotkeyState::AwaitingListenAccess => Some(HotkeyState::AwaitingListenAccess),
+        wire::HotkeyState::Refused => Some(HotkeyState::Refused),
+        wire::HotkeyState::KeyUnavailable => Some(HotkeyState::KeyUnavailable),
     }
 }
 
@@ -5547,6 +5575,28 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn every_hotkey_state_survives_the_wire() {
+        for state in [
+            None,
+            Some(HotkeyState::Armed),
+            Some(HotkeyState::AwaitingPermission),
+            Some(HotkeyState::AwaitingListenAccess),
+            Some(HotkeyState::Refused),
+            Some(HotkeyState::KeyUnavailable),
+        ] {
+            let response = wire::GetHotkeyStatusResponse::from(state);
+            assert_eq!(hotkey_state(&response), state);
+        }
+    }
+
+    #[test]
+    fn a_hotkey_state_newer_than_this_build_reads_as_unknown() {
+        let response = wire::GetHotkeyStatusResponse { state: 99 };
+
+        assert_eq!(hotkey_state(&response), None);
     }
 }
 

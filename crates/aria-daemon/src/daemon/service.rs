@@ -9,6 +9,7 @@ mod chat;
 mod dictation;
 mod events;
 mod history;
+mod hotkey;
 mod inference;
 mod microphone;
 mod pairing;
@@ -30,6 +31,7 @@ pub(super) use chat::ChatRpc;
 pub(super) use dictation::DictationRpc;
 pub(super) use events::EventsService;
 pub(super) use history::{HistoryRpc, HistoryWorker};
+pub(super) use hotkey::HotkeyRpc;
 pub(super) use inference::{
     InferenceAdminRpc, InferencePairingRpc, InferenceRpc, authenticate as authenticate_inference,
 };

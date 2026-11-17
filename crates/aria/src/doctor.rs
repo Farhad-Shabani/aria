@@ -13,7 +13,7 @@ use aria_daemon::ipc::{DaemonClient, Liveness, probe_daemon};
 use aria_daemon::ipc::{HOTKEY_HEALTH_SERVICE, WAKE_WORD_HEALTH_SERVICE};
 use aria_kit::segmentation::Engine as SegmentationEngine;
 use aria_kit::speaker::Engine as SpeakerEngine;
-use aria_platform::hotkey::PlatformHotkeyListener;
+use aria_platform::hotkey::{HotkeyState, PlatformHotkeyListener};
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_provider::ProviderError;
 use aria_segmentation::pyannote::Pyannote;
@@ -398,12 +398,15 @@ fn running_daemon(socket: &Path, client: &mut DaemonClient, wake: Option<&WakeCo
     // A missing Accessibility grant is the expected first-run state, so an
     // unarmed hotkey warns with the fix instead of failing.
     if client.check_service_ready(HOTKEY_HEALTH_SERVICE).is_err() {
+        // An older daemon reports no state. On macOS its reason then names
+        // Accessibility.
+        let state = client.hotkey_state().ok().flatten();
         return Check::warning(
             DAEMON,
             format!(
                 "running at {}, but {}",
                 socket.display(),
-                hotkey_unarmed_reason()
+                hotkey_unarmed_reason(state)
             ),
         );
     }
@@ -422,9 +425,9 @@ fn serving_suffix(wake: Option<&WakeConfig>) -> &'static str {
 }
 
 /// Why the dictation hotkey is not armed, and the fix when one exists.
-pub fn hotkey_unarmed_reason() -> String {
+pub fn hotkey_unarmed_reason(state: Option<HotkeyState>) -> String {
     match loaded(|settings, _home| Ok(settings.aria_key())) {
-        Ok(key) => PlatformHotkeyListener::unarmed_reason(key),
+        Ok(key) => PlatformHotkeyListener::unarmed_reason(key, state),
         Err(error) => format!("the settings file could not be read: {error}"),
     }
 }
