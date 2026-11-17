@@ -62,6 +62,7 @@ aria-stt = { workspace = true, features = [ "parakeet-mlx" ] }
 
 [dev-dependencies]
 aria-kit      = { workspace = true, features = [ "test-support" ] }
+aria-platform = { workspace = true, features = [ "test-support" ] }
 aria-settings = { workspace = true, features = [ "test-support" ] }
 aria-voice    = { workspace = true, features = [ "test-support" ] }
 # The relay's timeouts are minutes long; its tests advance the clock instead.

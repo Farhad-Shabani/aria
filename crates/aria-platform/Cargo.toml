@@ -12,7 +12,8 @@ publish              = false
 workspace = true
 
 [features]
-sqlite = [ "dep:rusqlite" ]
+sqlite       = [ "dep:rusqlite" ]
+test-support = [  ]
 
 [dependencies]
 aria-kit        = { workspace = true, features = [ "playback" ] }

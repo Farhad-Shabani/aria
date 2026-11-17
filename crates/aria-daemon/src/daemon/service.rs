@@ -108,45 +108,25 @@ fn log_failure(method: &'static str, failure: &RpcFailure) {
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
-    use std::sync::{Arc, Mutex};
 
+    use super::super::log::testing::CapturedLogs;
     use super::super::operation::CallError;
     use super::*;
     use aria_settings::Position;
     use aria_settings::rpc::RpcErrorCode;
 
-    /// A log sink the test reads back.
-    #[derive(Clone, Default)]
-    struct Captured(Arc<Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Captured {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().expect("the sink").extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
     #[test]
     fn a_settings_failure_logs_its_place_and_not_its_message() {
-        let captured = Captured::default();
-        let sink = captured.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || sink.clone())
-            .with_ansi(false)
-            .finish();
+        let logs = CapturedLogs::start();
         let failure = RpcFailure::new(
             RpcErrorCode::SettingsInvalid,
             "fix settings.toml first: tts.voice does not accept \"secret-value\"",
         )
         .with_settings_position(Some(Position { line: 4, column: 9 }));
 
-        tracing::subscriber::with_default(subscriber, || log_failure("Method", &failure));
+        log_failure("Method", &failure);
 
-        let log = String::from_utf8(captured.0.lock().expect("the sink").clone()).expect("text");
+        let log = logs.text();
         assert!(log.contains("line=4") && log.contains("column=9"), "{log}");
         assert!(
             !log.contains("secret-value") && !log.contains("tts.voice"),
@@ -158,18 +138,11 @@ mod tests {
     /// payload declares; the chat actor's payload declares none.
     #[test]
     fn an_actor_failure_logs_the_daemons_category() {
-        let captured = Captured::default();
-        let sink = captured.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || sink.clone())
-            .with_ansi(false)
-            .finish();
+        let logs = CapturedLogs::start();
 
-        let status = tracing::subscriber::with_default(subscriber, || {
-            failed("Method", &CallError::<Infallible>::Unavailable)
-        });
+        let status = failed("Method", &CallError::<Infallible>::Unavailable);
 
-        let log = String::from_utf8(captured.0.lock().expect("the sink").clone()).expect("text");
+        let log = logs.text();
         assert!(log.contains(r#"status="shutting_down""#), "{log}");
         assert_eq!(status.code(), tonic::Code::Unavailable);
         assert_eq!(
