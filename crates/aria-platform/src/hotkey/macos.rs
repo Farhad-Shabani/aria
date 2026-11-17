@@ -332,13 +332,12 @@ impl MacOsHotkeyListener {
         should_stop: impl Fn() -> bool,
     ) {
         let state = TapState::new(key, &take);
-        let mut grant = GrantRequest::default();
         loop {
             if should_stop() {
                 return;
             }
             if let Err(unarmed) = arm(&state) {
-                if grant.requests(&unarmed) {
+                if unarmed.needs_grant() {
                     Trust::request();
                 }
                 events(unarmed.into());
@@ -485,27 +484,18 @@ enum Unarmed {
     TapRefused(TapRefusal),
 }
 
+impl Unarmed {
+    /// A refused tap's process already holds the grant.
+    fn needs_grant(&self) -> bool {
+        matches!(self, Self::AwaitingPermission)
+    }
+}
+
 impl From<Unarmed> for ListenerEvent {
     fn from(unarmed: Unarmed) -> Self {
         match unarmed {
             Unarmed::AwaitingPermission => Self::AwaitingPermission,
             Unarmed::TapRefused(refusal) => Self::TapRefused(refusal),
-        }
-    }
-}
-
-/// Asks for the grant once per listener, and never for a refused tap, whose
-/// process already holds it.
-#[derive(Default)]
-struct GrantRequest {
-    made: bool,
-}
-
-impl GrantRequest {
-    fn requests(&mut self, unarmed: &Unarmed) -> bool {
-        match unarmed {
-            Unarmed::AwaitingPermission => !std::mem::replace(&mut self.made, true),
-            Unarmed::TapRefused(_) => false,
         }
     }
 }
@@ -1142,14 +1132,9 @@ mod tests {
     }
 
     #[test]
-    fn the_grant_is_requested_once_and_never_for_a_refusal() {
-        let mut grant = GrantRequest::default();
-
-        let refused = grant.requests(&Unarmed::TapRefused(REFUSAL));
-        let first = grant.requests(&Unarmed::AwaitingPermission);
-        let second = grant.requests(&Unarmed::AwaitingPermission);
-
-        assert_eq!((refused, first, second), (false, true, false));
+    fn only_a_missing_grant_needs_one() {
+        assert!(Unarmed::AwaitingPermission.needs_grant());
+        assert!(!Unarmed::TapRefused(REFUSAL).needs_grant());
     }
 
     fn key_remap(

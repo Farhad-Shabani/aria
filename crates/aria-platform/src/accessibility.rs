@@ -6,6 +6,7 @@
 use std::io;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,7 @@ const REUSE_ANSWER_FOR: Duration = Duration::from_secs(3);
 const PANE_RENAMED_IN_MACOS: isize = 27;
 
 static LAST_ANSWER: Mutex<Option<Answer>> = Mutex::new(None);
+static REQUESTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Trust {
@@ -82,10 +84,14 @@ impl Trust {
     /// Only the bundled helper asks. macOS charges the dialog to the
     /// responsible process, so a daemon run from a terminal would ask for,
     /// and grant, the terminal.
+    ///
+    /// Asks once per run. Every listener a key change starts would ask again.
     pub fn request() {
-        if runs_from_bundle() {
-            ax::is_process_trusted_with_prompt(true);
-        }
+        request_once(&REQUESTED, || {
+            if runs_from_bundle() {
+                ax::is_process_trusted_with_prompt(true);
+            }
+        });
     }
 
     pub fn is_trusted(self) -> bool {
@@ -171,6 +177,12 @@ fn target(exe: &Path) -> &Path {
     }
 }
 
+fn request_once(requested: &AtomicBool, ask: impl FnOnce()) {
+    if !requested.swap(true, Ordering::Relaxed) {
+        ask();
+    }
+}
+
 fn runs_from_bundle() -> bool {
     std::env::current_exe().is_ok_and(|exe| is_bundle_executable(&exe))
 }
@@ -242,6 +254,17 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.arg("-c").arg(script);
         command
+    }
+
+    #[test]
+    fn the_grant_is_asked_for_once() {
+        let requested = AtomicBool::new(false);
+        let mut asked = 0;
+
+        request_once(&requested, || asked += 1);
+        request_once(&requested, || asked += 1);
+
+        assert_eq!(asked, 1);
     }
 
     #[test]
