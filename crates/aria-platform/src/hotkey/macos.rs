@@ -21,14 +21,16 @@ use objc2::runtime::AnyObject;
 use objc2_core_foundation::{CFMachPort, CFRetained, CFRunLoop, CFString};
 use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventTapCallBack, CGEventTapLocation, CGEventTapOptions,
-    CGEventTapPlacement, CGEventTapProxy, CGEventType,
+    CGEventTapPlacement, CGEventTapProxy, CGEventType, CGPreflightListenEventAccess,
+    CGPreflightPostEventAccess,
 };
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults};
 
 use super::{
     AriaKey, BareKey, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press, PressDetector, Taken,
+    TapRefusal,
 };
-use crate::accessibility::{self, Trust};
+use crate::accessibility::{self, Checked, Trust};
 use crate::delivery::RETURN_VIRTUAL_KEY;
 
 const PERMISSION_RETRY: Duration = Duration::from_secs(3);
@@ -330,17 +332,16 @@ impl MacOsHotkeyListener {
         should_stop: impl Fn() -> bool,
     ) {
         let state = TapState::new(key, &take);
-        let mut grant_requested = false;
+        let mut grant = GrantRequest::default();
         loop {
             if should_stop() {
                 return;
             }
-            if !arm(&state) {
-                if !grant_requested {
+            if let Err(unarmed) = arm(&state) {
+                if grant.requests(&unarmed) {
                     Trust::request();
-                    grant_requested = true;
                 }
-                events(ListenerEvent::AwaitingPermission);
+                events(unarmed.into());
                 if wait(PERMISSION_RETRY, &should_stop) {
                     return;
                 }
@@ -442,30 +443,102 @@ fn hid_usage_in(remap: &NSDictionary, field: &str) -> Option<i64> {
     Some(value.downcast::<NSNumber>().ok()?.longLongValue())
 }
 
-/// Creates the taps and hooks them into this thread's run loop. A tap
-/// created before the grant never recovers.
-fn arm(state: &TapState<'_>) -> bool {
-    if !Trust::check_now().is_trusted() {
-        return false;
-    }
-    if add_taps(state).is_none() {
-        state.disarm();
-        return false;
-    }
+fn arm(state: &TapState<'_>) -> Result<(), Unarmed> {
+    arm_with(Trust::check_now(), || {
+        add_taps(state).map_err(|step| {
+            state.disarm();
+            TapRefusal {
+                step: step.name(),
+                listen_access: CGPreflightListenEventAccess(),
+                post_access: CGPreflightPostEventAccess(),
+            }
+        })
+    })?;
     state.enable_taps();
     tracing::info!(trigger = "hotkey", "event tap armed");
-    true
+    Ok(())
+}
+
+/// Taps are made only for a trusted process, since a tap made before the
+/// grant never recovers. Taps fail for an untrusted process too, and a stale
+/// answer can miss a revoked grant. So only a fresh answer makes a failed tap
+/// a refusal.
+fn arm_with(
+    checked: Checked,
+    add_taps: impl FnOnce() -> Result<(), TapRefusal>,
+) -> Result<(), Unarmed> {
+    if !checked.trust().is_trusted() {
+        return Err(Unarmed::AwaitingPermission);
+    }
+    add_taps().map_err(|refusal| {
+        if checked.is_fresh() {
+            Unarmed::TapRefused(refusal)
+        } else {
+            Unarmed::AwaitingPermission
+        }
+    })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Unarmed {
+    AwaitingPermission,
+    TapRefused(TapRefusal),
+}
+
+impl From<Unarmed> for ListenerEvent {
+    fn from(unarmed: Unarmed) -> Self {
+        match unarmed {
+            Unarmed::AwaitingPermission => Self::AwaitingPermission,
+            Unarmed::TapRefused(refusal) => Self::TapRefused(refusal),
+        }
+    }
+}
+
+/// Asks for the grant once per listener, and never for a refused tap, whose
+/// process already holds it.
+#[derive(Default)]
+struct GrantRequest {
+    made: bool,
+}
+
+impl GrantRequest {
+    fn requests(&mut self, unarmed: &Unarmed) -> bool {
+        match unarmed {
+            Unarmed::AwaitingPermission => !std::mem::replace(&mut self.made, true),
+            Unarmed::TapRefused(_) => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TapStep {
+    Listener,
+    Blocker,
+    RunLoop,
+    Source,
+}
+
+impl TapStep {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Listener => "listener tap",
+            Self::Blocker => "blocker tap",
+            Self::RunLoop => "run loop",
+            Self::Source => "run loop source",
+        }
+    }
 }
 
 /// Each tap joins `state` as soon as it exists, so a later failure still
 /// invalidates it.
-fn add_taps(state: &TapState<'_>) -> Option<()> {
+fn add_taps(state: &TapState<'_>) -> Result<(), TapStep> {
     let listener = create_tap(
         state,
         CGEventTapOptions::ListenOnly,
         LISTENER_EVENTS,
         Some(listener_callback),
-    )?;
+    )
+    .ok_or(TapStep::Listener)?;
     state.taps.borrow_mut().push(listener);
     // An active tap holds each event until it returns, so this one takes key
     // events only. Revoking the grant stalls them until `watch`'s next trust
@@ -475,14 +548,15 @@ fn add_taps(state: &TapState<'_>) -> Option<()> {
         CGEventTapOptions::Default,
         BLOCKER_EVENTS,
         Some(blocker_callback),
-    )?;
+    )
+    .ok_or(TapStep::Blocker)?;
     state.taps.borrow_mut().push(blocker);
-    let run_loop = CFRunLoop::current()?;
+    let run_loop = CFRunLoop::current().ok_or(TapStep::RunLoop)?;
     for tap in state.taps.borrow().iter() {
-        let source = CFMachPort::new_run_loop_source(None, Some(tap), 0)?;
+        let source = CFMachPort::new_run_loop_source(None, Some(tap), 0).ok_or(TapStep::Source)?;
         run_loop.add_source(Some(&source), Some(&default_mode()));
     }
-    Some(())
+    Ok(())
 }
 
 /// Drives the run loop and reports presses until shutdown or tap death.
@@ -534,7 +608,7 @@ struct GrantWatch {
 impl GrantWatch {
     fn run(&self) {
         while !wait(REARM_INTERVAL, &|| self.done.load(Ordering::Acquire)) {
-            if !Trust::check_now().is_trusted() {
+            if !Trust::check_now().trust().is_trusted() {
                 self.revoked.store(true, Ordering::Release);
                 return;
             }
@@ -1031,6 +1105,51 @@ mod tests {
             (LEFT_OPTION_USAGE, LEFT_OPTION_USAGE),
         ]];
         assert_eq!(remap_of(&keyboards, AriaKey::RightOption), None);
+    }
+
+    const REFUSAL: TapRefusal = TapRefusal {
+        step: "blocker tap",
+        listen_access: false,
+        post_access: true,
+    };
+
+    #[test]
+    fn a_missing_grant_awaits_permission_without_making_taps() {
+        let unarmed = arm_with(Checked::fresh(Trust::Untrusted), || {
+            panic!("no tap may be made before the grant")
+        });
+
+        assert_eq!(unarmed, Err(Unarmed::AwaitingPermission));
+    }
+
+    #[test]
+    fn a_failed_tap_under_a_fresh_trust_answer_is_a_refusal() {
+        let unarmed = arm_with(Checked::fresh(Trust::Trusted), || Err(REFUSAL));
+
+        assert_eq!(unarmed, Err(Unarmed::TapRefused(REFUSAL)));
+    }
+
+    #[test]
+    fn a_failed_tap_under_a_stale_trust_answer_awaits_permission() {
+        let unarmed = arm_with(Checked::stale(Trust::Trusted), || Err(REFUSAL));
+
+        assert_eq!(unarmed, Err(Unarmed::AwaitingPermission));
+    }
+
+    #[test]
+    fn a_stale_trust_answer_still_arms() {
+        assert_eq!(arm_with(Checked::stale(Trust::Trusted), || Ok(())), Ok(()));
+    }
+
+    #[test]
+    fn the_grant_is_requested_once_and_never_for_a_refusal() {
+        let mut grant = GrantRequest::default();
+
+        let refused = grant.requests(&Unarmed::TapRefused(REFUSAL));
+        let first = grant.requests(&Unarmed::AwaitingPermission);
+        let second = grant.requests(&Unarmed::AwaitingPermission);
+
+        assert_eq!((refused, first, second), (false, true, false));
     }
 
     fn key_remap(

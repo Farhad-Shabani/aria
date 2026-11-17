@@ -39,7 +39,7 @@ impl Trust {
         }
     }
 
-    pub fn check_now() -> Self {
+    pub fn check_now() -> Checked {
         let started = Instant::now();
         let checked = check_in_fresh_process();
         tracing::debug!(
@@ -48,7 +48,11 @@ impl Trust {
         );
         let mut last = LAST_ANSWER.lock().expect("lock");
         let previous = *last;
-        let trust = checked.unwrap_or_else(|error| fall_back_to_last_answer(&error, previous));
+        let checked = match checked {
+            Ok(trust) => Checked::fresh(trust),
+            Err(error) => Checked::stale(fall_back_to_last_answer(&error, previous)),
+        };
+        let trust = checked.trust;
         // Stamped on failure too, so `reuse_or_check` waits before retrying.
         let answer = Answer {
             trust,
@@ -61,14 +65,14 @@ impl Trust {
             );
         }
         *last = Some(answer);
-        answer.trust
+        checked
     }
 
     pub fn reuse_or_check() -> Self {
         let last = *LAST_ANSWER.lock().expect("lock");
         match last {
             Some(answer) if answer.checked_at.elapsed() < REUSE_ANSWER_FOR => answer.trust,
-            _ => Self::check_now(),
+            _ => Self::check_now().trust(),
         }
     }
 
@@ -101,6 +105,35 @@ impl Trust {
             Some(1) => Ok(Self::Untrusted),
             _ => Err(CheckError::Exit(status)),
         }
+    }
+}
+
+/// A failed check falls back to an older or in-process answer, which can miss
+/// a revoked grant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Checked {
+    trust: Trust,
+    fresh: bool,
+}
+
+impl Checked {
+    pub(crate) fn fresh(trust: Trust) -> Self {
+        Self { trust, fresh: true }
+    }
+
+    pub(crate) fn stale(trust: Trust) -> Self {
+        Self {
+            trust,
+            fresh: false,
+        }
+    }
+
+    pub fn trust(self) -> Trust {
+        self.trust
+    }
+
+    pub fn is_fresh(self) -> bool {
+        self.fresh
     }
 }
 

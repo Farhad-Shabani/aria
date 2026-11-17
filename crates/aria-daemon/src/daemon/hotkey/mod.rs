@@ -9,7 +9,9 @@ use super::dictation::{DictationHandle, DictationRuntime};
 use super::subscriptions::Subscriptions;
 use super::tasks::Supervised;
 use crate::ipc::HOTKEY_HEALTH_SERVICE;
-use aria_platform::hotkey::{AriaKey, BareKey, ListenerEvent, PlatformHotkeyListener, Taken};
+use aria_platform::hotkey::{
+    AriaKey, BareKey, ListenerEvent, PlatformHotkeyListener, Taken, TapRefusal,
+};
 use router::{Hold, KeyRouter};
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -111,7 +113,9 @@ impl HotkeyTrigger {
             listener(current, &take, &events, &should_stop);
         });
 
-        let mut waiting = false;
+        // The listener retries every few seconds, so only a change of state
+        // is worth a line or a health update.
+        let mut unarmed: Option<Unarmed> = None;
         // Dropped with this listener, which cancels a hold it can no longer
         // end.
         let mut hold: Option<Hold> = None;
@@ -122,27 +126,41 @@ impl HotkeyTrigger {
                 biased;
                 Some(event) = incoming.recv() => match event {
                     ListenerEvent::Armed => {
-                        waiting = false;
+                        unarmed = None;
                         self.health
                             .set_service_status(HOTKEY_HEALTH_SERVICE, ServingStatus::Serving)
                             .await;
                     }
                     ListenerEvent::AwaitingPermission => {
-                        self.health
-                            .set_service_status(HOTKEY_HEALTH_SERVICE, ServingStatus::NotServing)
-                            .await;
-                        // The listener retries every few seconds, so only a
-                        // change of state is worth a line.
-                        if !waiting {
-                            waiting = true;
+                        if unarmed.replace(Unarmed::AwaitingPermission)
+                            != Some(Unarmed::AwaitingPermission)
+                        {
+                            self.health
+                                .set_service_status(HOTKEY_HEALTH_SERVICE, ServingStatus::NotServing)
+                                .await;
                             tracing::info!(
                                 trigger = "hotkey",
                                 "the hotkey is waiting for permission; run `aria doctor` for steps"
                             );
                         }
                     }
+                    ListenerEvent::TapRefused(refusal) => {
+                        let refused = Unarmed::refused(refusal);
+                        if unarmed.replace(refused) != Some(refused) {
+                            self.health
+                                .set_service_status(HOTKEY_HEALTH_SERVICE, ServingStatus::NotServing)
+                                .await;
+                            tracing::warn!(
+                                trigger = "hotkey",
+                                step = refusal.step(),
+                                listen_access = refusal.listen_access(),
+                                post_access = refusal.post_access(),
+                                "macOS refused the hotkey's event taps though Accessibility is on"
+                            );
+                        }
+                    }
                     ListenerEvent::KeyUnavailable => {
-                        waiting = false;
+                        unarmed = None;
                         self.health
                             .set_service_status(HOTKEY_HEALTH_SERVICE, ServingStatus::NotServing)
                             .await;
@@ -177,6 +195,23 @@ impl HotkeyTrigger {
                 tracing::error!("hotkey listener lost the settings store");
                 HotkeyExit::Failed
             }
+        }
+    }
+}
+
+/// A refusal is a new state only when listen access changes. That's the one
+/// answer that points to a cause, so a step or post access that flickers
+/// between retries logs no new line.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Unarmed {
+    AwaitingPermission,
+    TapRefused { listen_access: bool },
+}
+
+impl Unarmed {
+    fn refused(refusal: TapRefusal) -> Self {
+        Self::TapRefused {
+            listen_access: refusal.listen_access(),
         }
     }
 }
@@ -220,6 +255,7 @@ mod tests {
     use super::super::context::Context;
     use super::super::dictation::channel as dictation_channel;
     use super::super::host::DaemonLifetime;
+    use super::super::log::testing::CapturedLogs;
     use super::*;
 
     /// Keys each fake listener was armed on; a fn pointer cannot capture.
@@ -412,5 +448,59 @@ mod tests {
                 .expect("the health check should answer");
             assert_eq!(response.into_inner().status(), expected, "{name:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_refused_tap_degrades_hotkey_health_and_logs_once() {
+        let logs = CapturedLogs::start();
+        let (_key, watch) = watch::channel(AriaKey::RightOption);
+        let directory = tempfile::TempDir::new().expect("the test directory should be created");
+        let subscriptions = Arc::new(Subscriptions::new());
+        let mut events = subscriptions.subscribe().expect("a subscriber fits");
+        let mut trigger = trigger(
+            watch,
+            subscriptions,
+            |_key, _take, events, should_stop| {
+                events(ListenerEvent::TapRefused(TapRefusal::for_test(false, true)));
+                events(ListenerEvent::TapRefused(TapRefusal::for_test(
+                    false, false,
+                )));
+                events(ListenerEvent::TapRefused(TapRefusal::for_test(true, true)));
+                // Queued behind the refusals, so its arrival means all were
+                // handled.
+                events(ListenerEvent::Press(Press::Combo(Combo::Shift)));
+                park_until(should_stop);
+            },
+            &directory,
+        );
+        let (reporter, _server) = tonic_health::server::health_reporter();
+        trigger.health = reporter.clone();
+        let service = HealthService::from_health_reporter(reporter);
+        let shutdown = CancellationToken::new();
+        let running = tokio::spawn(trigger.run(shutdown.clone()));
+
+        tokio::time::timeout(Duration::from_secs(2), events.next())
+            .await
+            .expect("the combo should arrive in time");
+        let health = service
+            .check(tonic::Request::new(HealthCheckRequest {
+                service: HOTKEY_HEALTH_SERVICE.to_owned(),
+            }))
+            .await
+            .expect("the health check should answer")
+            .into_inner()
+            .status();
+        shutdown.cancel();
+        running.await.expect("the trigger should stop cleanly");
+
+        assert_eq!(health, ServingStatus::NotServing);
+        let log = logs.text();
+        let refusals: Vec<_> = log
+            .lines()
+            .filter(|line| line.contains("refused the hotkey's event taps"))
+            .collect();
+        assert_eq!(refusals.len(), 2, "{log}");
+        assert!(refusals[0].contains("listen_access=false"), "{log}");
+        assert!(refusals[1].contains("listen_access=true"), "{log}");
     }
 }

@@ -336,12 +336,13 @@ pub(in crate::daemon) mod testing {
     use std::io;
     use std::sync::{Arc, Mutex};
 
-    /// What this thread logs while the value lives, for a test to read back.
+    /// Captures only this thread's logs, so it misses what a blocking task or
+    /// another runtime worker logs.
     pub(in crate::daemon) struct CapturedLogs {
         bytes: Arc<Mutex<Vec<u8>>>,
         _subscriber: tracing::subscriber::DefaultGuard,
-        // With one dispatch, the first thread to reach a callsite caches its
-        // interest for all. A second keeps tracing asking each one.
+        // With one dispatcher, the first thread at a callsite caches its
+        // interest for every thread. A second keeps tracing asking each thread.
         _second: tracing::Dispatch,
     }
 

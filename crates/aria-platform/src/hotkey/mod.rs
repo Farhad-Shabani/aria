@@ -301,11 +301,46 @@ pub enum ListenerEvent {
     Armed,
     /// The platform refused the watch until the user grants a permission.
     AwaitingPermission,
+    /// macOS trusts the process for Accessibility, yet the taps did not arm.
+    TapRefused(TapRefusal),
     /// The listener has no usable device with the key, or cannot watch the
     /// key at all. Changing the key or the devices can arm it again.
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     KeyUnavailable,
     Press(Press),
+}
+
+/// macOS gives no reason when it refuses a tap. This keeps what is known: the
+/// step that failed, and the input permissions macOS reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TapRefusal {
+    step: &'static str,
+    listen_access: bool,
+    post_access: bool,
+}
+
+impl TapRefusal {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test(listen_access: bool, post_access: bool) -> Self {
+        Self {
+            step: "listener tap",
+            listen_access,
+            post_access,
+        }
+    }
+
+    pub fn step(&self) -> &'static str {
+        self.step
+    }
+
+    /// System Settings lists this permission as Input Monitoring.
+    pub fn listen_access(&self) -> bool {
+        self.listen_access
+    }
+
+    pub fn post_access(&self) -> bool {
+        self.post_access
+    }
 }
 
 #[cfg(test)]
