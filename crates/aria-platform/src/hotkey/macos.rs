@@ -462,14 +462,11 @@ fn arm(state: &TapState<'_>) -> Result<(), Unarmed> {
 /// grant never recovers. Taps fail for an untrusted process too, and a stale
 /// answer can miss a revoked grant. So only a fresh answer makes a failed tap
 /// a refusal.
-fn arm_with(
-    checked: Checked,
-    add_taps: impl FnOnce() -> Result<(), TapRefusal>,
-) -> Result<(), Unarmed> {
+fn arm_with(checked: Checked, tap: impl FnOnce() -> Result<(), TapRefusal>) -> Result<(), Unarmed> {
     if !checked.trust().is_trusted() {
         return Err(Unarmed::AwaitingPermission);
     }
-    add_taps().map_err(|refusal| {
+    tap().map_err(|refusal| {
         if checked.is_fresh() {
             Unarmed::TapRefused(refusal)
         } else {
