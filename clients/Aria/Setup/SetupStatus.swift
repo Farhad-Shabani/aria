@@ -33,6 +33,9 @@ final class SetupStatus: ObservableObject {
     @Published private(set) var downloadedModels = DownloadedModels()
 
     private let inspect: @MainActor () async throws -> Aria_Setup_V1_Inspection
+    /// The inspection says only that a permission is missing. The daemon
+    /// says which.
+    private var ariaKey = AriaKeyState.needsAccessibility
     /// Only the newest inspection may update the status. An older one could
     /// hide a change the person just made.
     private var inspectionID: UUID?
@@ -43,7 +46,7 @@ final class SetupStatus: ObservableObject {
 
     func show(_ inspection: Aria_Setup_V1_Inspection) {
         inspectionID = nil
-        items = SetupItem.items(in: inspection)
+        items = SetupItem.items(in: inspection, ariaKey: ariaKey)
         hasSpeakerModelOnDisk = Self.hasSpeakerModelOnDisk(in: inspection)
         server = inspection.hasServer ? inspection.server : nil
         sttRunsOn = RunsOn(inspection.sttRunsOn)
@@ -56,7 +59,9 @@ final class SetupStatus: ObservableObject {
         self.inspectionID = inspectionID
         do {
             let inspection = try await inspect()
+            let ariaKey = await HotkeyClient.state()
             guard self.inspectionID == inspectionID else { return }
+            self.ariaKey = ariaKey
             show(inspection)
         } catch {
             log.error("Setup inspection failed: \(String(describing: error), privacy: .private)")
@@ -64,7 +69,7 @@ final class SetupStatus: ObservableObject {
     }
 
     nonisolated static func isMissingSttModel(in inspection: Aria_Setup_V1_Inspection) -> Bool {
-        SetupItem.items(in: inspection).contains {
+        SetupItem.items(in: inspection, ariaKey: .needsAccessibility).contains {
             if case .speechModel = $0 { return true }
             return false
         }

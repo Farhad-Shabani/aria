@@ -67,7 +67,7 @@ struct SetupView: View {
         case .inspecting, .welcome: WelcomePage(state: state)
         case .choices: EnginesPage(state: state)
         case .applying: InstallingPage(state: state)
-        case .grant: GrantPage()
+        case .grant: GrantPage(ariaKey: state.ariaKeyState)
         case .voice: VoicePage(state: state)
         case .tryOut: TryOutPage(state: state)
         case .done: DonePage(state: state, ariaKey: ariaKey, askCombo: askCombo)
@@ -119,7 +119,7 @@ struct SetupView: View {
             Button("Cancel") { state.cancel() }.disabled(state.applying != .models)
         case .grant:
             Button("Skip") { state.next() }
-            Button("Open System Settings") { state.openAccessibility() }
+            Button("Open System Settings") { state.openPrivacySettings() }
                 .primaryAction()
         case .voice:
             Button("Skip") { state.next() }.disabled(state.isBusy)

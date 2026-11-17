@@ -16,8 +16,8 @@ final class SetupState: ObservableObject {
         /// for a bounded time.
         var stopDaemon: () async -> Void
         var startDaemon: () async -> Void
-        var hotkeyArmed: () async -> Bool
-        var openAccessibility: () -> Void
+        var ariaKeyState: () async -> AriaKeyState
+        var openPrivacySettings: (AriaKeyState) -> Void
         var speakers: () async throws -> [EnrolledSpeaker]
         var enroll: (String) async throws -> Void
         var transcribe: () async throws -> String
@@ -83,8 +83,9 @@ final class SetupState: ObservableObject {
     @Published private(set) var voicePrompt: String?
     @Published private(set) var enrolled: String?
     @Published private(set) var heard: String?
+    @Published private(set) var ariaKeyState = AriaKeyState.needsAccessibility
     /// Whether the dictation hotkey answers, so Done can teach it.
-    @Published private(set) var isHotkeyReady = false
+    var isHotkeyReady: Bool { ariaKeyState == .armed }
     /// A step's own failure, which setup carries on past.
     @Published private(set) var notice: String?
     @Published private(set) var isBusy = false
@@ -325,8 +326,8 @@ final class SetupState: ObservableObject {
         Task { await inspectNow() }
     }
 
-    func openAccessibility() {
-        effects.openAccessibility()
+    func openPrivacySettings() {
+        effects.openPrivacySettings(ariaKeyState)
     }
 
     func recordVoice() {
@@ -432,7 +433,7 @@ final class SetupState: ObservableObject {
 
     private func finishApply(_ summary: Aria_Setup_V1_Summary) async {
         self.summary = summary
-        isHotkeyReady = summary.grant == .armed
+        ariaKeyState = summary.grant == .armed ? .armed : .needsAccessibility
         if summary.grant != .armed {
             step = .grant
             watchGrant()
@@ -445,11 +446,11 @@ final class SetupState: ObservableObject {
         grantTask?.cancel()
         grantTask = Task {
             while !Task.isCancelled {
-                let armed = await effects.hotkeyArmed()
+                let state = await effects.ariaKeyState()
                 // Skip may have moved on while the check was out.
                 guard !Task.isCancelled else { return }
-                if armed {
-                    isHotkeyReady = true
+                ariaKeyState = state
+                if state == .armed {
                     if step == .grant { await enterVoice() }
                     return
                 }

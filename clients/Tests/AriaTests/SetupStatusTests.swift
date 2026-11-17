@@ -22,7 +22,9 @@ final class SetupStatusTests: XCTestCase {
             Self.missing(.grant),
         ]
 
-        XCTAssertEqual(SetupItem.items(in: inspection), [.speechModel(id: "parakeet"), .ariaKey])
+        XCTAssertEqual(
+            SetupItem.items(in: inspection, ariaKey: .needsAccessibility),
+            [.speechModel(id: "parakeet"), .ariaKey(.needsAccessibility)])
     }
 
     func testASettingsGapIsAnItemOnlyForAServerNobodyPaired() {
@@ -30,9 +32,9 @@ final class SetupStatusTests: XCTestCase {
         inspection.sttRunsOn = .server
         inspection.missing = [Self.missing(.settings)]
 
-        XCTAssertEqual(SetupItem.items(in: inspection), [.server])
+        XCTAssertEqual(SetupItem.items(in: inspection, ariaKey: .needsAccessibility), [.server])
         inspection.server = Aria_Setup_V1_PairedServer()
-        XCTAssertEqual(SetupItem.items(in: inspection), [])
+        XCTAssertEqual(SetupItem.items(in: inspection, ariaKey: .needsAccessibility), [])
     }
 
     func testAnInspectionStartedBeforeAChangeDoesNotLandOverIt() async {

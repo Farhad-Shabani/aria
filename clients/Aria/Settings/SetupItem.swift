@@ -8,19 +8,19 @@ enum SetupItem: Hashable {
     case settingsFileIgnored(line: Int?)
     case server
     case speechModel(id: String)
-    case ariaKey
+    case ariaKey(AriaKeyState)
     case ariaKeyRemapped
 
     /// Unset choices still run as their defaults, so a settings gap matters
     /// only for recognition on a server with no pairing.
-    nonisolated static func items(in inspection: Aria_Setup_V1_Inspection) -> [SetupItem] {
+    nonisolated static func items(in inspection: Aria_Setup_V1_Inspection, ariaKey: AriaKeyState) -> [SetupItem] {
         let recognition = Set(
             inspection.models.filter { $0.engineID == inspection.defaults.sttEngineID }.map(\.id))
         let isUnpairedServer = inspection.sttRunsOn == .server && !inspection.hasServer
         return inspection.missing.compactMap { missing in
             switch missing.kind {
             case .model: recognition.contains(missing.modelID) ? .speechModel(id: missing.modelID) : nil
-            case .grant: .ariaKey
+            case .grant: .ariaKey(ariaKey)
             case .keyRemapped: .ariaKeyRemapped
             case .settings: isUnpairedServer ? .server : nil
             case .wakeword, .service, .unspecified, .UNRECOGNIZED: nil
@@ -76,7 +76,11 @@ enum SetupItem: Hashable {
             "Aria can’t start until your Mac is paired with your server."
         case .speechModel:
             "Download it so Aria can turn your voice into text."
-        case .ariaKey:
+        case .ariaKey(.needsInputMonitoring):
+            "Turn on Aria in Input Monitoring so it can hear the Aria key."
+        case .ariaKey(.refused):
+            "macOS didn’t let Aria hear the Aria key, though access is on. Run `aria doctor` in Terminal to see why."
+        case .ariaKey(.armed), .ariaKey(.needsAccessibility):
             "Lets Aria hear the Aria key and type for you."
         case .ariaKeyRemapped:
             "Modifier Keys turns the Aria key into another key, so Aria can’t hear it. Restore it in Keyboard settings."

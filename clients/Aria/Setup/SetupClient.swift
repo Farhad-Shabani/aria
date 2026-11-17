@@ -175,8 +175,9 @@ enum SetupClient {
         return .failure(failure(status: run.status, stderr: run.stderr))
     }
 
-    static func openAccessibility() {
-        let pane = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+    static func openPrivacySettings(for ariaKey: AriaKeyState) {
+        let list = ariaKey == .needsInputMonitoring ? "Privacy_ListenEvent" : "Privacy_Accessibility"
+        let pane = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(list)"
         if let url = URL(string: pane) { NSWorkspace.shared.open(url) }
     }
 
@@ -247,8 +248,8 @@ extension SetupState.Effects {
             apply: { request, onEvent in try await SetupClient.apply(request, onEvent: onEvent) },
             stopDaemon: { await SetupClient.stopDaemonBeforeApply() },
             startDaemon: { await SetupClient.startDaemonAfterFailedApply() },
-            hotkeyArmed: { await HealthClient.isServing(HealthClient.hotkeyService) },
-            openAccessibility: { SetupClient.openAccessibility() },
+            ariaKeyState: { await HotkeyClient.state() },
+            openPrivacySettings: { SetupClient.openPrivacySettings(for: $0) },
             speakers: { try await SpeakerClient.list() },
             enroll: { name in try await SpeakerClient.enroll(name: name) },
             transcribe: { try await TryOutClient.transcribe() },

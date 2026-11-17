@@ -15,7 +15,8 @@ final class SetupStateTests: XCTestCase {
         var applyContinuation: CheckedContinuation<Aria_Setup_V1_Summary, Error>?
         var stoppedDaemon = 0
         var startedDaemon = 0
-        var armed = false
+        var ariaKey = AriaKeyState.needsAccessibility
+        var openedFor = [AriaKeyState]()
         var speakers = [EnrolledSpeaker]()
         var enrolledNames = [String]()
         var enrollError: Error?
@@ -38,8 +39,8 @@ final class SetupStateTests: XCTestCase {
                 },
                 stopDaemon: { self.stoppedDaemon += 1 },
                 startDaemon: { self.startedDaemon += 1 },
-                hotkeyArmed: { self.armed },
-                openAccessibility: {},
+                ariaKeyState: { self.ariaKey },
+                openPrivacySettings: { self.openedFor.append($0) },
                 speakers: { self.speakers },
                 enroll: { name in
                     self.enrolledNames.append(name)
@@ -359,9 +360,23 @@ final class SetupStateTests: XCTestCase {
         await waitUntil { state.step == .grant }
         XCTAssertFalse(state.isHotkeyReady)
 
-        harness.armed = true
+        harness.ariaKey = .armed
         await waitUntil { state.step == .voice }
         XCTAssertTrue(state.isHotkeyReady, "Done teaches the hotkey once it arms")
+    }
+
+    func testTheGrantPageFollowsThePermissionTheAriaKeyLacks() async {
+        let harness = Harness()
+        harness.summary = Self.summary(grant: .waiting)
+        harness.ariaKey = .needsInputMonitoring
+        let state = await walkToApplying(harness)
+
+        harness.applyContinuation?.resume(returning: harness.summary)
+        await waitUntil { state.ariaKeyState == .needsInputMonitoring }
+        state.openPrivacySettings()
+
+        XCTAssertEqual(state.step, .grant)
+        XCTAssertEqual(harness.openedFor, [.needsInputMonitoring])
     }
 
     func testVoiceIsSkippedWhenSomeoneIsEnrolledOrTheModelWasSkipped() async {
