@@ -15,7 +15,7 @@ use aria_voice::microphone::Gate;
 
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use super::capture::MicrophoneFollower;
 use super::chat;
@@ -30,8 +30,8 @@ use super::memory::{self, MemoryBacklog};
 use super::phone::{AdmitsPhone, PhoneMicrophone};
 use super::server::{Actors, Relay, Server, ServerError, Services};
 use super::service::{
-    ChatRpc, DictationRpc, EventsService, HistoryRpc, MicrophoneRpc, PhoneMicrophoneRpc, RelayRpc,
-    SettingsRpc, SpeakerRpc, SpeechRpc, SystemTranscriptionRpc, VocabularyRpc,
+    ChatRpc, DictationRpc, EventsService, HistoryRpc, HotkeyRpc, MicrophoneRpc, PhoneMicrophoneRpc,
+    RelayRpc, SettingsRpc, SpeakerRpc, SpeechRpc, SystemTranscriptionRpc, VocabularyRpc,
 };
 use super::settings;
 use super::shutdown::ShutdownError;
@@ -219,6 +219,8 @@ fn compose(
     // The router rebuilds the serving half from this reporter's shared state.
     let (health, _) = tonic_health::server::health_reporter();
     let wake = monitor.map(|monitor| WakeTrigger::new(monitor, dictation.clone(), health.clone()));
+    // A daemon without the hotkey drops the sender, and the state stays None.
+    let (hotkey_state, hotkey_status) = watch::channel(None);
     let hotkey = match hotkey {
         HotkeyConfig::Enabled => Some(HotkeyTrigger::new(
             aria_key,
@@ -227,6 +229,7 @@ fn compose(
             Arc::clone(&dictation_runtime),
             Arc::clone(&subscriptions),
             health.clone(),
+            hotkey_state,
         )),
         HotkeyConfig::Disabled => None,
     };
@@ -280,6 +283,7 @@ fn compose(
             Arc::clone(&history_store),
         ))),
         settings: settings_rpc,
+        hotkey: HotkeyRpc::new(hotkey_status),
         vocabulary: VocabularyRpc::new(Arc::clone(&vocabulary)),
         speaker: SpeakerRpc::new(speaker),
         microphone: MicrophoneRpc::new(Arc::clone(&cache), Arc::clone(&phone_microphone)),

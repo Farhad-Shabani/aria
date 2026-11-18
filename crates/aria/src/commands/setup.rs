@@ -98,8 +98,13 @@ fn print_summary(summary: &crate::setup::Summary) {
     if let Some(press) = try_out_message(&summary.tried) {
         println!("test press   {press}");
     }
+    // The summary says only that a permission is missing. Doctor asks the
+    // daemon which.
     if summary.grant == Grant::Waiting {
-        println!("next         {}", crate::doctor::hotkey_unarmed_reason());
+        println!(
+            "next         {}",
+            crate::doctor::hotkey_unarmed_reason(None)
+        );
     }
     if cfg!(target_os = "macos") {
         println!("next         open Aria for the menu bar, then run `aria doctor`");

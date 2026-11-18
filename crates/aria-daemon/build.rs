@@ -9,6 +9,7 @@ const PROTOS: &[&str] = &[
     "../../proto/aria/daemon/v1/errors.proto",
     "../../proto/aria/daemon/v1/events.proto",
     "../../proto/aria/daemon/v1/history.proto",
+    "../../proto/aria/daemon/v1/hotkey.proto",
     "../../proto/aria/daemon/v1/inference.proto",
     "../../proto/aria/daemon/v1/microphone.proto",
     "../../proto/aria/daemon/v1/phone.proto",

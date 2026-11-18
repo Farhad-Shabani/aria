@@ -47,6 +47,10 @@ field focused. Check [Accessibility permission](./macos.md#permissions). For a
 terminal recording, try `aria dictate --mode copy` and paste to separate
 insertion from recognition.
 
+On a Mac, if the Aria key does nothing though Accessibility is on, turn on
+[Input Monitoring](./macos.md#permissions). `aria doctor` names the permission
+the Aria key still needs.
+
 On Linux, run `aria doctor` if the hotkey does nothing; it shows how to grant
 [keyboard access](./linux.md#permissions). If text is copied but not pasted,
 your desktop may lack a remote desktop portal, or you declined its dialog;

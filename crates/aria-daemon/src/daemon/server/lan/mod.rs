@@ -607,6 +607,7 @@ mod tests {
             "/aria.daemon.v1.DictationService/Stop",
             "/aria.daemon.v1.EventsService/Subscribe",
             "/aria.daemon.v1.HistoryService/List",
+            "/aria.daemon.v1.HotkeyService/GetStatus",
             "/aria.daemon.v1.InferenceService/GetInfo",
             "/aria.daemon.v1.InferenceAdminService/Invite",
             "/aria.daemon.v1.InferencePairingService/Pair",

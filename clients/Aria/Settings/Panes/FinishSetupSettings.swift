@@ -26,8 +26,8 @@ struct FinishSetupSettings: View {
                             await setup.refresh()
                             await poller.ensureRunning()
                         }
-                    case .ariaKey:
-                        row(item) { Button("Open System Settings") { SetupClient.openAccessibility() } }
+                    case .ariaKey(let state):
+                        row(item) { Button("Open System Settings") { SetupClient.openPrivacySettings(for: state) } }
                     case .ariaKeyRemapped:
                         row(item) { Button("Open Keyboard Settings") { SetupClient.openKeyboard() } }
                     }
@@ -41,7 +41,7 @@ struct FinishSetupSettings: View {
             action()
         } label: {
             Text(item.title)
-            Text(item.detail)
+            Text(markdown: item.detail)
         }
     }
 }

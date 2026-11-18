@@ -21,7 +21,8 @@ use rustix::ioctl::{Getter, Setter, ioctl, opcode};
 use rustix::time::{ClockId, clock_gettime};
 
 use super::{
-    AriaKey, BareKey, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press, PressDetector, Taken,
+    AriaKey, BareKey, HotkeyState, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press,
+    PressDetector, Taken,
 };
 
 #[cfg(not(target_pointer_width = "64"))]
@@ -90,14 +91,14 @@ impl AriaKey {
 pub struct LinuxHotkeyListener;
 
 impl LinuxHotkeyListener {
-    pub const PERMISSION: &str = "access to your keyboard";
-
     /// A remapper's output is read from its own virtual device.
     pub fn remap(_key: AriaKey) -> Option<KeyRemap> {
         None
     }
 
-    pub fn unarmed_reason(key: AriaKey) -> String {
+    /// This process reads the keyboard with the same access the daemon has,
+    /// and reads it now, so the daemon's `state` adds nothing.
+    pub fn unarmed_reason(key: AriaKey, _state: Option<HotkeyState>) -> String {
         let Some(aria_key) = key.key_code() else {
             return "the dictation hotkey is set to Fn, which Linux cannot see; \
                 set `shortcuts.aria_key` to right_option, the Right Alt key"
@@ -1181,7 +1182,9 @@ mod tests {
 
     #[test]
     fn fn_gets_a_definite_reason() {
-        assert!(LinuxHotkeyListener::unarmed_reason(AriaKey::Fn).contains("Linux cannot see"));
+        assert!(
+            LinuxHotkeyListener::unarmed_reason(AriaKey::Fn, None).contains("Linux cannot see")
+        );
     }
 
     #[test]

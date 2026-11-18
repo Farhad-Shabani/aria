@@ -27,8 +27,8 @@ use objc2_core_graphics::{
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUserDefaults};
 
 use super::{
-    AriaKey, BareKey, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press, PressDetector, Taken,
-    TapRefusal,
+    AriaKey, BareKey, HotkeyState, KeyEvent, KeyRemap, ListenerEvent, Modifiers, Press,
+    PressDetector, Taken, TapRefusal,
 };
 use crate::accessibility::{self, Checked, Trust};
 use crate::delivery::RETURN_VIRTUAL_KEY;
@@ -305,15 +305,27 @@ impl Drop for TapState<'_> {
 }
 
 impl MacOsHotkeyListener {
-    pub const PERMISSION: &str = "Accessibility access";
-
-    pub fn unarmed_reason(_key: AriaKey) -> String {
-        format!(
-            "the dictation hotkey is waiting for permission: System Settings → \
-             Privacy & Security → {} → + → {}; it arms within ~3s",
-            accessibility::settings_pane(),
-            accessibility::target_label()
-        )
+    /// `state` is the daemon's. This process can't check the daemon's
+    /// permissions, since macOS grants them per process.
+    pub fn unarmed_reason(_key: AriaKey, state: Option<HotkeyState>) -> String {
+        match state {
+            Some(HotkeyState::AwaitingListenAccess) => {
+                "the dictation hotkey needs Input Monitoring: System Settings → \
+                 Privacy & Security → Input Monitoring → turn on Aria; it arms within ~3s"
+                    .to_owned()
+            }
+            Some(HotkeyState::Refused) => {
+                "macOS refused the dictation hotkey though its permissions are on; \
+                 the daemon log names the step that failed"
+                    .to_owned()
+            }
+            _ => format!(
+                "the dictation hotkey is waiting for permission: System Settings → \
+                 Privacy & Security → {} → + → {}; it arms within ~3s",
+                accessibility::settings_pane(),
+                accessibility::target_label()
+            ),
+        }
     }
 
     /// Modifier Keys turns the key into another one before any tap sees it.
@@ -1099,6 +1111,27 @@ mod tests {
         listen_access: false,
         post_access: true,
     };
+
+    #[test]
+    fn the_reason_names_input_monitoring_only_when_listen_access_is_missing() {
+        let listen = MacOsHotkeyListener::unarmed_reason(
+            AriaKey::RightOption,
+            Some(HotkeyState::AwaitingListenAccess),
+        );
+        let accessibility = MacOsHotkeyListener::unarmed_reason(
+            AriaKey::RightOption,
+            Some(HotkeyState::AwaitingPermission),
+        );
+
+        assert!(
+            listen.contains("→ Input Monitoring → turn on Aria"),
+            "{listen}"
+        );
+        assert!(
+            !accessibility.contains("Input Monitoring"),
+            "{accessibility}"
+        );
+    }
 
     #[test]
     fn a_missing_grant_awaits_permission_without_making_taps() {

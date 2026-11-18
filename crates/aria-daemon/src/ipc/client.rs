@@ -4,6 +4,7 @@
 
 use super::{protocol, wire};
 use aria_assistant::chat::{AskCall, AssistantModel, ChatStage, ChatTarget, PromptCall, Ticket};
+use aria_platform::hotkey::HotkeyState;
 use aria_settings::config::AssistantId;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{
@@ -262,6 +263,19 @@ impl DaemonClient {
             // The daemon never registered the service, so waiting will not help.
             ServingStatus::ServiceUnknown => Err(ClientError::NotProvided),
         }
+    }
+
+    /// None when the daemon has no state to report, or one newer than this
+    /// build.
+    pub fn hotkey_state(&self) -> Result<Option<HotkeyState>, ClientError> {
+        let mut hotkey =
+            wire::hotkey_service_client::HotkeyServiceClient::new(self.channel.clone());
+        let response = self.call(
+            REQUEST_TIMEOUT,
+            wire::GetHotkeyStatusRequest {},
+            |request| hotkey.get_status(request),
+        )?;
+        Ok(protocol::hotkey_state(&response))
     }
 
     pub(crate) fn service_status(&mut self, service: &str) -> Result<ServingStatus, ClientError> {

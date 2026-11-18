@@ -12,10 +12,10 @@ final class SetupItemTests: XCTestCase {
 
     func testWhatStopsAriaFromStartingComesFirst() {
         let items = SetupItem.all(
-            inspected: [.ariaKey, .speechModel(id: "parakeet")], settingsStatus: nil,
+            inspected: [.ariaKey(.needsAccessibility), .speechModel(id: "parakeet")], settingsStatus: nil,
             startFailure: .backgroundItemOff)
 
-        XCTAssertEqual(items, [.backgroundService, .ariaKey, .speechModel(id: "parakeet")])
+        XCTAssertEqual(items, [.backgroundService, .ariaKey(.needsAccessibility), .speechModel(id: "parakeet")])
     }
 
     func testAnInvalidFileNamesItsLineAndNeverTheParserText() {
@@ -47,7 +47,19 @@ final class SetupItemTests: XCTestCase {
         remapped.kind = .keyRemapped
         inspection.missing = [remapped]
 
-        XCTAssertEqual(SetupItem.items(in: inspection), [.ariaKeyRemapped])
+        XCTAssertEqual(SetupItem.items(in: inspection, ariaKey: .needsAccessibility), [.ariaKeyRemapped])
+    }
+
+    func testTheAriaKeyItemNamesThePermissionTheDaemonReports() {
+        var inspection = Aria_Setup_V1_Inspection()
+        var grant = Aria_Setup_V1_Missing()
+        grant.kind = .grant
+        inspection.missing = [grant]
+
+        let items = SetupItem.items(in: inspection, ariaKey: .needsInputMonitoring)
+
+        XCTAssertEqual(items, [.ariaKey(.needsInputMonitoring)])
+        XCTAssertEqual(items[0].detail, "Turn on Aria in Input Monitoring so it can hear the Aria key.")
     }
 
     func testAGenericStartFailureIsNoItem() {

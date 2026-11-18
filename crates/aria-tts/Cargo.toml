@@ -39,7 +39,7 @@ serde       = { workspace = true, optional = true }
 serde_json  = { workspace = true, optional = true }
 thiserror   = { workspace = true, optional = true }
 tokenizers  = { version = "0.23", default-features = false, features = [ "unstable_wasm" ], optional = true }
-zip         = { version = "8", default-features = false, optional = true }
+zip         = { version = "9", default-features = false, optional = true }
 
 # The kokoro doctest speaks through the default output device.
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]

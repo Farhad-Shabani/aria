@@ -9,7 +9,7 @@ It appears in the menu bar. To run setup again, open **Aria Setup** in
 
 ## Permissions
 
-Aria needs two permissions:
+Aria needs these permissions:
 
 - **Microphone** to hear you. Allow access when macOS asks. If you previously
   denied it, turn on **Aria** in
@@ -21,6 +21,10 @@ Aria needs two permissions:
   and choose
   `/Applications/Aria.app/Contents/Helpers/Aria.app`. Use **⌘⇧G** in the
   file picker to enter that path.
+- **Input Monitoring** to read the Aria key, on Macs that require it even
+  with Accessibility on. When macOS asks, choose **Open System Settings** and
+  turn on **Aria** under **System Settings → Privacy & Security → Input
+  Monitoring**.
 
 ## Try it
 

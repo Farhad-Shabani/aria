@@ -310,6 +310,33 @@ pub enum ListenerEvent {
     Press(Press),
 }
 
+impl ListenerEvent {
+    /// None for a press, which says nothing about the state.
+    pub fn state(&self) -> Option<HotkeyState> {
+        match self {
+            Self::Armed => Some(HotkeyState::Armed),
+            Self::AwaitingPermission => Some(HotkeyState::AwaitingPermission),
+            Self::TapRefused(refusal) if !refusal.listen_access => {
+                Some(HotkeyState::AwaitingListenAccess)
+            }
+            Self::TapRefused(_) => Some(HotkeyState::Refused),
+            Self::KeyUnavailable => Some(HotkeyState::KeyUnavailable),
+            Self::Press(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeyState {
+    Armed,
+    AwaitingPermission,
+    /// Turning on Input Monitoring arms the key.
+    AwaitingListenAccess,
+    /// No permission explains this refusal.
+    Refused,
+    KeyUnavailable,
+}
+
 /// macOS gives no reason when it refuses a tap. This keeps what is known: the
 /// step that failed, and the input permissions macOS reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -586,5 +613,19 @@ mod tests {
         keyboard.down(Modifiers::SHIFT);
         assert_eq!(keyboard.detector.reset(), None);
         assert_eq!(keyboard.up_after(A_TAP), None);
+    }
+
+    #[test]
+    fn a_refusal_without_listen_access_awaits_listen_access() {
+        let refused = ListenerEvent::TapRefused(TapRefusal::for_test(false, true));
+
+        assert_eq!(refused.state(), Some(HotkeyState::AwaitingListenAccess));
+    }
+
+    #[test]
+    fn a_refusal_with_listen_access_is_refused() {
+        let refused = ListenerEvent::TapRefused(TapRefusal::for_test(true, true));
+
+        assert_eq!(refused.state(), Some(HotkeyState::Refused));
     }
 }
