@@ -27,7 +27,7 @@ pub use shipped::{Run, label_as_attributed, label_as_shipped};
 pub use sibling::{Windowing, label_by_voice};
 
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -366,45 +366,66 @@ impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
             // leaves idle. Stepped replay hears the same audio under any
             // load, so the overlap cannot move a score.
             let (synthesized, ready) = mpsc::sync_channel(0);
-            let (tts, directory, ahead, cancel) =
-                (&tts, workspace.path(), &conversations, &unheard);
-            threads.spawn(move || {
-                for scenario in ahead {
-                    let wav = scenario.synthesize(tts, directory, cancel);
-                    let failed = wav.is_err();
-                    if synthesized.send(wav).is_err() || failed {
-                        break;
-                    }
-                }
+            threads.spawn(|| {
+                synthesize_ahead(
+                    &tts,
+                    workspace.path(),
+                    &conversations,
+                    &unheard,
+                    synthesized,
+                );
             });
-
-            let report = (|| {
-                let mut scenarios = Vec::new();
-                for (scenario, wav) in conversations.iter().zip(ready) {
-                    let wav = wav?;
-                    let model = || SpeakerConfig {
-                        model: speaker.model.clone(),
-                    };
-                    let mut diarizer = diarizer(model())?;
-                    let (segments, dropped) = replay::hear(
-                        &stepped,
-                        &wav,
-                        scenario.name,
-                        SCENARIO_LIMIT,
-                        Some(&mut diarizer),
-                    )?;
-                    let fallbacks = replay::relabeled(&diarizer, &segments);
-                    let finals = settled(&segmentation, model(), &wav, &segments)?;
-                    scenarios.push(scenario.scored(&segments, fallbacks, finals, &dropped));
-                }
-                Ok(Report { scenarios })
-            })();
+            let report = hear_all(&stepped, &speaker, &segmentation, &conversations, ready);
             // The scope joins the synthesis thread. A failed hearing must not
             // wait on a conversation nobody will hear.
             unheard.cancel();
             report
         })
     }
+}
+
+fn synthesize_ahead<Tts: Synthesizer>(
+    tts: &Tts,
+    directory: &Path,
+    conversations: &[synth::Scenario],
+    cancel: &CancelToken,
+    synthesized: mpsc::SyncSender<Result<PathBuf, BenchError>>,
+) {
+    for scenario in conversations {
+        let wav = scenario.synthesize(tts, directory, cancel);
+        let failed = wav.is_err();
+        if synthesized.send(wav).is_err() || failed {
+            break;
+        }
+    }
+}
+
+fn hear_all<Stt: StreamingEngine>(
+    stepped: &SteppedTranscription<Stt>,
+    speaker: &SpeakerConfig,
+    segmentation: &Path,
+    conversations: &[synth::Scenario],
+    ready: mpsc::Receiver<Result<PathBuf, BenchError>>,
+) -> Result<Report, BenchError> {
+    let model = || SpeakerConfig {
+        model: speaker.model.clone(),
+    };
+    let mut scenarios = Vec::new();
+    for (scenario, wav) in conversations.iter().zip(ready) {
+        let wav = wav?;
+        let mut diarizer = diarizer(model())?;
+        let (segments, dropped) = replay::hear(
+            stepped,
+            &wav,
+            scenario.name,
+            SCENARIO_LIMIT,
+            Some(&mut diarizer),
+        )?;
+        let fallbacks = replay::relabeled(&diarizer, &segments);
+        let finals = settled(segmentation, model(), &wav, &segments)?;
+        scenarios.push(scenario.scored(&segments, fallbacks, finals, &dropped));
+    }
+    Ok(Report { scenarios })
 }
 
 #[derive(Debug, thiserror::Error)]
