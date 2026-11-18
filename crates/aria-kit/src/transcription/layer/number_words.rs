@@ -152,18 +152,29 @@ pub(super) fn is_ordinal(word: &str) -> bool {
     }
 }
 
-/// Whether `word` carries on a number that `previous` belongs to: a number
-/// word, "point" after one, "and" after "hundred" or a scale, or "o" for a
-/// zero once the number `reads_digits`, as it does past "point" or a spoken
-/// symbol. All in lowercase.
-pub(super) fn continues(word: &str, previous: &str, reads_digits: bool) -> bool {
+/// Whether `word` carries on a number that `previous` belongs to, with
+/// `next` the word after it: a number word, "point" after one, "and" after
+/// "hundred" or a scale, or "o" for a zero. "o" carries on once the number
+/// `reads_digits`, as it does past "point" or a spoken symbol, and before a
+/// number word or the end: "twenty oh five", but "ten oh my". All in
+/// lowercase.
+pub(super) fn continues(
+    word: &str,
+    previous: &str,
+    next: Option<&str>,
+    reads_digits: bool,
+) -> bool {
     match word {
         "point" => is_number_word(previous),
         "and" => ends_on_hundred_or_scale(previous),
-        // "ten oh my" ends at "ten".
-        "o" | "oh" => reads_digits,
+        "o" | "oh" => reads_digits || next.is_none_or(is_number_word),
         word => is_number_word(word),
     }
+}
+
+/// Whether `word`, in lowercase, is "zero" through "nine".
+pub(super) fn is_digit(word: &str) -> bool {
+    matches!(NumberWord::parse(word), Some(NumberWord::Digit(_)))
 }
 
 fn ends_on_hundred_or_scale(word: &str) -> bool {
@@ -180,28 +191,32 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case::number_after_number("twenty", "one", false, true)]
-    #[case::hyphenated("twenty-one", "hundred", false, true)]
-    #[case::point_after_number("two", "point", false, true)]
-    #[case::number_after_point("point", "five", true, true)]
-    #[case::and_after_hundred("hundred", "and", false, true)]
-    #[case::and_after_scale("thousand", "and", false, true)]
-    #[case::and_after_a_hyphenated_scale("twenty-thousand", "and", false, true)]
-    #[case::o_after_point("point", "o", true, true)]
-    #[case::o_after_a_digit_past_the_point("five", "oh", true, true)]
-    #[case::o_before_the_point("ten", "oh", false, false)]
-    #[case::point_after_a_word("the", "point", false, false)]
-    #[case::and_after_tens("twenty", "and", false, false)]
-    #[case::and_after_a_word_ending_like_a_scale("foo-hundred", "and", false, false)]
-    #[case::other_word("twenty", "apples", false, false)]
-    #[case::ordinal("twenty", "second", false, false)]
+    #[case::number_after_number("twenty", "one", None, false, true)]
+    #[case::hyphenated("twenty-one", "hundred", None, false, true)]
+    #[case::point_after_number("two", "point", None, false, true)]
+    #[case::number_after_point("point", "five", None, true, true)]
+    #[case::and_after_hundred("hundred", "and", None, false, true)]
+    #[case::and_after_scale("thousand", "and", None, false, true)]
+    #[case::and_after_a_hyphenated_scale("twenty-thousand", "and", None, false, true)]
+    #[case::o_after_point("point", "o", Some("my"), true, true)]
+    #[case::o_after_a_digit_past_the_point("five", "oh", Some("my"), true, true)]
+    #[case::o_before_a_word("ten", "oh", Some("my"), false, false)]
+    #[case::o_before_a_digit("twenty", "oh", Some("five"), false, true)]
+    #[case::o_before_a_teen("twenty", "oh", Some("fifteen"), false, true)]
+    #[case::o_before_nothing("twenty", "oh", None, false, true)]
+    #[case::point_after_a_word("the", "point", None, false, false)]
+    #[case::and_after_tens("twenty", "and", None, false, false)]
+    #[case::and_after_a_word_ending_like_a_scale("foo-hundred", "and", None, false, false)]
+    #[case::other_word("twenty", "apples", None, false, false)]
+    #[case::ordinal("twenty", "second", None, false, false)]
     fn continues_a_number(
         #[case] previous: &str,
         #[case] word: &str,
+        #[case] next: Option<&str>,
         #[case] reads_digits: bool,
         #[case] expected: bool,
     ) {
-        assert_eq!(continues(word, previous, reads_digits), expected);
+        assert_eq!(continues(word, previous, next, reads_digits), expected);
     }
 
     #[rstest]

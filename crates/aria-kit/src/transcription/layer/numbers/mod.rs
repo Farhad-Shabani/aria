@@ -4,16 +4,16 @@ mod unit;
 use std::borrow::Cow;
 use std::ops::Range;
 
-use self::grammar::Number;
+use self::grammar::{Number, Spoken};
 use self::unit::Unit;
 use super::claim::{Claimed, Word};
-use super::number_words::{continues, is_number_word, is_ordinal};
+use super::number_words::{continues, is_digit, is_number_word, is_ordinal};
 use super::symbol_words::{is_symbol, symbol};
 
 /// Claims each run of number words that has one clear written form as
-/// digits: "two point five" → `2.5`. Other runs stay words and are kept
-/// whole, so a stream never cuts inside them: "one two three", "twenty
-/// second".
+/// digits: "two point five" → `2.5`, "twenty fifteen" → `2015`, "nine five
+/// five" → `955`. Other runs stay words and are kept whole, so a stream
+/// never cuts inside them: "nine fifty five", "twenty second".
 ///
 /// Where a spoken symbol joins two words that both have a joined form
 /// (`Word::joined`), each types that form:
@@ -45,12 +45,18 @@ pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
         let whole = |end: usize| words[run.start].span.start..words[end - 1].span.end;
         let Some(number) = scan.number(&run) else {
             claimed.keep_whole(whole(run.end));
-            match scan.digits(&run) {
-                Some(digits) => claimed.push(Word {
+            if let Some(digits) = scan.digit_by_digit(&run) {
+                claimed.push(Word {
+                    joined: Some(Cow::Owned(digits.clone())),
+                    ..Word::claimed(whole(run.end), Cow::Owned(digits))
+                });
+            } else if let Some(digits) = scan.digits(&run) {
+                claimed.push(Word {
                     joined: Some(Cow::Owned(digits)),
                     ..Word::plain(whole(run.end))
-                }),
-                None => claimed.extend(words[run.clone()].iter().cloned()),
+                });
+            } else {
+                claimed.extend(words[run.clone()].iter().cloned());
             }
             index = run.end;
             continue;
@@ -197,7 +203,8 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         let mut last = start;
         let mut reads_digits = after_symbol;
         while let Some(next) = self.following(last) {
-            if !continues(next, self.word(last)?, reads_digits) {
+            let after = self.following(last + 1);
+            if !continues(next, self.word(last)?, after, reads_digits) {
                 break;
             }
             reads_digits |= next == "point";
@@ -225,9 +232,28 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         Some(run)
     }
 
+    /// The number `run` says. A year a unit follows has none: "nineteen
+    /// ninety nine dollars" may be $19.99.
     fn number(&self, run: &Range<usize>) -> Option<Number> {
         let said: Vec<&str> = run.clone().filter_map(|index| self.word(index)).collect();
-        Number::parse(&said)
+        let number = Number::parse(&said)?;
+        let unit = self
+            .following(run.end - 1)
+            .and_then(|word| Unit::parse(word, &number));
+        (number.spoken() == Spoken::Count || unit.is_none()).then_some(number)
+    }
+
+    /// `run` as typed digits, when it says three or more digit by digit,
+    /// with "o" as a zero after the first: "nine oh five" is `905`.
+    fn digit_by_digit(&self, run: &Range<usize>) -> Option<String> {
+        let said: Vec<&str> = run.clone().filter_map(|index| self.word(index)).collect();
+        let (first, rest) = said.split_first()?;
+        let spelled = said.len() >= 3
+            && is_digit(first)
+            && rest
+                .iter()
+                .all(|word| is_digit(word) || matches!(*word, "o" | "oh"));
+        spelled.then(|| self.digits(run)).flatten()
     }
 
     /// `run` read the way the words after "point" are, with its punctuation.
@@ -403,6 +429,20 @@ mod tests {
     #[case::dollars_before_other_words("five dollars and twenty people", "$5 and 20 people")]
     // "x minus ten" may be a sum, so "minus" never signs a number.
     #[case::minus_stays_a_word("x minus ten", "x minus 10")]
+    #[case::year("in twenty fifteen", "in 2015")]
+    #[case::year_with_a_teen_lead("nineteen ninety nine", "1999")]
+    #[case::year_ending_on_a_compound("twenty twenty six", "2026")]
+    #[case::year_with_oh("twenty oh five", "2005")]
+    #[case::year_with_o("nineteen o one", "1901")]
+    #[case::year_with_the_lowest_lead("thirteen twenty", "1320")]
+    #[case::historic_year("eighteen sixty five", "1865")]
+    #[case::year_after_an_ordinal("March fifth twenty fifteen", "March fifth 2015")]
+    #[case::digit_words("room nine five five", "room 955")]
+    #[case::digit_words_with_oh("python one oh one", "python 101")]
+    #[case::digit_words_opening_on_zero("zero two one three nine", "02139")]
+    #[case::digit_words_of_a_phone_number("five five five one two one two", "5551212")]
+    #[case::digit_words_counting("count one two three", "count 123")]
+    #[case::digit_words_a_symbol_joins("user underscore one two three", "user_123")]
     fn writes(#[case] heard: &str, #[case] typed: &str) {
         assert_eq!(written(heard), typed);
     }
@@ -424,7 +464,15 @@ mod tests {
     #[case::scale_word_first_before_more("a hundred and fifty")]
     #[case::run_with_no_one_form("fifty fifty")]
     #[case::and_between_digit_words("one and two")]
-    #[case::digit_words_no_symbol_joins("count one two three")]
+    #[case::year_before_dollars("nineteen ninety nine dollars")]
+    #[case::year_before_percent("twenty fifteen percent")]
+    #[case::time_with_a_lead_under_thirteen("twelve thirty")]
+    #[case::time_past_ten("ten fifteen")]
+    #[case::time_with_oh("ten oh five")]
+    #[case::digit_word_then_tens("room nine fifty five")]
+    #[case::two_digit_words("a one two punch")]
+    #[case::digit_words_opening_on_oh("oh one two")]
+    #[case::year_lead_before_oh_and_a_teen("twenty oh fifteen")]
     #[case::digit_run_beside_a_word("user underscore one two")]
     #[case::point_without_a_number_before("point five")]
     #[case::plural_after_one("one dollars")]
