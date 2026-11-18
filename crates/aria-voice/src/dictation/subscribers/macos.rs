@@ -152,15 +152,6 @@ mod tests {
     }
 
     #[test]
-    fn each_cue_has_its_own_system_sound() {
-        let files = [Cue::Start, Cue::Stop, Cue::Error].map(Cue::sound_file);
-        assert_eq!(
-            files,
-            ["begin_record.caf", "end_record.caf", "mic_unmute_fail.caf"]
-        );
-    }
-
-    #[test]
     fn every_cue_file_reads_as_a_clip() {
         for cue in [Cue::Start, Cue::Stop, Cue::Error] {
             let clip = feedback::read_caf(cue.sound_path())

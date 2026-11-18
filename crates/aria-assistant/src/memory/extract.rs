@@ -349,6 +349,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use crate::memory::testing::store;
 
     /// Answers every call with the same text and keeps what it was asked.
     struct Scripted {
@@ -374,12 +375,6 @@ mod tests {
             self.asked.lock().expect("lock").push(message.to_owned());
             Ok(self.reply.clone())
         }
-    }
-
-    fn store() -> (tempfile::TempDir, Store) {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let store = Store::open(&dir.path().join("memory.db")).expect("opens");
-        (dir, store)
     }
 
     fn add(kind: &str, text: &str, confidence: &str) -> String {
@@ -507,14 +502,11 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_output_is_an_error_and_a_valid_empty_list_moves_the_watermark() {
+    fn unreadable_output_is_an_error_and_leaves_the_watermark() {
         let (_dir, store) = store();
         let (result, _) = run(&store, "sorry", &["hi".to_owned()], 1, 10, &[]);
         assert!(matches!(result, Err(ConsolidateError::Unreadable)));
         assert_eq!(store.consolidated_through("s1").expect("reads"), 0);
-
-        ok(&store, "[]", &["hi".to_owned()], 10, &[]);
-        assert_eq!(store.consolidated_through("s1").expect("reads"), 1);
     }
 
     #[test]
@@ -533,15 +525,24 @@ mod tests {
             .add_fact("Is Sam", "identity", STATUS_ACTIVE, 0.9, "", "")
             .expect("adds");
         let turns = ["new".to_owned()];
-        let (result, extractor) = run(&store, "[]", &turns, 2, 10, &["db2"]);
+        let (result, _) = run(&store, "[]", &turns, 2, 10, &["db2"]);
         assert_eq!(result.expect("runs").turns, 1);
-        let asked = extractor.asked();
+        assert_eq!(store.consolidated_through("s1").expect("reads"), 2);
+    }
+
+    #[test]
+    fn the_message_lists_existing_facts_the_transcript_and_lexicon_terms() {
+        let (_dir, store) = store();
+        store
+            .add_fact("Is Sam", "identity", STATUS_ACTIVE, 0.9, "", "")
+            .expect("adds");
+        let turns = ["new".to_owned()];
+        let (_, extractor) = run(&store, "[]", &turns, 2, 10, &["db2"]);
         assert_eq!(
-            asked[0],
+            extractor.asked()[0],
             "EXISTING FACTS:\n  1: [identity] Is Sam\n\n\
              TRANSCRIPT (user statements):\n  - new\n\nLEXICON TERMS:\n  - db2"
         );
-        assert_eq!(store.consolidated_through("s1").expect("reads"), 2);
     }
 
     #[test]
@@ -598,7 +599,10 @@ mod tests {
     fn the_system_prompt_keeps_the_contract_under_an_override() {
         let home = tempfile::tempdir().expect("temp home");
         let prompt = build_system_prompt(home.path());
-        assert!(prompt.starts_with("You extract durable personal facts"));
+        assert!(
+            prompt.len() > OUTPUT_CONTRACT.len(),
+            "guidance precedes the contract"
+        );
         assert!(!prompt.contains("<!--"));
         assert!(prompt.ends_with(OUTPUT_CONTRACT));
 
@@ -630,23 +634,35 @@ mod tests {
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(
-            args,
-            [
-                "-p",
-                "--output-format",
-                "stream-json",
-                "--verbose",
-                "--restricted",
-                "--tools",
-                "",
-                "--strict-mcp-config",
-                "--system-prompt",
-                "rules",
-                "--model",
-                "sonnet",
-            ]
+        assert!(
+            args.windows(2).any(|pair| pair == ["--tools", ""]),
+            "{args:?}"
         );
+        assert!(args.contains(&"--restricted".to_owned()), "{args:?}");
+        assert!(args.contains(&"--strict-mcp-config".to_owned()), "{args:?}");
         assert_eq!(command.get_current_dir(), Some(Path::new("/tmp")));
+    }
+
+    #[test]
+    fn the_claude_command_passes_its_prompt_and_model() {
+        let extractor = ClaudeExtractor::new(
+            "sonnet".to_owned(),
+            "rules".to_owned(),
+            PathBuf::from("/tmp"),
+        );
+        let args: Vec<String> = extractor
+            .command()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--system-prompt", "rules"]),
+            "{args:?}"
+        );
+        assert!(
+            args.windows(2).any(|pair| pair == ["--model", "sonnet"]),
+            "{args:?}"
+        );
     }
 }

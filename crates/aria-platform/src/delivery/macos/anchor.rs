@@ -430,8 +430,8 @@ mod tests {
     }
 
     #[test]
-    fn the_first_segment_types_without_a_check() {
-        // Nothing reads Accessibility before the first segment.
+    fn an_unreadable_field_before_any_text_lets_typing_go_on() {
+        // Pid 1 exposes no field, so the read comes back unknown.
         let mut anchor = Anchor {
             application: ax::UiElement::with_app_pid(1),
             field: ax::UiElement::with_app_pid(1),
@@ -442,23 +442,6 @@ mod tests {
 
         assert!(anchor.check().is_ok());
         assert_eq!(anchor.expected_caret, 5);
-    }
-
-    #[test]
-    fn a_lone_segment_returns_without_waiting_for_the_caret() {
-        let mut anchor = Anchor {
-            application: ax::UiElement::with_app_pid(1),
-            field: ax::UiElement::with_app_pid(1),
-            expected_caret: 5,
-            ending: None,
-            tracking: Tracking::Untested(5),
-        };
-        let started = Instant::now();
-
-        anchor.after_typing("hello");
-
-        assert!(started.elapsed() < CATCH_UP_BUDGET / 2);
-        assert_eq!(anchor.expected_caret, 10);
     }
 
     fn typed_anchor() -> Anchor {

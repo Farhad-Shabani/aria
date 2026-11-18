@@ -367,12 +367,6 @@ mod tests {
     use aria_platform::delivery::OutputMode;
     use aria_platform::hotkey::AriaKey;
 
-    fn settings(text: &str) -> crate::CheckedSettings {
-        crate::Loaded::parse(text, std::path::Path::new("/Users/you"))
-            .expect("the text loads")
-            .settings
-    }
-
     #[test]
     fn an_empty_file_reads_as_the_defaults() {
         assert_eq!(
@@ -382,8 +376,23 @@ mod tests {
     }
 
     #[test]
+    fn the_defaults_load_and_match_what_code_does_without_them() {
+        let home = crate::testing::test_home();
+        let defaults = crate::Loaded::parse(&crate::testing::defaults_text(), &home)
+            .expect("every default is valid")
+            .settings;
+
+        let mut settings = crate::Settings::from_file(&defaults).expect("valid");
+        assert_eq!(
+            settings.assistant_id.take(),
+            Some(crate::Settings::default().resolve_assistant_id())
+        );
+        assert_eq!(crate::Settings::default(), settings);
+    }
+
+    #[test]
     fn a_microphone_is_automatic_or_a_host_and_device() {
-        let home = std::path::Path::new("/Users/you");
+        let home = crate::testing::test_home();
         let file = |value: &str| format!("[dictation]\nmicrophone = \"{value}\"\n");
         for value in [
             "automatic",
@@ -391,11 +400,11 @@ mod tests {
             "coreaudio:BuiltInMicrophoneDevice",
             "alsa:hw:0,0",
         ] {
-            let loaded = crate::Loaded::parse(&file(value), home).expect(value);
+            let loaded = crate::Loaded::parse(&file(value), &home).expect(value);
             assert_eq!(loaded.settings.microphone().as_str(), value);
         }
         for value in ["", "built-in", ":device", "coreaudio:"] {
-            let error = crate::Loaded::parse(&file(value), home).expect_err(value);
+            let error = crate::Loaded::parse(&file(value), &home).expect_err(value);
             assert!(
                 matches!(
                     error,
@@ -467,6 +476,9 @@ mod tests {
             .expect("prompts"),
         };
         let patch = patch(&Settings::default(), &next).expect("encodes");
+        for key in patch.keys() {
+            assert_eq!(key.apply(), crate::Apply::Live, "{key}");
+        }
         let dir = tempfile::tempdir().expect("a temp dir");
         let path = dir.path().join("settings.toml");
         let written = crate::modify(&path, dir.path(), None, |_current| {
@@ -490,7 +502,8 @@ mod tests {
     #[test]
     fn an_unchanged_setting_writes_nothing() {
         let current =
-            Settings::from_file(&settings("[dictation]\nmute_sound = true\n")).expect("valid");
+            Settings::from_file(&crate::testing::file("[dictation]\nmute_sound = true\n"))
+                .expect("valid");
         assert!(patch(&current, &current).expect("encodes").is_empty());
     }
 }

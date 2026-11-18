@@ -1035,35 +1035,19 @@ mod tests {
     use std::sync::mpsc::{Receiver, sync_channel};
     use std::thread;
 
-    use crate::dictation::testing::{Edge, HEARD, RecordsUntilStopped, recording_started};
-    use crate::stt::LanguageCode;
-    use aria_kit::audio::SilenceDuration;
+    use crate::dictation::testing::{
+        Edge, HEARD, RecordsUntilStopped, TYPED_PROCESS, recording_started,
+    };
     use aria_platform::delivery::OutputMode;
     use aria_settings::DeliveryMode;
 
     use super::*;
-    use crate::history::HistorySource;
 
     fn settings(stop_mode: StopMode) -> DictationSettings {
         DictationSettings {
-            source: HistorySource::Local,
-            history_enabled: true,
-            history_keep_audio: false,
-            mute_sound: false,
-            return_sends: true,
-            stt_language: Language::Specific(LanguageCode::english()),
-            output_mode: OutputMode::Copy,
-            delivery_mode: DeliveryMode::Complete,
             stop_mode,
-            inputs: aria_kit::audio::Inputs::Any,
-            silence_duration: SilenceDuration::default(),
-            auto_stop: None,
-            own_voice_only: false,
-            cleanup: Cleanup::default(),
             route: crate::dictation::TranscriptRoute::TranscriptOnly,
-            project: None,
-            application: None,
-            target: aria_platform::delivery::TargetPolicy::default(),
+            ..crate::dictation::testing::settings(DeliveryMode::Complete, OutputMode::Copy)
         }
     }
 
@@ -1130,19 +1114,16 @@ mod tests {
             DictationError::from(TranscriptionError::NoNativeStream),
             DictationError::Transcription(TranscriptionError::NoNativeStream)
         ));
+    }
+
+    #[test]
+    fn a_speaker_failure_reports_as_a_transcription_failure() {
         assert_eq!(
             RpcErrorCode::from(&DictationError::Speaker(
                 crate::hearing::TrackingError::Failed
             )),
             RpcErrorCode::TranscriptionFailed
         );
-    }
-
-    #[test]
-    fn stopping_with_nothing_recording_says_so() {
-        let (coordinator, _recording, _events) = coordinator();
-
-        assert!(!coordinator.stop_recording(RecordingId(1)));
     }
 
     #[test]
@@ -1277,7 +1258,6 @@ mod tests {
 
     fn excluded(stop_mode: StopMode) -> DictationSettings {
         DictationSettings {
-            source: HistorySource::Local,
             application: Some(aria_platform::delivery::Application {
                 name: "1Password".into(),
                 bundle_id: Some("com.1password.1password".into()),
@@ -1399,15 +1379,8 @@ mod tests {
     fn a_cancelled_recording_does_not_pretend_to_recognize() {
         let (events, stages) = announcing();
         let cancel = CancelToken::new();
-        let policy = DictationPolicy::new(Duration::from_secs(5)).expect("a valid policy");
-        let control = Arc::new(ExecutionControl::new(
-            RecordingId(0),
-            StopMode::Manual,
-            EscapeRule::Passes,
-            cancel.clone(),
-            policy.deadline(),
-            SoundMuting::Never,
-        ));
+        let control =
+            ExecutionControl::for_test_with_cancellation(StopMode::Manual, cancel.clone());
 
         let guard = control
             .start_recording(
@@ -1572,6 +1545,7 @@ mod tests {
 
     /// Tests resolve default settings, so only a coordinator allowed to mute
     /// may reach the real output.
+    #[cfg(target_os = "macos")]
     #[test]
     fn only_a_coordinator_allowed_to_mute_does_when_the_setting_is_on() {
         for (sound_muting, mute_sound, expected) in [
@@ -1595,10 +1569,7 @@ mod tests {
                 panic!("the microphone is free");
             };
 
-            #[cfg(target_os = "macos")]
             assert_eq!(control.sound_muting == SoundMuting::Allowed, expected);
-            #[cfg(not(target_os = "macos"))]
-            let _ = (control, expected);
         }
     }
 
@@ -1764,5 +1735,64 @@ mod tests {
 
         assert!(control.return_dropped());
         assert!(!control.take_return(), "typing ended");
+    }
+    #[test]
+    fn a_dictation_types_into_its_app_until_typing_ends() {
+        let dictation = ExecutionControl::for_test(StopMode::Manual);
+        let _recording = dictation
+            .start_recording(
+                DeliveryMode::Streaming,
+                crate::dictation::TranscriptRoute::Deliver,
+                &DictationEventEmitter::unsubscribed(),
+            )
+            .expect("recording starts");
+        let active = ActiveDictation::new(Arc::clone(&dictation));
+        assert_eq!(active.target_process(), None, "nothing is typing yet");
+
+        let armed = dictation.arm_return(TYPED_PROCESS);
+        assert_eq!(active.target_process(), Some(TYPED_PROCESS));
+        assert!(active.take_return());
+        assert!(!active.is_recording(), "the Return ended recording");
+        assert_eq!(
+            active.target_process(),
+            Some(TYPED_PROCESS),
+            "a second Return there joins the first"
+        );
+
+        assert!(
+            armed.finish().is_some(),
+            "the dictation learns of the Return"
+        );
+        assert_eq!(active.target_process(), None);
+        assert!(!active.take_return(), "the key belongs to the app again");
+    }
+
+    #[test]
+    fn a_taken_return_ends_any_recording() {
+        let on_silence = ExecutionControl::for_test(StopMode::OnSilence);
+        let _recording = on_silence
+            .start_recording(
+                DeliveryMode::Streaming,
+                crate::dictation::TranscriptRoute::Deliver,
+                &DictationEventEmitter::unsubscribed(),
+            )
+            .expect("recording starts");
+        let _armed = on_silence.arm_return(TYPED_PROCESS);
+
+        assert!(ActiveDictation::new(Arc::clone(&on_silence)).take_return());
+        assert!(
+            !on_silence.request_recording_stop(),
+            "the Return already asked recording to stop"
+        );
+    }
+
+    #[test]
+    fn a_dropped_dictation_lets_return_through() {
+        let dictation = ExecutionControl::for_test(StopMode::Manual);
+        drop(dictation.arm_return(TYPED_PROCESS));
+
+        let active = ActiveDictation::new(Arc::clone(&dictation));
+        assert_eq!(active.target_process(), None);
+        assert!(!active.take_return());
     }
 }

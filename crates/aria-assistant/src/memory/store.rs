@@ -336,6 +336,20 @@ impl Store {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn expire_claims(&self) {
+        self.conn
+            .execute(
+                &format!(
+                    "UPDATE consolidations SET claimed_at = strftime('%Y-%m-%dT%H:%M:%S', \
+                     'now', 'localtime', '-{} seconds')",
+                    STALE_CLAIM_SECONDS + 1
+                ),
+                [],
+            )
+            .expect("ages the claim");
+    }
+
     /// The transaction a run writes its results in, or `None` when its claim
     /// no longer stands.
     pub(crate) fn begin_claimed(
@@ -451,12 +465,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
-
-    fn store() -> (tempfile::TempDir, Store) {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let store = Store::open(&dir.path().join("memory.db")).expect("opens");
-        (dir, store)
-    }
+    use crate::memory::testing::store;
 
     fn add(store: &Store, text: &str, status: &str) -> i64 {
         store
@@ -484,7 +493,9 @@ mod tests {
     #[test]
     fn a_fact_round_trips() {
         let (_dir, store) = store();
-        let id = add(&store, "User is Sam", STATUS_ACTIVE);
+        let id = store
+            .add_fact("User is Sam", "identity", STATUS_ACTIVE, 0.9, "quote", "s1")
+            .expect("adds");
         let fact = store.get(id).expect("reads").expect("exists");
         assert_eq!(fact.text, "User is Sam");
         assert_eq!(fact.kind, "identity");
@@ -494,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn the_database_erases_deleted_content() {
+    fn opening_turns_secure_delete_on() {
         let (_dir, store) = store();
         let erases: bool = store
             .conn
@@ -512,8 +523,11 @@ mod tests {
             std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o644)).expect("chmod");
         }
         drop(Store::open(&path).expect("opens"));
-        let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
+        let mode = |file: &std::path::Path| {
+            std::fs::metadata(file).expect("stat").permissions().mode() & 0o777
+        };
+        assert_eq!(mode(&path), 0o600);
+        assert!(!journal.exists() || mode(&journal) == 0o600);
     }
 
     #[test]
@@ -644,7 +658,7 @@ mod tests {
     }
 
     #[test]
-    fn a_release_ignores_a_claim_it_did_not_make() {
+    fn a_release_after_the_run_finished_changes_nothing() {
         let (_dir, store) = store();
         store.claim_consolidation("s", 4).expect("claims");
         store.record_consolidation("s", 4).expect("records");
@@ -653,18 +667,19 @@ mod tests {
     }
 
     #[test]
+    fn a_release_for_another_window_end_leaves_the_claim_standing() {
+        let (_dir, store) = store();
+        store.claim_consolidation("s", 4).expect("claims");
+        store.release_consolidation("s", 3, 0).expect("releases");
+        assert_eq!(store.claim_consolidation("s", 6).expect("claims"), None);
+    }
+
+    #[test]
     fn a_stale_claim_is_taken_over_from_its_start() {
         let (_dir, store) = store();
         store.record_consolidation("s", 2).expect("records");
         assert_eq!(store.claim_consolidation("s", 5).expect("claims"), Some(2));
-        store
-            .conn
-            .execute(
-                "UPDATE consolidations SET claimed_at = \
-                 strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', '-601 seconds')",
-                [],
-            )
-            .expect("ages the claim");
+        store.expire_claims();
         assert_eq!(store.claim_consolidation("s", 6).expect("claims"), Some(2));
     }
 

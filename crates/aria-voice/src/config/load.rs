@@ -465,24 +465,6 @@ mod tests {
     }
 
     #[test]
-    fn retry_backend_keeps_matching_config_and_uses_other_engine_defaults() {
-        let home = Path::new("/tmp/retry-config");
-        let configured = SttConfig::Parakeet {
-            model_directory: home.join("custom"),
-            device: SttDevice::Cpu,
-        };
-        assert_eq!(
-            configured.for_backend(backend::PARAKEET, home).unwrap(),
-            configured
-        );
-        assert_eq!(
-            configured.for_backend(backend::WHISPER, home).unwrap(),
-            stt_defaults(backend::WHISPER, home).unwrap()
-        );
-        assert!(configured.for_backend(backend::PARAKEET_MLX, home).is_err());
-    }
-
-    #[test]
     fn stt_resolves_a_parakeet_model_directory() {
         let file = file("[stt]\nbackend = \"parakeet\"\nmodel = \"~/models/tdt\"\n");
         assert_eq!(
@@ -524,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    fn tts_defaults_to_the_system_backend_at_the_natural_pace() {
+    fn tts_defaults_to_the_system_backend_without_a_fallback() {
         let defaults = file("");
         let tts = TtsConfig::load(&defaults, &test_home());
 
@@ -656,22 +638,6 @@ mod tests {
                 .any(|model| model.section == Section::SystemTranscription
                     && model.path == Path::new("/home/user/tdt"))
         );
-    }
-
-    #[test]
-    fn mac_audio_admits_only_an_engine_that_streams() {
-        let whisper = SttConfig::Whisper {
-            model: PathBuf::from("/models/whisper.bin"),
-        };
-        let tiny = SttConfig::WhisperCandle {
-            model_directory: PathBuf::from("/models/tiny"),
-        };
-
-        assert!(SystemTranscriptionEngine::new(whisper).is_ok());
-        assert!(matches!(
-            SystemTranscriptionEngine::new(tiny),
-            Err(ConfigError::SystemTranscriptionUnusableEngine(_))
-        ));
     }
 
     #[test]

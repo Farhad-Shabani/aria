@@ -182,26 +182,17 @@ fn has_control(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Modifiers;
 
-    fn prompt(id: &str, chord: Option<Chord>) -> Prompt {
+    fn prompt(id: &str) -> Prompt {
         Prompt::new(
             PromptId::new(id).expect("id"),
             "Polish".to_owned(),
             PromptKind::Rewrite,
             PathBuf::from("/prompts/polish.md"),
             true,
-            chord,
+            None,
         )
         .expect("prompt")
-    }
-
-    fn control(key_code: u16) -> Option<Chord> {
-        let modifiers = Modifiers {
-            control: true,
-            ..Modifiers::default()
-        };
-        Some(Chord::new(key_code, modifiers).expect("chord"))
     }
 
     #[test]
@@ -235,16 +226,17 @@ mod tests {
     #[test]
     fn a_list_holds_each_id_once_and_is_bounded() {
         assert!(matches!(
-            Prompts::new(vec![prompt("a", None), prompt("a", None)]),
+            Prompts::new(vec![prompt("a"), prompt("a")]),
             Err(PromptError::DuplicateId)
         ));
-        let many = (0..=MAX_PROMPTS)
-            .map(|n| prompt(&n.to_string(), None))
-            .collect();
+        let many = (0..=MAX_PROMPTS).map(|n| prompt(&n.to_string())).collect();
         assert!(matches!(Prompts::new(many), Err(PromptError::TooMany)));
+    }
 
-        let prompts =
-            Prompts::new(vec![prompt("a", None), prompt("b", control(1))]).expect("prompts");
+    #[test]
+    fn a_prompt_is_found_by_its_id() {
+        let prompts = Prompts::new(vec![prompt("a"), prompt("b")]).expect("prompts");
+
         assert_eq!(prompts.find("b").map(|p| p.id().as_str()), Some("b"));
         assert!(prompts.find("c").is_none());
     }

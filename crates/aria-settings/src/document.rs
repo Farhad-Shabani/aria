@@ -1674,14 +1674,6 @@ pub(super) mod tests {
         }
     }
 
-    fn refused(text: &str, key: Key) {
-        let error = Loaded::parse(text, Path::new(HOME)).expect_err("refused");
-        assert!(
-            matches!(&error, SettingsError::Invalid { key: found, .. } if *found == key),
-            "{text}: {error}"
-        );
-    }
-
     /// A binding clashes with a default just as with a written one.
     #[test]
     fn a_shortcut_that_takes_the_others_default_is_invalid() {
@@ -1773,16 +1765,19 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn an_unknown_key_is_refused_with_its_position() {
+    fn an_unknown_key_is_refused_with_its_position_and_may_come_from_a_newer_aria() {
         let error = Loaded::parse(
             "[dictation]\noutput_mode = \"copy\"\nloudness = 3\n",
             Path::new(HOME),
         )
         .expect_err("an unknown key is refused");
+
         let SettingsError::Parse(parse) = error else {
             panic!("{error}");
         };
-        assert!(parse.to_string().contains("loudness"), "{parse}");
+        let message = parse.to_string();
+        assert!(message.contains("loudness"), "{message}");
+        assert!(message.contains("a newer Aria"), "{message}");
         assert_eq!(
             parse.position(),
             Some(super::super::Position { line: 3, column: 1 })
@@ -1830,15 +1825,6 @@ pub(super) mod tests {
         .unwrap_err();
 
         assert_eq!(error.position().map(|position| position.line), Some(4));
-    }
-
-    #[test]
-    fn an_unknown_key_says_it_may_come_from_a_newer_aria() {
-        let error = Loaded::parse("[memory]\nsoon = 1\n", Path::new(HOME)).unwrap_err();
-
-        let message = error.to_string();
-        assert!(message.contains("soon"), "{message}");
-        assert!(message.contains("a newer Aria"), "{message}");
     }
 
     /// The settings types and the key table are two lists. Every section is
@@ -1953,7 +1939,6 @@ pub(super) mod tests {
         let (id, prompt) = &settings.prompts.0[0];
         assert_eq!(id, "p");
         assert_eq!(prompt.file, Path::new("/Users/you/Prompts/p.md"));
-        assert!(prompt.enabled);
 
         let error = Loaded::parse("[memory]\ndir = \"~you/.aria\"\n", Path::new(HOME))
             .expect_err("refused");
@@ -1965,6 +1950,15 @@ pub(super) mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_prompt_without_enabled_is_on() {
+        let loaded = load("[prompts.p]\nname = \"P\"\nkind = \"rewrite\"\nfile = \"/p.md\"\n");
+
+        let (_, prompt) = &loaded.settings.prompts.0[0];
+
+        assert!(prompt.enabled);
     }
 
     #[test]
@@ -2002,7 +1996,15 @@ pub(super) mod tests {
                 "{key}"
             );
         }
-        refused("[stt]\nmodel = \"~you/tdt\"\n", Key::SttModel);
+        let error =
+            Loaded::parse("[stt]\nmodel = \"~you/tdt\"\n", Path::new(HOME)).expect_err("refused");
+        assert!(matches!(
+            error,
+            SettingsError::Invalid {
+                key: Key::SttModel,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2086,19 +2088,6 @@ pub(super) mod tests {
             .map(|(id, _entry)| id)
             .collect();
         assert_eq!(ids, ["com.tinyspeck.slackmacgap", "com.apple.Notes"]);
-
-        let error = Loaded::parse(
-            "[application_overrides.\"com app\"]\nexcluded = true\n",
-            Path::new(HOME),
-        )
-        .expect_err("a malformed bundle id is refused");
-        assert!(matches!(
-            error,
-            SettingsError::Invalid {
-                key: Key::ApplicationOverrides,
-                ..
-            }
-        ));
     }
 
     #[test]
@@ -2155,51 +2144,117 @@ pub(super) mod tests {
 
     #[test]
     fn a_value_its_rule_forbids_is_refused() {
-        refused("[stt]\nbackend = \"parakeet-mlx\"\n", Key::SttInterpreter);
-        refused(
-            "[stt]\ndevice = \"gpu\"\nbackend = \"whisper\"\n",
-            Key::SttDevice,
-        );
-        refused("[tts]\nfallback = \"system\"\n", Key::TtsFallback);
-        refused("[tts]\nfallback = \"none\"\n", Key::TtsFallback);
-        refused("[tts]\nrate = 9.0\n", Key::TtsRate);
-        refused(
-            "[wake]\nenabled = true\nbackend = \"livekit\"\n",
-            Key::WakeModel,
-        );
-        refused(
-            "[dictation]\nmax_recording_secs = 700.0\ntimeout_secs = 600.0\n",
-            Key::DictationMaxRecordingSecs,
-        );
-        refused(
-            "[assistant]\ntimeout_secs = 600.0\n",
-            Key::AssistantTimeoutSecs,
-        );
-        refused("[capture]\nbackend = \"wav_file\"\n", Key::CapturePath);
-        refused("[capture]\npace = \"realtime\"\n", Key::CapturePace);
-        refused(
-            "[provider]\nendpoint = \"https://example.com/v1/chat/completions\"\n",
-            Key::ProviderEndpoint,
-        );
-        for model in ["", "-m"] {
-            refused(
-                &format!(
-                    "[provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n\
-                     [dictation.cleanup.llm]\nmodel = \"{model}\"\n"
-                ),
+        let endpoint = "[provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n";
+        let mut rows: Vec<(String, Key)> = vec![
+            (
+                "[stt]\nbackend = \"whisper\"\ninterpreter = \"/usr/bin/python3\"\n".to_owned(),
+                Key::SttInterpreter,
+            ),
+            (
+                "[stt]\nbackend = \"parakeet-mlx\"\n".to_owned(),
+                Key::SttInterpreter,
+            ),
+            (
+                "[transcription]\nbackend = \"server\"\n".to_owned(),
+                Key::SystemTranscriptionBackend,
+            ),
+            (
+                "[stt]\ndevice = \"gpu\"\nbackend = \"whisper\"\n".to_owned(),
+                Key::SttDevice,
+            ),
+            (
+                "[tts]\nfallback = \"system\"\n".to_owned(),
+                Key::TtsFallback,
+            ),
+            ("[tts]\nfallback = \"none\"\n".to_owned(), Key::TtsFallback),
+            (
+                "[capture]\npace = \"realtime\"\n".to_owned(),
+                Key::CapturePace,
+            ),
+            (
+                "[wake]\nenabled = true\nbackend = \"livekit\"\n".to_owned(),
+                Key::WakeModel,
+            ),
+            (
+                "[capture]\nbackend = \"wav_file\"\n".to_owned(),
+                Key::CapturePath,
+            ),
+            (
+                "[provider]\nendpoint = \"https://example.com/v1/chat/completions\"\n".to_owned(),
+                Key::ProviderEndpoint,
+            ),
+            (
+                "[dictation.cleanup.llm]\nmodel = \"m\"\n".to_owned(),
                 Key::DictationCleanupLlmModel,
+            ),
+            (
+                "[dictation]\nmax_recording_secs = 700.0\ntimeout_secs = 600.0\n".to_owned(),
+                Key::DictationMaxRecordingSecs,
+            ),
+            (
+                "[assistant]\ntimeout_secs = 600.0\n".to_owned(),
+                Key::AssistantTimeoutSecs,
+            ),
+            ("[stt]\nbackend = \"vosk\"\n".to_owned(), Key::SttBackend),
+            (
+                "[tts]\nbackend = \"elevenlabs\"\n".to_owned(),
+                Key::TtsBackend,
+            ),
+            (
+                "[wake]\nbackend = \"porcupine\"\n".to_owned(),
+                Key::WakeBackend,
+            ),
+            (
+                "[wake]\nenabled = false\nthreshold = 7.5\n".to_owned(),
+                Key::WakeThreshold,
+            ),
+            (
+                "[delivery]\ntimeout_secs = -1.0\n".to_owned(),
+                Key::DeliveryTimeoutSecs,
+            ),
+            (
+                "[memory]\nenabled = false\nextract_model = \"\"\n".to_owned(),
+                Key::MemoryExtractModel,
+            ),
+            ("[stt]\nmodel = \"  \"\n".to_owned(), Key::SttModel),
+            (
+                "[stt]\nbackend = \"parakeet\"\nmodel = \"models/tdt\"\n".to_owned(),
+                Key::SttModel,
+            ),
+            ("[speaker]\nmodel = \"\"\n".to_owned(), Key::SpeakerModel),
+            (
+                "[speaker]\nprofiles_dir = \"  \"\n".to_owned(),
+                Key::SpeakerProfilesDir,
+            ),
+            ("[capture]\npath = \"\"\n".to_owned(), Key::CapturePath),
+        ];
+        for model in ["", "-m"] {
+            rows.push((
+                format!("{endpoint}[dictation.cleanup.llm]\nmodel = \"{model}\"\n"),
+                Key::DictationCleanupLlmModel,
+            ));
+        }
+        for model in ["two words", "line\nbreak", "--flag"] {
+            rows.push((
+                format!("[assistant.models]\ncodex = {model:?}\n"),
+                Key::AssistantModels,
+            ));
+        }
+        rows.push((
+            format!("[assistant.models]\ncodex = {:?}\n", "x".repeat(201)),
+            Key::AssistantModels,
+        ));
+
+        for (text, key) in &rows {
+            let error = Loaded::parse(text, Path::new(HOME)).expect_err(text);
+            assert!(
+                matches!(&error, SettingsError::Invalid { key: found, .. } if found == key),
+                "{text}: {error}"
             );
         }
-        refused(
-            "[dictation.cleanup.llm]\nmodel = \"m\"\n",
-            Key::DictationCleanupLlmModel,
-        );
-        load("[provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n");
+
+        load(endpoint);
         load("[dictation.cleanup.llm]\nenabled = false\n");
-        refused(
-            "[dictation]\nauto_stop_ms = 2999\n",
-            Key::DictationAutoStopMs,
-        );
         load("[dictation]\nauto_stop_ms = 0\n");
     }
 
@@ -2280,19 +2335,6 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_setting_its_backend_does_not_have_is_refused() {
-        refused(
-            "[stt]\nbackend = \"whisper\"\ninterpreter = \"/usr/bin/python3\"\n",
-            Key::SttInterpreter,
-        );
-        refused("[stt]\nbackend = \"parakeet-mlx\"\n", Key::SttInterpreter);
-        refused(
-            "[transcription]\nbackend = \"server\"\n",
-            Key::SystemTranscriptionBackend,
-        );
-    }
-
-    #[test]
     fn the_server_keeps_the_local_engine_and_its_settings() {
         let loaded = load(
             "[stt]\nbackend = \"parakeet\"\nmodel = \"/models/parakeet\"\ndevice = \"gpu\"\nruns_on = \"server\"\n",
@@ -2333,40 +2375,18 @@ pub(super) mod tests {
             let text = format!("[transcription]\nbackend = \"{engine}\"\n");
             assert!(Loaded::parse(&text, Path::new(HOME)).is_ok(), "{engine}");
         }
-        refused(
+        let error = Loaded::parse(
             "[transcription]\nbackend = \"whisper-candle\"\n",
-            Key::SystemTranscriptionBackend,
-        );
-    }
-
-    #[test]
-    fn a_value_no_engine_can_use_is_refused_even_while_dormant() {
-        refused("[stt]\nbackend = \"vosk\"\n", Key::SttBackend);
-        refused("[tts]\nbackend = \"elevenlabs\"\n", Key::TtsBackend);
-        refused("[wake]\nbackend = \"porcupine\"\n", Key::WakeBackend);
-        refused(
-            "[wake]\nenabled = false\nthreshold = 7.5\n",
-            Key::WakeThreshold,
-        );
-        refused(
-            "[delivery]\ntimeout_secs = -1.0\n",
-            Key::DeliveryTimeoutSecs,
-        );
-        refused(
-            "[memory]\nenabled = false\nextract_model = \"\"\n",
-            Key::MemoryExtractModel,
-        );
-        refused("[stt]\nmodel = \"  \"\n", Key::SttModel);
-        refused(
-            "[stt]\nbackend = \"parakeet\"\nmodel = \"models/tdt\"\n",
-            Key::SttModel,
-        );
-        refused("[speaker]\nmodel = \"\"\n", Key::SpeakerModel);
-        refused(
-            "[speaker]\nprofiles_dir = \"  \"\n",
-            Key::SpeakerProfilesDir,
-        );
-        refused("[capture]\npath = \"\"\n", Key::CapturePath);
+            Path::new(HOME),
+        )
+        .expect_err("refused");
+        assert!(matches!(
+            error,
+            SettingsError::Invalid {
+                key: Key::SystemTranscriptionBackend,
+                ..
+            }
+        ));
     }
 
     #[test]

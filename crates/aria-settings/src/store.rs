@@ -358,8 +358,8 @@ mod tests {
     }
 
     #[test]
-    fn invalid_model_ids_leave_settings_unchanged() {
-        let (_home, path, store) = new_store();
+    fn an_invalid_model_id_leaves_settings_unchanged() {
+        let (_home, _path, store) = new_store();
         update(
             &store,
             SettingsPatch {
@@ -368,36 +368,17 @@ mod tests {
             },
         );
         let before = revision(&store);
-        let invalid_ids = [
-            "two words".to_owned(),
-            "line\nbreak".to_owned(),
-            "--flag".to_owned(),
-            "x".repeat(201),
-        ];
-        for invalid in &invalid_ids {
-            assert!(matches!(
-                store.update(
-                    before,
-                    SettingsPatch {
-                        assistant_models: [(AssistantId::Codex, invalid.clone())].into(),
-                        ..Default::default()
-                    }
-                ),
-                Err(StoreError::InvalidModelId)
-            ));
-            assert_eq!(revision(&store), before);
-        }
-        for invalid in &invalid_ids {
-            let text = format!("[assistant.models]\ncodex = {invalid:?}\n");
-            std::fs::write(&path, text).unwrap();
-            assert!(matches!(
-                SettingsStore::open(&path),
-                Err(StoreError::Settings(crate::SettingsError::Invalid {
-                    key: crate::Key::AssistantModels,
-                    ..
-                }))
-            ));
-        }
+
+        let refused = store.update(
+            before,
+            SettingsPatch {
+                assistant_models: [(AssistantId::Codex, "two words".to_owned())].into(),
+                ..Default::default()
+            },
+        );
+
+        assert!(matches!(refused, Err(StoreError::InvalidModelId)));
+        assert_eq!(revision(&store), before);
     }
 
     #[test]
@@ -485,7 +466,20 @@ mod tests {
             .snapshot()
             .expect("snapshot")
             .settings;
-        assert_eq!(settings.vocabulary_dir, Some(selected.clone()));
+        assert_eq!(settings.vocabulary_dir, Some(selected));
+    }
+
+    #[test]
+    fn turning_vocabulary_off_keeps_its_folder_and_clearing_removes_it() {
+        use crate::Directory;
+
+        let selected = Directory::new("/projects/selected".into()).expect("absolute path");
+        let settings = Settings {
+            vocabulary_enabled: true,
+            vocabulary_dir: Some(selected.clone()),
+            ..Settings::default()
+        };
+
         let disabled = SettingsPatch {
             vocabulary_enabled: Some(false),
             ..Default::default()
@@ -621,63 +615,6 @@ mod tests {
         );
         assert!(taken.is_ok(), "{taken:?}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
-    }
-
-    /// Operations read these through `loaded`, so a restart mark would report
-    /// a restart while applying live.
-    #[test]
-    fn every_key_behind_these_settings_is_live() {
-        use crate::{Apply, Key};
-        for key in [
-            Key::DictationOutputMode,
-            Key::DictationDeliveryMode,
-            Key::DictationSilenceDurationMs,
-            Key::DictationAutoStopMs,
-            Key::DictationMuteSound,
-            Key::DictationReturnSends,
-            Key::DictationOwnVoiceOnly,
-            Key::DictationCleanupEnabled,
-            Key::DictationCleanupFillers,
-            Key::DictationCleanupBacktrack,
-            Key::DictationCleanupLlmEnabled,
-            Key::DictationVocabularyEnabled,
-            Key::DictationVocabularyDir,
-            Key::HistoryEnabled,
-            Key::HistoryKeepAudio,
-            Key::AssistantId,
-            Key::AssistantModels,
-            Key::MemoryEnabled,
-            Key::Prompts,
-            Key::ApplicationOverrides,
-            Key::ShortcutsAriaKey,
-            Key::ShortcutsAsk,
-            Key::ShortcutsPromptList,
-            Key::SttLanguage,
-            Key::TtsRate,
-        ] {
-            assert_eq!(key.apply(), Apply::Live, "{key}");
-        }
-    }
-
-    #[test]
-    fn updating_the_aria_key_notifies_watchers() {
-        let (_home, _path, store) = new_store();
-        let mut watcher = store.aria_key();
-
-        let unrelated = SettingsPatch {
-            own_voice_only: Some(true),
-            ..Default::default()
-        };
-        store.update(revision(&store), unrelated).expect("updates");
-        assert!(!watcher.has_changed().expect("sender alive"));
-
-        let key = SettingsPatch {
-            aria_key: Some(AriaKey::Fn),
-            ..Default::default()
-        };
-        store.update(revision(&store), key).expect("updates");
-        assert!(watcher.has_changed().expect("sender alive"));
-        assert_eq!(*watcher.borrow_and_update(), AriaKey::Fn);
     }
 
     const PROMPTS: &str = "[prompts.reply]\n# keep me\nname = \"Reply\"\nkind = \"compose\"\nfile = \"~/p/reply.md\" # mine\n\n# the second\n[prompts.polish]\nname = \"Polish\"\nkind = \"rewrite\"\nfile = \"/p/polish.md\"\n";

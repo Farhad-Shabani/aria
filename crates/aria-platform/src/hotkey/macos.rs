@@ -829,7 +829,7 @@ mod tests {
     use super::*;
 
     const RIGHT_OPTION: u64 = 0x40;
-    const LEFT_OPTION: u64 = 0x0008_0020;
+    const LEFT_OPTION_HELD: u64 = 0x0008_0020;
     const SECONDARY_FN: u64 = 0x0080_0000;
     const RIGHT_OPTION_KEY: i64 = 61;
     const LEFT_OPTION_KEY: i64 = 58;
@@ -844,13 +844,13 @@ mod tests {
     fn left_option_held_across_the_release_still_counts() {
         let key = AriaKey::RightOption;
         assert!(matches!(
-            hardware(key, RIGHT_OPTION_KEY, RIGHT_OPTION | LEFT_OPTION),
+            hardware(key, RIGHT_OPTION_KEY, RIGHT_OPTION | LEFT_OPTION_HELD),
             Some(KeyEvent::AriaDown {
                 held: Modifiers::NONE
             })
         ));
         assert!(matches!(
-            hardware(key, RIGHT_OPTION_KEY, LEFT_OPTION),
+            hardware(key, RIGHT_OPTION_KEY, LEFT_OPTION_HELD),
             Some(KeyEvent::AriaUp)
         ));
     }
@@ -869,7 +869,7 @@ mod tests {
             hardware(
                 AriaKey::RightOption,
                 LEFT_OPTION_KEY,
-                LEFT_OPTION | SECONDARY_FN
+                LEFT_OPTION_HELD | SECONDARY_FN
             ),
             Some(KeyEvent::Modifiers {
                 held: Modifiers::NONE
@@ -925,7 +925,7 @@ mod tests {
             (
                 AriaKey::RightOption,
                 RETURN_KEY_CODE,
-                RIGHT_OPTION_HELD | LEFT_OPTION,
+                RIGHT_OPTION_HELD | LEFT_OPTION_HELD,
                 None,
             ),
             (
@@ -948,7 +948,7 @@ mod tests {
             (
                 AriaKey::RightOption,
                 ESCAPE_KEY_CODE,
-                RIGHT_OPTION_HELD | LEFT_OPTION,
+                RIGHT_OPTION_HELD | LEFT_OPTION_HELD,
                 None,
             ),
         ];
@@ -962,20 +962,89 @@ mod tests {
     }
 
     #[test]
-    fn only_the_persons_bare_key_is_asked_about() {
-        for key in [BareKey::Return, BareKey::Escape] {
-            let cases = [
-                (Some(key), false, KeyHandling::Ask(key)),
-                (None, false, KeyHandling::Pass),
-                (Some(key), true, KeyHandling::Pass),
-            ];
-            for (bare, synthetic, action) in cases {
-                assert_eq!(
-                    key_handling(KeyPhase::Down, bare, synthetic, false),
-                    action,
-                    "bare {bare:?}, synthetic {synthetic}"
-                );
-            }
+    fn key_handling_follows_the_phase_the_key_and_whether_it_is_taken() {
+        let ret = Some(BareKey::Return);
+        let esc = Some(BareKey::Escape);
+        let rows = [
+            (
+                "a bare Return going down is asked",
+                KeyPhase::Down,
+                ret,
+                false,
+                false,
+                KeyHandling::Ask(BareKey::Return),
+            ),
+            (
+                "a bare Escape going down is asked",
+                KeyPhase::Down,
+                esc,
+                false,
+                false,
+                KeyHandling::Ask(BareKey::Escape),
+            ),
+            (
+                "a key that is not bare passes",
+                KeyPhase::Down,
+                None,
+                false,
+                false,
+                KeyHandling::Pass,
+            ),
+            (
+                "a synthetic Return passes",
+                KeyPhase::Down,
+                ret,
+                true,
+                false,
+                KeyHandling::Pass,
+            ),
+            (
+                "a synthetic Escape passes",
+                KeyPhase::Down,
+                esc,
+                true,
+                false,
+                KeyHandling::Pass,
+            ),
+            (
+                "a taken key's repeat is swallowed",
+                KeyPhase::Repeat,
+                ret,
+                false,
+                true,
+                KeyHandling::Swallow,
+            ),
+            (
+                "a taken key's release ends it",
+                KeyPhase::Up,
+                ret,
+                false,
+                true,
+                KeyHandling::End,
+            ),
+            (
+                "an untaken key's repeat passes",
+                KeyPhase::Repeat,
+                ret,
+                false,
+                false,
+                KeyHandling::Pass,
+            ),
+            (
+                "an untaken key's release passes",
+                KeyPhase::Up,
+                ret,
+                false,
+                false,
+                KeyHandling::Pass,
+            ),
+        ];
+        for (why, phase, bare, synthetic, swallowing, expected) in rows {
+            assert_eq!(
+                key_handling(phase, bare, synthetic, swallowing),
+                expected,
+                "{why}"
+            );
         }
     }
 
@@ -1051,32 +1120,6 @@ mod tests {
         assert!(
             swallowed(&state, RETURN_KEY_CODE, false),
             "the taken release"
-        );
-    }
-
-    #[test]
-    fn a_taken_key_is_swallowed_until_released() {
-        let bare = Some(BareKey::Return);
-        assert_eq!(
-            key_handling(KeyPhase::Repeat, bare, false, true),
-            KeyHandling::Swallow
-        );
-        assert_eq!(
-            key_handling(KeyPhase::Up, bare, false, true),
-            KeyHandling::End
-        );
-    }
-
-    #[test]
-    fn an_untaken_key_repeats_and_releases_untouched() {
-        let bare = Some(BareKey::Return);
-        assert_eq!(
-            key_handling(KeyPhase::Repeat, bare, false, false),
-            KeyHandling::Pass
-        );
-        assert_eq!(
-            key_handling(KeyPhase::Up, bare, false, false),
-            KeyHandling::Pass
         );
     }
 

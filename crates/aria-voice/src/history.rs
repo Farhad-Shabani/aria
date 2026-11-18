@@ -394,3 +394,117 @@ impl From<rusqlite::Error> for HistoryError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(text: &str) -> HistoryEntry {
+        HistoryEntry {
+            id: 0,
+            title: None,
+            content: HistoryContent::Dictation(DictationContent {
+                language: "en".into(),
+                engine: "test".into(),
+                own_voice_only: true,
+                audio: AudioAvailability::Unavailable,
+                retrying: false,
+            }),
+            created_at_ms: 0,
+            duration_ms: Some(1_000),
+            source: HistorySource::Local,
+            application: None,
+            project: None,
+            text: text.into(),
+            complete: true,
+            result_count: 0,
+            status: HistoryStatus::Success,
+            error: None,
+            warning: None,
+            deletion_pending: false,
+        }
+    }
+
+    #[test]
+    fn a_blank_overlong_or_multiline_title_is_invalid() {
+        for title in ["", "   ", "two\nlines", "tab\tinside", &"é".repeat(129)] {
+            assert!(
+                matches!(Title::new(title), Err(HistoryError::InvalidTitle)),
+                "{title:?}"
+            );
+        }
+        assert!(Title::new(&"a".repeat(Title::MAX_BYTES)).is_ok());
+        let error = Title::new("").expect_err("blank");
+        assert_eq!(
+            error.to_string(),
+            "a title must be one line of 1 to 256 bytes"
+        );
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::InvalidRequest);
+    }
+
+    #[test]
+    fn a_prompt_reads_an_asks_reply_and_any_other_entrys_text() {
+        let ask = HistoryEntry {
+            content: HistoryContent::Ask {
+                reply: "Friday.".into(),
+                chat: None,
+            },
+            ..entry("When?")
+        };
+        let whole = HistoryEntry {
+            content: HistoryContent::SystemTranscription {
+                transcript: PathBuf::from("/transcripts/session.txt"),
+                read: Some(TranscriptRead::Whole),
+            },
+            ..entry("[00:00:01] Ship it.")
+        };
+
+        assert_eq!(ask.prompt_text().unwrap(), "Friday.");
+        assert_eq!(whole.prompt_text().unwrap(), "[00:00:01] Ship it.");
+        assert_eq!(entry("Hello").prompt_text().unwrap(), "Hello");
+    }
+
+    #[test]
+    fn a_prompt_cannot_read_a_blank_entry() {
+        let blank_chat = HistoryEntry {
+            content: HistoryContent::Ask {
+                reply: " \n".into(),
+                chat: None,
+            },
+            ..entry("When?")
+        };
+
+        for blank in [entry(" \n"), blank_chat] {
+            let error = blank.prompt_text().expect_err("no text");
+            assert!(matches!(error, HistoryError::EntryEmpty));
+            assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::HistoryEntryEmpty);
+        }
+    }
+
+    #[test]
+    fn a_prompt_reads_a_mac_audio_transcript_only_whole() {
+        for read in [
+            None,
+            Some(TranscriptRead::Truncated),
+            Some(TranscriptRead::Unavailable),
+        ] {
+            let partial = HistoryEntry {
+                content: HistoryContent::SystemTranscription {
+                    transcript: PathBuf::from("/transcripts/session.txt"),
+                    read,
+                },
+                ..entry("[00:00:01] Ship it.")
+            };
+
+            let error = partial.prompt_text().expect_err("only part is read");
+            assert!(
+                matches!(error, HistoryError::TranscriptUnreadable),
+                "{read:?}"
+            );
+            assert_eq!(
+                RpcErrorCode::from(&error),
+                RpcErrorCode::HistoryTranscriptUnreadable
+            );
+        }
+    }
+}

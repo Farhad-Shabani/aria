@@ -638,15 +638,22 @@ mod tests {
         fs::write(path, contents).unwrap();
     }
 
-    fn scan(root: &Path) -> Discovery {
+    fn scan_with<E: Extractor>(
+        root: &Path,
+        previous: &[Source],
+        extractor: &mut E,
+    ) -> Result<Discovery, Error<E::Error>> {
         scan_cached(
             root,
-            &[],
-            &mut LocalExtractor,
+            previous,
+            extractor,
             Deadline::never(),
             &CancelToken::never(),
         )
-        .unwrap()
+    }
+
+    fn scan(root: &Path) -> Discovery {
+        scan_with(root, &[], &mut LocalExtractor).unwrap()
     }
 
     fn paths(discovery: &Discovery) -> HashSet<&Path> {
@@ -710,11 +717,21 @@ mod tests {
     }
 
     #[test]
-    fn gitignore_prunes_subtrees_and_updates_cached_sources() {
+    fn a_gitignore_above_the_selected_folder_does_not_apply() {
         let temp = tempfile::tempdir().unwrap();
         write(temp.path(), ".gitignore", "*\n");
-        let selected = temp.path().join("selected");
-        let root = selected.as_path();
+        let root = temp.path().join("selected");
+        write(&root, "target/generated.txt", "");
+
+        let found = scan(&root);
+
+        assert!(paths(&found).contains(Path::new("target/generated.txt")));
+    }
+
+    #[test]
+    fn gitignore_prunes_subtrees_by_anchor_negation_and_nesting() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
         for path in [
             "target/generated.txt",
             "keep.txt",
@@ -727,9 +744,6 @@ mod tests {
         ] {
             write(root, path, "");
         }
-        let first = scan(root);
-        assert!(paths(&first).contains(Path::new("target/generated.txt")));
-
         write(
             root,
             ".gitignore",
@@ -745,16 +759,11 @@ mod tests {
             deep.push("nested");
         }
         fs::create_dir_all(deep).unwrap();
-        let refreshed = scan_cached(
-            root,
-            &first.sources,
-            &mut LocalExtractor,
-            Deadline::never(),
-            &CancelToken::never(),
-        )
-        .unwrap();
-        assert_eq!(refreshed.coverage.completeness, Completeness::Whole);
-        let listed = paths(&refreshed);
+
+        let found = scan(root);
+
+        assert_eq!(found.coverage.completeness, Completeness::Whole);
+        let listed = paths(&found);
         for included in ["keep.txt", "src/inside.txt", "src/root-only.rs"] {
             assert!(listed.contains(Path::new(included)), "missing {included}");
         }
@@ -769,16 +778,21 @@ mod tests {
         ] {
             assert!(!listed.contains(Path::new(excluded)), "included {excluded}");
         }
+    }
 
-        write(root, "src/.gitignore", "inside.txt\nblocked/\n");
-        let changed = scan_cached(
-            root,
-            &refreshed.sources,
-            &mut LocalExtractor,
-            Deadline::never(),
-            &CancelToken::never(),
-        )
-        .unwrap();
+    #[test]
+    fn a_changed_gitignore_drops_cached_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        write(root, "src/inside.txt", "");
+        write(root, ".gitignore", "*.txt\n");
+        write(root, "src/.gitignore", "!inside.txt\n");
+        let first = scan(root);
+        assert!(paths(&first).contains(Path::new("src/inside.txt")));
+
+        write(root, "src/.gitignore", "inside.txt\n");
+        let changed = scan_with(root, &first.sources, &mut LocalExtractor).unwrap();
+
         assert!(!paths(&changed).contains(Path::new("src/inside.txt")));
     }
 
@@ -795,13 +809,7 @@ mod tests {
         );
         write(root, "oversized/oversized-name.rs", "");
         fs::set_permissions(root.join("locked"), fs::Permissions::from_mode(0o000)).unwrap();
-        let result = scan_cached(
-            root,
-            &[],
-            &mut LocalExtractor,
-            Deadline::never(),
-            &CancelToken::never(),
-        );
+        let result = scan_with(root, &[], &mut LocalExtractor);
         fs::set_permissions(root.join("locked"), fs::Permissions::from_mode(0o700)).unwrap();
         let result = result.unwrap();
         let found = names(&result);
@@ -897,14 +905,7 @@ mod tests {
         write(&root, ".hidden/secret-name.txt", "");
         write(&root, "binary.dat", b"\0\xff");
         let mut extractor = RecordingExtractor::default();
-        let result = scan_cached(
-            &root,
-            &[],
-            &mut extractor,
-            Deadline::never(),
-            &CancelToken::never(),
-        )
-        .unwrap();
+        let result = scan_with(&root, &[], &mut extractor).unwrap();
         assert_eq!(result.coverage.hidden, 1);
         assert_eq!(
             extractor.inputs,
@@ -1004,14 +1005,7 @@ mod tests {
         write(root, "Documents/notes.txt", "");
         fs::create_dir(root.join("JavaTree/.git")).unwrap();
         let mut extractor = RecordingExtractor::default();
-        let all = scan_cached(
-            root,
-            &[],
-            &mut extractor,
-            Deadline::never(),
-            &CancelToken::never(),
-        )
-        .unwrap();
+        let all = scan_with(root, &[], &mut extractor).unwrap();
         assert_eq!(all.root, root.canonicalize().unwrap());
         for expected in ["Widget.java", "View.swift", "notes.txt"] {
             assert!(
@@ -1022,14 +1016,7 @@ mod tests {
         }
         extractor.inputs.clear();
         let selected = root.join("JavaTree");
-        let child = scan_cached(
-            &selected,
-            &[],
-            &mut extractor,
-            Deadline::never(),
-            &CancelToken::never(),
-        )
-        .unwrap();
+        let child = scan_with(&selected, &[], &mut extractor).unwrap();
         assert_eq!(child.root, selected.canonicalize().unwrap());
         assert!(
             !extractor
@@ -1052,35 +1039,14 @@ mod tests {
         write(&root, "first-name.rs", "");
         write(&root, "gone-name.rs", "");
         let mut extractor = RecordingExtractor::default();
-        let first = scan_cached(
-            &root,
-            &[],
-            &mut extractor,
-            Deadline::never(),
-            &CancelToken::never(),
-        )
-        .unwrap();
+        let first = scan_with(&root, &[], &mut extractor).unwrap();
         extractor.inputs.clear();
-        let same = scan_cached(
-            &root,
-            &first.sources,
-            &mut extractor,
-            Deadline::never(),
-            &CancelToken::never(),
-        )
-        .unwrap();
+        let same = scan_with(&root, &first.sources, &mut extractor).unwrap();
         assert!(extractor.inputs.is_empty());
         assert_eq!(same.sources, first.sources);
         fs::rename(root.join("first-name.rs"), root.join("other-name.rs")).unwrap();
         fs::remove_file(root.join("gone-name.rs")).unwrap();
-        let changed = scan_cached(
-            &root,
-            &first.sources,
-            &mut extractor,
-            Deadline::never(),
-            &CancelToken::never(),
-        )
-        .unwrap();
+        let changed = scan_with(&root, &first.sources, &mut extractor).unwrap();
         assert_eq!(
             extractor.inputs,
             [(SourceKind::FileName, "other-name.rs".into())]
@@ -1117,14 +1083,7 @@ mod tests {
         ] {
             let mut previous = first.sources.clone();
             previous[source_index].candidates = candidates;
-            let repaired = scan_cached(
-                temp.path(),
-                &previous,
-                &mut LocalExtractor,
-                Deadline::never(),
-                &CancelToken::never(),
-            )
-            .unwrap();
+            let repaired = scan_with(temp.path(), &previous, &mut LocalExtractor).unwrap();
             assert_eq!(repaired.sources, first.sources);
         }
     }
@@ -1158,13 +1117,7 @@ mod tests {
             vec![0..8, 0..8],
             vec![0..8; MAX_CANDIDATES + 1],
         ] {
-            let result = scan_cached(
-                &root,
-                &[],
-                &mut InvalidExtractor(spans),
-                Deadline::never(),
-                &CancelToken::never(),
-            );
+            let result = scan_with(&root, &[], &mut InvalidExtractor(spans));
             assert!(matches!(result, Err(Error::InvalidOutput)));
         }
     }
@@ -1193,12 +1146,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         write(temp.path(), "a-first.rs", "");
         write(temp.path(), "z-gone.rs", "");
-        let result = scan_cached(
+        let result = scan_with(
             temp.path(),
             &[],
             &mut MutatingExtractor(temp.path().join("z-gone.rs")),
-            Deadline::never(),
-            &CancelToken::never(),
         )
         .unwrap();
         let paths = paths(&result);
@@ -1207,10 +1158,11 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_fails_and_links_are_never_opened() {
+    fn a_cancelled_scan_fails() {
         let temp = tempfile::tempdir().unwrap();
         let cancel = CancelToken::new();
         cancel.cancel();
+
         assert!(matches!(
             scan_cached(
                 temp.path(),
@@ -1221,6 +1173,11 @@ mod tests {
             ),
             Err(Error::Cancelled)
         ));
+    }
+
+    #[test]
+    fn a_symlink_or_parent_step_is_never_opened() {
+        let temp = tempfile::tempdir().unwrap();
         let nested = temp.path().join("nested");
         fs::create_dir(&nested).unwrap();
         let directory = open_directory(&temp.path().canonicalize().unwrap()).unwrap();

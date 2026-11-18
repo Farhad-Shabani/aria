@@ -243,7 +243,7 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
-    use crate::dictation::testing::{EDGE_WAIT, TYPED_PROCESS};
+    use crate::dictation::testing::EDGE_WAIT;
 
     use super::*;
 
@@ -445,14 +445,7 @@ mod tests {
     #[test]
     fn a_second_manual_press_stops_the_recording_instead_of_starting_one() {
         let gate = Gate::new();
-        let running = control(StopMode::Manual);
-        let _recording = running
-            .start_recording(
-                aria_settings::DeliveryMode::Complete,
-                crate::dictation::TranscriptRoute::Deliver,
-                &DictationEventEmitter::unsubscribed(),
-            )
-            .expect("recording starts");
+        let (running, _recording) = recording(StopMode::Manual);
         let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&running));
 
         assert!(matches!(
@@ -489,58 +482,6 @@ mod tests {
         let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&dictation));
         let active = gate.active_dictation().expect("a dictation holds it");
         assert_eq!(active.stop_mode(), StopMode::Manual);
-    }
-
-    #[test]
-    fn a_dictation_types_into_its_app_until_typing_ends() {
-        let gate = Gate::new();
-        let (dictation, _recording) = recording(StopMode::Manual);
-        let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&dictation));
-        let active = gate.active_dictation().expect("a dictation holds it");
-        assert_eq!(active.target_process(), None, "nothing is typing yet");
-
-        let armed = dictation.arm_return(TYPED_PROCESS);
-        assert_eq!(active.target_process(), Some(TYPED_PROCESS));
-        assert!(active.take_return());
-        assert!(!active.is_recording(), "the Return ended recording");
-        assert_eq!(
-            active.target_process(),
-            Some(TYPED_PROCESS),
-            "a second Return there joins the first"
-        );
-
-        assert!(
-            armed.finish().is_some(),
-            "the dictation learns of the Return"
-        );
-        assert_eq!(active.target_process(), None);
-        assert!(!active.take_return(), "the key belongs to the app again");
-    }
-
-    #[test]
-    fn a_taken_return_ends_any_recording() {
-        let gate = Gate::new();
-        let (on_silence, _recording) = recording(StopMode::OnSilence);
-        let _dictating = gate.admit_dictation(StopMode::OnSilence, Arc::clone(&on_silence));
-        let _armed = on_silence.arm_return(TYPED_PROCESS);
-
-        assert!(gate.active_dictation().unwrap().take_return());
-        assert!(
-            !on_silence.request_recording_stop(),
-            "the Return already asked recording to stop"
-        );
-    }
-
-    #[test]
-    fn a_dropped_dictation_lets_return_through() {
-        let gate = Gate::new();
-        let dictation = control(StopMode::Manual);
-        let _dictating = gate.admit_dictation(StopMode::Manual, Arc::clone(&dictation));
-        drop(dictation.arm_return(TYPED_PROCESS));
-
-        let active = gate.active_dictation().unwrap();
-        assert_eq!(active.target_process(), None);
-        assert!(!active.take_return());
     }
 
     #[test]
@@ -593,6 +534,13 @@ mod tests {
     }
 
     #[test]
+    fn stopping_with_nothing_recording_says_so() {
+        let gate = Gate::new();
+
+        assert!(!gate.stop_recording(RecordingId(1)));
+    }
+
+    #[test]
     fn a_stop_does_not_end_an_enrollment() {
         let gate = Gate::new();
         let _enrolling = gate.admit_enrollment().expect("the microphone is idle");
@@ -603,14 +551,7 @@ mod tests {
     #[test]
     fn a_stop_names_the_recording_it_ends() {
         let gate = Gate::new();
-        let running = control(StopMode::OnSilence);
-        let _recording = running
-            .start_recording(
-                aria_settings::DeliveryMode::Complete,
-                crate::dictation::TranscriptRoute::Deliver,
-                &DictationEventEmitter::unsubscribed(),
-            )
-            .expect("recording starts");
+        let (running, _recording) = recording(StopMode::OnSilence);
         let _dictating = gate.admit_dictation(StopMode::OnSilence, Arc::clone(&running));
 
         assert!(!gate.stop_recording(RecordingId(7)));

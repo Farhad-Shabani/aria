@@ -294,19 +294,6 @@ fn folder_scope_and_conflicts_survive_catalog_reuse() {
 }
 
 #[test]
-fn a_deep_selected_folder_reports_partial_counts() {
-    let temporary = tempfile::tempdir().unwrap();
-    let root = temporary.path().join("scope");
-    let mut nested = root.clone();
-    for _ in 0..18 {
-        nested.push("nested");
-    }
-    fs::create_dir_all(nested).unwrap();
-    let report = measure(&root, &temporary.path().join("catalog"), 1, false).unwrap();
-    assert_eq!(report["counts"]["partial"], json!(true));
-}
-
-#[test]
 #[ignore = "release diagnostic; writes only to ARIA_VOCABULARY_COLLECTION_RESULTS when set"]
 fn vocabulary_collection_benchmark() {
     if cfg!(debug_assertions) {

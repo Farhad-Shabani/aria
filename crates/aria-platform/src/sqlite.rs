@@ -343,18 +343,23 @@ mod tests {
     }
 
     #[test]
-    fn a_second_link_or_an_oversized_file_is_refused() {
+    fn a_database_with_a_second_link_is_refused() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("data.db");
         drop(Database::open(&path, &POLICY, &CancelToken::never()).unwrap());
-
         fs::hard_link(&path, temp.path().join("second")).unwrap();
+
         assert!(matches!(
             Database::open(&path, &POLICY, &CancelToken::never()),
             Err(Error::Linked)
         ));
-        fs::remove_file(temp.path().join("second")).unwrap();
+    }
 
+    #[test]
+    fn a_database_over_its_size_limit_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("data.db");
+        drop(Database::open(&path, &POLICY, &CancelToken::never()).unwrap());
         File::options()
             .write(true)
             .open(&path)
