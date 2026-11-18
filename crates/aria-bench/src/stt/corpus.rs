@@ -166,42 +166,6 @@ mod tests {
     }
 
     #[test]
-    fn a_line_without_a_tab_is_refused_by_number() {
-        let manifest = manifest("/corpus/one.wav THE SOCKET CLOSES\n");
-
-        let loaded = Corpus::load(manifest.path());
-
-        assert!(matches!(
-            loaded,
-            Err(CorpusError::Malformed { line: 1, .. })
-        ));
-    }
-
-    #[test]
-    fn a_line_without_reference_text_is_refused() {
-        let manifest = manifest("/corpus/one.wav\t   \n");
-
-        let loaded = Corpus::load(manifest.path());
-
-        assert!(matches!(
-            loaded,
-            Err(CorpusError::Malformed { line: 1, .. })
-        ));
-    }
-
-    #[test]
-    fn a_relative_audio_path_is_refused_by_number() {
-        let manifest = manifest("corpus/one.wav\tTHE SOCKET CLOSES\n");
-
-        let loaded = Corpus::load(manifest.path());
-
-        assert!(matches!(
-            loaded,
-            Err(CorpusError::RelativeAudio { line: 1, .. })
-        ));
-    }
-
-    #[test]
     fn a_written_manifest_loads_back_and_counts_scored_words() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("manifest.tsv");
@@ -224,11 +188,39 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_manifest_is_refused() {
-        let manifest = manifest("\n  \n");
+    fn a_bad_manifest_is_refused() {
+        let good = "/corpus/zero.wav\tTHE SOCKET OPENS\n";
+        type Refusal = fn(&CorpusError) -> bool;
+        let rows: [(&str, String, Refusal); 4] = [
+            (
+                "a line without a tab is refused by number",
+                format!("{good}/corpus/one.wav THE SOCKET CLOSES\n"),
+                |error| matches!(error, CorpusError::Malformed { line: 2, .. }),
+            ),
+            (
+                "a line without reference text is refused",
+                format!("{good}/corpus/one.wav\t   \n"),
+                |error| matches!(error, CorpusError::Malformed { line: 2, .. }),
+            ),
+            (
+                "a relative audio path is refused by number",
+                format!("{good}corpus/one.wav\tTHE SOCKET CLOSES\n"),
+                |error| matches!(error, CorpusError::RelativeAudio { line: 2, .. }),
+            ),
+            (
+                "an empty manifest is refused",
+                "\n  \n".to_owned(),
+                |error| matches!(error, CorpusError::Empty { .. }),
+            ),
+        ];
+        for (label, text, expected) in rows {
+            let manifest = manifest(&text);
 
-        let loaded = Corpus::load(manifest.path());
+            let Err(error) = Corpus::load(manifest.path()) else {
+                panic!("{label}: the manifest loaded");
+            };
 
-        assert!(matches!(loaded, Err(CorpusError::Empty { .. })));
+            assert!(expected(&error), "{label}: {error:?}");
+        }
     }
 }

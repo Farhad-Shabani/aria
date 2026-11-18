@@ -4,7 +4,7 @@
 //! sandbox, so its daemon reads a temporary home instead of the developer's.
 #![cfg(target_os = "macos")]
 
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use aria::primitives::process::{ChildProcess, WaitOutcome};
 use aria_daemon::{Daemon, DaemonLifetime, DaemonSession};
-use aria_harness::Sandbox;
+use aria_harness::{Sandbox, wait_until_ready};
 use signal_hook::consts::SIGINT;
 
 const CHILD_TIMEOUT: Duration = Duration::from_secs(20);
@@ -24,14 +24,8 @@ fn ctrl_c_stays_with_the_caller_when_another_process_owns_the_daemon() {
     let sandbox = Sandbox::create("").expect("the sandbox should be created");
     let mut host = start(&sandbox, "host");
     let socket = sandbox.socket_path();
-    match host
-        .wait_until(Instant::now() + CHILD_TIMEOUT, || socket.exists())
-        .expect("the host should be waited on")
-    {
-        WaitOutcome::Cancelled => {}
-        WaitOutcome::Exited(status) => panic!("the host ended before serving with {status}"),
-        WaitOutcome::TimedOut => panic!("the host never bound its socket"),
-    }
+    wait_until_ready(&mut host, CHILD_TIMEOUT, || socket.exists())
+        .expect("the host should bind its socket");
 
     let status = finish(start(&sandbox, "probe"));
     assert!(status.success(), "the probe ended with {status}");
@@ -77,14 +71,9 @@ fn probe() {
         .expect("the daemon should still serve after Ctrl-C");
 }
 
-/// Reruns this test binary as `case` inside `sandbox`.
 fn start(sandbox: &Sandbox, case: &str) -> ChildProcess {
-    let mut command =
-        Command::new(std::env::current_exe().expect("the test binary should resolve"));
-    sandbox.apply(&mut command);
-    command
-        .args([case, "--exact", "--ignored"])
-        .stdout(Stdio::null());
+    let mut command = sandbox.test_command(case);
+    command.stdout(Stdio::null());
     ChildProcess::spawn(&mut command).expect("the child should start")
 }
 

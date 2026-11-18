@@ -193,7 +193,7 @@ mod tests {
 
     #[cfg(not(target_os = "ios"))]
     #[test]
-    fn inspect_accepts_a_runnable_regular_file() {
+    fn a_runnable_regular_file_is_executable() {
         let fixture = FileFixture::with_mode(EXECUTABLE_MODE);
         let expected_path = fixture.canonical_target();
 
@@ -233,7 +233,7 @@ mod tests {
 
     #[cfg(not(target_os = "ios"))]
     #[test]
-    fn inspect_rejects_a_regular_file_that_is_not_runnable() {
+    fn a_regular_file_that_cannot_run_is_not_executable() {
         let fixture = FileFixture::with_mode(REGULAR_FILE_MODE);
         let expected_path = fixture.canonical_target();
 

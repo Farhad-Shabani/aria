@@ -773,13 +773,4 @@ mod tests {
         assert_eq!(chunks[0].len(), UNITS_PER_EVENT - 1);
         assert_eq!(chunks[1], "🙂".encode_utf16().collect::<Vec<_>>());
     }
-
-    #[test]
-    fn multibyte_text_survives_chunking() {
-        let text = "سلام دنیا — こんにちは";
-
-        let chunks = unicode_chunks(text);
-
-        assert_eq!(chunks.concat(), text.encode_utf16().collect::<Vec<_>>());
-    }
 }

@@ -519,4 +519,27 @@ mod tests {
 
         assert!(matches!(collected, Collected::Audio(audio) if audio == b"one"));
     }
+
+    #[test]
+    fn only_a_code_known_to_be_safe_keeps_its_message() {
+        let path = "/Users/you/.aria/settings.lock";
+        for code in [
+            RpcErrorCode::Busy,
+            RpcErrorCode::Internal,
+            RpcErrorCode::PermissionDenied,
+            RpcErrorCode::SettingsInvalid,
+            RpcErrorCode::TranscriptionFailed,
+            RpcErrorCode::Unknown(999),
+        ] {
+            let status = redacted(failure_status(RpcFailure::new(code, path)));
+            assert!(!status.message().contains(path), "{code:?}");
+        }
+        let kept = redacted(failure_status(RpcFailure::new(
+            RpcErrorCode::InvalidRequest,
+            "memory.enabled is refused",
+        )));
+        assert_eq!(kept.message(), "memory.enabled is refused");
+        let bare = redacted(Status::internal(path));
+        assert!(!bare.message().contains(path));
+    }
 }

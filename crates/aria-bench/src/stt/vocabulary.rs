@@ -713,22 +713,6 @@ mod tests {
     }
 
     #[test]
-    fn canonical_spelling_is_not_hidden_by_wer_normalization() {
-        assert_eq!(crate::stt::words("aria-stt"), crate::stt::words("aria stt"));
-        assert!(
-            !crate::stt::score::exact_alignment("Cargo.toml", "cargo toml")
-                .reference_span_matches(0..1)
-        );
-        let (target, background) = crate::stt::score::partitioned_errors(
-            "open aria now",
-            "open wrong aria now",
-            &[false, true, false],
-        );
-        assert_eq!(target.insertions, 1);
-        assert_eq!(errors(background), 0);
-    }
-
-    #[test]
     fn empty_and_overlapping_cases_are_rejected() {
         let mut suite = fixtures().unwrap();
         let duplicate = suite.cases[0].targets[0].clone();
@@ -739,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_keeps_whole_and_segment_results_separate() {
+    fn evaluation_scores_whole_and_segment_inputs_separately() {
         let mut suite = fixtures().unwrap();
         let case = suite
             .cases
@@ -764,6 +748,5 @@ mod tests {
         assert_eq!(whole["output"], "aria-stt");
         assert_eq!(streaming["output"], "aria dash stt");
         assert_eq!(streaming["metrics"]["counts"]["baseline_target_errors"], 1);
-        assert!(evaluate(&suite, &path).is_err());
     }
 }

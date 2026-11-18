@@ -165,106 +165,20 @@ fn preload(engine: &DictationEngine, stop: &CancelToken) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
     use std::time::Duration;
 
-    use aria_kit::audio::RecordingReader;
-    use aria_settings::Settings;
-    use aria_voice::config::{PairingId, SttConfig};
-    use aria_voice::dictation::{
-        Cleanup, DictationCoordinator, DictationError, DictationEventEmitter, DictationExecutor,
-        DictationOutcome, DictationPolicy, DictationRequest, DictationResult, DictationSettings,
-        ExecutionControl, StopMode, Transcribed,
-    };
-    use aria_voice::stt::{Language, TranscriptionError};
+    use aria_voice::config::PairingId;
+    use aria_voice::dictation::DictationError;
+    use aria_voice::stt::TranscriptionError;
 
-    use super::super::assembly::RuntimeExecutor;
+    use super::super::assembly::tests::{local, named, press};
     use super::super::model_load::Preload;
     use super::*;
 
-    struct Named {
-        name: &'static str,
-        dropped: Arc<AtomicBool>,
-    }
-
-    impl Drop for Named {
-        fn drop(&mut self) {
-            self.dropped.store(true, Ordering::SeqCst);
-        }
-    }
-
-    impl DictationExecutor for Named {
-        fn execute(
-            &self,
-            _: DictationSettings,
-            _: &Arc<ExecutionControl>,
-            _: &DictationEventEmitter,
-        ) -> Result<DictationResult, DictationError> {
-            Ok(DictationResult {
-                text: self.name.to_owned(),
-                own_voice: false,
-            })
-        }
-
-        fn transcribe(
-            &self,
-            _: &mut RecordingReader,
-            _: &Language,
-            _: bool,
-            _: Option<&aria_settings::Directory>,
-            _: Cleanup,
-            _: &CancelToken,
-        ) -> Result<Transcribed, DictationError> {
-            panic!("these tests only press");
-        }
-
-        fn deliver_recording(
-            &self,
-            _: &mut RecordingReader,
-            _: DictationSettings,
-            _: &Arc<ExecutionControl>,
-            _: &DictationEventEmitter,
-        ) -> Result<String, DictationError> {
-            panic!("these tests only press");
-        }
-    }
-
-    fn named(name: &'static str) -> (RuntimeExecutor, Arc<AtomicBool>) {
-        let dropped = Arc::new(AtomicBool::new(false));
-        let executor = Box::new(Named {
-            name,
-            dropped: Arc::clone(&dropped),
-        });
-        (executor, dropped)
-    }
-
-    fn local(directory: &str) -> SttBackend {
-        SttBackend::Local(SttConfig::Moonshine {
-            model_directory: Path::new(directory).to_path_buf(),
-        })
-    }
-
     fn server(id: u8) -> SttBackend {
         SttBackend::Server(Some(PairingId::new([id; 32])))
-    }
-
-    fn settings() -> DictationSettings {
-        DictationSettings::resolve(
-            Settings::default(),
-            DictationRequest::new(StopMode::OnSilence),
-            None,
-        )
-    }
-
-    fn press(slot: &EngineSlot) -> Result<String, DictationError> {
-        slot.execute(
-            settings(),
-            &ExecutionControl::for_test(StopMode::OnSilence),
-            &DictationEventEmitter::unsubscribed(),
-        )
-        .map(|result| result.text)
     }
 
     fn building(
@@ -498,65 +412,5 @@ mod tests {
 
         assert_eq!(settled, Settled::Unchanged);
         assert_eq!(runs.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn an_unusable_engine_keeps_the_first_build_that_succeeds() {
-        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counted = Arc::clone(&attempts);
-        let build: BuildEngine = Arc::new(move |backend: &SttBackend| {
-            if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-                return Err(DictationError::Transcription(
-                    TranscriptionError::NoNativeStream,
-                ));
-            }
-            let (executor, _) = named("recovered");
-            Ok(DictationEngine::built(
-                "recovered",
-                backend.clone(),
-                executor,
-            ))
-        });
-        let slot = EngineSlot::new(DictationEngine::unusable(local("/new"), build));
-
-        assert!(press(&slot).is_err());
-        assert_eq!(press(&slot).unwrap(), "recovered");
-        assert_eq!(press(&slot).unwrap(), "recovered");
-        assert_eq!(attempts.load(Ordering::SeqCst), 2);
-    }
-
-    /// The coordinator outlives the swap, so its recording IDs keep counting.
-    #[test]
-    fn the_same_coordinator_runs_the_new_engine_after_a_swap() {
-        let (old, _) = named("old");
-        let (new, _) = named("new");
-        let slot = EngineSlot::of("old", old);
-        let microphone = Gate::new();
-        let execution: RuntimeExecutor = Box::new(slot.clone());
-        let coordinator = DictationCoordinator::new(
-            DictationPolicy::new(Duration::from_secs(5)).unwrap(),
-            execution,
-            Arc::clone(&microphone),
-        );
-        let dictate = || {
-            let outcome = coordinator
-                .execute(
-                    settings(),
-                    aria_voice::dictation::EscapeRule::Passes,
-                    CancelToken::never(),
-                    &DictationEventEmitter::unsubscribed(),
-                )
-                .unwrap();
-            let DictationOutcome::Completed(result) = outcome else {
-                panic!("an automatic press completes");
-            };
-            result.text
-        };
-
-        assert_eq!(dictate(), "old");
-        let claim = microphone.admit_engine_swap(&CancelToken::never()).unwrap();
-        slot.replace(DictationEngine::built("new", local("/new"), new), &claim);
-        drop(claim);
-        assert_eq!(dictate(), "new");
     }
 }

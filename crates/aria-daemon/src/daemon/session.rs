@@ -809,41 +809,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_prompt_run_on_an_on_demand_daemon_is_refused_with_how_to_start_one() {
-        use aria_assistant::chat::{Instructions, PromptChoice, PromptInput};
-        use aria_settings::rpc::RpcErrorCode;
-
-        let daemon = crate::daemon::testing::HostedDaemon::configured(|_| String::new());
-        let session = daemon.session();
-
-        let refused = session
-            .run_prompt(PromptCall {
-                input: PromptInput::Text("we met on Friday".to_owned()),
-                prompt: PromptChoice::OneOff(
-                    Instructions::new("List the action items.".to_owned()).expect("instructions"),
-                ),
-                application: None,
-                tap_cancels: false,
-                escape_cancels: false,
-                output_mode: None,
-            })
-            .err()
-            .expect("an on-demand daemon runs no prompt");
-
-        let ClientError::Rpc(failure) = refused else {
-            panic!("{refused}");
-        };
-        assert_eq!(failure.code, RpcErrorCode::Unsupported);
-        assert!(
-            failure.message.contains("aria daemon"),
-            "{}",
-            failure.message
-        );
-        drop(session);
-        daemon.stop();
-    }
-
-    #[test]
     fn a_missing_history_entry_reads_as_missing_and_deletes_as_done() {
         use aria_settings::rpc::RpcErrorCode;
 

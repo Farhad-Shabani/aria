@@ -260,3 +260,55 @@ impl fmt::Display for RpcErrorCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::StoreError;
+
+    #[test]
+    fn a_change_the_file_cannot_parse_quotes_nothing_from_it() {
+        let fault =
+            crate::Loaded::parse("[memory]\nenabled = maybe\n", &crate::testing::test_home())
+                .expect_err("invalid");
+
+        let failure = RpcFailure::from(&StoreError::Settings(fault));
+
+        assert_eq!(failure.code, RpcErrorCode::InvalidRequest);
+        assert_eq!(failure.message, "the change does not fit settings.toml");
+        assert!(!failure.message.contains("maybe"));
+        assert_eq!(failure.settings_position, None);
+    }
+
+    #[test]
+    fn a_rejected_value_names_its_key_and_never_the_value() {
+        let key = crate::Key::ALL[0];
+        let fault = crate::invalid(
+            key,
+            crate::InvalidValue::Unsupported {
+                value: "/Users/someone/private".to_owned(),
+                supported: "a, b".to_owned(),
+            },
+        );
+
+        let failure = RpcFailure::from(&StoreError::Settings(fault));
+
+        assert_eq!(failure.code, RpcErrorCode::InvalidRequest);
+        assert_eq!(failure.message, format!("{key} does not accept that value"));
+        assert!(!failure.message.contains("private"));
+    }
+
+    #[test]
+    fn a_failure_reads_as_its_message_or_else_its_code() {
+        let named = RpcFailure::new(
+            RpcErrorCode::DeliveryTargetChanged,
+            "the window changed".to_owned(),
+        );
+        let bare = RpcFailure::new(RpcErrorCode::HistoryUnavailable, String::new());
+        let newer = RpcFailure::new(RpcErrorCode::Unknown(42), String::new());
+
+        assert_eq!(named.to_string(), "the window changed");
+        assert_eq!(bare.to_string(), "history unavailable");
+        assert_eq!(newer.to_string(), "unknown (42)");
+    }
+}

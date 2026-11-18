@@ -1154,4 +1154,24 @@ mod tests {
         candidate.failure = Some("capture failed".into());
         assert!(compare(&candidate, &baseline, "first-finalized", 0.0).is_err());
     }
+
+    #[test]
+    fn shipping_modes_and_override_constraints_are_explicit() {
+        for (backend, expected) in [
+            (backend::WHISPER, aria_stt::whisper::CADENCE),
+            (backend::MOONSHINE, aria_stt::moonshine::CADENCE),
+            (backend::PARAKEET, aria_stt::parakeet::CADENCE),
+        ] {
+            let Stream::Agreement(cadence) = stream(backend, None).unwrap() else {
+                panic!("expected agreement");
+            };
+            assert_eq!(cadence.stride_samples(), expected.stride_samples());
+        }
+        assert!(matches!(
+            stream(backend::NEMOTRON, None),
+            Ok(Stream::Native)
+        ));
+        assert!(stream(backend::NEMOTRON, Some(1000)).is_err());
+        assert!(stream(backend::WHISPER_CANDLE, None).is_err());
+    }
 }

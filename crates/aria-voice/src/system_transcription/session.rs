@@ -373,83 +373,77 @@ fn emit_merges(events: &SystemTranscriptionEventEmitter, merged: &[crate::speake
 #[cfg(test)]
 mod tests {
     use crate::config::{SttConfig, SttDevice};
-    use crate::dictation::testing::Loud;
-    use crate::stt::{Cadence, Hypothesis, RecognitionAudio};
+    use crate::dictation::testing::{Hypotheses, Loud};
+    use crate::stt::{Cadence, Hypothesis};
     use crate::vocabulary::{PersonalRules, Term};
 
     use super::*;
 
-    #[test]
-    fn stopping_during_model_loading_finishes_capture() {
-        for (cancelled, capture_failed) in [(true, false), (true, true), (false, false)] {
-            let directory = tempfile::tempdir().unwrap();
-            let (sink, _) = TranscriptFile::create(directory.path()).unwrap();
-            let capture_outcome = if capture_failed {
-                Err(SystemTranscriptionError::PermissionDenied)
-            } else {
-                Ok(())
-            };
-            let (capture, recording) = SystemAudioCapture::spawn_fake(capture_outcome).unwrap();
-            let stopped = capture.stopper();
-            let cancel = CancelToken::new();
-            if cancelled {
-                cancel.cancel();
-            }
-            let speaker = SpeakerConfig {
-                model: directory.path().join("speaker"),
-                segmentation_model: directory.path().join("segmentation"),
-                profiles_dir: directory.path().join("profiles"),
-            };
-            let vocabulary = Vocabulary::default();
-            let events = SystemTranscriptionEventEmitter::unsubscribed();
-            let session = Session {
-                vocabulary: &vocabulary,
-                events: &events,
-            };
-
-            let parakeet = SystemTranscriptionEngine::new(SttConfig::Parakeet {
-                model_directory: directory.path().to_path_buf(),
-                device: SttDevice::Cpu,
-            })
-            .unwrap();
-            let result = session.run(&parakeet, &cancel, &speaker, capture, recording, sink);
-
-            assert!(stopped.is_stopped());
-            if !cancelled {
-                assert!(matches!(
-                    result,
-                    Err(SystemTranscriptionError::Transcription(_))
-                ));
-            } else if capture_failed {
-                assert!(matches!(
-                    result,
-                    Err(SystemTranscriptionError::PermissionDenied)
-                ));
-            } else {
-                assert!(result.is_ok(), "stop returned {result:?}");
-            }
+    /// Runs a session whose model cannot load, and returns the result with
+    /// whether the capture was stopped.
+    fn run_while_loading(
+        cancelled: bool,
+        capture_outcome: Result<(), SystemTranscriptionError>,
+    ) -> (Result<(), SystemTranscriptionError>, bool) {
+        let directory = tempfile::tempdir().unwrap();
+        let (sink, _) = TranscriptFile::create(directory.path()).unwrap();
+        let (capture, recording) = SystemAudioCapture::spawn_fake(capture_outcome).unwrap();
+        let stopped = capture.stopper();
+        let cancel = CancelToken::new();
+        if cancelled {
+            cancel.cancel();
         }
+        let speaker = SpeakerConfig {
+            model: directory.path().join("speaker"),
+            segmentation_model: directory.path().join("segmentation"),
+            profiles_dir: directory.path().join("profiles"),
+        };
+        let vocabulary = Vocabulary::default();
+        let events = SystemTranscriptionEventEmitter::unsubscribed();
+        let session = Session {
+            vocabulary: &vocabulary,
+            events: &events,
+        };
+        let parakeet = SystemTranscriptionEngine::new(SttConfig::Parakeet {
+            model_directory: directory.path().to_path_buf(),
+            device: SttDevice::Cpu,
+        })
+        .unwrap();
+
+        let result = session.run(&parakeet, &cancel, &speaker, capture, recording, sink);
+
+        (result, stopped.is_stopped())
     }
 
-    struct Answering(&'static str);
+    #[test]
+    fn a_stop_during_model_loading_ends_cleanly() {
+        let (result, stopped) = run_while_loading(true, Ok(()));
 
-    impl Recognizer for Answering {
-        fn validate_language(
-            &self,
-            _language: &Language,
-            _cancel: &CancelToken,
-        ) -> Result<(), TranscriptionError> {
-            Ok(())
-        }
+        assert!(stopped);
+        assert!(result.is_ok(), "stop returned {result:?}");
+    }
 
-        fn recognize_with(
-            &self,
-            _audio: RecognitionAudio<'_>,
-            _language: &Language,
-            _cancel: &CancelToken,
-        ) -> Result<Hypothesis, TranscriptionError> {
-            Ok(Hypothesis::new(self.0))
-        }
+    #[test]
+    fn a_stop_during_model_loading_keeps_the_captures_failure() {
+        let (result, stopped) =
+            run_while_loading(true, Err(SystemTranscriptionError::PermissionDenied));
+
+        assert!(stopped);
+        assert!(matches!(
+            result,
+            Err(SystemTranscriptionError::PermissionDenied)
+        ));
+    }
+
+    #[test]
+    fn a_model_that_fails_to_load_fails_the_session_and_ends_capture() {
+        let (result, stopped) = run_while_loading(false, Ok(()));
+
+        assert!(stopped);
+        assert!(matches!(
+            result,
+            Err(SystemTranscriptionError::Transcription(_))
+        ));
     }
 
     /// Transcribes `audio`, answered with `text`, into a fresh transcript
@@ -465,8 +459,10 @@ mod tests {
             TranscriptFile::create(directory.path()).expect("the transcript file is created");
         let recording = RecordingReader::from_samples(audio);
         let track_audio = recording.fork();
-        let transcription =
-            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering(text));
+        let transcription = Transcription::agreement(
+            Cadence::from_millis(100, 20_000),
+            Hypotheses(move |_| Ok(Hypothesis::new(text))),
+        );
         let session = Session {
             vocabulary,
             events: &SystemTranscriptionEventEmitter::unsubscribed(),

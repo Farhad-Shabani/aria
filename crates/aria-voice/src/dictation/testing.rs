@@ -301,8 +301,8 @@ pub fn timed(text: &str, words: &[(f32, f32)]) -> Hypothesis {
     Hypothesis::with_words(text, words)
 }
 
-/// A manual-stop press in automatic language with history on and every
-/// optional behavior off.
+/// A manual-stop press in automatic language with history on and Return
+/// sending. Every other optional behavior is off.
 pub fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> DictationSettings {
     DictationSettings {
         source: HistorySource::Local,
@@ -562,5 +562,18 @@ impl ActiveDictationBuilder {
             _recording: recording,
             _armed: armed,
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct FinalLayer<F>(pub(crate) F);
+
+#[cfg(test)]
+impl<F> aria_kit::transcription::layer::Layer for FinalLayer<F>
+where
+    F: Fn(&mut String, &CancelToken) -> Result<(), TranscriptionError> + Send + Sync,
+{
+    fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
+        (self.0)(text, cancel)
     }
 }

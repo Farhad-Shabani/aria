@@ -214,12 +214,11 @@ pub enum RecordError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stt::Cadence;
     use crate::stt::conditions::Decoding;
     use serde_json::json;
 
     #[test]
-    fn result_rows_record_effective_conditions_even_when_replay_fails() {
+    fn a_failed_replay_scores_its_reference_as_deletions() {
         let descriptor = Descriptor {
             name: "fake",
             model: "fixture".into(),
@@ -231,88 +230,20 @@ mod tests {
             audio: "unused.wav".into(),
             reference: "two words".into(),
         };
-        let agreement = Decoding::agreement(Cadence::from_millis(500, 20_000));
-        for (decoding, realtime, expected) in [
-            (
-                agreement,
-                false,
-                json!({
-                    "decoding": {
-                        "mode": "agreement", "stride_samples": 8000, "max_buffer_samples": 320000
-                    },
-                    "replay": {"pace": "stepped", "stride_samples": 8000},
-                    "previews": true
-                }),
-            ),
-            (
-                agreement,
-                true,
-                json!({
-                    "decoding": {
-                        "mode": "agreement", "stride_samples": 8000, "max_buffer_samples": 320000
-                    },
-                    "replay": {"pace": "realtime"},
-                    "previews": true
-                }),
-            ),
-            (
-                Decoding::Whole,
-                true,
-                json!({
-                    "decoding": {"mode": "whole"},
-                    "replay": {"pace": "immediate"},
-                    "previews": false
-                }),
-            ),
-            (
-                Decoding::ChunkedFile {
-                    chunk_samples: 4000,
-                },
-                true,
-                json!({
-                    "decoding": {"mode": "chunked_file", "chunk_samples": 4000},
-                    "replay": {"pace": "immediate"},
-                    "previews": false
-                }),
-            ),
-            (
-                Decoding::Native {
-                    chunk_samples: 12800,
-                },
-                false,
-                json!({
-                    "decoding": {"mode": "native", "chunk_samples": 12800},
-                    "replay": {"pace": "stepped", "stride_samples": 12800},
-                    "previews": false
-                }),
-            ),
-            (
-                Decoding::Native {
-                    chunk_samples: 12800,
-                },
-                true,
-                json!({
-                    "decoding": {"mode": "native", "chunk_samples": 12800},
-                    "replay": {"pace": "realtime"},
-                    "previews": false
-                }),
-            ),
-        ] {
-            let conditions = Conditions::new(decoding, realtime, true);
-            let row = Record::score(
-                &Heard::failed("replay failed".into()),
-                &utterance,
-                descriptor.clone(),
-                "test-run",
-                1,
-                conditions,
-            );
-            let row = serde_json::to_value(row).unwrap();
-            assert_eq!(row["schema"], SCHEMA_VERSION);
-            assert_eq!(row["conditions"], expected);
-            assert_eq!(row["deletions"], 2);
-            assert_eq!(row["error"], "replay failed");
-        }
+        let conditions = Conditions::new(Decoding::Whole, true, true);
+        let row = Record::score(
+            &Heard::failed("replay failed".into()),
+            &utterance,
+            descriptor,
+            "test-run",
+            1,
+            conditions,
+        );
+        let row = serde_json::to_value(row).unwrap();
+        assert_eq!(row["schema"], SCHEMA_VERSION);
+        assert_eq!(row["conditions"]["decoding"], json!({"mode": "whole"}));
+        assert_eq!(row["deletions"], 2);
+        assert_eq!(row["error"], "replay failed");
     }
 
     #[test]

@@ -163,25 +163,21 @@ mod tests {
 
     #[test]
     fn the_classes_run_silence_then_singles_then_pairs() {
-        assert_eq!(
-            loudest(&[9.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Activity::SILENT
-        );
-        assert_eq!(
-            loudest(&[0.0, 9.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            Activity::SILENT.speaking(0)
-        );
-        assert_eq!(
-            loudest(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 9.0]),
-            Activity::SILENT.speaking(1).speaking(2)
-        );
-    }
+        let expected = [
+            Activity::SILENT,
+            Activity::SILENT.speaking(0),
+            Activity::SILENT.speaking(1),
+            Activity::SILENT.speaking(2),
+            Activity::SILENT.speaking(0).speaking(1),
+            Activity::SILENT.speaking(0).speaking(2),
+            Activity::SILENT.speaking(1).speaking(2),
+        ];
 
-    #[test]
-    fn every_class_names_at_most_two_voices() {
-        for class in POWERSET {
-            assert!(class.len() <= 2);
-            assert!(class.iter().all(|&voice| voice < LOCAL_SPEAKERS));
+        for (class, activity) in expected.into_iter().enumerate() {
+            let mut scores = [0.0; 7];
+            scores[class] = 9.0;
+
+            assert_eq!(loudest(&scores), activity, "class {class}");
         }
     }
 }

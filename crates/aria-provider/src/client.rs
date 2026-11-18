@@ -192,7 +192,48 @@ struct Message {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
     use super::*;
+
+    fn answer_once(response: String) -> (Client, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(&stream);
+            let mut length = 0;
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap() > 0 && line != "\r\n" {
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap();
+                }
+                line.clear();
+            }
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            // The client may hang up once a reply breaks a limit.
+            let _ = stream.write_all(response.as_bytes());
+        });
+        let client = Client::new(
+            &format!("{address}/v1/chat/completions"),
+            &format!("{address}/v1/models"),
+        );
+        (client, worker)
+    }
+
+    fn serves(listed: &str, model: &str) -> bool {
+        let (client, worker) = answer_once(format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{listed}",
+            listed.len()
+        ));
+        let served = client
+            .serves(model, Instant::now() + Duration::from_secs(3))
+            .unwrap();
+        worker.join().unwrap();
+        served
+    }
 
     fn reply(content: &str) -> serde_json::Value {
         serde_json::json!({
@@ -245,5 +286,62 @@ mod tests {
             parse_reply(br#"{"choices":[]}"#),
             Err(ProviderError::InvalidResponse)
         );
+    }
+
+    #[test]
+    fn a_reply_that_breaks_a_limit_fails_by_its_category() {
+        for (reply, expected) in [
+            (
+                "HTTP/1.1 302 Found\r\nLocation: http://192.0.2.1/secret\r\nContent-Length: 0\r\n\r\n"
+                    .to_owned(),
+                "http_status",
+            ),
+            (
+                "HTTP/1.1 500 Error\r\nContent-Length: 0\r\n\r\n".to_owned(),
+                "http_status",
+            ),
+            (
+                format!(
+                    "HTTP/1.1 200 OK\r\nX-Large: {}\r\nContent-Length: 0\r\n\r\n",
+                    "a".repeat(9 * 1024)
+                ),
+                "header_size",
+            ),
+            (
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                    32 * 1024 + 1,
+                    "a".repeat(32 * 1024 + 1)
+                ),
+                "response_size",
+            ),
+        ] {
+            let (client, worker) = answer_once(reply);
+            let error = client
+                .complete(
+                    &serde_json::json!({ "model": "local", "stream": false }),
+                    32 * 1024,
+                    Instant::now() + Duration::from_secs(3),
+                    &CancelToken::never(),
+                )
+                .unwrap_err();
+            assert!(!format!("{error:?}").contains("secret"));
+            assert_eq!(error.category(), expected);
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn a_bare_model_name_is_served_by_its_latest_tag_alone() {
+        assert!(serves(r#"{"data":[{"id":"llama3.2:latest"}]}"#, "llama3.2"));
+        assert!(!serves(
+            r#"{"data":[{"id":"llama3.2:latest"}]}"#,
+            "llama3.2:1b"
+        ));
+    }
+
+    #[test]
+    fn a_null_model_list_serves_nothing() {
+        assert!(!serves(r#"{"object":"list","data":null}"#, "qwen2.5:3b"));
     }
 }

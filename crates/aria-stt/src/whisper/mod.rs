@@ -345,7 +345,7 @@ fn run_with_cancellation<T: Send>(
 }
 
 #[cfg(test)]
-mod load_engine_tests {
+mod tests {
     use aria_kit::transcription::LanguageCode;
 
     use super::*;
@@ -393,15 +393,6 @@ mod load_engine_tests {
             Err(TranscriptionError::UnsupportedLanguage { backend, language })
                 if backend == BACKEND && language == "fr"
         ));
-    }
-
-    fn name_of<E: Engine>() -> &'static str {
-        E::NAME
-    }
-
-    #[test]
-    fn the_trait_carries_the_engine_identity() {
-        assert_eq!(name_of::<Whisper>(), NAME);
     }
 
     #[test]

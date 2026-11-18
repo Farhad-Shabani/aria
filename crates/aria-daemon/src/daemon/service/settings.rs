@@ -99,13 +99,6 @@ mod tests {
 
     const INVALID: &str = "[memory]\nenabled = maybe\n";
 
-    fn mute() -> SettingsPatch {
-        SettingsPatch {
-            mute_sound: Some(true),
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn a_daemon_start_writes_the_schema_beside_the_settings() {
         let daemon = HostedDaemon::configured(|_| String::new());
@@ -128,7 +121,13 @@ mod tests {
         std::fs::write(daemon.settings_path(), INVALID).expect("a hand edit");
 
         let refused = session
-            .update_settings(before.revision, mute())
+            .update_settings(
+                before.revision,
+                SettingsPatch {
+                    mute_sound: Some(true),
+                    ..Default::default()
+                },
+            )
             .expect_err("an invalid file is never written over");
 
         let ClientError::Rpc(failure) = refused else {

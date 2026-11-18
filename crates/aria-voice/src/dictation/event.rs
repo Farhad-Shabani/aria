@@ -233,4 +233,40 @@ mod tests {
             DictationStage::Failed(RpcErrorCode::TranscriptionFailed)
         );
     }
+
+    #[test]
+    fn a_caption_snapshot_debugs_without_its_words() {
+        for ended in [false, true] {
+            let caption = CaptionSnapshot {
+                recording: RecordingId(42),
+                finalized: Arc::from("private finalized words"),
+                provisional: Arc::from("private provisional words"),
+                ended,
+            };
+            let debug = format!("{caption:?}");
+            assert!(!debug.contains("private"));
+        }
+    }
+
+    #[test]
+    fn a_ghost_snapshot_debugs_without_its_words() {
+        let ghost = GhostSnapshot {
+            recording: RecordingId(42),
+            text: Arc::from("private unconfirmed words"),
+            placement: Some(Placement {
+                caret: aria_platform::delivery::Rect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 1.0,
+                    height: 16.0,
+                },
+                field: None,
+                font: Some(aria_platform::delivery::Font {
+                    name: "Helvetica".to_owned(),
+                    size: 13.0,
+                }),
+            }),
+        };
+        assert!(!format!("{ghost:?}").contains("private"));
+    }
 }

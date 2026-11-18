@@ -206,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn a_silent_sample_is_reported_as_one_sample() {
+    fn a_sample_without_a_voice_is_refused_and_not_counted() {
         let mut enrollment = enrolling(vec![None]);
         assert!(matches!(enrollment.add(&[]), Err(EnrollmentError::NoVoice)));
         assert!(enrollment.samples.is_empty());

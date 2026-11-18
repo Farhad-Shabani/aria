@@ -548,6 +548,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_write_through_the_cache_notifies_the_aria_key_watchers() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let store = store(dir.path(), "");
+        let mut watcher = store.aria_key();
+
+        let mut unrelated = Patch::new();
+        unrelated.set(Key::DictationOwnVoiceOnly, true);
+        write(&store, &unrelated);
+        assert!(!watcher.has_changed().expect("sender alive"));
+
+        let mut key = Patch::new();
+        key.set(Key::ShortcutsAriaKey, "fn");
+        write(&store, &key);
+        assert!(watcher.has_changed().expect("sender alive"));
+        assert_eq!(*watcher.borrow_and_update(), AriaKey::Fn);
+    }
+
     fn memory_on() -> Patch {
         let mut patch = Patch::new();
         patch.set(Key::MemoryEnabled, true);

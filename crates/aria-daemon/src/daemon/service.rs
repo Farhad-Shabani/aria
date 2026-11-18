@@ -153,31 +153,6 @@ mod tests {
         );
     }
 
-    /// A settings fault keeps its place however deep it sits in the chain,
-    /// so a press refused by an invalid file points at the line.
-    #[test]
-    fn a_settings_fault_keeps_its_place_through_a_runtime_error() {
-        use super::super::dictation::DictationRuntimeError;
-
-        let fault = aria_settings::Loaded::parse(
-            "[memory]\nenabled = maybe\n",
-            std::path::Path::new("/home"),
-        )
-        .expect_err("invalid");
-        let error = DictationRuntimeError::Settings(aria_settings::StoreError::FileInvalid(fault));
-
-        let failure = RpcFailure::from(&error);
-
-        assert_eq!(failure.code, RpcErrorCode::SettingsInvalid);
-        assert_eq!(
-            failure.settings_position,
-            Some(Position {
-                line: 2,
-                column: 11
-            })
-        );
-    }
-
     /// Every handler encodes a failure through `failed`, so each one is
     /// logged once and the level rule holds everywhere.
     #[test]

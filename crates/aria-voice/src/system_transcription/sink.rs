@@ -409,16 +409,6 @@ mod tests {
         }
     }
 
-    /// The same utterance, arriving `at` seconds into the recording.
-    fn heard_at<'a>(at: u64, speaker: Option<&'a Label>, text: &'a str) -> Utterance<'a> {
-        let start = at * u64::from(CANONICAL_SAMPLE_RATE);
-        Utterance {
-            at: start,
-            span: Some(start..start + u64::from(CANONICAL_SAMPLE_RATE)),
-            ..heard(speaker, text)
-        }
-    }
-
     /// An utterance running from `at` for `seconds`.
     fn spanning<'a>(
         at: u64,
@@ -580,9 +570,9 @@ mod tests {
         // clock of its own here is a clock the two disagree on.
         let (_directory, mut sink, path) = open_in_tempdir();
 
-        sink.segment(heard_at(0, Some(&Label::Anonymous(1)), "hello"))
+        sink.segment(spanning(0, 1, Some(&Label::Anonymous(1)), "hello"))
             .expect("the write succeeds");
-        sink.segment(heard_at(3_671, Some(&Label::Anonymous(2)), "much later"))
+        sink.segment(spanning(3_671, 1, Some(&Label::Anonymous(2)), "much later"))
             .expect("the write succeeds");
         drop(sink);
 
@@ -739,12 +729,12 @@ mod tests {
         let (_directory, mut sink, path) = open_in_tempdir();
         let speaker = Label::Anonymous(1);
 
-        sink.voiced_segment(heard_at(0, Some(&speaker), "hello"), Some(&[0.6, 0.8]))
+        sink.voiced_segment(spanning(0, 1, Some(&speaker), "hello"), Some(&[0.6, 0.8]))
             .expect("the write succeeds");
-        sink.voiced_segment(heard_at(1, Some(&speaker), "there"), Some(&[0.6, -0.8]))
+        sink.voiced_segment(spanning(1, 1, Some(&speaker), "there"), Some(&[0.6, -0.8]))
             .expect("the write succeeds");
         sink.voiced_segment(
-            heard_at(9, Some(&Label::Anonymous(2)), "hi back"),
+            spanning(9, 1, Some(&Label::Anonymous(2)), "hi back"),
             Some(&[0.0, 1.0]),
         )
         .expect("the write succeeds");

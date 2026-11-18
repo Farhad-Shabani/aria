@@ -5,7 +5,11 @@ use super::wav::wav_spec;
 #[cfg(test)]
 pub(in crate::audio) use recordings::spooled;
 #[cfg(test)]
+pub(in crate::audio) use recordings::wav_samples;
+#[cfg(test)]
 pub(crate) use recordings::{Pace, paced, recorded};
+#[cfg(all(test, feature = "microphone"))]
+pub(in crate::audio) use voiced::{Loudness, silence, speech};
 
 pub(crate) const FIXTURE_SAMPLES: usize = 16_000;
 
@@ -31,6 +35,36 @@ pub(crate) fn write_fixture(directory: &Path, spec: hound::WavSpec, samples: usi
     path
 }
 
+#[cfg(all(test, feature = "microphone"))]
+mod voiced {
+    use std::time::Duration;
+
+    use super::super::canonical_samples;
+    use crate::voice_activity::{VoiceActivityDetector, VoiceActivityError};
+
+    pub(in crate::audio) struct Loudness;
+
+    impl VoiceActivityDetector for Loudness {
+        const FRAME_SAMPLES: usize = 160;
+
+        fn probability(&mut self, frame: &[i16]) -> Result<f32, VoiceActivityError> {
+            Ok(if frame.iter().any(|&sample| sample != 0) {
+                1.0
+            } else {
+                0.0
+            })
+        }
+    }
+
+    pub(in crate::audio) fn speech(duration: Duration) -> Vec<i16> {
+        vec![1_000; canonical_samples(duration) as usize]
+    }
+
+    pub(in crate::audio) fn silence(duration: Duration) -> Vec<i16> {
+        vec![0; canonical_samples(duration) as usize]
+    }
+}
+
 #[cfg(test)]
 mod recordings {
     use std::sync::Mutex;
@@ -39,6 +73,14 @@ mod recordings {
     use super::super::recording::ends;
     use super::super::spool::WavSpool;
     use super::super::{CaptureError, RecordingReader, RecordingWriter};
+
+    pub(in crate::audio) fn wav_samples(path: &std::path::Path) -> Vec<i16> {
+        hound::WavReader::open(path)
+            .expect("the wav should open")
+            .into_samples::<i16>()
+            .collect::<Result<_, _>>()
+            .expect("the wav should decode")
+    }
 
     /// One recording written the way capture writes it, closed before it returns.
     pub(crate) fn recorded(samples: &[i16]) -> (tempfile::TempDir, RecordingReader) {

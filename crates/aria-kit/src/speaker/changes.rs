@@ -359,9 +359,16 @@ mod tests {
     }
 
     #[test]
-    fn padding_cannot_supply_candidate_activity() {
+    fn a_candidate_past_the_retained_audio_is_an_error() {
         let mut continuity = fixture(&[&[0], &[0], &[1], &[1], &[1], &[1]]);
+
         assert!(continuity.verify(Some(&(0..20)), &(50..70), 30).is_err());
+    }
+
+    #[test]
+    fn a_candidate_shorter_than_a_frame_is_unresolved() {
+        let mut continuity = fixture(&[&[0], &[0], &[1], &[1], &[1], &[1]]);
+
         assert!(matches!(
             continuity.verify(Some(&(0..20)), &(20..25), 30).unwrap(),
             Evidence::Unresolved
@@ -380,26 +387,35 @@ mod tests {
     }
 
     #[test]
-    fn malformed_geometry_grid_and_audio_are_errors() {
+    fn a_zero_frame_shift_is_refused() {
         let shape = ChunkShape {
             samples: 60,
             frame_shift: 0,
             frame_size: 10,
             speakers: 3,
         };
-        assert!(
-            Continuity::new(
-                Fixed {
-                    shape,
-                    frames: vec![]
-                },
-                0
-            )
-            .is_err()
+
+        let continuity = Continuity::new(
+            Fixed {
+                shape,
+                frames: vec![],
+            },
+            0,
         );
+
+        assert!(continuity.is_err());
+    }
+
+    #[test]
+    fn audio_with_a_gap_or_a_nan_is_refused() {
         let mut continuity = fixture(&[&[0], &[0], &[0], &[0], &[0], &[0]]);
+
         assert!(continuity.push(61, &[0.2]).is_err());
         assert!(continuity.push(60, &[f32::NAN]).is_err());
+    }
+
+    #[test]
+    fn a_grid_of_the_wrong_length_is_refused() {
         let shape = ChunkShape {
             samples: 60,
             frame_shift: 10,
@@ -415,6 +431,7 @@ mod tests {
         )
         .unwrap();
         malformed.push(0, &[0.2; 60]).unwrap();
+
         assert!(malformed.verify(Some(&(0..20)), &(40..60), 30).is_err());
     }
 }

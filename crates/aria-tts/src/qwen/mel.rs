@@ -204,13 +204,10 @@ mod tests {
         let mut re = vec![1f32; 64];
         let mut im = vec![0f32; 64];
         fft(&mut re, &mut im);
-        assert!((im[0]).abs() < 1e-4);
+        assert!((re[0] - 64.0).abs() < 1e-4, "{}", re[0]);
+        assert!(im[0].abs() < 1e-4);
+        assert!(re[1..].iter().chain(&im[1..]).all(|bin| bin.abs() < 1e-4));
     }
-}
-
-#[cfg(test)]
-mod filterbank_tests {
-    use super::*;
 
     #[test]
     fn filterbank_covers_the_spectrum() {

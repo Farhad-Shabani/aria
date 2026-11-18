@@ -113,6 +113,10 @@ mod tests {
             Quote::new("a".repeat(Quote::MAX_BYTES + 1)),
             Err(QuoteError::TooLong)
         );
+    }
+
+    #[test]
+    fn a_quote_never_prints_its_text() {
         assert_eq!(
             format!("{:?}", Quote::new("secret".to_owned())),
             "Ok(Quote(6 bytes))"

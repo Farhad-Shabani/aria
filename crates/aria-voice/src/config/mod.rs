@@ -229,3 +229,45 @@ pub enum CaptureConfig {
     Microphone,
     WavFile { path: PathBuf, pace: ReplayPace },
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::load::stt_defaults;
+    use super::*;
+
+    #[test]
+    fn retry_backend_keeps_matching_config_and_uses_other_engine_defaults() {
+        let home = Path::new("/tmp/retry-config");
+        let configured = SttConfig::Parakeet {
+            model_directory: home.join("custom"),
+            device: SttDevice::Cpu,
+        };
+        assert_eq!(
+            configured.for_backend(backend::PARAKEET, home).unwrap(),
+            configured
+        );
+        assert_eq!(
+            configured.for_backend(backend::WHISPER, home).unwrap(),
+            stt_defaults(backend::WHISPER, home).unwrap()
+        );
+        assert!(configured.for_backend(backend::PARAKEET_MLX, home).is_err());
+    }
+
+    #[test]
+    fn mac_audio_admits_only_an_engine_that_streams() {
+        let whisper = SttConfig::Whisper {
+            model: PathBuf::from("/models/whisper.bin"),
+        };
+        let tiny = SttConfig::WhisperCandle {
+            model_directory: PathBuf::from("/models/tiny"),
+        };
+
+        assert!(SystemTranscriptionEngine::new(whisper).is_ok());
+        assert!(matches!(
+            SystemTranscriptionEngine::new(tiny),
+            Err(ConfigError::SystemTranscriptionUnusableEngine(_))
+        ));
+    }
+}

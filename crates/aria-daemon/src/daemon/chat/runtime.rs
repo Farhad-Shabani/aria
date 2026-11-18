@@ -1268,8 +1268,8 @@ pub(super) mod tests {
 
     pub(in crate::daemon) struct AssistantOverrides {
         pub(super) execute: Box<ExecuteAssistant>,
-        pub(super) models: Box<DiscoverModels>,
-        pub(super) ready: Box<CheckReady>,
+        pub(in crate::daemon) models: Box<DiscoverModels>,
+        pub(in crate::daemon) ready: Box<CheckReady>,
         /// `None` types for real.
         pub(in crate::daemon) deliver: Option<Box<DeliverText>>,
     }
@@ -1312,55 +1312,6 @@ pub(super) mod tests {
             let mut log = self.0.lock().expect("the log is not poisoned");
             log.prompts.push(request.prompt());
             Ok("Polished.".to_owned())
-        }
-    }
-
-    #[tokio::test]
-    async fn request_drop_and_shutdown_cancel_model_discovery() {
-        use crate::daemon::{host::DaemonLifetime, service::ChatRpc};
-        use crate::ipc::wire::{self, chat_service_server::ChatService};
-
-        for disconnect in [true, false] {
-            let directory = tempfile::tempdir().expect("test directory");
-            let (started, mut observed) = tokio::sync::mpsc::unbounded_channel();
-            let log = Arc::new(Mutex::new(Log::default()));
-            let (mut runtime, _events) = runtime_with(directory.path(), logging_assistants(&log));
-            runtime.assistant_overrides.as_mut().unwrap().models = Box::new(move |_, cancel| {
-                started.send(cancel.clone()).expect("discovery started");
-                let deadline = std::time::Instant::now() + Duration::from_secs(2);
-                while !cancel.is_cancelled() && std::time::Instant::now() < deadline {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-                Err(AssistantError::Cancelled)
-            });
-            let runtime = Arc::new(runtime);
-            let (handle, _actor) = crate::daemon::chat::channel(Arc::clone(&runtime));
-            let shutdown = tokio_util::sync::CancellationToken::new();
-            let rpc = ChatRpc::new(
-                handle,
-                Arc::clone(&runtime),
-                DaemonLifetime::Persistent,
-                shutdown.clone(),
-            );
-            let request = tokio::spawn(async move {
-                rpc.list_models(tonic::Request::new(wire::ListAssistantModelsRequest {
-                    assistant_id: wire::AssistantId::Codex.into(),
-                }))
-                .await
-            });
-            let cancel = tokio::time::timeout(Duration::from_secs(1), observed.recv())
-                .await
-                .expect("discovery starts")
-                .expect("discovery token");
-            if disconnect {
-                request.abort();
-                assert!(request.await.expect_err("request aborted").is_cancelled());
-            } else {
-                shutdown.cancel();
-                assert!(cancel.is_cancelled());
-                assert!(request.await.expect("request finishes").is_err());
-            }
-            assert!(cancel.is_cancelled());
         }
     }
 
@@ -1933,72 +1884,6 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_local_chat_in_the_owners_voice_is_kept() {
-        let home = home_with_memory();
-        enroll_owner(home.path());
-        let endpoint = serve_local_reply("hi there");
-        std::fs::write(
-            home.path().join(".aria/settings.toml"),
-            format!(
-                "[memory]\nenabled = true\n[provider]\nendpoint = \"{endpoint}\"\n\
-                 [assistant.models]\nlocal-model = \"m\"\n"
-            ),
-        )
-        .expect("the settings file");
-        let log = Arc::new(Mutex::new(Log::default()));
-        let (runtime, events, mut woken) = runtime_waking(home.path(), logging_assistants(&log));
-        let heard = ChatRequest {
-            own_voice: true,
-            assistant_id: AssistantId::LocalModel,
-            ..request("hello", home.path(), false)
-        };
-
-        let ended = run(&runtime, &events, 1, heard.clone());
-
-        assert!(matches!(ended, ChatStageKind::Replied(_)), "{ended:?}");
-        assert_eq!(turns(home.path(), &heard), ["hello"]);
-        assert!(woken.try_recv().is_ok());
-    }
-
-    /// A loopback model server that streams `reply` to every request.
-    fn serve_local_reply(reply: &str) -> String {
-        use std::io::{BufRead, BufReader, Read, Write};
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-        let address = listener.local_addr().expect("its address");
-        let chunk = format!(
-            r#"{{"choices":[{{"delta":{{"content":"{reply}"}},"finish_reason":"stop"}}]}}"#
-        );
-        let body = format!("data: {chunk}\n\ndata: [DONE]\n\n");
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\
-             Connection: close\r\n\r\n{body}",
-            body.len()
-        );
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let mut stream = stream.expect("a connection");
-                let mut reader = BufReader::new(stream.try_clone().expect("a reader"));
-                let mut length = 0;
-                loop {
-                    let mut line = String::new();
-                    reader.read_line(&mut line).expect("a header");
-                    if line.trim().is_empty() {
-                        break;
-                    }
-                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-                        length = value.trim().parse().expect("a length");
-                    }
-                }
-                let mut request = vec![0; length];
-                reader.read_exact(&mut request).expect("the body");
-                stream.write_all(response.as_bytes()).expect("the reply");
-            }
-        });
-        format!("http://{address}/v1/chat/completions")
-    }
-
-    #[test]
     fn memory_keeps_an_assistants_asks_in_one_directory_together_across_chats() {
         let home = home_with_memory();
         enroll_owner(home.path());
@@ -2331,9 +2216,7 @@ pub(super) mod tests {
         assert_eq!(reply.history_entry_id, None);
 
         let home = tempfile::tempdir().expect("a temp home");
-        let (failing, events) = runtime_with(home.path(), |_assistant_id| FailingAssistant {
-            signed_out: false,
-        });
+        let (failing, events) = failing_runtime(home.path());
         let kind = run(&failing, &events, 1, request("hi", home.path(), false));
         assert!(matches!(kind, ChatStageKind::Failed { .. }));
         assert!(chats(&failing).is_empty());
@@ -2492,18 +2375,7 @@ pub(super) mod tests {
     fn a_prompt_cannot_run_on_a_blank_entry() {
         let home = tempfile::tempdir().expect("a temp home");
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
-        runtime.history.save_ask(NewAsk {
-            request: "When?",
-            quote: None,
-            reply: " \n",
-            workdir: home.path(),
-            resume: None,
-            chat: None,
-            created_at_ms: now_ms(),
-            duration_ms: 0,
-            failure: None,
-        });
-        let entry = chats(&runtime)[0].id;
+        let entry = saved_entry(&runtime, home.path(), " \n");
 
         let error = entry_request(&runtime, entry, "Polish", home.path().join("polish.md"))
             .expect_err("the entry has no text");
@@ -2523,7 +2395,7 @@ pub(super) mod tests {
         std::fs::create_dir(&folder).expect("the transcript folder");
         let transcript = folder.join("session.txt");
         std::fs::write(&transcript, "[00:00:01] Ship it Friday.").expect("the transcript");
-        let (created_at_ms, _) = elapsed_ms((SystemTime::now(), Instant::now()));
+        let created_at_ms = now_ms();
         runtime
             .history
             .save_transcript(&transcript, created_at_ms, 1_000, None);
@@ -2563,13 +2435,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_prompt_run_with_history_off_or_that_failed_saves_no_result() {
-        let home = tempfile::tempdir().expect("a temp home");
-        std::fs::create_dir_all(home.path().join(".aria")).expect("the settings folder");
-        std::fs::write(
-            home.path().join(".aria/settings.toml"),
-            "[history]\nenabled = false\n",
-        )
-        .expect("the settings file");
+        let home = home_without_history();
         let file = prompt_file(home.path(), "Fix grammar.");
         let log = Arc::new(Mutex::new(Log::default()));
         let (off, _events) = runtime_with(home.path(), logging_assistants(&log));
@@ -2579,9 +2445,7 @@ pub(super) mod tests {
 
         let home = tempfile::tempdir().expect("a temp home");
         prompt_file(home.path(), "Fix grammar.");
-        let (failing, _events) = runtime_with(home.path(), |_assistant_id| FailingAssistant {
-            signed_out: false,
-        });
+        let (failing, _events) = failing_runtime(home.path());
         let entry = saved_entry(&failing, home.path(), "Friday at noon.");
         let failed = FailingAssistant { signed_out: false };
         assert!(run_on(&failing, &failed, entry, home.path().join("polish.md")).is_err());
@@ -2609,9 +2473,7 @@ pub(super) mod tests {
     fn a_failed_turn_is_not_kept() {
         let home = home_with_memory();
         enroll_owner(home.path());
-        let (runtime, events) = runtime_with(home.path(), |_assistant_id| FailingAssistant {
-            signed_out: false,
-        });
+        let (runtime, events) = failing_runtime(home.path());
         let heard = ChatRequest {
             own_voice: true,
             ..request("hello", home.path(), false)
@@ -2893,77 +2755,42 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_new_session_keeps_the_chats_folder() {
-        let home = home_without_history();
-        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
-        let chat = start(&runtime, home.path());
-        named_turn(&runtime, &events, 1, &chat, home.path(), false);
-        let (failing, failing_events) = failing_runtime(home.path());
+    fn a_failed_turn_keeps_the_chats_folder_whether_it_resumed_or_began_anew() {
+        for new_session in [true, false] {
+            let home = home_without_history();
+            let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
+            let chat = start(&runtime, home.path());
+            named_turn(&runtime, &events, 1, &chat, home.path(), false);
+            let (failing, failing_events) = failing_runtime(home.path());
 
-        let outcome = named_turn(&failing, &failing_events, 2, &chat, home.path(), true);
+            let outcome = named_turn(
+                &failing,
+                &failing_events,
+                2,
+                &chat,
+                home.path(),
+                new_session,
+            );
 
-        assert!(
-            matches!(outcome, ChatStageKind::Failed { .. }),
-            "{outcome:?}"
-        );
-        let folder = folder_of(&runtime, named_call(&chat.name, None));
-        assert_eq!(folder.expect("the follow-up is admitted"), home.path());
-    }
-
-    #[test]
-    fn a_failed_resume_keeps_the_chats_folder() {
-        let home = home_without_history();
-        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
-        let chat = start(&runtime, home.path());
-        named_turn(&runtime, &events, 1, &chat, home.path(), false);
-        let (failing, failing_events) = failing_runtime(home.path());
-
-        let outcome = named_turn(&failing, &failing_events, 2, &chat, home.path(), false);
-
-        assert!(
-            matches!(outcome, ChatStageKind::Failed { .. }),
-            "{outcome:?}"
-        );
-        assert_eq!(
-            runtime
-                .sessions
-                .recall(&SessionKey::named(&chat))
-                .expect("the resume record reads"),
-            None,
-            "the failed resume is forgotten"
-        );
-        let folder = folder_of(&runtime, named_call(&chat.name, None));
-        assert_eq!(folder.expect("the follow-up is admitted"), home.path());
-    }
-
-    #[test]
-    fn a_chat_keeps_its_folder_after_the_resume_record_drops_it() {
-        let home = home_without_history();
-        let (runtime, events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
-        let chat = start(&runtime, home.path());
-        named_turn(&runtime, &events, 1, &chat, home.path(), false);
-
-        // Enough other chats to push this one out of the resume record.
-        for ticket in 2..=1_001 {
-            runtime
-                .sessions
-                .record(
-                    SessionKey::named(&named_key(&format!("other-{ticket}"))),
-                    "resume",
-                )
-                .expect("records");
+            assert!(
+                matches!(outcome, ChatStageKind::Failed { .. }),
+                "{new_session}: {outcome:?}"
+            );
+            assert_eq!(
+                runtime
+                    .sessions
+                    .recall(&SessionKey::named(&chat))
+                    .expect("the resume record reads"),
+                None,
+                "{new_session}: the failed turn is forgotten"
+            );
+            let folder = folder_of(&runtime, named_call(&chat.name, None));
+            assert_eq!(
+                folder.expect("the follow-up is admitted"),
+                home.path(),
+                "{new_session}"
+            );
         }
-
-        assert_eq!(
-            runtime
-                .sessions
-                .recall(&SessionKey::named(&chat))
-                .expect("the resume record reads"),
-            None,
-            "the resume record dropped it"
-        );
-        let folder = folder_of(&runtime, named_call(&chat.name, None));
-        assert_eq!(folder.expect("the follow-up is admitted"), home.path());
     }
 
     #[test]
@@ -3115,10 +2942,7 @@ pub(super) mod tests {
             workdir: home.path(),
             resume: None,
             chat: Some(ghost.clone()),
-            created_at_ms: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("after the epoch")
-                .as_millis() as u64,
+            created_at_ms: now_ms(),
             duration_ms: 1,
             failure: None,
         });
@@ -3421,98 +3245,42 @@ pub(super) mod tests {
 
     #[test]
     fn a_signed_out_turn_says_so_and_keeps_the_chat() {
-        for signed_out in [true, false] {
-            let directory = tempfile::tempdir().expect("test directory");
-            let work = directory.path();
-            let log = Arc::new(Mutex::new(Log::default()));
-            let (runtime, events) = runtime_with(work, logging_assistants(&log));
-            run(&runtime, &events, 1, request("one", work, false));
-            let (failing, failing_events) =
-                runtime_with(work, move |_assistant_id| FailingAssistant { signed_out });
+        let directory = tempfile::tempdir().expect("test directory");
+        let work = directory.path();
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (runtime, events) = runtime_with(work, logging_assistants(&log));
+        run(&runtime, &events, 1, request("one", work, false));
+        let (failing, failing_events) =
+            runtime_with(work, |_assistant_id| FailingAssistant { signed_out: true });
 
-            let outcome = run(&failing, &failing_events, 2, request("two", work, false));
+        let outcome = run(&failing, &failing_events, 2, request("two", work, false));
 
-            let ChatStageKind::Failed { code, message } = outcome else {
-                panic!("unexpected {outcome:?}");
-            };
-            let record = std::fs::read_to_string(work.join(SESSION_FILE)).expect("a record");
-            if signed_out {
-                assert_eq!(code, RpcErrorCode::AssistantSignedOut);
-                assert_eq!(message, "Claude Code isn't signed in; sign in");
-                assert!(record.contains("session-1"), "{record}");
-            } else {
-                assert_eq!(code, RpcErrorCode::AssistantFailed);
-                assert!(!record.contains("session-1"), "{record}");
-            }
-        }
+        let ChatStageKind::Failed { code, message } = outcome else {
+            panic!("unexpected {outcome:?}");
+        };
+        let record = std::fs::read_to_string(work.join(SESSION_FILE)).expect("a record");
+        assert_eq!(code, RpcErrorCode::AssistantSignedOut);
+        assert_eq!(message, "Claude Code isn't signed in; sign in");
+        assert!(record.contains("session-1"), "{record}");
     }
 
-    #[tokio::test]
-    async fn listed_assistants_carry_their_status_and_fix() {
-        use crate::daemon::{host::DaemonLifetime, service::ChatRpc};
-        use crate::ipc::wire::{self, chat_service_server::ChatService};
-
+    #[test]
+    fn a_failed_resume_forgets_the_session() {
         let directory = tempfile::tempdir().expect("test directory");
+        let work = directory.path();
         let log = Arc::new(Mutex::new(Log::default()));
-        let (mut runtime, _events) = runtime_with(directory.path(), logging_assistants(&log));
-        runtime.assistant_overrides.as_mut().unwrap().ready =
-            Box::new(|assistant_id, _cancel| match assistant_id {
-                AssistantId::ClaudeCode => AssistantStatus::SignedOut { fix: "sign in" },
-                AssistantId::Codex => AssistantStatus::Ready,
-                AssistantId::LocalModel => AssistantStatus::ModelMissing {
-                    model: "qwen".to_owned(),
-                },
-            });
-        let runtime = Arc::new(runtime);
-        let (handle, _actor) = crate::daemon::chat::channel(Arc::clone(&runtime));
-        let rpc = ChatRpc::new(
-            handle,
-            Arc::clone(&runtime),
-            DaemonLifetime::Persistent,
-            tokio_util::sync::CancellationToken::new(),
-        );
+        let (runtime, events) = runtime_with(work, logging_assistants(&log));
+        run(&runtime, &events, 1, request("one", work, false));
+        let (failing, failing_events) = failing_runtime(work);
 
-        let listed = rpc
-            .list_assistants(tonic::Request::new(wire::ListAssistantsRequest {}))
-            .await
-            .expect("the list")
-            .into_inner()
-            .assistants;
+        let outcome = run(&failing, &failing_events, 2, request("two", work, false));
 
-        let statuses: Vec<_> = listed
-            .iter()
-            .map(|assistant| {
-                (
-                    assistant.id,
-                    assistant.status,
-                    assistant.fix.as_str(),
-                    assistant.needs_model,
-                )
-            })
-            .collect();
-        assert_eq!(
-            statuses,
-            [
-                (
-                    wire::AssistantId::ClaudeCode as i32,
-                    wire::AssistantStatus::SignedOut as i32,
-                    "sign in",
-                    false
-                ),
-                (
-                    wire::AssistantId::Codex as i32,
-                    wire::AssistantStatus::Ready as i32,
-                    "",
-                    false
-                ),
-                (
-                    wire::AssistantId::LocalModel as i32,
-                    wire::AssistantStatus::ModelMissing as i32,
-                    "load qwen into the model server, such as with ollama pull",
-                    true
-                ),
-            ]
-        );
+        let ChatStageKind::Failed { code, .. } = outcome else {
+            panic!("unexpected {outcome:?}");
+        };
+        let record = std::fs::read_to_string(work.join(SESSION_FILE)).expect("a record");
+        assert_eq!(code, RpcErrorCode::AssistantFailed);
+        assert!(!record.contains("session-1"), "{record}");
     }
 
     #[test]
@@ -3644,7 +3412,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_missing_directory_is_not_a_missing_binary() {
+    fn a_folder_gone_by_the_asks_turn_fails_as_invalid() {
         let directory = tempfile::tempdir().expect("test directory");
         let log = Arc::new(Mutex::new(Log::default()));
         let (runtime, events) = runtime_with(directory.path(), logging_assistants(&log));

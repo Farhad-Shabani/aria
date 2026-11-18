@@ -65,13 +65,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-
-    fn home(settings: &str) -> tempfile::TempDir {
-        let home = tempfile::tempdir().unwrap();
-        fs::create_dir_all(home.path().join(".aria")).unwrap();
-        fs::write(aria_settings::default_path(home.path()), settings).unwrap();
-        home
-    }
+    use crate::setup::testing::home;
 
     fn set(
         home: &Path,

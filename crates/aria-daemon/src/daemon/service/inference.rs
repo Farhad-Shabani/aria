@@ -595,7 +595,7 @@ mod tests {
         assert!(output.next().await.is_none());
     }
     #[tokio::test]
-    async fn malformed_ingress_removes_its_spool_and_wakes_its_reader() {
+    async fn a_failed_upload_removes_its_spool_and_wakes_its_reader() {
         let directory = tempfile::tempdir().unwrap();
         let (mut reader, writer) = aria_kit::audio::Recording::open_spooled(
             directory.path(),

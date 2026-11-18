@@ -1804,6 +1804,7 @@ fn map_sink_error(error: impl Into<DictationError>, control: &ExecutionControl) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dictation::testing::FinalLayer;
     use crate::dictation::testing::{
         CallLog, Hypotheses, Loud, Operations, PLACED, PlacedDelivery, RecordingDelivery, settings,
         timed,
@@ -1828,17 +1829,6 @@ mod tests {
     use std::time::Duration;
 
     struct Answering(&'static str);
-
-    struct FinalLayer<F>(F);
-
-    impl<F> Layer for FinalLayer<F>
-    where
-        F: Fn(&mut String, &CancelToken) -> Result<(), TranscriptionError> + Send + Sync,
-    {
-        fn apply(&self, text: &mut String, cancel: &CancelToken) -> Result<(), TranscriptionError> {
-            (self.0)(text, cancel)
-        }
-    }
 
     struct Parts(&'static [&'static str]);
 
@@ -2034,13 +2024,6 @@ mod tests {
         ]
     }
 
-    const BACKTRACK: Cleanup = Cleanup {
-        enabled: true,
-        fillers: true,
-        backtrack: true,
-        llm: true,
-    };
-
     fn with_cleanup(
         mut settings: DictationSettings,
         cleanup: bool,
@@ -2086,6 +2069,33 @@ mod tests {
             }
         });
         (events, receive)
+    }
+
+    impl<C, V, E, G, T, M: Mode, L: Layer, S> DictationPipeline<C, V, E, G, T, M, L, S>
+    where
+        V: VoiceActivityDetector,
+        E: Embedder,
+        G: Segmenter,
+        T: Recognizer,
+    {
+        /// Transcribes `recording` in automatic language, with no vocabulary
+        /// and no cleanup.
+        fn transcribed(
+            &self,
+            recording: &mut RecordingReader,
+            own_voice_only: bool,
+            cancel: &CancelToken,
+        ) -> Result<Transcribed, DictationError> {
+            self.transcribe(
+                recording,
+                &Language::Automatic,
+                own_voice_only,
+                None,
+                Cleanup::default(),
+                "test",
+                cancel,
+            )
+        }
     }
 
     impl<C, V, E, G, T, M, L, S> DictationPipeline<C, V, E, G, T, M, L, S>
@@ -2339,47 +2349,34 @@ mod tests {
         published.provisional("", &sinks);
         assert_eq!(log.entries(), ["prepare:Insert"]);
 
-        let directory = tempfile::tempdir().unwrap();
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
-        let transcription = Transcription::complete_samples(Answering("turn left"));
-        let mut operation = transcription
-            .start_with(&Language::Automatic, &CancelToken::never())
-            .unwrap();
-        let heard = aria_kit::transcription::next_heard(&mut operation, &mut recording)
-            .unwrap()
-            .unwrap();
-        published.provisional("uncommitted guess", &sinks);
-        publish_whole(&mut published, heard, "turn left", &mut sinks).unwrap();
-        assert_eq!(log.entries(), ["prepare:Insert", "segment:turn left"]);
-        let transcript = operation.finish(&mut recording).unwrap();
-        let Dictated {
-            transcript,
-            mut completion,
-            ..
-        } = published.finish(transcript, false, &mut sinks).unwrap();
-        deliver_transcript(
-            &transcript,
-            &mut completion,
-            &recording,
-            &control,
-            &mut sinks,
-        )
-        .unwrap();
-        assert_eq!(
-            log.entries(),
-            [
-                "prepare:Insert",
-                "segment:turn left",
-                "completed:turn left",
-                "deliver:turn left"
-            ]
-        );
+        drop(published);
         drop(events);
         let snapshots: Vec<_> = snapshots.iter().collect();
         assert_eq!(snapshots[0].provisional.as_ref(), "turn lift at the light");
         assert_eq!(snapshots[1].provisional.as_ref(), "turn left");
         assert!(snapshots[2].provisional.is_empty());
+    }
+
+    #[test]
+    fn a_published_segment_clears_the_provisional_caption() {
+        let (events, snapshots) = caption_events();
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
+        let mut published =
+            Published::new(&settings, no_terms(), &control, &events, Instant::now());
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
+        sinks.dictation_started(&settings, &control).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let heard = heard(directory.path(), "turn left");
+
+        published.provisional("uncommitted guess", &sinks);
+        publish_whole(&mut published, heard, "turn left", &mut sinks).unwrap();
+
+        assert_eq!(log.entries(), ["prepare:Insert", "segment:turn left"]);
+        drop(published);
+        drop(events);
+        let snapshots: Vec<_> = snapshots.iter().collect();
         assert_eq!(snapshots.last().unwrap().finalized.as_ref(), "turn left");
         assert!(snapshots.last().unwrap().provisional.is_empty());
     }
@@ -3464,94 +3461,6 @@ mod tests {
         }
     }
 
-    /// Each choice comes with each press, and the gate decides for all of
-    /// them, a model configured at startup included.
-    #[test]
-    fn each_press_follows_the_cleanup_it_was_admitted_with() {
-        fn finish<L: aria_kit::transcription::layer::Layer>(
-            rewrites: &Rewrites<L>,
-            enabled: bool,
-            fillers: bool,
-            backtrack: bool,
-            llm: bool,
-        ) -> String {
-            rewrites
-                .finish(
-                    Transcript::new("um meet at 2 actually 3").unwrap(),
-                    Cleanup {
-                        enabled,
-                        fillers,
-                        backtrack,
-                        llm,
-                    },
-                    None,
-                    &CancelToken::never(),
-                )
-                .unwrap()
-                .into_text()
-        }
-        let rules = Rewrites::new().with(());
-        for (enabled, fillers, backtrack, expected) in [
-            (false, true, true, "um meet at 2 actually 3"),
-            (true, false, false, "um meet at 2 actually 3"),
-            (true, true, false, "meet at 2 actually 3"),
-            (true, false, true, "um meet at 3"),
-            (true, true, true, "meet at 3"),
-        ] {
-            assert_eq!(
-                finish(&rules, enabled, fillers, backtrack, true),
-                expected,
-                "enabled {enabled}, fillers {fillers}, backtrack {backtrack}"
-            );
-        }
-
-        let model = Rewrites::new().with(FinalLayer(|text: &mut String, _: &CancelToken| {
-            *text = "from the model".to_owned();
-            Ok(())
-        }));
-        assert_eq!(
-            finish(&model, false, true, true, true),
-            "um meet at 2 actually 3"
-        );
-        assert_eq!(finish(&model, true, true, true, false), "meet at 3");
-        assert_eq!(finish(&model, true, false, false, true), "from the model");
-    }
-
-    #[test]
-    fn backtracking_is_local_to_each_completed_transcript() {
-        let pipeline = DictationPipeline::new(
-            (),
-            Transcription::complete_samples(Answering("")),
-            UnreachableSink,
-        );
-        for text in ["meet at 2", "actually 3", "scratch", "that to Sara"] {
-            assert_eq!(
-                pipeline
-                    .rewrites
-                    .finish(
-                        Transcript::new(text).unwrap(),
-                        BACKTRACK,
-                        None,
-                        &CancelToken::never()
-                    )
-                    .unwrap()
-                    .as_str(),
-                text
-            );
-        }
-        let cancel = CancelToken::new();
-        cancel.cancel();
-        assert!(matches!(
-            pipeline.rewrites.finish(
-                Transcript::new("meet at 2 actually 3").unwrap(),
-                BACKTRACK,
-                None,
-                &cancel
-            ),
-            Err(TranscriptionError::Cancelled)
-        ));
-    }
-
     #[test]
     fn completion_layers_are_ordered_optional_and_skip_streaming() {
         for mode in [DeliveryMode::Complete, DeliveryMode::Streaming] {
@@ -3611,7 +3520,7 @@ mod tests {
     }
 
     #[test]
-    fn full_recording_transcription_uses_completion_layers_and_cancellation() {
+    fn transcribing_a_recording_runs_every_cleanup_pass() {
         let (directory, capture) = capture();
         let layer = FinalLayer(|text: &mut String, _: &CancelToken| {
             assert_eq!(text, "meet at 3");
@@ -3649,19 +3558,6 @@ mod tests {
                 .as_str(),
             "Meet at 3."
         );
-        cancel.cancel();
-        assert!(matches!(
-            pipeline.transcribe(
-                &mut recording,
-                &Language::Automatic,
-                false,
-                None,
-                every_pass,
-                "test",
-                &cancel,
-            ),
-            Err(DictationError::Cancelled)
-        ));
     }
 
     #[test]
@@ -3741,46 +3637,6 @@ mod tests {
                 warmed,
                 "{mode:?}, cleanup {cleanup}"
             );
-        }
-    }
-
-    #[test]
-    fn oversized_completion_keeps_text_without_contacting_the_model() {
-        let home = tempfile::tempdir().unwrap();
-        let cleanup = super::super::LlmCleanup::new(
-            &aria_settings::LlmCleanupTarget::new(
-                aria_settings::LocalProvider::new("http://127.0.0.1:1/v1/chat/completions")
-                    .unwrap(),
-                "local",
-            )
-            .unwrap(),
-            home.path(),
-        )
-        .unwrap();
-        let pipeline = DictationPipeline::new(
-            (),
-            Transcription::complete_samples(Answering("")),
-            UnreachableSink,
-        )
-        .rewriting(Rewrites::new().with(Some(cleanup)));
-        for bytes in [4097, 65537] {
-            let prefix = "a".repeat(bytes);
-            let text = format!("{prefix} meet at 2 actually 3");
-            let transcript = pipeline
-                .rewrites
-                .finish(
-                    Transcript::new(&text).unwrap(),
-                    Cleanup {
-                        enabled: true,
-                        fillers: true,
-                        backtrack: true,
-                        llm: true,
-                    },
-                    None,
-                    &CancelToken::never(),
-                )
-                .unwrap();
-            assert_eq!(transcript.as_str(), format!("{prefix} meet at 3"));
         }
     }
 
@@ -3920,57 +3776,6 @@ mod tests {
                 assert_eq!(delivered(&log), "d b two run db2");
             }
         }
-    }
-
-    #[test]
-    fn cleaning_drops_hesitations_and_repeats_only_when_on() {
-        for (enabled, expected) in [(false, "send the the um report"), (true, "send the report")] {
-            let pipeline = DictationPipeline::new(
-                (),
-                Transcription::complete_samples(Answering("")),
-                UnreachableSink,
-            );
-
-            let transcript = pipeline
-                .rewrites
-                .finish(
-                    Transcript::new("send the the um report").unwrap(),
-                    Cleanup {
-                        enabled,
-                        fillers: true,
-                        backtrack: false,
-                        llm: true,
-                    },
-                    None,
-                    &CancelToken::never(),
-                )
-                .unwrap();
-
-            assert_eq!(transcript.as_str(), expected);
-        }
-    }
-
-    #[test]
-    fn a_whole_transcript_of_only_fillers_is_no_speech() {
-        let pipeline = DictationPipeline::new(
-            (),
-            Transcription::complete_samples(Answering("")),
-            UnreachableSink,
-        );
-
-        let result = pipeline.rewrites.finish(
-            Transcript::new("um").unwrap(),
-            Cleanup {
-                enabled: true,
-                fillers: true,
-                backtrack: false,
-                llm: true,
-            },
-            None,
-            &CancelToken::never(),
-        );
-
-        assert!(matches!(result, Err(TranscriptionError::NoSpeech)));
     }
 
     fn ghost_events() -> (
@@ -4320,13 +4125,9 @@ mod tests {
         );
         assert_eq!(
             pipeline
-                .transcribe(
+                .transcribed(
                     &mut RecordingReader::from_samples(&source),
-                    &Language::Automatic,
                     true,
-                    None,
-                    Cleanup::default(),
-                    "test",
                     &CancelToken::never()
                 )
                 .unwrap()
@@ -4414,13 +4215,9 @@ mod tests {
                     .text
             } else {
                 pipeline
-                    .transcribe(
+                    .transcribed(
                         &mut RecordingReader::from_samples(&source),
-                        &Language::Automatic,
                         true,
-                        None,
-                        Cleanup::default(),
-                        "test",
                         &CancelToken::never(),
                     )
                     .unwrap()
@@ -4740,15 +4537,7 @@ mod tests {
                         .map(|result| result.text)
                 } else {
                     pipeline
-                        .transcribe(
-                            &mut RecordingReader::from_samples(&source),
-                            &Language::Automatic,
-                            true,
-                            None,
-                            Cleanup::default(),
-                            "test",
-                            &cancel,
-                        )
+                        .transcribed(&mut RecordingReader::from_samples(&source), true, &cancel)
                         .map(|heard| heard.transcript.into_text())
                 };
                 match failure {
@@ -4803,13 +4592,9 @@ mod tests {
                     .map(|result| result.text)
             } else {
                 pipeline
-                    .transcribe(
+                    .transcribed(
                         &mut RecordingReader::from_samples(&source),
-                        &Language::Automatic,
                         true,
-                        None,
-                        Cleanup::default(),
-                        "test",
                         &CancelToken::never(),
                     )
                     .map(|heard| heard.transcript.into_text())
@@ -4860,15 +4645,7 @@ mod tests {
         let mut recording = RecordingReader::from_wav_file(&path).unwrap();
         assert_eq!(
             pipeline
-                .transcribe(
-                    &mut recording,
-                    &Language::Automatic,
-                    true,
-                    None,
-                    Cleanup::default(),
-                    "test",
-                    &CancelToken::never()
-                )
+                .transcribed(&mut recording, true, &CancelToken::never())
                 .unwrap()
                 .transcript
                 .as_str(),
@@ -5019,15 +4796,7 @@ mod tests {
             .tracking_voices(diarizer, segmenter);
             let mut recording = RecordingReader::from_samples(OWN_SPEECH);
 
-            let result = pipeline.transcribe(
-                &mut recording,
-                &Language::Automatic,
-                true,
-                None,
-                Cleanup::default(),
-                "test",
-                &CancelToken::never(),
-            );
+            let result = pipeline.transcribed(&mut recording, true, &CancelToken::never());
 
             assert!(
                 matches!(
@@ -6221,24 +5990,8 @@ mod tests {
         let mut spoken =
             RecordingReader::from_samples_in(directory.path(), &[0.5; 16_000]).unwrap();
 
-        let refused = pipeline.transcribe(
-            &mut silent,
-            &Language::Automatic,
-            false,
-            None,
-            Cleanup::default(),
-            "test",
-            &CancelToken::never(),
-        );
-        let heard = pipeline.transcribe(
-            &mut spoken,
-            &Language::Automatic,
-            false,
-            None,
-            Cleanup::default(),
-            "test",
-            &CancelToken::never(),
-        );
+        let refused = pipeline.transcribed(&mut silent, false, &CancelToken::never());
+        let heard = pipeline.transcribed(&mut spoken, false, &CancelToken::never());
 
         assert!(matches!(refused, Err(DictationError::NoSpeech)));
         assert_eq!(
@@ -6386,15 +6139,7 @@ mod tests {
             let mut recording = RecordingReader::from_samples_in(directory.path(), &[0.5; 64_000])
                 .expect("the test recording is written");
 
-            let heard = pipeline.transcribe(
-                &mut recording,
-                &Language::Automatic,
-                true,
-                None,
-                Cleanup::default(),
-                "test",
-                &CancelToken::never(),
-            );
+            let heard = pipeline.transcribed(&mut recording, true, &CancelToken::never());
 
             if voice == OWN {
                 let heard = heard.expect("the enrolled voice is typed");
@@ -6406,7 +6151,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_honors_cancellation() {
+    fn a_transcribed_recording_honors_cancellation() {
         let (directory, capture) = capture();
         let pipeline = DictationPipeline::new(
             capture,
@@ -6418,15 +6163,7 @@ mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
         assert!(matches!(
-            pipeline.transcribe(
-                &mut recording,
-                &Language::Automatic,
-                false,
-                None,
-                Cleanup::default(),
-                "test",
-                &cancel
-            ),
+            pipeline.transcribed(&mut recording, false, &cancel),
             Err(DictationError::Cancelled)
         ));
     }

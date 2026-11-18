@@ -823,16 +823,21 @@ mod tests {
     }
 
     #[test]
-    fn canonical_lists_bound_iteration_and_compiled_snapshot_size() {
+    fn a_canonical_list_stops_reading_at_the_term_bound() {
         let consumed = std::cell::Cell::new(0);
         let terms = (0..MAX_TERMS + 2).map(|_| {
             consumed.set(consumed.get() + 1);
             "aria-stt"
         });
+
         assert!(matches!(Vocabulary::new(terms), Err(MatchError::TooLarge)));
         assert_eq!(consumed.get(), MAX_TERMS + 1);
+    }
 
+    #[test]
+    fn a_vocabulary_past_the_snapshot_bound_is_refused() {
         let terms = (0..20_000).map(|index| format!("project{index:05}-{}-stt", "x".repeat(230)));
+
         assert!(matches!(Vocabulary::new(terms), Err(MatchError::TooLarge)));
     }
 
@@ -1033,7 +1038,7 @@ mod tests {
     }
 
     #[test]
-    fn each_segment_split_keeps_original_text_until_a_complete_alias_exists() {
+    fn part_of_a_spoken_form_stays_as_heard() {
         let matcher = compile(&["aria-stt"], PersonalRules::default());
         let words = ["aria", "dash", "stt"];
         for split in 1..words.len() {

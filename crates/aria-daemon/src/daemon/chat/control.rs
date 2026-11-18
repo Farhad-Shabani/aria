@@ -103,17 +103,24 @@ mod tests {
     }
 
     #[test]
-    fn the_caller_and_shutdown_still_stop_a_typing_job() {
+    fn the_caller_still_stops_a_typing_job() {
         let caller = CancelToken::new();
-        let shutdown = CancellationToken::new();
-        let control = JobControl::new(caller.clone(), shutdown.clone());
+        let control = JobControl::new(caller.clone(), CancellationToken::new());
         assert!(control.start_typing());
 
         caller.cancel();
 
         assert!(control.cancellation().is_cancelled());
+    }
+
+    #[test]
+    fn shutdown_still_stops_a_typing_job() {
+        let shutdown = CancellationToken::new();
         let control = JobControl::new(CancelToken::never(), shutdown.clone());
+        assert!(control.start_typing());
+
         shutdown.cancel();
+
         assert!(control.cancellation().is_cancelled());
     }
 }

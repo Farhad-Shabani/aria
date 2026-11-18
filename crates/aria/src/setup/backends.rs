@@ -91,6 +91,14 @@ impl Host {
             },
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn mac() -> Self {
+        Self {
+            macos: true,
+            system_voice: Availability::Ready,
+        }
+    }
 }
 
 /// Where an engine's model comes from.
@@ -364,10 +372,7 @@ mod tests {
 
     #[test]
     fn setup_defaults_to_the_engines_an_unset_config_runs() {
-        let host = Host {
-            macos: true,
-            system_voice: Availability::Ready,
-        };
+        let host = Host::mac();
         let default = |choices: Vec<Choice>| choices.into_iter().find(|choice| choice.default);
         let unset = SettingsFile::default();
 
@@ -392,5 +397,39 @@ mod tests {
             Stt::ParakeetMlx.availability(&host),
             Availability::Unsupported { .. }
         ));
+    }
+
+    #[test]
+    fn a_missing_system_voice_changes_only_an_unconfigured_default() {
+        let host = Host {
+            system_voice: Availability::Missing {
+                fix: "install the system voice".to_owned(),
+            },
+            ..Host::mac()
+        };
+        let default = |current| {
+            choices::<Tts>(current, &host)
+                .into_iter()
+                .find(|choice| choice.default)
+                .unwrap()
+                .key
+        };
+
+        assert_eq!(default(None), "kokoro");
+        assert_eq!(default(Some("system")), "system");
+    }
+
+    #[test]
+    fn an_engine_is_settable_in_place_only_when_setup_can_fetch_it() {
+        let stt = choices::<Stt>(None, &Host::mac());
+        let settable = |key: &str| {
+            stt.iter()
+                .find(|choice| choice.key == key)
+                .unwrap()
+                .settable()
+        };
+
+        assert!(settable(backend::MOONSHINE));
+        assert!(!settable(backend::PARAKEET_MLX), "it fetches its own model");
     }
 }

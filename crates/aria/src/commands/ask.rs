@@ -284,12 +284,12 @@ mod tests {
                     .unwrap()
                     .command,
                 Command::Ask(AskArgs {
-                    assistant_id: Some(_),
+                    assistant_id: Some(parsed),
                     ..
-                })
+                }) if parsed == *assistant_id
             ));
         }
-        assert!(Cli::try_parse_from(["aria", "assistant", "unknown"]).is_err());
+        assert!(Cli::try_parse_from(["aria", "ask", "--assistant", "unknown", "hello"]).is_err());
     }
 
     #[test]
@@ -302,5 +302,20 @@ mod tests {
         for name in ["   ", "two\nlines", "/Users/me/proj"] {
             assert!(Cli::try_parse_from(["aria", "ask", "--chat", name, "hello"]).is_err());
         }
+    }
+
+    #[test]
+    fn a_project_conflicts_with_a_cancel() {
+        assert!(
+            Cli::try_parse_from([
+                "aria",
+                "ask",
+                "--project",
+                "/projects/aria",
+                "--cancel",
+                "1"
+            ])
+            .is_err()
+        );
     }
 }

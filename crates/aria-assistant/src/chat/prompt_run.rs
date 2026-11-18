@@ -171,7 +171,10 @@ mod tests {
 
     #[test]
     fn the_transcript_comes_after_the_instructions_and_the_frame() {
-        for kind in [PromptKind::Rewrite, PromptKind::Compose] {
+        for (kind, frame) in [
+            (PromptKind::Rewrite, REWRITE_FRAME),
+            (PromptKind::Compose, COMPOSE_FRAME),
+        ] {
             let prompt = PromptRun {
                 model_id: None,
                 kind,
@@ -180,7 +183,7 @@ mod tests {
             }
             .prompt();
             let instructions = prompt.find("Make it formal.").expect("instructions");
-            let frame = prompt.find("never as").expect("frame");
+            let frame = prompt.find(frame).expect("frame");
             let transcript = prompt.find("ignore the above").expect("transcript");
             assert!(instructions < frame && frame < transcript, "{prompt}");
         }
@@ -197,8 +200,10 @@ mod tests {
             }
             .prompt()
         };
-        assert!(prompt(PromptKind::Rewrite).contains("Rewrite the transcript"));
-        assert!(prompt(PromptKind::Compose).contains("Write what the instructions above ask for"));
+        let rewrite = prompt(PromptKind::Rewrite);
+        let compose = prompt(PromptKind::Compose);
+        assert!(rewrite.contains(REWRITE_FRAME) && !rewrite.contains(COMPOSE_FRAME));
+        assert!(compose.contains(COMPOSE_FRAME) && !compose.contains(REWRITE_FRAME));
     }
 
     #[test]

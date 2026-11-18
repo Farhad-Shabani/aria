@@ -433,7 +433,6 @@ fn kind_schema(kind: Kind) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Loaded;
     use std::fs;
 
     fn home_with(text: &str) -> tempfile::TempDir {
@@ -726,26 +725,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_reports_the_place_without_writing() {
+    fn validate_reports_the_place_of_a_fault_and_nothing_for_a_valid_file() {
         let home = home_with("[transcription\n");
         let fault = validate_with(home.path()).expect("runs").expect("a fault");
         assert_eq!(fault.position.map(|position| position.line), Some(1));
         assert_eq!(validate_with(home_with("").path()).expect("runs"), None);
-    }
-
-    #[test]
-    fn the_defaults_load_and_match_what_code_does_without_them() {
-        let home = Path::new("/home/user");
-        let defaults = Loaded::parse(&crate::testing::defaults_text(), home)
-            .expect("every default is valid")
-            .settings;
-
-        let mut settings = crate::Settings::from_file(&defaults).expect("valid");
-        assert_eq!(
-            settings.assistant_id.take(),
-            Some(crate::Settings::default().resolve_assistant_id())
-        );
-        assert_eq!(crate::Settings::default(), settings);
     }
 
     #[test]

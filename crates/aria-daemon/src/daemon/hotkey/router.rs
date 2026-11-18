@@ -364,38 +364,38 @@ mod tests {
 
     #[test]
     fn a_tap_stops_only_a_manual_recording_it_can_still_stop() {
-        let stops = |built: Option<ActiveDictationBuilder>| {
+        let tapped = |built: Option<ActiveDictationBuilder>| {
             let built = built.map(ActiveDictationBuilder::build);
             let dictation = built.as_ref().map(|built| built.dictation.clone());
-            matches!(
-                press_action(Press::Tap, dictation),
-                PressAction::StopRecording(_)
-            )
+            match press_action(Press::Tap, dictation) {
+                PressAction::StopRecording(_) => "stops the recording",
+                PressAction::CancelRunOrDictate => "cancels a run or dictates",
+                _ => "something else",
+            }
         };
-        assert!(stops(Some(manual().with_recording())));
-        assert!(!stops(None), "nothing records");
-        assert!(!stops(Some(manual())), "it stopped recording already");
-        assert!(
-            !stops(Some(manual().with_recording().with_cancellation())),
+
+        assert_eq!(
+            tapped(Some(manual().with_recording())),
+            "stops the recording"
+        );
+        assert_eq!(tapped(None), "cancels a run or dictates", "nothing records");
+        assert_eq!(
+            tapped(Some(manual())),
+            "cancels a run or dictates",
+            "it stopped recording already"
+        );
+        assert_eq!(
+            tapped(Some(manual().with_recording().with_cancellation())),
+            "cancels a run or dictates",
             "it is ending"
         );
-        assert!(
-            !stops(Some(
+        assert_eq!(
+            tapped(Some(
                 ActiveDictationBuilder::new(StopMode::OnSilence).with_recording()
             )),
+            "cancels a run or dictates",
             "silence ends it, not a tap"
         );
-    }
-
-    #[test]
-    fn a_tap_with_nothing_to_stop_goes_to_a_run_or_dictates() {
-        let stopped = manual().build();
-        for dictation in [None, Some(stopped.dictation)] {
-            assert!(matches!(
-                press_action(Press::Tap, dictation),
-                PressAction::CancelRunOrDictate
-            ));
-        }
     }
 
     #[test]
@@ -414,8 +414,18 @@ mod tests {
             press_action(Press::HoldCancelled, dictation()),
             PressAction::EndHold(HoldEnd::Cancelled)
         ));
+    }
+
+    #[test]
+    fn a_combo_is_broadcast_whatever_dictates() {
+        let recording = manual().with_recording().build();
+
         assert!(matches!(
-            press_action(Press::Combo(Combo::Shift), dictation()),
+            press_action(Press::Combo(Combo::Shift), Some(recording.dictation)),
+            PressAction::Broadcast(Combo::Shift)
+        ));
+        assert!(matches!(
+            press_action(Press::Combo(Combo::Shift), None),
             PressAction::Broadcast(Combo::Shift)
         ));
     }

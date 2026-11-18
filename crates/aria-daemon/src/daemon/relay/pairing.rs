@@ -680,58 +680,55 @@ mod tests {
     }
 
     #[test]
-    fn a_bearer_era_file_is_replaced_with_fresh_material() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = pairing_path(&directory);
-        let before = load_or_create(&path, "Aria (studio)").unwrap();
-        let bearer_era = serde_json::json!({
-            "instance": "Aria (studio)",
-            "token": "a".repeat(64),
-            "certificate_pem": before.certificate_pem,
-            "key_pem": before.key_pem,
-        });
-        std::fs::write(&path, serde_json::to_vec(&bearer_era).unwrap()).unwrap();
+    fn a_damaged_file_is_replaced_with_fresh_material() {
+        type Damage = fn(&Path, &Pairing);
+        let rows: [(&str, Damage); 3] = [
+            ("a bearer-era file", |path, before| {
+                let bearer_era = serde_json::json!({
+                    "instance": "Aria (studio)",
+                    "token": "a".repeat(64),
+                    "certificate_pem": before.certificate_pem,
+                    "key_pem": before.key_pem,
+                });
+                std::fs::write(path, serde_json::to_vec(&bearer_era).unwrap()).unwrap();
+            }),
+            ("a corrupt certificate", |path, _| {
+                let mut corrupt = stored(path);
+                corrupt.certificate_pem = "-----BEGIN CERTIFICATE-----\nnot base64!\n".to_owned();
+                std::fs::write(path, serde_json::to_vec(&corrupt).unwrap()).unwrap();
+            }),
+            ("an unparseable file", |path, _| {
+                std::fs::write(path, b"{ not json").unwrap();
+            }),
+        ];
 
-        let after = load_or_create(&path, "Aria (studio)").unwrap();
+        for (label, damage) in rows {
+            let (_directory, path, before) = mac();
+            damage(&path, &before);
 
-        assert_ne!(after.certificate_pem, before.certificate_pem);
-        assert!(stored(&path).phones.is_empty());
-    }
+            let after = load_or_create(&path, "Aria (studio)").unwrap();
 
-    #[test]
-    fn a_corrupt_certificate_is_replaced_with_fresh_material() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = pairing_path(&directory);
-        let before = load_or_create(&path, "Aria (studio)").unwrap();
-
-        let mut corrupt = stored(&path);
-        corrupt.certificate_pem = "-----BEGIN CERTIFICATE-----\nnot base64!\n".to_owned();
-        std::fs::write(&path, serde_json::to_vec(&corrupt).unwrap()).unwrap();
-
-        let after = load_or_create(&path, "Aria (studio)").unwrap();
-        assert!(after.certificate_pem.contains("BEGIN CERTIFICATE"));
-        assert_ne!(
-            after.certificate_fingerprint,
-            before.certificate_fingerprint
-        );
-    }
-
-    #[test]
-    fn an_unparseable_file_is_replaced_with_fresh_material() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = pairing_path(&directory);
-        load_or_create(&path, "Aria (studio)").unwrap();
-        std::fs::write(&path, b"{ not json").unwrap();
-
-        let after = load_or_create(&path, "Aria (studio)").unwrap();
-        assert_eq!(stored(&path).certificate_pem, after.certificate_pem);
+            assert_ne!(after.certificate_pem, before.certificate_pem, "{label}");
+            assert!(
+                after.certificate_pem.contains("BEGIN CERTIFICATE"),
+                "{label}"
+            );
+            assert_ne!(
+                after.certificate_fingerprint, before.certificate_fingerprint,
+                "{label}"
+            );
+            assert_eq!(
+                stored(&path).certificate_pem,
+                after.certificate_pem,
+                "{label}"
+            );
+            assert!(stored(&path).phones.is_empty(), "{label}");
+        }
     }
 
     #[test]
     fn the_file_shape_is_stable() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = pairing_path(&directory);
-        load_or_create(&path, "Aria (studio)").unwrap();
+        let (_directory, path, _) = mac();
 
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();

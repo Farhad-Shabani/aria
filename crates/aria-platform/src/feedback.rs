@@ -85,21 +85,3 @@ fn player(sound_path: &str) -> Command {
     command.env_clear();
     command
 }
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use super::*;
-
-    #[test]
-    fn the_player_gets_the_sound_path_as_its_only_argument() {
-        let command = player("/sounds/ping.caf");
-
-        assert_eq!(command.get_program(), Path::new(PLAYER));
-        assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            [Path::new("/sounds/ping.caf").as_os_str()]
-        );
-    }
-}

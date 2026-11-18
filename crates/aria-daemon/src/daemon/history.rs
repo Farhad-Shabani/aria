@@ -617,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn relay_entries_share_the_store_and_name_the_served_by() {
+    fn served_by_replaces_the_engine_the_sink_was_built_with() {
         let directory = tempfile::tempdir().unwrap();
         let (saved, mut sink, mut recording) = sink(directory.path(), "server", 1_600);
         sink.dictation_started(

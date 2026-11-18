@@ -6,6 +6,8 @@
 
 mod grid;
 mod pyannote;
+#[cfg(test)]
+mod testing;
 mod timeline;
 
 use std::ops::Range;

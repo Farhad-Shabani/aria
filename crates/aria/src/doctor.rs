@@ -744,7 +744,7 @@ mod tests {
 
         let check = daemon_at(&directory.path().join("daemon.sock"), None);
 
-        assert_ne!(check.status, Status::Ok);
+        assert_eq!(check.status, Status::Failed);
         assert!(check.detail.contains("not running"));
     }
 

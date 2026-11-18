@@ -395,9 +395,22 @@ mod tests {
         assert_eq!(consumer.pop(), Ok(-0.5));
         assert_eq!(context.failed.load(Ordering::Acquire), QUEUE_FULL);
         assert!(check_callback(&context.failed).is_err());
-        context.failed.store(0, Ordering::Release);
+    }
+
+    #[test]
+    fn a_stopped_callback_takes_no_samples() {
+        let (mut context, mut consumer) = callback(2);
+        let mut samples = [0.25_f32, -0.5, 0.75];
+        let input = cat::AudioBufList {
+            number_buffers: 1,
+            buffers: [cat::AudioBuf {
+                number_channels: 1,
+                data_bytes_size: 12,
+                data: samples.as_mut_ptr().cast(),
+            }],
+        };
         context.stop.stop();
-        // SAFETY: The buffer still points to the live samples array above.
+        // SAFETY: The buffer points to the live samples array above.
         unsafe { receive_buffer(&input, &mut context) };
         assert!(consumer.pop().is_err());
         assert_eq!(context.failed.load(Ordering::Acquire), 0);

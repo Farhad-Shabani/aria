@@ -237,4 +237,23 @@ mod tests {
 
         assert!(matches!(outcome, Err(TranscriptionError::Cancelled)));
     }
+
+    #[test]
+    fn a_parakeet_directory_without_a_vocabulary_is_refused() {
+        let directory = tempfile::TempDir::new().expect("test directory should be created");
+
+        let error = Parakeet::check_from(&ParakeetConfig::new(directory.path(), Device::Cpu))
+            .expect_err("parakeet needs a vocabulary");
+
+        assert!(matches!(
+            error,
+            TranscriptionError::Model {
+                source: aria_kit::backend::ModelError::Missing {
+                    file: "vocab.txt",
+                    ..
+                },
+                ..
+            }
+        ));
+    }
 }

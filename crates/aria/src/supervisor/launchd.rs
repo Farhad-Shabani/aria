@@ -252,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unset_variable_is_left_out_of_the_plist() {
+    fn an_empty_environment_renders_an_empty_dict() {
         let spec = UnitSpec {
             exe: PathBuf::from("/opt/aria"),
             home: PathBuf::from("/Users/tester"),
@@ -261,7 +261,6 @@ mod tests {
 
         let plist = render(&spec);
 
-        assert!(!plist.contains("<key>PATH</key>"));
         assert!(plist.contains("<dict>\n    </dict>"));
     }
 

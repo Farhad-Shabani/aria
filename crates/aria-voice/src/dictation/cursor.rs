@@ -541,6 +541,13 @@ mod tests {
         left_after(mode, Utterance::anonymous("hello"))
     }
 
+    fn app(name: &str, bundle_id: &str) -> aria_platform::delivery::Application {
+        aria_platform::delivery::Application {
+            name: name.into(),
+            bundle_id: Some(bundle_id.into()),
+        }
+    }
+
     fn deferring(text: &str) -> Utterance<'_> {
         Utterance {
             spacing: Spacing {
@@ -553,13 +560,9 @@ mod tests {
 
     #[test]
     fn a_retry_types_the_queue_only_once_the_start_app_is_back_in_front() {
-        let app = |id: &str| aria_platform::delivery::Application {
-            name: id.into(),
-            bundle_id: Some(id.into()),
-        };
         let log = CallLog::default();
         let mut cursor = Cursor::new(wandering(&log));
-        *cursor.delivery.front.lock().unwrap() = Some(app("com.notes"));
+        *cursor.delivery.front.lock().unwrap() = Some(app("com.notes", "com.notes"));
         cursor
             .dictation_started(
                 &settings(DeliveryMode::Streaming, OutputMode::Insert),
@@ -568,14 +571,14 @@ mod tests {
             .unwrap();
         cursor.segment(Utterance::anonymous("hello")).unwrap();
         cursor.delivery.leave(|| DeliveryError::TargetChanged);
-        *cursor.delivery.front.lock().unwrap() = Some(app("com.safari"));
+        *cursor.delivery.front.lock().unwrap() = Some(app("com.safari", "com.safari"));
         cursor.segment(Utterance::anonymous("there")).unwrap();
 
         cursor.delivery.come_back();
         cursor.retry().unwrap();
         assert!(cursor.is_queueing(), "another app is still in front");
 
-        *cursor.delivery.front.lock().unwrap() = Some(app("com.notes"));
+        *cursor.delivery.front.lock().unwrap() = Some(app("com.notes", "com.notes"));
         cursor.retry().unwrap();
 
         assert!(!cursor.is_queueing());
@@ -612,10 +615,7 @@ mod tests {
 
     #[test]
     fn settings_chosen_for_the_start_app_still_copy_its_leftover() {
-        let notes = aria_platform::delivery::Application {
-            name: "Notes".into(),
-            bundle_id: Some("com.notes".into()),
-        };
+        let notes = app("Notes", "com.notes");
         let log = CallLog::default();
         let mut cursor = Cursor::new(wandering(&log));
         *cursor.delivery.front.lock().unwrap() = Some(notes);
@@ -625,10 +625,7 @@ mod tests {
             .dictation_started(&settings, &ExecutionControl::for_test(StopMode::Manual))
             .unwrap();
         cursor.segment(Utterance::anonymous("hello")).unwrap();
-        *cursor.delivery.front.lock().unwrap() = Some(aria_platform::delivery::Application {
-            name: "Safari".into(),
-            bundle_id: Some("com.safari".into()),
-        });
+        *cursor.delivery.front.lock().unwrap() = Some(app("Safari", "com.safari"));
 
         cursor.segment(Utterance::anonymous("there")).unwrap();
         cursor
@@ -650,10 +647,7 @@ mod tests {
         cursor
             .dictation_started(&settings, &ExecutionControl::for_test(StopMode::Manual))
             .unwrap();
-        *cursor.delivery.front.lock().unwrap() = Some(aria_platform::delivery::Application {
-            name: "Vault".into(),
-            bundle_id: Some("com.secret".into()),
-        });
+        *cursor.delivery.front.lock().unwrap() = Some(app("Vault", "com.secret"));
 
         cursor.segment(Utterance::anonymous("hello")).unwrap();
         let ended = cursor.completed(Utterance::anonymous("hello"));
@@ -820,10 +814,7 @@ mod tests {
         cursor
             .dictation_started(&settings, &ExecutionControl::for_test(StopMode::Manual))
             .unwrap();
-        *cursor.delivery.front.lock().unwrap() = Some(aria_platform::delivery::Application {
-            name: "Vault".into(),
-            bundle_id: Some("com.secret".into()),
-        });
+        *cursor.delivery.front.lock().unwrap() = Some(app("Vault", "com.secret"));
 
         cursor.segment(Utterance::anonymous("hello")).unwrap();
 
@@ -1459,10 +1450,7 @@ mod tests {
                 fail: false,
             },
             caret: Caret::between("", ""),
-            front: Some(aria_platform::delivery::Application {
-                name: "Vault".into(),
-                bundle_id: Some("com.secret".into()),
-            }),
+            front: Some(app("Vault", "com.secret")),
         });
         let mut settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
         settings.target.excluded = vec!["com.secret".into()];
@@ -1504,13 +1492,6 @@ mod tests {
 
     #[test]
     fn a_deferred_period_attaches_before_the_text_after_the_caret() {
-        let deferring = |text| Utterance {
-            spacing: Spacing {
-                defers_ending: true,
-                ..Spacing::default()
-            },
-            ..Utterance::anonymous(text)
-        };
         let utterances = [
             deferring("we should"),
             deferring(". Ship it"),

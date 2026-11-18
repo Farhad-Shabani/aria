@@ -162,6 +162,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::speaker::Grouping;
+    use crate::speaker::testing::{OWN, Voice};
     use aria_kit::audio::{Recording, RecordingWriter};
 
     use super::*;
@@ -273,21 +274,8 @@ mod tests {
         }
     }
 
-    /// Hears one fixed voice in every window.
-    struct Voice;
-
-    impl Embedder for Voice {
-        fn embed(&mut self, _window: &[f32]) -> Result<Option<Vec<f32>>, SpeakerError> {
-            Ok(Some(Vec::from([1.0, 0.0])))
-        }
-
-        fn dimension(&self) -> usize {
-            2
-        }
-    }
-
     fn one_voice() -> PyannoteVoices<Speaking, Voice> {
-        PyannoteVoices::new(Speaking, Voice, Vec::new(), Grouping::default())
+        PyannoteVoices::new(Speaking, Voice(OWN), Vec::new(), Grouping::default())
     }
 
     /// Hears nobody, so the walk's cost is the segmenter's alone.

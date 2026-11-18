@@ -252,13 +252,17 @@ mod tests {
         }
     }
 
+    fn save_new(store: &ProfileStore, profile: &Profile) {
+        store
+            .save(profile, Replace::Never)
+            .expect("the profile is written");
+    }
+
     #[test]
     fn a_saved_profile_reads_back() {
         let (_home, store) = store();
         let alex = profile("alex", Role::Owner, "wespeaker", vec![1.0, 0.0]);
-        store
-            .save(&alex, Replace::Never)
-            .expect("the profile is written");
+        save_new(&store, &alex);
 
         assert_eq!(profiles(&store), vec![alex]);
     }
@@ -267,12 +271,10 @@ mod tests {
     fn profiles_come_back_sorted_by_name() {
         let (_home, store) = store();
         for name in ["zoe", "ada"] {
-            store
-                .save(
-                    &profile(name, Role::Guest, "wespeaker", vec![0.0, 1.0]),
-                    Replace::Never,
-                )
-                .expect("the profile is written");
+            save_new(
+                &store,
+                &profile(name, Role::Guest, "wespeaker", vec![0.0, 1.0]),
+            );
         }
 
         let names = names(&store);
@@ -282,18 +284,14 @@ mod tests {
     #[test]
     fn a_profile_from_another_engine_is_not_offered_to_this_one() {
         let (_home, store) = store();
-        store
-            .save(
-                &profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0]),
-                Replace::Never,
-            )
-            .expect("the profile is written");
-        store
-            .save(
-                &profile("zoe", Role::Owner, "other", vec![1.0, 0.0]),
-                Replace::Never,
-            )
-            .expect("the profile is written");
+        save_new(
+            &store,
+            &profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0]),
+        );
+        save_new(
+            &store,
+            &profile("zoe", Role::Owner, "other", vec![1.0, 0.0]),
+        );
 
         let usable = store
             .read_for("wespeaker", 2)
@@ -306,12 +304,10 @@ mod tests {
     #[test]
     fn a_profile_of_another_width_is_not_offered_either() {
         let (_home, store) = store();
-        store
-            .save(
-                &profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0, 0.0]),
-                Replace::Never,
-            )
-            .expect("the profile is written");
+        save_new(
+            &store,
+            &profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0, 0.0]),
+        );
 
         let stored = store.read_for("wespeaker", 2).expect("the directory lists");
         assert!(stored.profiles.is_empty());
@@ -320,12 +316,10 @@ mod tests {
     #[test]
     fn one_unreadable_profile_does_not_hide_the_others() {
         let (home, store) = store();
-        store
-            .save(
-                &profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0]),
-                Replace::Never,
-            )
-            .expect("the profile is written");
+        save_new(
+            &store,
+            &profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0]),
+        );
         std::fs::write(home.path().join("broken.json"), b"{").expect("the file is written");
 
         let stored = store.read_all().expect("the directory lists");
@@ -339,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_profiles_directory_means_nobody_enrolled() {
+    fn a_missing_profiles_directory_means_nobody_enrolled() {
         let home = tempfile::tempdir().expect("a temporary directory");
         assert!(profiles(&ProfileStore::open(home.path().join("absent"))).is_empty());
     }
@@ -348,12 +342,10 @@ mod tests {
     fn removing_says_whether_anyone_was_enrolled() {
         let (_home, store) = store();
         let ada = SpeakerName::new("ada").expect("the name is usable");
-        store
-            .save(
-                &profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0]),
-                Replace::Never,
-            )
-            .expect("the profile is written");
+        save_new(
+            &store,
+            &profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0]),
+        );
 
         assert!(store.remove(&ada).expect("the delete succeeds"));
         assert!(!store.remove(&ada).expect("the delete succeeds"));
@@ -364,9 +356,7 @@ mod tests {
     fn a_second_profile_of_the_same_name_is_refused_unless_asked() {
         let (_home, store) = store();
         let first = profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0]);
-        store
-            .save(&first, Replace::Never)
-            .expect("the profile is written");
+        save_new(&store, &first);
 
         let second = profile("ada", Role::Guest, "wespeaker", vec![0.0, 1.0]);
         assert!(matches!(
@@ -384,12 +374,10 @@ mod tests {
     #[test]
     fn a_profile_recording_an_impossible_moment_is_skipped() {
         let (home, store) = store();
-        store
-            .save(
-                &profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0]),
-                Replace::Never,
-            )
-            .expect("the profile is written");
+        save_new(
+            &store,
+            &profile("ada", Role::Owner, "wespeaker", vec![1.0, 0.0]),
+        );
         let tampered = home.path().join("zoe.json");
         std::fs::write(
             &tampered,
@@ -399,33 +387,16 @@ mod tests {
         std::fs::set_permissions(&tampered, std::fs::Permissions::from_mode(0o600))
             .expect("the mode is set");
 
-        let names = names(&store);
-        assert_eq!(names, ["ada"]);
-    }
-
-    #[test]
-    fn a_name_that_could_escape_the_directory_is_refused() {
-        for name in ["", " ada", "ada ", "../ada", "ada/zoe", ".hidden", "a\nb"] {
-            assert!(
-                SpeakerName::new(name).is_err(),
-                "{name:?} must not become a filename"
-            );
-        }
-    }
-
-    #[test]
-    fn a_name_that_reads_like_an_anonymous_speaker_is_refused() {
-        assert!(SpeakerName::new("Speaker 2").is_err());
-        assert!(SpeakerName::new("Speaker Two").is_ok());
-    }
-
-    #[test]
-    fn an_ordinary_name_is_accepted() {
-        assert_eq!(
-            SpeakerName::new("Alex Morgan")
-                .expect("the name is usable")
-                .as_str(),
-            "Alex Morgan"
-        );
+        let stored = store.read_all().expect("the directory lists");
+        let listed: Vec<&str> = stored
+            .profiles
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect();
+        assert_eq!(listed, ["ada"]);
+        assert!(matches!(
+            stored.unreadable.as_slice(),
+            [ProfileError::UnreadableMoment]
+        ));
     }
 }

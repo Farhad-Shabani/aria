@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn matching_unique_ids_and_strict_labels_are_required() {
+    fn prepare_rejects_unpaired_or_duplicate_ids() {
         let rubric: Rubric = serde_json::from_value(
             json!({"tasks":{"task":"{response}"},"abstention":"{response}"}),
         )
@@ -346,6 +346,10 @@ mod tests {
         ] {
             assert!(prepare(&references, &hypotheses, &rubric).is_err());
         }
+    }
+
+    #[test]
+    fn only_an_exact_yes_or_no_is_a_label() {
         for (reply, expected) in [(" yes ", true), ("NO", false)] {
             assert_eq!(
                 parse_reply(

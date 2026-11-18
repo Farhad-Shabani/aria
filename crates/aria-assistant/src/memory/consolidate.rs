@@ -143,6 +143,7 @@ mod tests {
 
     use super::*;
     use crate::memory::PROFILE_FILE;
+    use crate::memory::testing::store;
 
     struct Scripted {
         replies: Mutex<Vec<Result<String, AssistantError>>>,
@@ -173,20 +174,12 @@ mod tests {
         }
     }
 
-    fn fixture() -> (tempfile::TempDir, Store) {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let store = Store::open(&dir.path().join(DB_FILE)).expect("opens");
-        (dir, store)
-    }
-
     fn speak(store: &Store, session: &str, text: &str) {
         store.add_turn(session, text).expect("adds");
     }
 
-    fn backlog(store: &Store, extractor: &Scripted, dir: &Path) -> Vec<ConsolidationResult> {
-        consolidate_backlog(store, extractor, &CancelToken::never(), dir, 10)
-            .expect("runs")
-            .results
+    fn backlog(store: &Store, extractor: &impl Extractor, dir: &Path) -> ConsolidationReport {
+        consolidate_backlog(store, extractor, &CancelToken::never(), dir, 10).expect("runs")
     }
 
     const ONE_FACT: &str =
@@ -194,42 +187,33 @@ mod tests {
 
     #[test]
     fn every_session_with_new_turns_is_consolidated_once() {
-        let (dir, store) = fixture();
+        let (dir, store) = store();
         speak(&store, "a", "hi");
         speak(&store, "b", "there");
         let extractor = Scripted::new(vec![Ok(ONE_FACT.to_owned())]);
 
-        let results = backlog(&store, &extractor, dir.path());
+        let results = backlog(&store, &extractor, dir.path()).results;
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].added, 1);
         assert_eq!(extractor.calls(), 2);
         assert!(dir.path().join(PROFILE_FILE).is_file());
 
-        assert!(backlog(&store, &extractor, dir.path()).is_empty());
+        assert!(backlog(&store, &extractor, dir.path()).results.is_empty());
         assert_eq!(extractor.calls(), 2);
 
         speak(&store, "a", "more");
-        let results = backlog(&store, &extractor, dir.path());
+        let results = backlog(&store, &extractor, dir.path()).results;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].turns, 1);
     }
 
-    /// Makes the run's claim stale and clears memory while the run waits on
-    /// its extraction.
+    /// Clears memory while the run waits on its extraction.
     struct ClearsMidway {
         path: std::path::PathBuf,
     }
 
     impl Extractor for ClearsMidway {
         fn extract(&self, _message: &str, _cancel: &CancelToken) -> Result<String, AssistantError> {
-            Connection::open(&self.path)
-                .expect("opens")
-                .execute(
-                    "UPDATE consolidations SET claimed_at = \
-                     strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', '-601 seconds')",
-                    [],
-                )
-                .expect("ages the claim");
             Store::open(&self.path)
                 .expect("opens")
                 .clear()
@@ -240,14 +224,13 @@ mod tests {
 
     #[test]
     fn a_run_whose_memory_was_cleared_writes_nothing() {
-        let (dir, store) = fixture();
+        let (dir, store) = store();
         speak(&store, "a", "hi");
         let extractor = ClearsMidway {
             path: dir.path().join(DB_FILE),
         };
 
-        let report = consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10)
-            .expect("runs");
+        let report = backlog(&store, &extractor, dir.path());
 
         assert_eq!(report.failed, 1);
         assert!(store.active_facts().expect("reads").is_empty());
@@ -256,23 +239,22 @@ mod tests {
 
     #[test]
     fn an_unreadable_reply_is_retried_next_run() {
-        let (dir, store) = fixture();
+        let (dir, store) = store();
         speak(&store, "a", "hi");
         let extractor = Scripted::new(vec![Ok("nope".to_owned()), Ok(ONE_FACT.to_owned())]);
 
-        assert!(backlog(&store, &extractor, dir.path()).is_empty());
-        let results = backlog(&store, &extractor, dir.path());
+        assert!(backlog(&store, &extractor, dir.path()).results.is_empty());
+        let results = backlog(&store, &extractor, dir.path()).results;
         assert_eq!(results[0].added, 1);
     }
 
     #[test]
     fn a_failed_extraction_gives_the_window_back() {
-        let (dir, store) = fixture();
+        let (dir, store) = store();
         speak(&store, "a", "hi");
         let extractor = Scripted::new(vec![Err(AssistantError::Failed("down".to_owned()))]);
 
-        let report = consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10)
-            .expect("runs");
+        let report = backlog(&store, &extractor, dir.path());
         assert!(report.results.is_empty());
         assert_eq!(report.failed, 1);
         assert_eq!(store.claim_consolidation("a", 1).expect("claims"), Some(0));
@@ -280,7 +262,7 @@ mod tests {
 
     #[test]
     fn a_failed_session_does_not_hide_successful_sessions() {
-        let (dir, store) = fixture();
+        let (dir, store) = store();
         speak(&store, "a", "hi");
         speak(&store, "b", "hello");
         let extractor = Scripted::new(vec![
@@ -288,8 +270,7 @@ mod tests {
             Ok(ONE_FACT.to_owned()),
         ]);
 
-        let report = consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10)
-            .expect("runs");
+        let report = backlog(&store, &extractor, dir.path());
 
         assert_eq!(report.failed, 1);
         assert_eq!(report.results.len(), 1);
@@ -300,7 +281,7 @@ mod tests {
 
     #[test]
     fn an_unreadable_turn_releases_its_claim() {
-        let (dir, store) = fixture();
+        let (dir, store) = store();
         speak(&store, "a", "hi");
         Connection::open(dir.path().join(DB_FILE))
             .expect("opens")
@@ -308,8 +289,7 @@ mod tests {
             .expect("makes the turn unreadable");
         let extractor = Scripted::new(Vec::new());
 
-        let report = consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10)
-            .expect("runs");
+        let report = backlog(&store, &extractor, dir.path());
 
         assert_eq!(report.failed, 1);
         assert_eq!(extractor.calls(), 0);
@@ -318,7 +298,7 @@ mod tests {
 
     #[test]
     fn a_profile_write_is_retried_without_extracting_again() {
-        let (dir, store) = fixture();
+        let (dir, store) = store();
         speak(&store, "a", "hi");
         let extractor = Scripted::new(vec![Ok(ONE_FACT.to_owned())]);
         let profile = dir.path().join(PROFILE_FILE);
@@ -331,7 +311,7 @@ mod tests {
         assert_eq!(store.consolidated_through("a").expect("watermark"), 1);
         std::fs::rename(&profile, dir.path().join("blocked-profile"))
             .expect("restores profile publication");
-        assert!(backlog(&store, &extractor, dir.path()).is_empty());
+        assert!(backlog(&store, &extractor, dir.path()).results.is_empty());
 
         assert_eq!(extractor.calls(), 1);
         assert!(
@@ -343,31 +323,24 @@ mod tests {
 
     #[test]
     fn a_fresh_claim_elsewhere_is_left_alone_and_a_stale_one_taken_over() {
-        let (dir, store) = fixture();
+        let (dir, store) = store();
         speak(&store, "a", "hi");
         store.claim_consolidation("a", 1).expect("claims");
         let extractor = Scripted::new(vec![Ok(ONE_FACT.to_owned())]);
 
-        assert!(backlog(&store, &extractor, dir.path()).is_empty());
+        assert!(backlog(&store, &extractor, dir.path()).results.is_empty());
         assert_eq!(extractor.calls(), 0);
 
-        Connection::open(dir.path().join(DB_FILE))
-            .expect("opens")
-            .execute(
-                "UPDATE consolidations SET claimed_at = \
-                 strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime', '-601 seconds')",
-                [],
-            )
-            .expect("ages the claim");
-        let results = backlog(&store, &extractor, dir.path());
+        store.expire_claims();
+        let results = backlog(&store, &extractor, dir.path()).results;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].added, 1);
         assert_eq!(extractor.calls(), 1);
     }
 
     #[test]
-    fn a_cancelled_run_stops_before_the_next_session() {
-        let (dir, store) = fixture();
+    fn a_run_cancelled_at_the_start_claims_nothing() {
+        let (dir, store) = store();
         speak(&store, "a", "hi");
         let extractor = Scripted::new(Vec::new());
         let cancel = CancelToken::from_fn(|| true);

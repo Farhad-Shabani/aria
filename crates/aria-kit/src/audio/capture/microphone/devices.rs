@@ -217,34 +217,49 @@ mod tests {
     }
 
     #[test]
-    fn a_connected_choice_wins_over_the_fallback() {
-        let devices = [
+    fn the_input_is_the_connected_choice_else_the_fallback() {
+        let airpods_fallback = [
             device("coreaudio:airpods", true),
             device("coreaudio:built-in", false),
         ];
-
-        let resolved = resolve_input(Some(&id("coreaudio:built-in")), &devices);
-
-        assert_eq!(resolved, Some(&devices[1]));
-    }
-
-    #[test]
-    fn a_missing_choice_takes_the_fallback() {
-        let devices = [device("coreaudio:built-in", true)];
-
-        let resolved = resolve_input(Some(&id("coreaudio:airpods")), &devices);
-
-        assert_eq!(resolved, Some(&devices[0]));
-    }
-
-    #[test]
-    fn no_choice_takes_the_fallback() {
-        let devices = [
+        let usb_and_built_in = [
             device("coreaudio:usb", false),
             device("coreaudio:built-in", true),
         ];
+        let built_in = [device("coreaudio:built-in", true)];
+        let rows = [
+            (
+                "a connected choice wins over the fallback",
+                Some("coreaudio:built-in"),
+                &airpods_fallback[..],
+                Some(1),
+            ),
+            (
+                "a missing choice takes the fallback",
+                Some("coreaudio:airpods"),
+                &built_in[..],
+                Some(0),
+            ),
+            (
+                "no choice takes the fallback",
+                None,
+                &usb_and_built_in[..],
+                Some(1),
+            ),
+            (
+                "nothing resolves without a device",
+                Some("coreaudio:airpods"),
+                &[][..],
+                None,
+            ),
+        ];
+        for (why, wanted, devices, expected) in rows {
+            let wanted = wanted.map(id);
 
-        assert_eq!(resolve_input(None, &devices), Some(&devices[1]));
+            let resolved = resolve_input(wanted.as_ref(), devices);
+
+            assert_eq!(resolved, expected.map(|index| &devices[index]), "{why}");
+        }
     }
 
     fn found(id: &str, transport: Transport) -> Found<()> {
@@ -310,50 +325,51 @@ mod tests {
     }
 
     #[test]
-    fn nothing_resolves_without_a_device() {
-        assert_eq!(resolve_input(Some(&id("coreaudio:airpods")), &[]), None);
-    }
+    fn follow_decides_from_the_choice_the_held_device_and_the_fallback() {
+        let rows = [
+            (
+                "a held choice stays when the fallback moves",
+                Some("coreaudio:built-in"),
+                "coreaudio:built-in",
+                Some("coreaudio:airpods"),
+                Follow::Stay,
+            ),
+            (
+                "a held fallback moves with the fallback",
+                Some("coreaudio:usb"),
+                "coreaudio:built-in",
+                Some("coreaudio:airpods"),
+                Follow::Reopen,
+            ),
+            (
+                "a held fallback watches for the choice",
+                Some("coreaudio:usb"),
+                "coreaudio:built-in",
+                Some("coreaudio:built-in"),
+                Follow::CheckChosen,
+            ),
+            (
+                "clearing the choice leaves a device that is not the fallback",
+                None,
+                "coreaudio:usb",
+                Some("coreaudio:built-in"),
+                Follow::Reopen,
+            ),
+            (
+                "no choice on the fallback stays",
+                None,
+                "coreaudio:built-in",
+                Some("coreaudio:built-in"),
+                Follow::Stay,
+            ),
+        ];
+        for (why, wanted, held, fallback, expected) in rows {
+            let wanted = wanted.map(id);
+            let fallback = fallback.map(id);
 
-    #[test]
-    fn a_held_choice_stays_when_the_fallback_moves() {
-        let held = id("coreaudio:built-in");
+            let next = follow(wanted.as_ref(), &id(held), fallback.as_ref());
 
-        let next = follow(Some(&held), &held, Some(&id("coreaudio:airpods")));
-
-        assert_eq!(next, Follow::Stay);
-    }
-
-    #[test]
-    fn a_held_fallback_moves_with_the_fallback() {
-        let next = follow(
-            Some(&id("coreaudio:usb")),
-            &id("coreaudio:built-in"),
-            Some(&id("coreaudio:airpods")),
-        );
-
-        assert_eq!(next, Follow::Reopen);
-    }
-
-    #[test]
-    fn a_held_fallback_watches_for_the_choice() {
-        let held = id("coreaudio:built-in");
-
-        let next = follow(Some(&id("coreaudio:usb")), &held, Some(&held));
-
-        assert_eq!(next, Follow::CheckChosen);
-    }
-
-    #[test]
-    fn clearing_the_choice_leaves_a_device_that_is_not_the_fallback() {
-        let next = follow(None, &id("coreaudio:usb"), Some(&id("coreaudio:built-in")));
-
-        assert_eq!(next, Follow::Reopen);
-    }
-
-    #[test]
-    fn no_choice_on_the_fallback_stays() {
-        let held = id("coreaudio:built-in");
-
-        assert_eq!(follow(None, &held, Some(&held)), Follow::Stay);
+            assert_eq!(next, expected, "{why}");
+        }
     }
 }

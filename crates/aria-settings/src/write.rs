@@ -1163,7 +1163,7 @@ mod tests {
     }
 
     #[test]
-    fn a_loose_mode_is_tightened_once() {
+    fn a_loose_mode_is_tightened_to_600() {
         let (_dir, path) = file_with("[memory]\nenabled = true\n");
         fs::set_permissions(&path, Permissions::from_mode(0o644)).expect("chmod");
         let patch = one_key(Key::MemoryEnabled, false);

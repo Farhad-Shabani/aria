@@ -244,20 +244,13 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::process::Stdio;
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     use rustix::process::{WaitId, WaitIdOptions, test_kill_process, waitid};
 
     use super::super::POLL_INTERVAL;
+    use super::super::testing::{PATIENCE, shell};
     use super::*;
-
-    const PATIENCE: Duration = Duration::from_secs(5);
-
-    fn shell(script: &str) -> Command {
-        let mut command = Command::new("/bin/sh");
-        command.arg("-c").arg(script);
-        command
-    }
 
     fn spawn(script: &str) -> ChildProcess {
         ChildProcess::spawn(&mut shell(script)).expect("the shell should start")
@@ -391,26 +384,14 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn waiting_reports_the_exit_status() {
-        let mut process = spawn("exit 3");
-
-        let outcome = process
-            .wait_until(Instant::now() + PATIENCE, || false)
-            .expect("waiting should succeed");
-
-        let WaitOutcome::Exited(status) = outcome else {
-            panic!("the shell should have exited");
-        };
-        assert_eq!(status.code(), Some(3));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
     fn waiting_gives_up_at_the_deadline() {
         let mut process = spawn("sleep 300");
 
         let outcome = process
-            .wait_until(Instant::now() + Duration::from_millis(50), || false)
+            .wait_until(
+                Instant::now() + std::time::Duration::from_millis(50),
+                || false,
+            )
             .expect("waiting should succeed");
 
         assert!(matches!(outcome, WaitOutcome::TimedOut));

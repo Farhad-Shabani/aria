@@ -1,37 +1,23 @@
 #![cfg(not(target_family = "wasm"))]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use aria_wake::livekit::{Config, LiveKitWakeWord};
 
-use aria_kit::wake_word::{WakeWordDetector, WakeWordMatch};
 use aria_wake::Error;
+
+mod support;
+
+use support::{fires, model};
 
 const THRESHOLD: f32 = 0.5;
 
 /// What livekit's own Python runtime scores on `negative.wav`.
 const NEGATIVE_REFERENCE: f32 = 0.0042;
 
-fn models(classifier: &str) -> Option<PathBuf> {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models/wakeword");
-    directory.join(classifier).is_file().then_some(directory)
-}
-
-fn detector(classifier: &str) -> Option<Result<LiveKitWakeWord, Error>> {
-    detector_at(classifier, THRESHOLD)
-}
-
-fn detector_at(classifier: &str, threshold: f32) -> Option<Result<LiveKitWakeWord, Error>> {
-    let config =
-        Config::new(models(classifier)?.join(classifier), threshold).expect("threshold is valid");
-    Some(LiveKitWakeWord::load_from(&config))
-}
-
-fn fires(detector: &mut LiveKitWakeWord, audio: &[i16]) -> bool {
-    audio
-        .chunks(1_280)
-        .map(|chunk| detector.detect(chunk).expect("detection should succeed"))
-        .any(|matched| matched == WakeWordMatch::Detected)
+fn detector_at(classifier: &str, threshold: f32) -> Result<LiveKitWakeWord, Error> {
+    let config = Config::new(model(classifier), threshold).expect("threshold is valid");
+    LiveKitWakeWord::load_from(&config)
 }
 
 fn negative_samples() -> Vec<i16> {
@@ -47,17 +33,13 @@ fn negative_samples() -> Vec<i16> {
 }
 
 #[test]
+#[ignore = "requires the wake-word classifiers in models/wakeword"]
 fn the_negative_fixture_scores_what_livekit_scores() {
     let audio = negative_samples();
-    let (Some(below), Some(above)) = (
-        detector_at("hey_livekit.onnx", NEGATIVE_REFERENCE * 0.99),
-        detector_at("hey_livekit.onnx", NEGATIVE_REFERENCE * 1.01),
-    ) else {
-        return;
-    };
-
-    let mut below = below.expect("the livekit head should load");
-    let mut above = above.expect("the livekit head should load");
+    let mut below = detector_at("hey_livekit.onnx", NEGATIVE_REFERENCE * 0.99)
+        .expect("the livekit head should load");
+    let mut above = detector_at("hey_livekit.onnx", NEGATIVE_REFERENCE * 1.01)
+        .expect("the livekit head should load");
 
     assert!(fires(&mut below, &audio), "peak score fell below reference");
     assert!(
@@ -67,12 +49,9 @@ fn the_negative_fixture_scores_what_livekit_scores() {
 }
 
 #[test]
+#[ignore = "requires the wake-word classifiers in models/wakeword"]
 fn the_openwakeword_head_is_refused() {
-    let Some(loaded) = detector("aria.onnx") else {
-        return;
-    };
-
-    let Err(error) = loaded else {
+    let Err(error) = detector_at("aria.onnx", THRESHOLD) else {
         panic!("aria.onnx is an openWakeWord head and must not load");
     };
 
@@ -86,11 +65,10 @@ fn the_openwakeword_head_is_refused() {
 }
 
 #[test]
+#[ignore = "requires the wake-word classifiers in models/wakeword"]
 fn silence_does_not_fire() {
-    let Some(detector) = detector("hey_livekit.onnx") else {
-        return;
-    };
-    let mut detector = detector.expect("the livekit head should load");
+    let mut detector =
+        detector_at("hey_livekit.onnx", THRESHOLD).expect("the livekit head should load");
 
     assert!(!fires(&mut detector, &vec![0; 48_000]));
 }

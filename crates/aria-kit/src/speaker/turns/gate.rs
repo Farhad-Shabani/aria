@@ -288,3 +288,233 @@ fn word_admission(
 fn covers(source: &Range<u64>, word: &Range<u64>) -> bool {
     source.start <= word.start && word.start < source.end && word.end <= source.end
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Judgment, Turn};
+    use super::*;
+    use crate::speaker::turns::testing::*;
+    use crate::voice_activity::{Progress, SpeechDetector};
+
+    #[test]
+    fn spoken_admission_drops_segments_without_speech_under_them() {
+        let mut speech = SpeechDetector::new(Loud, 0);
+        speech
+            .hear(&audio(&[(OWN_LEVEL, 1.0), (0.0, 2.0)]))
+            .unwrap();
+        let mut gate = Gate::new(Admission::Spoken, 0);
+        gate.hold(heard_text("hello", seconds(0.0, 1.0)));
+        // Silent, but the segment before it held speech.
+        gate.hold(heard_text("tail", seconds(1.0, 1.5)));
+        gate.hold(heard_text("noise", seconds(1.5, 2.5)));
+        // Past what the detector has scored.
+        gate.hold(heard_text("later", seconds(2.5, 3.5)));
+
+        let decision = gate.decide(&Timeline::default(), Some(speech.map()));
+        let texts = |segments: Vec<&Heard>| -> Vec<String> {
+            segments
+                .into_iter()
+                .map(|heard| heard.segment.as_str().to_owned())
+                .collect()
+        };
+
+        assert_eq!(
+            texts(
+                decision
+                    .released
+                    .iter()
+                    .map(|released| &released.heard)
+                    .collect()
+            ),
+            ["hello", "tail"]
+        );
+        assert_eq!(texts(decision.dropped.iter().collect()), ["noise"]);
+        assert!(gate.undecided_from().is_some());
+    }
+
+    #[test]
+    fn source_admission_does_not_rescue_missing_or_rejected_evidence() {
+        let owner = finished_timeline(&[(6_144..24_064, Judgment::Owner)], 25_600);
+        let mut mixed = owner.clone();
+        mixed.turns.push(Turn {
+            span: 24_064..25_600,
+            judgment: Judgment::Other,
+        });
+        let silent = Timeline {
+            turns: Vec::new(),
+            ..owner.clone()
+        };
+        let broken = Timeline {
+            progress: Progress::Broken,
+            ..owner.clone()
+        };
+        for (timeline, word, source) in [
+            (owner.clone(), 2_560..5_120, None),
+            (owner.clone(), 25_600..25_600, Some(0..25_600)),
+            (owner, 2_560..5_120, Some(0..26_000)),
+            (mixed, 2_560..5_120, Some(0..25_600)),
+            (silent, 2_560..5_120, Some(0..25_600)),
+            (broken, 2_560..5_120, Some(0..25_600)),
+        ] {
+            let mut held = Gate::new(Admission::OwnerOnly, 0);
+            held.hold(timed_heard(word, source));
+            let decision = held.decide(&timeline, None);
+            assert!(decision.released.is_empty());
+            assert_eq!(decision.dropped.len(), 1);
+        }
+    }
+
+    #[test]
+    fn source_admission_does_not_reach_before_the_tracking_origin() {
+        let timeline = finished_timeline(&[(20_000..30_000, Judgment::Owner)], 32_000);
+        let mut held = Gate::new(Admission::OwnerOnly, 16_000);
+        held.hold(timed_heard(2_560..5_120, Some(0..32_000)));
+
+        assert!(release(&mut held, &timeline).is_empty());
+
+        let mut held = Gate::new(Admission::OwnerOnly, 16_000);
+        held.hold(timed_heard(17_000..18_000, Some(16_000..32_000)));
+        assert_eq!(release(&mut held, &timeline).len(), 1);
+    }
+
+    #[test]
+    fn source_admission_waits_for_its_pending_turn() {
+        let mut timeline = Timeline {
+            turns: vec![Turn {
+                span: 6_144..24_064,
+                judgment: Judgment::Pending,
+            }],
+            reached: 25_600,
+            open: true,
+            stable_to: 5_120,
+            ..Timeline::default()
+        };
+        let mut held = Gate::new(Admission::OwnerOnly, 0);
+        held.hold(timed_heard(2_560..5_120, Some(0..25_600)));
+        assert!(release(&mut held, &timeline).is_empty());
+        assert!(held.undecided_from().is_some());
+
+        timeline.turns[0].judgment = Judgment::Unverified;
+        timeline.open = false;
+        timeline.progress = Progress::Finished;
+        assert_eq!(release(&mut held, &timeline).len(), 1);
+    }
+
+    #[test]
+    fn a_preview_kept_from_view_still_counts_as_undecided_words() {
+        let timeline = Timeline {
+            turns: vec![Turn {
+                span: 0..16_000,
+                judgment: Judgment::Pending,
+            }],
+            reached: 16_000,
+            open: true,
+            ..Timeline::default()
+        };
+        let mut gate = Gate::new(Admission::OwnerOnly, 0);
+        assert!(!gate.has_undecided_words());
+
+        gate.propose("one".to_owned(), Some(0..16_000), 16_000);
+        assert_eq!(gate.decide(&timeline, None).preview.as_deref(), Some(""));
+        assert!(gate.has_undecided_words());
+
+        gate.propose(String::new(), None, 16_000);
+        assert!(!gate.has_undecided_words());
+    }
+
+    #[test]
+    fn sentence_punctuation_does_not_move_an_owner_word_into_a_guest_turn() {
+        use crate::transcription::{TimedWord, TranscriptSegment, word_timings};
+
+        let timeline = finished_timeline(
+            &[
+                (seconds(0.0, 0.3), Judgment::Owner),
+                (seconds(0.3, 1.0), Judgment::Other),
+            ],
+            SECOND as u64,
+        );
+        let words = word_timings([
+            (
+                " own",
+                TimedWord {
+                    start: 0.0,
+                    end: 0.2,
+                },
+            ),
+            (
+                "er",
+                TimedWord {
+                    start: 0.2,
+                    end: 0.4,
+                },
+            ),
+            (
+                ".",
+                TimedWord {
+                    start: 0.4,
+                    end: 0.8,
+                },
+            ),
+            (
+                " guest",
+                TimedWord {
+                    start: 0.8,
+                    end: 1.0,
+                },
+            ),
+        ]);
+        let segment = TranscriptSegment::new("owner. guest", Some(seconds(0.0, 1.0)))
+            .unwrap()
+            .with_word_spans(
+                words
+                    .iter()
+                    .map(|word| word.span_from(0).unwrap())
+                    .collect(),
+            )
+            .unwrap();
+        let mut held = Gate::new(Admission::OwnerOnly, 0);
+        held.hold(Heard {
+            span: segment.span(),
+            window: seconds(0.0, 1.0),
+            segment,
+        });
+        let released = release(&mut held, &timeline);
+        assert_eq!(released.len(), 1);
+        assert_eq!(released[0].segment.as_str(), "owner.");
+    }
+
+    #[test]
+    fn a_release_after_a_dropped_segment_forgets_its_sentence_reading() {
+        let timeline = finished_timeline(
+            &[
+                (seconds(0.0, 5.5), Judgment::Other),
+                (seconds(5.5, 8.0), Judgment::Owner),
+            ],
+            8 * SECOND as u64,
+        );
+        let mut held = Gate::new(Admission::OwnerOnly, 0);
+        held.hold(heard_text("before", seconds(5.0, 5.5)));
+        let mut owner = heard_text("owner", seconds(6.0, 7.0));
+        owner.segment = owner.segment.with_sentence_ended_before(Some(false));
+        held.hold(owner);
+
+        let decision = held.decide(&timeline, None);
+
+        let released: Vec<&str> = decision
+            .released
+            .iter()
+            .map(|released| released.heard.segment.as_str())
+            .collect();
+        let dropped: Vec<&str> = decision
+            .dropped
+            .iter()
+            .map(|heard| heard.segment.as_str())
+            .collect();
+        assert_eq!(released, ["owner"]);
+        assert_eq!(dropped, ["before"]);
+        assert_eq!(
+            decision.released[0].heard.segment.sentence_ended_before(),
+            None
+        );
+    }
+}

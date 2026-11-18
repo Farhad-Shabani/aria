@@ -384,15 +384,31 @@ mod tests {
     }
 
     #[test]
-    fn expired_certificates_and_wrong_private_keys_are_rejected() {
+    fn an_expired_certificate_is_rejected() {
         let mut parameters =
             rcgen::CertificateParams::new(vec![CERTIFICATE_NAME.to_owned()]).unwrap();
         parameters.not_before = time::OffsetDateTime::now_utc() - time::Duration::days(2);
         parameters.not_after = time::OffsetDateTime::now_utc() - time::Duration::days(1);
         let key = rcgen::KeyPair::generate().unwrap();
         let certificate = parameters.self_signed(&key).unwrap();
+
         assert!(validate_certificate(certificate.der()).is_err());
+    }
+
+    #[test]
+    fn a_private_key_that_does_not_match_its_certificate_is_rejected() {
+        let parameters = rcgen::CertificateParams::new(vec![CERTIFICATE_NAME.to_owned()]).unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let certificate = parameters.self_signed(&key).unwrap();
         let other_key = rcgen::KeyPair::generate().unwrap();
+
+        assert!(
+            validate_credentials(&Credentials {
+                certificate_pem: certificate.pem(),
+                key_pem: key.serialize_pem()
+            })
+            .is_ok()
+        );
         assert!(
             validate_credentials(&Credentials {
                 certificate_pem: certificate.pem(),

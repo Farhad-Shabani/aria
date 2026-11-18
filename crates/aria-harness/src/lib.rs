@@ -14,11 +14,13 @@ mod daemon;
 pub mod inputs;
 pub mod log;
 pub mod own_voice;
+mod ready;
 mod runner;
 mod sandbox;
 pub mod stats;
 
 pub use catalog::CatalogError;
 pub use daemon::{DaemonProcessError, RunningDaemon, ServiceStart, start_service};
+pub use ready::{ReadyError, wait_until_ready};
 pub use runner::run_catalog;
 pub use sandbox::{Sandbox, SandboxError, toml_string};

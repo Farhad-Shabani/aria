@@ -152,8 +152,7 @@ mod tests {
 
     #[test]
     fn the_block_is_written_and_removed_with_its_facts() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let store = Store::open(&dir.path().join("memory.db")).expect("opens");
+        let (dir, store) = crate::memory::testing::store();
         assert_eq!(load_profile_block(dir.path()), None);
 
         let id = store

@@ -280,7 +280,8 @@ mod tests {
     use tokio_stream::wrappers::UnboundedReceiverStream;
 
     use crate::daemon::phone::{PhoneCommand, PhoneRecordingId};
-    use crate::ipc::protocol::{MAX_PHONE_CHUNK_BYTES, rpc_failure};
+    use crate::daemon::testing::code;
+    use crate::ipc::protocol::MAX_PHONE_CHUNK_BYTES;
     use aria_settings::rpc::RpcErrorCode;
 
     type Inbound = UnboundedReceiverStream<Result<wire::PhoneMicrophoneRequest, Status>>;
@@ -315,10 +316,6 @@ mod tests {
 
     fn never(_preference: &Microphone) -> bool {
         false
-    }
-
-    fn code(status: &Status) -> RpcErrorCode {
-        rpc_failure(status).expect("an RpcError").code
     }
 
     fn command(sent: Option<Result<wire::PhoneMicrophoneCommand, Status>>) -> PhoneCommand {

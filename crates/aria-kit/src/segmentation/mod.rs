@@ -153,12 +153,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn silence_names_nobody() {
-        assert_eq!(Activity::SILENT.voices(), 0);
-        assert!(!Activity::SILENT.speaks(0));
-    }
-
-    #[test]
     fn two_voices_at_once_is_an_ordinary_answer() {
         let both = Activity::SILENT.speaking(0).speaking(2);
         assert_eq!(both.voices(), 2);

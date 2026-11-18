@@ -205,21 +205,16 @@ mod tests {
     /// A recording that ends mid-window leaves the spectrogram running past
     /// the audio. Only the frames the audio reached may be recognized.
     #[test]
-    fn padding_never_counts_as_something_spoken() {
-        for seconds in [1, 15, 20, 30, 45] {
-            let samples = seconds * whisper::SAMPLE_RATE;
-            let spoken = spoken_frames(samples);
-            let padded = padded_frames(spoken);
-
-            assert!(
-                spoken <= padded,
-                "{seconds}s: {spoken} spoken frames exceeds {padded} padded"
-            );
-            assert_eq!(
-                padded % whisper::N_FRAMES,
-                0,
-                "{seconds}s does not pad to whole windows"
-            );
+    fn the_spectrogram_pads_to_whole_windows() {
+        for (samples, spoken, padded) in [
+            (16_000, 100, 3_000),
+            (240_000, 1_500, 3_000),
+            (320_000, 2_000, 3_000),
+            (480_000, 3_000, 3_000),
+            (720_000, 4_500, 6_000),
+        ] {
+            assert_eq!(spoken_frames(samples), spoken, "{samples} samples");
+            assert_eq!(padded_frames(spoken), padded, "{samples} samples");
         }
     }
 

@@ -283,39 +283,36 @@ fn percent(wer: Option<f64>) -> String {
 mod tests {
     use super::*;
 
-    fn home() -> Option<&'static Path> {
-        Some(Path::new("/Users/tester"))
-    }
-
     #[test]
-    fn a_path_under_home_is_home_relative() {
-        assert_eq!(
-            home_relative(Path::new("/Users/tester/runs/bench.jsonl"), home()),
-            "~/runs/bench.jsonl"
-        );
-    }
-
-    #[test]
-    fn another_users_path_keeps_only_its_file_name() {
-        assert_eq!(
-            home_relative(Path::new("/Users/alice/runs/bench.jsonl"), home()),
-            "bench.jsonl"
-        );
-    }
-
-    #[test]
-    fn a_relative_path_is_shown_whole() {
-        assert_eq!(
-            home_relative(Path::new("runs/bench.jsonl"), home()),
-            "runs/bench.jsonl"
-        );
-    }
-
-    #[test]
-    fn an_unknown_home_still_hides_the_user() {
-        assert_eq!(
-            home_relative(Path::new("/Users/tester/bench.jsonl"), None),
-            "bench.jsonl"
-        );
+    fn a_path_is_shown_without_the_user() {
+        let home = Some(Path::new("/Users/tester"));
+        for (label, path, home, printed) in [
+            (
+                "a path under home is home relative",
+                "/Users/tester/runs/bench.jsonl",
+                home,
+                "~/runs/bench.jsonl",
+            ),
+            (
+                "another user's path keeps only its file name",
+                "/Users/alice/runs/bench.jsonl",
+                home,
+                "bench.jsonl",
+            ),
+            (
+                "a relative path is shown whole",
+                "runs/bench.jsonl",
+                home,
+                "runs/bench.jsonl",
+            ),
+            (
+                "an unknown home still hides the user",
+                "/Users/tester/bench.jsonl",
+                None,
+                "bench.jsonl",
+            ),
+        ] {
+            assert_eq!(home_relative(Path::new(path), home), printed, "{label}");
+        }
     }
 }

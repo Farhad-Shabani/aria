@@ -147,6 +147,14 @@ pub(crate) fn spoken(vocabulary: Option<&Vocabulary>) -> &Vocabulary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dictation::testing::FinalLayer;
+
+    const BACKTRACK: Cleanup = Cleanup {
+        enabled: true,
+        fillers: true,
+        backtrack: true,
+        llm: true,
+    };
 
     fn finished(heard: &str, vocabulary: Option<&Vocabulary>) -> String {
         Rewrites::new()
@@ -172,5 +180,154 @@ mod tests {
             finished("aria dash stt hyphen test", Some(&vocabulary)),
             "aria-stt-test"
         );
+    }
+    /// Each choice comes with each press, and the gate decides for all of
+    /// them, a model configured at startup included.
+    #[test]
+    fn each_press_follows_the_cleanup_it_was_admitted_with() {
+        fn finish<L: Layer>(
+            rewrites: &Rewrites<L>,
+            enabled: bool,
+            fillers: bool,
+            backtrack: bool,
+            llm: bool,
+        ) -> String {
+            rewrites
+                .finish(
+                    Transcript::new("um meet at 2 actually 3").unwrap(),
+                    Cleanup {
+                        enabled,
+                        fillers,
+                        backtrack,
+                        llm,
+                    },
+                    None,
+                    &CancelToken::never(),
+                )
+                .unwrap()
+                .into_text()
+        }
+        let rules = Rewrites::new().with(());
+        for (enabled, fillers, backtrack, expected) in [
+            (false, true, true, "um meet at 2 actually 3"),
+            (true, false, false, "um meet at 2 actually 3"),
+            (true, true, false, "meet at 2 actually 3"),
+            (true, false, true, "um meet at 3"),
+            (true, true, true, "meet at 3"),
+        ] {
+            assert_eq!(
+                finish(&rules, enabled, fillers, backtrack, true),
+                expected,
+                "enabled {enabled}, fillers {fillers}, backtrack {backtrack}"
+            );
+        }
+
+        let model = Rewrites::new().with(FinalLayer(|text: &mut String, _: &CancelToken| {
+            *text = "from the model".to_owned();
+            Ok(())
+        }));
+        assert_eq!(
+            finish(&model, false, true, true, true),
+            "um meet at 2 actually 3"
+        );
+        assert_eq!(finish(&model, true, true, true, false), "meet at 3");
+        assert_eq!(finish(&model, true, false, false, true), "from the model");
+    }
+
+    #[test]
+    fn backtracking_is_local_to_each_completed_transcript() {
+        let rewrites = Rewrites::new();
+        for text in ["meet at 2", "actually 3", "scratch", "that to Sara"] {
+            assert_eq!(
+                rewrites
+                    .finish(
+                        Transcript::new(text).unwrap(),
+                        BACKTRACK,
+                        None,
+                        &CancelToken::never()
+                    )
+                    .unwrap()
+                    .as_str(),
+                text
+            );
+        }
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            rewrites.finish(
+                Transcript::new("meet at 2 actually 3").unwrap(),
+                BACKTRACK,
+                None,
+                &cancel
+            ),
+            Err(TranscriptionError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn oversized_completion_keeps_text_without_contacting_the_model() {
+        let home = tempfile::tempdir().unwrap();
+        let cleanup = LlmCleanup::new(
+            &aria_settings::LlmCleanupTarget::new(
+                aria_settings::LocalProvider::new("http://127.0.0.1:1/v1/chat/completions")
+                    .unwrap(),
+                "local",
+            )
+            .unwrap(),
+            home.path(),
+        )
+        .unwrap();
+        let rewrites = Rewrites::new().with(Some(cleanup));
+        for bytes in [4097, 65537] {
+            let prefix = "a".repeat(bytes);
+            let text = format!("{prefix} meet at 2 actually 3");
+            let transcript = rewrites
+                .finish(
+                    Transcript::new(&text).unwrap(),
+                    BACKTRACK,
+                    None,
+                    &CancelToken::never(),
+                )
+                .unwrap();
+            assert_eq!(transcript.as_str(), format!("{prefix} meet at 3"));
+        }
+    }
+
+    #[test]
+    fn cleaning_drops_hesitations_and_repeats_only_when_on() {
+        for (enabled, expected) in [(false, "send the the um report"), (true, "send the report")] {
+            let transcript = Rewrites::new()
+                .finish(
+                    Transcript::new("send the the um report").unwrap(),
+                    Cleanup {
+                        enabled,
+                        fillers: true,
+                        backtrack: false,
+                        llm: true,
+                    },
+                    None,
+                    &CancelToken::never(),
+                )
+                .unwrap();
+
+            assert_eq!(transcript.as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn a_whole_transcript_of_only_fillers_is_no_speech() {
+        let result = Rewrites::new().finish(
+            Transcript::new("um").unwrap(),
+            Cleanup {
+                enabled: true,
+                fillers: true,
+                backtrack: false,
+                llm: true,
+            },
+            None,
+            &CancelToken::never(),
+        );
+
+        assert!(matches!(result, Err(TranscriptionError::NoSpeech)));
     }
 }

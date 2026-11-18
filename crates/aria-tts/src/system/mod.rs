@@ -282,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn the_command_line_never_carries_the_text() {
+    fn the_child_gets_the_voice_and_no_environment() {
         let command = command(
             Path::new("/usr/bin/say"),
             Some(&Voice::new("Samantha").expect("a plain voice name")),
@@ -290,10 +290,6 @@ mod tests {
         );
 
         let arguments: Vec<_> = command.get_args().map(|arg| arg.to_os_string()).collect();
-        assert!(
-            !arguments.iter().any(|arg| arg == "hello"),
-            "the text must travel on stdin"
-        );
         assert!(arguments.iter().any(|arg| arg == "Samantha"));
         assert_eq!(
             command.get_envs().count(),

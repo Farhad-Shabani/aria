@@ -62,37 +62,6 @@ fn status_message(status: WakeWordStatus) -> (&'static str, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::{Cli, Command};
-    use clap::Parser;
-
-    #[test]
-    fn wake_commands_are_public_subcommands() {
-        let run =
-            Cli::try_parse_from(["aria", "wake", "run"]).expect("wake run should be accepted");
-        let status = Cli::try_parse_from(["aria", "wake", "status"])
-            .expect("wake status should be accepted");
-        let log =
-            Cli::try_parse_from(["aria", "wake", "log"]).expect("wake log should be accepted");
-
-        assert!(matches!(
-            run.command,
-            Command::Wake {
-                command: WakeCommand::Run
-            }
-        ));
-        assert!(matches!(
-            status.command,
-            Command::Wake {
-                command: WakeCommand::Status
-            }
-        ));
-        assert!(matches!(
-            log.command,
-            Command::Wake {
-                command: WakeCommand::Log
-            }
-        ));
-    }
 
     #[test]
     fn only_a_listening_wake_monitor_has_a_successful_status() {

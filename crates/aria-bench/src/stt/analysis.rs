@@ -548,6 +548,13 @@ mod tests {
         path
     }
 
+    fn refingerprint(path: &Path) {
+        let mut manifest: Manifest =
+            serde_json::from_slice(&fs::read(manifest_path(path)).unwrap()).unwrap();
+        manifest.results_sha256 = fingerprint(path).unwrap();
+        fs::write(manifest_path(path), serde_json::to_vec(&manifest).unwrap()).unwrap();
+    }
+
     /// Refingerprints the manifest, so the edited rows still load.
     fn rewrite_rows(path: &Path, edit: impl FnOnce(&mut [serde_json::Value])) {
         let mut rows: Vec<serde_json::Value> = fs::read_to_string(path)
@@ -558,24 +565,31 @@ mod tests {
         edit(&mut rows);
         let text: Vec<_> = rows.iter().map(|row| row.to_string()).collect();
         fs::write(path, text.join("\n") + "\n").unwrap();
-        let mut manifest: Manifest =
-            serde_json::from_slice(&fs::read(manifest_path(path)).unwrap()).unwrap();
-        manifest.results_sha256 = fingerprint(path).unwrap();
-        fs::write(manifest_path(path), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        refingerprint(path);
     }
 
     #[test]
-    fn repeats_keep_the_utterance_cluster_and_compare_with_a_smaller_budget() {
+    fn repeated_passes_keep_one_cluster_per_utterance() {
         let directory = tempfile::tempdir().unwrap();
         let baseline =
             Artifact::load(&artifact(directory.path(), "baseline", 5, &[1, 4, 2, 3])).unwrap();
         let candidate =
             Artifact::load(&artifact(directory.path(), "candidate", 1, &[1, 4, 2, 3])).unwrap();
+
         assert_eq!(
             baseline.measurements()[0].interval,
             candidate.measurements()[0].interval
         );
+    }
+
+    #[test]
+    fn measurements_sum_timing_and_take_the_first_event_median() {
+        let directory = tempfile::tempdir().unwrap();
+        let candidate =
+            Artifact::load(&artifact(directory.path(), "candidate", 1, &[1, 4, 2, 3])).unwrap();
+
         let measured = &candidate.measurements()[0];
+
         assert_eq!(measured.decode_ms, 48);
         assert_eq!(measured.decode_calls, 12);
         assert_eq!(measured.transcribe_ms, 80);
@@ -583,13 +597,33 @@ mod tests {
         assert_eq!(measured.finalized_attempts, 4);
         assert_eq!(measured.first_preview_median_ms, None);
         assert!(!measured.realtime);
+    }
+
+    #[test]
+    fn an_identical_run_is_accepted_with_a_smaller_budget() {
+        let directory = tempfile::tempdir().unwrap();
+        let baseline =
+            Artifact::load(&artifact(directory.path(), "baseline", 5, &[1, 4, 2, 3])).unwrap();
+        let candidate =
+            Artifact::load(&artifact(directory.path(), "candidate", 1, &[1, 4, 2, 3])).unwrap();
+
         let comparison = candidate.compare(&baseline, 0.0).unwrap();
+
         assert_eq!(comparison[0].decision, Decision::Accepted);
         assert_eq!(comparison[0].difference_interval, Some((0.0, 0.0)));
         assert!(comparison[0].changes.is_empty());
+    }
+
+    #[test]
+    fn a_worse_run_regresses_and_lists_what_changed() {
+        let directory = tempfile::tempdir().unwrap();
+        let baseline =
+            Artifact::load(&artifact(directory.path(), "baseline", 5, &[1, 4, 2, 3])).unwrap();
         let regression =
             Artifact::load(&artifact(directory.path(), "regression", 1, &[1, 6, 4, 5])).unwrap();
+
         let comparison = regression.compare(&baseline, 0.0).unwrap();
+
         assert_eq!(comparison[0].decision, Decision::Regressed);
         let changed: Vec<_> = comparison[0]
             .changes
@@ -696,14 +730,10 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         fs::write(&path, text.lines().next().unwrap()).unwrap();
         assert!(Artifact::load(&path).is_err());
-        let mut manifest: Manifest =
-            serde_json::from_slice(&fs::read(manifest_path(&path)).unwrap()).unwrap();
-        manifest.results_sha256 = fingerprint(&path).unwrap();
-        fs::write(manifest_path(&path), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        refingerprint(&path);
         assert!(Artifact::load(&path).is_err());
         fs::write(&path, format!("{0}\n{0}\n", text.lines().next().unwrap())).unwrap();
-        manifest.results_sha256 = fingerprint(&path).unwrap();
-        fs::write(manifest_path(&path), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        refingerprint(&path);
         assert!(Artifact::load(&path).is_err());
     }
 
@@ -713,7 +743,7 @@ mod tests {
         let path = artifact(directory.path(), "conditions", 1, &[1]);
         let original: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        let mut manifest: Manifest =
+        let manifest: Manifest =
             serde_json::from_slice(&fs::read(manifest_path(&path)).unwrap()).unwrap();
         for conditions in [
             Conditions::new(
@@ -747,14 +777,20 @@ mod tests {
             let mut row = original.clone();
             row["conditions"] = serde_json::to_value(conditions).unwrap();
             fs::write(&path, serde_json::to_vec(&row).unwrap()).unwrap();
-            manifest.results_sha256 = fingerprint(&path).unwrap();
-            fs::write(manifest_path(&path), serde_json::to_vec(&manifest).unwrap()).unwrap();
+            refingerprint(&path);
             assert!(Artifact::load(&path).is_err(), "{conditions:?}");
         }
-        fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
-        manifest.results_sha256 = fingerprint(&path).unwrap();
+    }
+
+    #[test]
+    fn an_unsupported_manifest_schema_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = artifact(directory.path(), "schema", 1, &[1]);
+        let mut manifest: Manifest =
+            serde_json::from_slice(&fs::read(manifest_path(&path)).unwrap()).unwrap();
         manifest.schema = 6;
         fs::write(manifest_path(&path), serde_json::to_vec(&manifest).unwrap()).unwrap();
+
         assert!(Artifact::load(&path).is_err());
     }
 

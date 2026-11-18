@@ -16,6 +16,8 @@ mod store;
 mod eval;
 #[cfg(test)]
 mod eval_stats;
+#[cfg(test)]
+mod testing;
 
 use std::path::Path;
 

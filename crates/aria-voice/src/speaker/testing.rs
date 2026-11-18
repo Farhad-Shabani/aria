@@ -1,8 +1,7 @@
 //! Speaker fakes the hearing and dictation tests share.
 
 use aria_kit::speaker::{
-    Diarizer, Embedder, LevelSegmenter, Profile, Role, SpeakerError, VoiceprintTracker,
-    enrolled_voice,
+    Diarizer, Embedder, LevelSegmenter, Role, SpeakerError, VoiceprintTracker, enrolled_voice,
 };
 
 /// The owner's voice.
@@ -21,15 +20,13 @@ impl Embedder for Voice {
     }
 }
 
-/// The owner's profile, the only one enrolled.
-pub(crate) fn alex() -> Vec<Profile> {
-    vec![enrolled_voice("alex", Role::Owner, OWN.to_vec())]
-}
-
 /// A diarizer that hears `embedder` in every window of sound, with only
-/// [`alex`] enrolled.
+/// the owner "alex", whose voice is [`OWN`], enrolled.
 pub(crate) fn diarizer<E: Embedder>(embedder: E) -> Diarizer<E> {
-    Diarizer::new(embedder, alex())
+    Diarizer::new(
+        embedder,
+        vec![enrolled_voice("alex", Role::Owner, OWN.to_vec())],
+    )
 }
 
 /// The tracker an owner-only press runs, starting at `at`.

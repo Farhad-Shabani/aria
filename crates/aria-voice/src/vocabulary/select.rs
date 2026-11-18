@@ -271,6 +271,10 @@ mod tests {
                 .iter()
                 .any(|term| term.canonical.starts_with("aria"))
         );
+    }
+
+    #[test]
+    fn a_selected_non_ascii_name_is_typed() {
         let selected = terms(
             &[source("one", &["écho-stt", "Cargo.toml"])],
             &CancelToken::never(),
@@ -292,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_and_limits_fail_explicitly() {
+    fn a_cancelled_selection_fails() {
         let cancel = CancelToken::new();
         cancel.cancel();
         assert!(matches!(terms(&[], &cancel), Err(Error::Cancelled)));
@@ -306,6 +310,10 @@ mod tests {
             terms(&[source("one", &names)], &cancel),
             Err(Error::Cancelled)
         ));
+    }
+
+    #[test]
+    fn evidence_past_the_limits_is_too_large() {
         let mut input = source("one", &["name.rs"]);
         input
             .candidates

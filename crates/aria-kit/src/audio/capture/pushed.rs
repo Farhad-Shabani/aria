@@ -180,23 +180,9 @@ mod tests {
     use std::sync::mpsc::{SyncSender, sync_channel};
 
     use super::*;
+    use crate::audio::Stopper;
     use crate::audio::capture::{AutoStop, SilenceDuration};
-    use crate::audio::{Stopper, canonical_samples};
-    use crate::voice_activity::VoiceActivityError;
-
-    struct Loudness;
-
-    impl VoiceActivityDetector for Loudness {
-        const FRAME_SAMPLES: usize = 160;
-
-        fn probability(&mut self, frame: &[i16]) -> Result<f32, VoiceActivityError> {
-            Ok(if frame.iter().any(|&sample| sample != 0) {
-                1.0
-            } else {
-                0.0
-            })
-        }
-    }
+    use crate::audio::testing::{Loudness, silence, speech};
 
     const STALL: Duration = Duration::from_millis(300);
 
@@ -217,15 +203,14 @@ mod tests {
             }
         }
 
-        /// Starts on half a second of speech, as a source's first samples.
         fn start(
             &self,
+            first: Vec<i16>,
             mode: RecordingMode,
             stop: StopSignal,
         ) -> (SyncSender<Vec<i16>>, Result<RecordingReader, CaptureError>) {
             let (feed, samples) = sync_channel(64);
             let finished = Arc::clone(&self.finished);
-            let first = speech(Duration::from_millis(500));
             let outcome = self
                 .capture
                 .start(mode, first, samples, STALL, stop, move || {
@@ -233,14 +218,6 @@ mod tests {
                 });
             (feed, outcome)
         }
-    }
-
-    fn speech(duration: Duration) -> Vec<i16> {
-        vec![1_000; canonical_samples(duration) as usize]
-    }
-
-    fn silence(duration: Duration) -> Vec<i16> {
-        vec![0; canonical_samples(duration) as usize]
     }
 
     fn finished_audio(mut recording: RecordingReader) -> Result<Duration, CaptureError> {
@@ -253,6 +230,7 @@ mod tests {
         let harness = Harness::new();
         let trailing_silence = SilenceDuration::new(Duration::from_millis(500)).expect("in range");
         let (feed, recording) = harness.start(
+            speech(Duration::from_millis(500)),
             RecordingMode::StopOnSilence { trailing_silence },
             StopSignal::never(),
         );
@@ -262,6 +240,22 @@ mod tests {
         let audio = finished_audio(recording.expect("audio arrived")).expect("speech was heard");
 
         assert_eq!(audio, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn finished_runs_once_capture_ends() {
+        let harness = Harness::new();
+        let trailing_silence = SilenceDuration::new(Duration::from_millis(500)).expect("in range");
+        let (feed, recording) = harness.start(
+            speech(Duration::from_millis(500)),
+            RecordingMode::StopOnSilence { trailing_silence },
+            StopSignal::never(),
+        );
+        feed.send(silence(Duration::from_millis(500)))
+            .expect("sent");
+
+        finished_audio(recording.expect("audio arrived")).expect("speech was heard");
+
         assert!(harness.finished.load(Ordering::SeqCst));
     }
 
@@ -270,6 +264,7 @@ mod tests {
         let harness = Harness::new();
         let stopper = Stopper::new();
         let (feed, recording) = harness.start(
+            speech(Duration::from_millis(500)),
             RecordingMode::UntilStopped,
             StopSignal::from(stopper.clone()),
         );
@@ -285,7 +280,11 @@ mod tests {
     #[test]
     fn a_pushed_recording_names_its_source() {
         let harness = Harness::new();
-        let (_feed, recording) = harness.start(RecordingMode::UntilStopped, StopSignal::never());
+        let (_feed, recording) = harness.start(
+            speech(Duration::from_millis(500)),
+            RecordingMode::UntilStopped,
+            StopSignal::never(),
+        );
 
         assert_eq!(
             recording.expect("audio arrived").source(),
@@ -296,7 +295,11 @@ mod tests {
     #[test]
     fn a_closed_feed_finishes_with_what_arrived() {
         let harness = Harness::new();
-        let (feed, recording) = harness.start(RecordingMode::UntilStopped, StopSignal::never());
+        let (feed, recording) = harness.start(
+            speech(Duration::from_millis(500)),
+            RecordingMode::UntilStopped,
+            StopSignal::never(),
+        );
 
         drop(feed);
         let audio =
@@ -308,7 +311,11 @@ mod tests {
     #[test]
     fn a_stalled_feed_finishes_with_what_arrived() {
         let harness = Harness::new();
-        let (_feed, recording) = harness.start(RecordingMode::UntilStopped, StopSignal::never());
+        let (_feed, recording) = harness.start(
+            speech(Duration::from_millis(500)),
+            RecordingMode::UntilStopped,
+            StopSignal::never(),
+        );
 
         let audio =
             finished_audio(recording.expect("audio arrived")).expect("the recording finishes");
@@ -320,8 +327,11 @@ mod tests {
     fn auto_stop_ends_a_quiet_recording() {
         let harness = Harness::new();
         let auto_stop = AutoStop::new(Duration::from_secs(3)).expect("in range");
-        let (feed, recording) =
-            harness.start(RecordingMode::UntilQuiet { auto_stop }, StopSignal::never());
+        let (feed, recording) = harness.start(
+            speech(Duration::from_millis(500)),
+            RecordingMode::UntilQuiet { auto_stop },
+            StopSignal::never(),
+        );
         feed.send(silence(Duration::from_secs(3))).expect("sent");
 
         let audio =

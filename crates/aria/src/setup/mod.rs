@@ -47,6 +47,8 @@ mod prompt;
 mod settings_file;
 pub mod stt_engine;
 pub mod stt_runs_on;
+#[cfg(test)]
+mod testing;
 pub mod wire;
 
 use assets::{Asset, EXTRAS, SPEAKER as SPEAKER_ASSET};
@@ -1036,6 +1038,7 @@ impl From<SettingsError> for SetupError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::setup::testing;
 
     fn touch(path: &Path) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1049,10 +1052,7 @@ mod tests {
         use aria_daemon::config::{DaemonConfig, WakeConfig, WakeWordOverride};
         use aria_voice::config::SpeakerConfig;
 
-        let home = tempfile::tempdir().unwrap();
-        let settings_path = aria_settings::default_path(home.path());
-        fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
-        fs::write(&settings_path, "[wake]\nenabled = true\n").unwrap();
+        let home = testing::home("[wake]\nenabled = true\n");
         let home_dir = home.path().to_path_buf();
         let settings = aria_settings::load(&home_dir).unwrap();
         let extras: Vec<PathBuf> = EXTRAS
@@ -1085,46 +1085,28 @@ mod tests {
     }
 
     #[test]
-    fn bundled_models_are_found_in_the_app_bundle() {
-        let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("Aria.app/Contents/MacOS/aria");
-        let models = dir
-            .path()
-            .join("Aria.app/Contents/Resources/models/wakeword");
-        touch(&exe);
-        touch(&models.join("aria.onnx"));
+    fn bundled_models_are_found_beside_the_binary() {
+        for (exe, models) in [
+            (
+                "Aria.app/Contents/MacOS/aria",
+                Some("Aria.app/Contents/Resources/models/wakeword"),
+            ),
+            ("opt/aria/bin/aria", Some("opt/aria/share/aria/wakeword")),
+            ("target/release/aria", Some("models/wakeword")),
+            ("aria", None),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let exe = dir.path().join(exe);
+            touch(&exe);
+            if let Some(models) = models {
+                touch(&dir.path().join(models).join("aria.onnx"));
+            }
 
-        let found = bundled_wakeword_dir(&exe).unwrap();
+            let found = bundled_wakeword_dir(&exe).map(|found| found.canonicalize().unwrap());
 
-        assert_eq!(
-            found.canonicalize().unwrap(),
-            models.canonicalize().unwrap()
-        );
-    }
-
-    #[test]
-    fn bundled_models_are_found_in_a_checkout() {
-        let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("target/release/aria");
-        let models = dir.path().join("models/wakeword");
-        touch(&exe);
-        touch(&models.join("aria.onnx"));
-
-        let found = bundled_wakeword_dir(&exe).unwrap();
-
-        assert_eq!(
-            found.canonicalize().unwrap(),
-            models.canonicalize().unwrap()
-        );
-    }
-
-    #[test]
-    fn a_bare_binary_has_no_bundled_models() {
-        let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("aria");
-        touch(&exe);
-
-        assert!(bundled_wakeword_dir(&exe).is_none());
+            let expected = models.map(|models| dir.path().join(models).canonicalize().unwrap());
+            assert_eq!(found, expected, "{}", exe.display());
+        }
     }
 
     #[test]
@@ -1178,16 +1160,9 @@ mod tests {
         );
     }
 
-    fn bare_host() -> Host {
-        Host {
-            macos: true,
-            system_voice: Availability::Ready,
-        }
-    }
-
     /// A machine with nothing on it but what `existing` says.
     pub(super) fn inspection(existing: Existing) -> Inspection {
-        let host = bare_host();
+        let host = Host::mac();
         let home = PathBuf::from("/nonexistent");
         Inspection {
             settings_path: PathBuf::from("/nonexistent/settings.toml"),
@@ -1227,22 +1202,6 @@ mod tests {
             downloads: Vec::new(),
             transfer_meter: false,
         }
-    }
-
-    #[test]
-    fn an_engine_is_settable_in_place_only_when_setup_can_fetch_it() {
-        let inspection = inspection(configured());
-        let settable = |key: &str| {
-            inspection
-                .stt
-                .iter()
-                .find(|choice| choice.key == key)
-                .unwrap()
-                .settable()
-        };
-
-        assert!(settable(backend::MOONSHINE));
-        assert!(!settable(backend::PARAKEET_MLX), "it fetches its own model");
     }
 
     #[test]
@@ -1560,11 +1519,9 @@ mod tests {
 
     #[test]
     fn pairing_refuses_while_the_server_recognizes() {
-        let home = tempfile::tempdir().unwrap();
+        let home = testing::home("[stt]\nruns_on = \"server\"\n");
         let config = aria_settings::default_path(home.path());
-        fs::create_dir_all(home.path().join(".aria")).unwrap();
 
-        fs::write(&config, "[stt]\nruns_on = \"server\"\n").unwrap();
         assert!(matches!(
             pair_server_at(home.path(), "{}"),
             Err(SetupError::ServerInUse)

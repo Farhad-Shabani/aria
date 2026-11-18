@@ -136,19 +136,27 @@ mod tests {
 
     const PATIENCE: Duration = Duration::from_secs(5);
 
+    fn sh(script: &str) -> Command {
+        let mut command = Command::new("sh");
+        command.args(["-c", script]);
+        command
+    }
+
     #[test]
     fn a_missing_binary_is_named() {
         let mut command = Command::new("/nonexistent/aria-assistant");
         let error = run_cli(&mut command, "hi", |_| {}, &CancelToken::never(), PATIENCE)
             .expect_err("the spawn should fail");
 
-        assert!(matches!(error, AssistantError::Missing { .. }), "{error:?}");
+        assert!(
+            matches!(&error, AssistantError::Missing { binary } if binary == std::path::Path::new("/nonexistent/aria-assistant")),
+            "{error:?}"
+        );
     }
 
     #[test]
     fn lines_arrive_in_order_while_the_child_runs() {
-        let mut command = Command::new("sh");
-        command.args(["-c", "echo one; echo two; printf tail"]);
+        let mut command = sh("echo one; echo two; printf tail");
         let mut seen = Vec::new();
 
         let output = run_cli(
@@ -166,9 +174,8 @@ mod tests {
 
     #[test]
     fn a_child_that_writes_past_the_cap_is_refused_and_stopped() {
-        let mut command = Command::new("sh");
         // `yes` would run forever: the overflow, not the deadline, ends it.
-        command.args(["-c", "yes"]);
+        let mut command = sh("yes");
         let started = Instant::now();
 
         let error = run_cli(&mut command, "", |_| {}, &CancelToken::never(), PATIENCE)
@@ -183,9 +190,8 @@ mod tests {
 
     #[test]
     fn a_line_cut_by_the_cap_never_reaches_the_listener() {
-        let mut command = Command::new("sh");
         let bytes = MAX_OUTPUT_BYTES + 1;
-        command.args(["-c", &format!("head -c {bytes} /dev/zero")]);
+        let mut command = sh(&format!("head -c {bytes} /dev/zero"));
         let mut lines = 0;
 
         let error = run_cli(
@@ -206,8 +212,7 @@ mod tests {
 
     #[test]
     fn line_endings_and_bad_bytes_do_not_reach_the_listener() {
-        let mut command = Command::new("sh");
-        command.args(["-c", "printf 'a\\r\\nb\\377\\n'"]);
+        let mut command = sh("printf 'a\\r\\nb\\377\\n'");
         let mut seen = Vec::new();
 
         run_cli(
@@ -224,8 +229,7 @@ mod tests {
 
     #[test]
     fn only_the_tail_of_stderr_is_kept() {
-        let mut command = Command::new("sh");
-        command.args(["-c", "yes | head -c 200000 >&2; printf end >&2; exit 1"]);
+        let mut command = sh("yes | head -c 200000 >&2; printf end >&2; exit 1");
 
         let output = run_cli(&mut command, "", |_| {}, &CancelToken::never(), PATIENCE)
             .expect("the run should end");
@@ -235,9 +239,8 @@ mod tests {
     }
 
     #[test]
-    fn a_failing_child_hands_back_its_status_and_stderr() {
-        let mut command = Command::new("sh");
-        command.args(["-c", "echo secret; echo boom >&2; exit 3"]);
+    fn a_failure_quotes_stderr_and_never_stdout() {
+        let mut command = sh("echo secret; echo boom >&2; exit 3");
         let output = run_cli(&mut command, "", |_| {}, &CancelToken::never(), PATIENCE)
             .expect("the run should end");
 

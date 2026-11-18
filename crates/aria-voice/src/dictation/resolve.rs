@@ -107,10 +107,14 @@ mod tests {
         })
     }
 
-    fn with_slack(overrides: DictationOverrides) -> Settings {
+    fn with_slack(
+        output_mode: OutputMode,
+        delivery_mode: DeliveryMode,
+        overrides: DictationOverrides,
+    ) -> Settings {
         Settings {
-            output_mode: OutputMode::Insert,
-            delivery_mode: DeliveryMode::Streaming,
+            output_mode,
+            delivery_mode,
             application_overrides: ApplicationOverrides::new([(
                 ApplicationId::new(SLACK).expect("valid"),
                 ApplicationOverride {
@@ -129,10 +133,14 @@ mod tests {
 
     #[test]
     fn the_front_apps_overrides_replace_settings() {
-        let settings = with_slack(DictationOverrides {
-            output_mode: Some(OutputMode::InsertAndSubmit),
-            delivery_mode: Some(DeliveryMode::Complete),
-        });
+        let settings = with_slack(
+            OutputMode::Insert,
+            DeliveryMode::Streaming,
+            DictationOverrides {
+                output_mode: Some(OutputMode::InsertAndSubmit),
+                delivery_mode: Some(DeliveryMode::Complete),
+            },
+        );
         let request = DictationRequest::new(StopMode::OnSilence);
 
         assert_eq!(
@@ -174,10 +182,14 @@ mod tests {
 
     #[test]
     fn unset_overrides_inherit_and_requests_win() {
-        let settings = with_slack(DictationOverrides {
-            output_mode: Some(OutputMode::InsertAndSubmit),
-            delivery_mode: None,
-        });
+        let settings = with_slack(
+            OutputMode::Insert,
+            DeliveryMode::Streaming,
+            DictationOverrides {
+                output_mode: Some(OutputMode::InsertAndSubmit),
+                delivery_mode: None,
+            },
+        );
         let request = DictationRequest {
             route: DictationRoute::Deliver(DictationOverrides {
                 output_mode: Some(OutputMode::InsertOrCopy),
@@ -201,7 +213,11 @@ mod tests {
             };
 
             let resolved = DictationSettings::resolve(
-                with_slack(DictationOverrides::default()),
+                with_slack(
+                    OutputMode::Insert,
+                    DeliveryMode::Streaming,
+                    DictationOverrides::default(),
+                ),
                 request,
                 None,
             );
@@ -224,7 +240,11 @@ mod tests {
 
     #[test]
     fn only_the_front_app_with_aria_off_is_excluded() {
-        let mut settings = with_slack(DictationOverrides::default());
+        let mut settings = with_slack(
+            OutputMode::Insert,
+            DeliveryMode::Streaming,
+            DictationOverrides::default(),
+        );
         settings.application_overrides = ApplicationOverrides::new([(
             ApplicationId::new(SLACK).expect("valid"),
             ApplicationOverride {
@@ -247,10 +267,14 @@ mod tests {
 
     #[test]
     fn delivery_is_pinned_only_to_an_app_with_overrides() {
-        let settings = with_slack(DictationOverrides {
-            output_mode: Some(OutputMode::Copy),
-            delivery_mode: None,
-        });
+        let settings = with_slack(
+            OutputMode::Insert,
+            DeliveryMode::Streaming,
+            DictationOverrides {
+                output_mode: Some(OutputMode::Copy),
+                delivery_mode: None,
+            },
+        );
         let request = DictationRequest::new(StopMode::OnSilence);
 
         assert_eq!(

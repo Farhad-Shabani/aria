@@ -283,18 +283,17 @@ mod tests {
         let heard = hypothesis([(" He", 1), (" hop", 2), ("ed", 3), (" there", 5)].into_iter());
 
         assert_eq!(heard.as_str(), "He hoped there");
-        let frame = |count: usize| count as f32 * FRAME_SECONDS;
+        let close = |actual: &[f32], expected: &[f32]| {
+            actual.len() == expected.len()
+                && actual
+                    .iter()
+                    .zip(expected)
+                    .all(|(a, e)| (a - e).abs() < 1e-6)
+        };
         let starts: Vec<f32> = heard.words().iter().map(|word| word.start).collect();
-        assert_eq!(starts, [frame(1), frame(2), frame(5)]);
+        assert!(close(&starts, &[0.08, 0.16, 0.40]), "{starts:?}");
         let ends: Vec<f32> = heard.words().iter().map(|word| word.end).collect();
-        assert_eq!(
-            ends,
-            [
-                frame(1) + FRAME_SECONDS,
-                frame(3) + FRAME_SECONDS,
-                frame(5) + FRAME_SECONDS
-            ]
-        );
+        assert!(close(&ends, &[0.16, 0.32, 0.48]), "{ends:?}");
     }
 
     #[test]

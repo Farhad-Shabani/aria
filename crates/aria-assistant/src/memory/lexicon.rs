@@ -157,16 +157,12 @@ mod tests {
     use super::*;
     use crate::memory::store::Store;
 
-    fn strings(items: &[&str]) -> Vec<String> {
-        items.iter().map(|item| (*item).to_owned()).collect()
-    }
-
     #[test]
     fn terms_skip_comments_and_blanks_and_a_missing_file() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("lexicon.txt");
         std::fs::write(&path, "# mine\n\n  db2  \nvex16\n").expect("writes");
-        assert_eq!(load_terms(&path), strings(&["db2", "vex16"]));
+        assert_eq!(load_terms(&path), ["db2", "vex16"]);
         assert!(load_terms(&dir.path().join("none.txt")).is_empty());
     }
 

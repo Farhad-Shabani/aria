@@ -594,6 +594,7 @@ mod testing {
 mod tests {
     use super::testing::*;
     use super::*;
+    use crate::speaker::voices::testing::frames;
 
     #[test]
     fn overlapping_chunks_judge_the_same_frame_more_than_once() {
@@ -622,13 +623,12 @@ mod tests {
         );
 
         voices.skip_to(HOP_SAMPLES * 2);
-        hear_all(&mut voices, &recording);
+        let mut heard = Vec::new();
+        while let Some(chunk) = voices.hear(&recording) {
+            heard.push(chunk.at);
+        }
 
-        assert_eq!(
-            voices.retained_from(),
-            HOP_SAMPLES * 4,
-            "the walk should resume past the skip, not replay it"
-        );
+        assert_eq!(heard, [HOP_SAMPLES * 2, HOP_SAMPLES * 3]);
     }
 
     #[test]
@@ -856,17 +856,6 @@ mod tests {
         let mut voices = track(Vec::from([brief]), Vec::from([[1.0, 0.0]]));
         hear_all(&mut voices, &recording);
         assert!(voices.voices.is_empty());
-    }
-
-    fn frames(pattern: &[&[usize]]) -> Vec<Activity> {
-        pattern
-            .iter()
-            .map(|speaking| {
-                speaking
-                    .iter()
-                    .fold(Activity::SILENT, |active, &voice| active.speaking(voice))
-            })
-            .collect()
     }
 
     /// A grid of `shift`-wide frames whose receptive field is `size` wide.

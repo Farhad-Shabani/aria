@@ -1029,6 +1029,8 @@ mod tests {
             "\n",
             r#"{"type":"item.completed","item":{"id":"i1","type":"reasoning","text":"thinking"}}"#,
             "\n",
+            r#"{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"first"}}"#,
+            "\n",
             r#"{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"hi"}}"#,
             "\n",
             r#"{"type":"turn.completed","usage":{"input_tokens":1}}"#,
@@ -1159,9 +1161,15 @@ mod tests {
         ] {
             assert!(args.windows(2).any(|pair| pair == expected), "{args:?}");
         }
-        for setting in CODEX_PROMPT_SETTINGS {
+        for setting in [
+            "features.shell_tool=false",
+            "features.apps=false",
+            "features.plugins=false",
+            "project_doc_max_bytes=0",
+            "web_search=\"disabled\"",
+        ] {
             assert!(
-                args.windows(2).any(|pair| pair == ["--config", *setting]),
+                args.windows(2).any(|pair| pair == ["--config", setting]),
                 "{args:?}"
             );
         }

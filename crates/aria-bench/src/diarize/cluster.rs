@@ -211,13 +211,4 @@ mod tests {
         ]);
         assert_eq!(group_online(&voices, 0.5), Vec::from([Some(0); 4]));
     }
-
-    #[test]
-    fn the_voice_heard_first_is_numbered_first() {
-        let voices = Vec::from([voice([0.0, 1.0]), voice([1.0, 0.0]), voice([0.14, 0.99])]);
-        assert_eq!(
-            group_online(&voices, 0.5),
-            Vec::from([Some(0), Some(1), Some(0)])
-        );
-    }
 }

@@ -177,6 +177,10 @@ mod tests {
             Some((10.0, 10.0))
         );
         assert_eq!(difference_interval(&[100; 10], &[100; 5]), None);
+    }
+
+    #[test]
+    fn a_decision_needs_a_finite_ordered_interval_and_margin() {
         assert_eq!(Decision::of(Some((10.0, 10.0)), 0.0), Decision::Regressed);
         assert_eq!(Decision::of(Some((0.0, 0.0)), 0.0), Decision::Accepted);
         assert_eq!(Decision::of(Some((-5.0, 8.0)), 5.0), Decision::Inconclusive);

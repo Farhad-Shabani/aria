@@ -532,6 +532,12 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
+    fn open_catalog() -> (tempfile::TempDir, Catalog) {
+        let temp = tempfile::tempdir().unwrap();
+        let catalog = Catalog::open(&temp.path().join("catalog"), CancelToken::never()).unwrap();
+        (temp, catalog)
+    }
+
     fn discovery(root: &Path) -> Discovery {
         Discovery {
             selected: root.to_path_buf(),
@@ -561,9 +567,7 @@ mod tests {
 
     #[test]
     fn folders_another_pipeline_stored_are_removed() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut catalog =
-            Catalog::open(&temp.path().join("catalog"), CancelToken::never()).unwrap();
+        let (temp, mut catalog) = open_catalog();
         let old = discovery(&temp.path().join("old-project"));
         let current = discovery(&temp.path().join("current-project"));
         catalog
@@ -642,9 +646,7 @@ mod tests {
 
     #[test]
     fn constraint_failure_and_mid_transaction_cancellation_preserve_generation() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut catalog =
-            Catalog::open(&temp.path().join("catalog"), CancelToken::never()).unwrap();
+        let (temp, mut catalog) = open_catalog();
         let mut input = discovery(&temp.path().join("project"));
         catalog
             .refresh_cancellable(&input, "a", &CancelToken::never())
@@ -672,9 +674,7 @@ mod tests {
 
     #[test]
     fn evidence_limits_fail_without_replacing_the_generation() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut catalog =
-            Catalog::open(&temp.path().join("catalog"), CancelToken::never()).unwrap();
+        let (temp, mut catalog) = open_catalog();
         let mut input = discovery(&temp.path().join("project"));
         catalog
             .refresh_cancellable(&input, "a", &CancelToken::never())
@@ -710,9 +710,7 @@ mod tests {
 
     #[test]
     fn per_source_limit_rejects_refresh_and_excess_stored_rows() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut catalog =
-            Catalog::open(&temp.path().join("catalog"), CancelToken::never()).unwrap();
+        let (temp, mut catalog) = open_catalog();
         let mut input = discovery(&temp.path().join("project"));
         input.sources.truncate(1);
         let source = &mut input.sources[0];
@@ -751,9 +749,7 @@ mod tests {
 
     #[test]
     fn sql_cancellation_interrupts_reads_and_can_resume() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut catalog =
-            Catalog::open(&temp.path().join("catalog"), CancelToken::never()).unwrap();
+        let (temp, mut catalog) = open_catalog();
         let cancel = CancelToken::new();
         cancel.cancel();
         catalog.cancel_on(cancel).unwrap();
@@ -770,7 +766,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_discards_only_derived_tables_and_rejects_newer_schema() {
+    fn migration_discards_only_derived_tables() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().join("catalog");
         private_fs::prepare_directory(&directory).unwrap();
@@ -799,6 +795,14 @@ mod tests {
                 .unwrap(),
             "keep"
         );
+    }
+
+    #[test]
+    fn a_newer_schema_is_refused_and_left_untouched() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("catalog");
+        let path = directory.join("catalog.db");
+        let catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
         catalog
             .connection
             .pragma_update(None, "user_version", 99)
@@ -901,9 +905,7 @@ mod tests {
 
     #[test]
     fn corrupt_candidates_are_rejected_before_loading_unbounded_strings() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut catalog =
-            Catalog::open(&temp.path().join("catalog"), CancelToken::never()).unwrap();
+        let (temp, mut catalog) = open_catalog();
         let input = discovery(&temp.path().join("project"));
         catalog
             .refresh_cancellable(&input, "a", &CancelToken::never())

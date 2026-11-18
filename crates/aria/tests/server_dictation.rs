@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use aria::primitives::cancel::CancelToken;
 use aria::primitives::process::{self, Bounds, Capture, ChildProcess, WaitOutcome};
 use aria_daemon::{Daemon, DaemonSession, DictationOutcome, DictationRequest, StopMode};
-use aria_harness::Sandbox;
+use aria_harness::{Sandbox, wait_until_ready};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -52,18 +52,16 @@ fn desktop_dictates_through_a_server_without_local_stt() {
         .stdout(Stdio::null())
         .stderr(std::fs::File::create(&server_log).unwrap());
     let mut host = ChildProcess::spawn(&mut command).unwrap();
-    let startup = host
-        .wait_until(Instant::now() + TIMEOUT, || {
-            std::fs::read_to_string(&server_log)
-                .unwrap()
-                .contains("inference server ready")
-        })
-        .unwrap();
-    assert!(
-        matches!(startup, WaitOutcome::Cancelled),
-        "server did not become ready:\n{}",
-        std::fs::read_to_string(&server_log).unwrap()
-    );
+    if let Err(error) = wait_until_ready(&mut host, TIMEOUT, || {
+        std::fs::read_to_string(&server_log)
+            .unwrap()
+            .contains("inference server ready")
+    }) {
+        panic!(
+            "server did not become ready: {error}\n{}",
+            std::fs::read_to_string(&server_log).unwrap()
+        );
+    }
     let invitation = run(
         &server,
         Command::new(env!("CARGO_BIN_EXE_aria")).args([
@@ -93,12 +91,7 @@ fn desktop_dictates_through_a_server_without_local_stt() {
     );
     run(
         &device,
-        Command::new(std::env::current_exe().unwrap()).args([
-            "desktop_probe",
-            "--exact",
-            "--ignored",
-            "--nocapture",
-        ]),
+        device.test_command("desktop_probe").arg("--nocapture"),
         &[],
     );
     assert!(!device.home_path().join(".aria/models").exists());

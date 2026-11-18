@@ -64,3 +64,85 @@ impl Conditions {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn conditions_record_the_effective_replay_and_previews() {
+        let agreement = Decoding::agreement(Cadence::from_millis(500, 20_000));
+        for (decoding, realtime, expected) in [
+            (
+                agreement,
+                false,
+                json!({
+                    "decoding": {
+                        "mode": "agreement", "stride_samples": 8000, "max_buffer_samples": 320000
+                    },
+                    "replay": {"pace": "stepped", "stride_samples": 8000},
+                    "previews": true
+                }),
+            ),
+            (
+                agreement,
+                true,
+                json!({
+                    "decoding": {
+                        "mode": "agreement", "stride_samples": 8000, "max_buffer_samples": 320000
+                    },
+                    "replay": {"pace": "realtime"},
+                    "previews": true
+                }),
+            ),
+            (
+                Decoding::Whole,
+                true,
+                json!({
+                    "decoding": {"mode": "whole"},
+                    "replay": {"pace": "immediate"},
+                    "previews": false
+                }),
+            ),
+            (
+                Decoding::ChunkedFile {
+                    chunk_samples: 4000,
+                },
+                true,
+                json!({
+                    "decoding": {"mode": "chunked_file", "chunk_samples": 4000},
+                    "replay": {"pace": "immediate"},
+                    "previews": false
+                }),
+            ),
+            (
+                Decoding::Native {
+                    chunk_samples: 12800,
+                },
+                false,
+                json!({
+                    "decoding": {"mode": "native", "chunk_samples": 12800},
+                    "replay": {"pace": "stepped", "stride_samples": 12800},
+                    "previews": false
+                }),
+            ),
+            (
+                Decoding::Native {
+                    chunk_samples: 12800,
+                },
+                true,
+                json!({
+                    "decoding": {"mode": "native", "chunk_samples": 12800},
+                    "replay": {"pace": "realtime"},
+                    "previews": false
+                }),
+            ),
+        ] {
+            let conditions = Conditions::new(decoding, realtime, true);
+
+            assert_eq!(serde_json::to_value(conditions).unwrap(), expected);
+        }
+    }
+}
