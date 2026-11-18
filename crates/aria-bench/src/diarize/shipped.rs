@@ -15,7 +15,7 @@ use aria_speaker::wespeaker::Config as SpeakerConfig;
 use aria_voice::speaker::{Grouping, VoiceTrack, Voices, voice_track};
 
 use crate::diarize::journal::Journal;
-use crate::diarize::{BenchError, Embedded, Labeled, SAMPLE_RATE, Turn};
+use crate::diarize::{BenchError, ChunkCache, Embedded, Labeled, SAMPLE_RATE, Turn};
 
 /// One pass of the shipped track over one recording.
 pub struct Run<'a> {
@@ -26,7 +26,7 @@ pub struct Run<'a> {
     pub grouping: Grouping,
     /// Where to keep what the nets heard. They answer the same whatever the
     /// grouping, so a sweep reads a recording once and varies the rest.
-    pub cache: Option<&'a Path>,
+    pub cache: Option<ChunkCache<'a>>,
     /// Where to write what the track believed after every chunk.
     pub journal: Option<&'a Path>,
 }

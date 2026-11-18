@@ -12,38 +12,52 @@ use serde::{Deserialize, Serialize};
 use crate::diarize::BenchError;
 use aria_kit::audio::RecordingReader;
 
+/// Where a run keeps what the nets heard.
+#[derive(Clone, Copy)]
+pub struct ChunkCache<'a> {
+    pub dir: &'a Path,
+    /// Digest of the executable doing the hearing. Any code or dependency in
+    /// it may shape what the nets hear, so chunks another build heard are
+    /// heard again. A sweep varies only flags and keeps hitting the cache.
+    pub executable_sha256: &'a str,
+}
+
 /// Hears a recording through the track, or loads what an earlier run heard.
 ///
-/// A cache under `dir` is used only when it was written on the same terms;
-/// anything else is read afresh and overwritten. Pass `None` to skip the
-/// cache entirely.
+/// A cache is used only when it was written on the same terms; anything else
+/// is read afresh and overwritten. Pass `None` to skip the cache entirely.
 pub(crate) fn heard<S: Segmenter, E: Embedder>(
     voices: &mut PyannoteVoices<S, E>,
     recording: &RecordingReader,
     wav: &Path,
     nets: Nets<'_>,
-    dir: Option<&Path>,
+    cache: Option<ChunkCache<'_>>,
 ) -> Result<Vec<Chunk>, BenchError> {
-    let terms = Terms::of(voices, wav, nets)?;
-    let file = dir.map(|dir| path(dir, wav));
-
-    if let Some(file) = &file
-        && let Some(chunks) = load(file, &terms)
-    {
+    let Some(cache) = cache else {
+        return Ok(hear_all(voices, recording));
+    };
+    let terms = Terms::of(voices, wav, nets, cache.executable_sha256)?;
+    let file = path(cache.dir, wav);
+    if let Some(chunks) = load(&file, &terms) {
         // The track never walked, so its own position stays at zero. Nothing
         // downstream of grouping reads it, and a cached run has no live
         // capture to release audio for.
         return Ok(chunks);
     }
+    let chunks = hear_all(voices, recording);
+    save(&file, &terms, &chunks).map_err(BenchError::Cache)?;
+    Ok(chunks)
+}
 
+fn hear_all<S: Segmenter, E: Embedder>(
+    voices: &mut PyannoteVoices<S, E>,
+    recording: &RecordingReader,
+) -> Vec<Chunk> {
     let mut chunks = Vec::new();
     while let Some(chunk) = voices.hear(recording) {
         chunks.push(chunk);
     }
-    if let Some(file) = &file {
-        save(file, &terms, &chunks).map_err(BenchError::Cache)?;
-    }
-    Ok(chunks)
+    chunks
 }
 
 /// The two nets whose answers a cache holds.
@@ -57,6 +71,7 @@ pub(crate) struct Nets<'a> {
 /// here, so a stale cache is a mismatch rather than a wrong answer.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct Terms {
+    executable_sha256: String,
     audio: Fingerprint,
     segmentation: Fingerprint,
     speaker: Fingerprint,
@@ -97,9 +112,11 @@ impl Terms {
         voices: &PyannoteVoices<S, E>,
         wav: &Path,
         nets: Nets<'_>,
+        executable_sha256: &str,
     ) -> Result<Self, BenchError> {
         let shape = voices.shape();
         Ok(Self {
+            executable_sha256: executable_sha256.to_owned(),
             audio: Fingerprint::of(wav)?,
             segmentation: Fingerprint::of(nets.segmentation)?,
             speaker: Fingerprint::of(nets.speaker)?,
@@ -224,6 +241,7 @@ mod tests {
 
     fn terms() -> Terms {
         Terms {
+            executable_sha256: "build".to_owned(),
             audio: fingerprint("meeting.wav"),
             segmentation: fingerprint("segmentation-3.0.onnx"),
             speaker: fingerprint("wespeaker.onnx"),

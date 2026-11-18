@@ -6,8 +6,8 @@
 //! loaded.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
 use std::time::Instant;
 
 use aria_kit::audio::RecordingReader;
@@ -24,6 +24,7 @@ use aria_voice::stt::{
 use super::Mode;
 use super::conditions::{Conditions, Decoding};
 use super::record::{Descriptor, Preview, Segment};
+use crate::replay::{Step, Stepped};
 
 /// One engine to measure, named with everything that engine needs.
 pub enum BackendRequest {
@@ -95,10 +96,11 @@ pub(super) struct Selection {
 impl Selection {
     pub(super) fn load(&self) -> Result<Loaded, TranscriptionError> {
         let timing = Timing::default();
+        let step = Step::default();
         let config = EngineConfig::try_from(self.config.clone())?;
         let input = config.input();
         let engine = Timed {
-            inner: load_recognizer(config, self.cadence)?,
+            inner: Stepped::new(load_recognizer(config, self.cadence)?, step.clone()),
             timing: timing.clone(),
         };
         let decoding = self.decoding();
@@ -116,28 +118,23 @@ impl Selection {
         Ok(Loaded {
             transcription,
             timing,
+            step,
             decoding,
         })
     }
 }
 
-/// A loaded selection: the transcription to drive, where it reports
-/// decode-busy time, and how its audio must arrive.
 pub(super) struct Loaded {
     transcription: Composed,
     timing: Timing,
+    pub(super) step: Step,
     pub(super) decoding: Decoding,
 }
 
 impl Loaded {
-    pub(super) fn attempt(&mut self, advance: Option<mpsc::Sender<()>>) -> Attempt<'_> {
+    pub(super) fn attempt(&self) -> Attempt<'_> {
         self.timing.decode_busy.store(0, Ordering::Relaxed);
         self.timing.decode_calls.store(0, Ordering::Relaxed);
-        *self
-            .timing
-            .step
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = advance;
         Attempt {
             transcription: &self.transcription,
             timing: &self.timing,
@@ -157,17 +154,6 @@ impl Attempt<'_> {
 
     pub(super) fn decode_calls(&self) -> u64 {
         self.timing.decode_calls.load(Ordering::Relaxed)
-    }
-}
-
-impl Drop for Attempt<'_> {
-    fn drop(&mut self) {
-        // Closing the channel releases a feeder still waiting for its next stride.
-        *self
-            .timing
-            .step
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     }
 }
 
@@ -223,11 +209,9 @@ impl Composed {
 }
 
 /// Times every decode an engine runs, so a streamed run can report how much
-/// wall clock was computation rather than waiting for audio to arrive. Under
-/// stepped replay it is also the clock: each finished decode releases the
-/// next stride of audio.
+/// wall clock was computation rather than waiting for audio to arrive.
 pub(super) struct Timed {
-    inner: Box<dyn Recognizer>,
+    inner: Stepped<Box<dyn Recognizer>>,
     timing: Timing,
 }
 
@@ -267,13 +251,10 @@ impl Recognizer for Timed {
     }
 }
 
-/// What every decode reports: its busy time, and the permit that releases
-/// the next stride of a stepped replay.
 #[derive(Clone, Default)]
 struct Timing {
     decode_busy: Arc<AtomicU64>,
     decode_calls: Arc<AtomicU64>,
-    step: Arc<Mutex<Option<mpsc::Sender<()>>>>,
 }
 
 impl Timing {
@@ -281,15 +262,6 @@ impl Timing {
         self.decode_calls.fetch_add(1, Ordering::Relaxed);
         self.decode_busy
             .fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
-        // The finishing decode can outlive its utterance's feeder; a send
-        // into a dropped receiver is the expected end of the run.
-        let step = self
-            .step
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(step) = step.as_ref() {
-            let _ = step.send(());
-        }
     }
 }
 
@@ -579,6 +551,8 @@ fn model_bytes(path: &Path) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+
     use super::*;
 
     struct TraceEngine {
@@ -642,8 +616,12 @@ mod tests {
     }
 
     fn trace_engine(fail_second: bool) -> Timed {
+        stepped_trace_engine(fail_second, Step::default())
+    }
+
+    fn stepped_trace_engine(fail_second: bool, step: Step) -> Timed {
         Timed {
-            inner: Box::new(TraceEngine { fail_second }),
+            inner: Stepped::new(Box::new(TraceEngine { fail_second }), step),
             timing: Timing::default(),
         }
     }
@@ -651,10 +629,12 @@ mod tests {
     #[test]
     fn attempts_reset_metrics_and_disconnect_replay_on_failure_and_unwind() {
         let directory = tempfile::tempdir().unwrap();
-        let engine = trace_engine(true);
-        let mut loaded = Loaded {
+        let step = Step::default();
+        let engine = stepped_trace_engine(true, step.clone());
+        let loaded = Loaded {
             timing: engine.timing.clone(),
             transcription: Composed::Streaming(Transcription::stream(Stream::Native, engine)),
+            step,
             decoding: Decoding::Native { chunk_samples: 2 },
         };
 
@@ -667,7 +647,8 @@ mod tests {
             loaded.timing.decode_calls.store(7, Ordering::Relaxed);
 
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let attempt = loaded.attempt(Some(advance));
+                let _armed = loaded.step.arm(advance);
+                let attempt = loaded.attempt();
                 assert_eq!(attempt.decode_ms(), 0);
                 assert_eq!(attempt.decode_calls(), 0);
 
@@ -748,9 +729,10 @@ mod tests {
                     }
                     writer.finish();
                 });
-                let engine = trace_engine(false);
+                let step = Step::default();
+                let engine = stepped_trace_engine(false, step.clone());
                 let calls = Arc::clone(&engine.timing.decode_calls);
-                *engine.timing.step.lock().expect("no poison") = Some(advance);
+                let _armed = step.arm(advance);
                 let composed = Composed::Streaming(Transcription::agreement(
                     Cadence::from_millis(100, 20_000),
                     engine,
