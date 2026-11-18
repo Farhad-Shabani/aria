@@ -75,6 +75,15 @@ impl Sandbox {
         self.home.path().join(RUNTIME_SUBDIRECTORY).join(LOG_FILE)
     }
 
+    /// Reruns the current test binary as the ignored test `case` inside this
+    /// sandbox.
+    pub fn test_command(&self, case: &str) -> Command {
+        let mut command = Command::new(std::env::current_exe().expect("the test binary resolves"));
+        self.apply(&mut command);
+        command.args([case, "--exact", "--ignored"]);
+        command
+    }
+
     /// Scopes `command` to this sandbox.
     pub fn apply(&self, command: &mut Command) {
         for (name, _) in std::env::vars_os() {
