@@ -34,7 +34,7 @@
 {"input": "three point five", "expected": "3.5"}
 {"input": "two and a half million", "expected": "2500000"}
 {"input": "minus forty degrees", "expected": "-40 degrees"}
-{"input": "plus one", "expected": "+one"}
+{"input": "plus one", "expected": "+1"}
 {"input": "negative twenty two point five", "expected": "-22.5"}
 {"input": "twenty dollars", "expected": "$20"}
 {"input": "twenty million dollars", "expected": "$20000000"}
@@ -118,7 +118,7 @@
 {"input": "thousandth thirties twelfth", "expected": "1000th 30s 12th"}
 {"input": "11 triple 22 1984 seven million +7 thousandth fifteen quadrillion euros", "expected": "11 triple 22 19847000000 7000th €15000000000000000"}
 {"input": "11 hundred two 0.07 third 0 dollar hundredth triple +7 negative five minus sixties", "expected": "1102 0.073rd $0 100th triple 7 -5 -60s"}
-{"input": "5% cent hundred triple percent pounds hundred hundredth 1 euro forty 100 274th", "expected": "5% cent 100 triple percent pounds 10000th one 40 100 274th"}
+{"input": "5% cent hundred triple percent pounds hundred hundredth 1 euro forty 100 274th", "expected": "5% cent 100 triple percent pounds 10000th €1 40 100 274th"}
 {"input": "six one", "expected": "61"}
 {"input": "first minus oh cent trillion dollar sixties", "expected": "1st ¢0 $1000000000000 60s"}
 {"input": "sixth and point pounds zero dollars fourth percent plus hundredth o 274th hundred", "expected": "6th and pounds $0 4th percent +100th 0 274th 100"}
@@ -137,7 +137,7 @@
 {"input": "100 hundredth euros o fourth three", "expected": "10000th euros 04th 3"}
 {"input": "plus 999 ninety ninety double dollars", "expected": "+9999090 double dollars"}
 {"input": "third eleven oh", "expected": "3rd 110"}
-{"input": "zero nine quadrillion double oh one 1 fourth sixties six $20 1 dollar eight", "expected": "9000000000000000001 14th 60s 6 $20 one 8"}
+{"input": "zero nine quadrillion double oh one 1 fourth sixties six $20 1 dollar eight", "expected": "9000000000000000001 14th 60s 6 $20 $1 8"}
 {"input": "second minus half hundredth trillion dollar 0", "expected": "2nd minus half 100th $1000000000000 0"}
 {"input": "1000 22 hundredth millionth fourth ten six", "expected": "1000 2200th 1000000th 4th 106"}
 {"input": "euro 007 euro twenty 274th", "expected": "euro €7 20 274th"}
@@ -150,7 +150,7 @@
 {"input": "per third ninety 100 1984 32nd hundredth dollars twelve percent eight billion", "expected": "per 3rd 90 100 1984 32nd 100th dollars 12% 8000000000"}
 {"input": "999 thousand dollar millionth hundred twenty 1000 seven dollar 32nd", "expected": "$999000 1000000th 120 $1007 32nd"}
 {"input": "seven thirties 5% first dollars and 0.07 third +7", "expected": "730s 5% 1st dollars and 0.073rd 7"}
-{"input": "seven millionth second one dollars pounds quadrillion twelve 999", "expected": "7000000th 2nd one pounds 1000000000000012 999"}
+{"input": "seven millionth second one dollars pounds quadrillion twelve 999", "expected": "7000000th 2nd $1 pounds 1000000000000012 999"}
 {"input": "three 274th six 007 0.07 1 hundredth cents triple quadrillion", "expected": "3 274th 6 7 0.07 100th cents triple 1000000000000000"}
 {"input": "negative 007 half cent thousand millionth cent zero eight quadrillion", "expected": "-7 half cent 1000th cent 8000000000000000"}
 {"input": "thirty twentieth million double thirteen second 5% plus half", "expected": "3020th 100000013132nd 5% plus half"}

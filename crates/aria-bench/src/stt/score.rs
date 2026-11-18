@@ -10,13 +10,14 @@ use std::ops::Range;
 
 /// Alignment weights taken from NIST `sclite`.
 ///
-/// They never enter the reported counts. Several alignments can share the
-/// minimum number of edits while splitting them differently, and these weights
-/// decide which of those wins, so the split follows a stated policy instead of
-/// whichever path a tie-break happened to reach.
-const SUBSTITUTION_COST: u32 = 4;
-const DELETION_COST: u32 = 3;
-const INSERTION_COST: u32 = 3;
+/// They never enter the reported counts: the alignment minimizes the number of
+/// edits first. Several alignments can share that minimum while splitting the
+/// edits differently, and these weights decide which of those wins, so the
+/// split follows a stated policy instead of whichever path a tie-break
+/// happened to reach.
+const SUBSTITUTION_WEIGHT: u32 = 4;
+const DELETION_WEIGHT: u32 = 3;
+const INSERTION_WEIGHT: u32 = 3;
 
 /// How a hypothesis differs from its reference.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -187,11 +188,28 @@ enum Edit {
     Insertion,
 }
 
+/// What a path through the table costs: its edit count, then its weight.
+/// Ordering compares the count first, so the weights only break ties.
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct Cost {
+    edits: u32,
+    weight: u32,
+}
+
+impl Cost {
+    fn with_edit(self, weight: u32) -> Self {
+        Self {
+            edits: self.edits + 1,
+            weight: self.weight + weight,
+        }
+    }
+}
+
 /// The edit-distance table, row per reference word, column per hypothesis word.
 struct Table {
     reference_words: usize,
     hypothesis_words: usize,
-    costs: Vec<u32>,
+    costs: Vec<Cost>,
     edits: Vec<Edit>,
 }
 
@@ -207,13 +225,18 @@ impl Table {
                     (table.cost(row - 1, column - 1), Edit::Correct)
                 } else {
                     (
-                        table.cost(row - 1, column - 1) + SUBSTITUTION_COST,
+                        table
+                            .cost(row - 1, column - 1)
+                            .with_edit(SUBSTITUTION_WEIGHT),
                         Edit::Substitution,
                     )
                 };
-                let deletion = (table.cost(row - 1, column) + DELETION_COST, Edit::Deletion);
+                let deletion = (
+                    table.cost(row - 1, column).with_edit(DELETION_WEIGHT),
+                    Edit::Deletion,
+                );
                 let insertion = (
-                    table.cost(row, column - 1) + INSERTION_COST,
+                    table.cost(row, column - 1).with_edit(INSERTION_WEIGHT),
                     Edit::Insertion,
                 );
 
@@ -234,7 +257,7 @@ impl Table {
         Self {
             reference_words,
             hypothesis_words,
-            costs: vec![0; cells],
+            costs: vec![Cost::default(); cells],
             edits: vec![Edit::Correct; cells],
         }
     }
@@ -243,11 +266,11 @@ impl Table {
     /// makes every hypothesis word an insertion.
     fn fill_borders(&mut self) {
         for row in 1..=self.reference_words {
-            let cost = self.cost(row - 1, 0) + DELETION_COST;
+            let cost = self.cost(row - 1, 0).with_edit(DELETION_WEIGHT);
             self.set(row, 0, (cost, Edit::Deletion));
         }
         for column in 1..=self.hypothesis_words {
-            let cost = self.cost(0, column - 1) + INSERTION_COST;
+            let cost = self.cost(0, column - 1).with_edit(INSERTION_WEIGHT);
             self.set(0, column, (cost, Edit::Insertion));
         }
     }
@@ -303,7 +326,7 @@ impl Table {
         row * (self.hypothesis_words + 1) + column
     }
 
-    fn cost(&self, row: usize, column: usize) -> u32 {
+    fn cost(&self, row: usize, column: usize) -> Cost {
         self.costs[self.cell(row, column)]
     }
 
@@ -311,7 +334,7 @@ impl Table {
         self.edits[self.cell(row, column)]
     }
 
-    fn set(&mut self, row: usize, column: usize, (cost, edit): (u32, Edit)) {
+    fn set(&mut self, row: usize, column: usize, (cost, edit): (Cost, Edit)) {
         let cell = self.cell(row, column);
         self.costs[cell] = cost;
         self.edits[cell] = edit;

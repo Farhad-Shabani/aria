@@ -34,7 +34,8 @@ require() {
 }
 
 # The whole archive, once. Fewer speakers on disk than the set holds means a
-# partial download, which gets replaced.
+# partial download, which gets replaced. Other LibriSpeech subsets beside
+# test-clean stay.
 download() {
     local on_disk=0
     if [ -d "$SPEECH/LibriSpeech/test-clean" ]; then
@@ -42,7 +43,7 @@ download() {
     fi
     [ "$on_disk" -ge "$SPEAKERS" ] && return 0
 
-    rm -rf "$SPEECH/LibriSpeech"
+    rm -rf "$SPEECH/LibriSpeech/test-clean"
     echo "downloading LibriSpeech test-clean (346 MB)..."
     curl --silent --fail "$ARCHIVE_URL" | tar -xz -C "$SPEECH"
 }

@@ -367,17 +367,22 @@ accuracy-rebaseline results="":
     if [ -z "$results" ]; then
         just _accuracy-run build/accuracy-rebaseline
         results=build/accuracy-rebaseline/results.jsonl
+    else
+        cargo build --locked --release -p aria-bench
     fi
-    cargo run --locked --release -p aria-bench -- reference-stt "$results" {{ stt_reference }}
+    target/release/aria-bench reference-stt "$results" {{ stt_reference }}
 
+# One build serves every step: a second `cargo run` rebuilds ONNX Runtime's
+# bindings after the first build has fetched the runtime.
 _accuracy-run directory models=(cache_directory() / "aria-test-models") *flags:
     #!/usr/bin/env bash
     set -euo pipefail
-    just corpus
+    cargo build --locked --release -p aria-bench
+    target/release/aria-bench corpus {{ justfile_directory() }}/build/corpus --utterances 100
     model="$(just test-model "{{ models }}")"
     rm -rf "{{ directory }}"
     mkdir -p "{{ directory }}"
-    cargo run --locked --release -p aria-bench -- stt \
+    target/release/aria-bench stt \
         --corpus {{ justfile_directory() }}/build/corpus/manifest.tsv \
         --model whisper="$model" \
         --results "{{ directory }}/results.jsonl" \
@@ -398,7 +403,7 @@ bench-compare results *flags:
     cargo run --locked --release -p aria-bench -- compare-stt \
         "{{ absolute_path(results) }}" {{ flags }}
 
-# Speaker-label accuracy on synthesized conversations (realtime; ~4 min)
+# Speaker-label accuracy on synthesized conversations (decode-paced)
 diarize-bench *flags:
     cargo run --locked --release -p aria-bench -- diarize {{ flags }}
 
