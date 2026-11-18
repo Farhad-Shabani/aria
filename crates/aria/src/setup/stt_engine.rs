@@ -100,15 +100,8 @@ mod tests {
     use aria_settings::{Apply, Key};
 
     use super::super::assets;
-    use super::super::backends::Availability;
+    use super::super::testing::home;
     use super::*;
-
-    fn home(settings: &str) -> tempfile::TempDir {
-        let home = tempfile::tempdir().unwrap();
-        fs::create_dir_all(home.path().join(".aria")).unwrap();
-        fs::write(aria_settings::default_path(home.path()), settings).unwrap();
-        home
-    }
 
     fn with_moonshine_on_disk(home: &Path) {
         let models = aria_settings::config::models_dir(home);
@@ -124,10 +117,7 @@ mod tests {
         engine: &str,
     ) -> (Result<SetSttEngineSummary, SetupError>, Vec<SetupEvent>) {
         let mut events = Vec::new();
-        let host = Host {
-            macos: true,
-            system_voice: Availability::Ready,
-        };
+        let host = Host::mac();
         let result = set_in(home, &host, engine, false, &mut |event| {
             events.push(event);
             Ok(())

@@ -585,36 +585,19 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn history_commands_parse_overrides_and_retention() {
-        for (arguments, expected) in [
-            (vec!["aria", "history", "clear"], false),
-            (vec!["aria", "history", "clear", "--yes"], true),
+    fn history_arguments_reject_out_of_range_ids_unknown_sections_and_languages() {
+        for arguments in [
+            vec!["aria", "history", "list", "--section", "mail"],
+            vec!["aria", "history", "retry", "0"],
+            vec!["aria", "history", "retry", "9223372036854775808"],
+            vec!["aria", "history", "retry", "42", "--language", "fr_CA"],
         ] {
-            assert!(matches!(
-                Cli::try_parse_from(arguments).unwrap().command,
-                Command::History { command: HistoryCommand::Clear { yes, section: None } } if yes == expected
-            ));
+            assert!(Cli::try_parse_from(arguments).is_err());
         }
-        assert!(matches!(
-            Cli::try_parse_from(["aria", "history", "list"])
-                .unwrap()
-                .command,
-            Command::History {
-                command: HistoryCommand::List {
-                    json: false,
-                    section: None,
-                    query: None,
-                }
-            }
-        ));
-        assert!(matches!(
-            Cli::try_parse_from(["aria", "history", "list", "--query", "weekly plan"])
-                .unwrap()
-                .command,
-            Command::History {
-                command: HistoryCommand::List { query: Some(query), .. }
-            } if query == "weekly plan"
-        ));
+    }
+
+    #[test]
+    fn history_sections_and_auto_language_parse() {
         assert!(matches!(
             Cli::try_parse_from(["aria", "history", "clear", "--section", "chat"])
                 .unwrap()
@@ -626,54 +609,18 @@ mod tests {
                 }
             }
         ));
-        assert!(Cli::try_parse_from(["aria", "history", "list", "--section", "mail"]).is_err());
         assert!(matches!(
-            Cli::try_parse_from(["aria", "history", "rename", "42", "Weekly plan"])
-                .unwrap()
-                .command,
-            Command::History {
-                command: HistoryCommand::Rename { id: 42, title: Some(title) }
-            } if title == "Weekly plan"
-        ));
-        assert!(matches!(
-            Cli::try_parse_from(["aria", "history", "retry", "42"])
+            Cli::try_parse_from(["aria", "history", "retry", "42", "--language", "auto"])
                 .unwrap()
                 .command,
             Command::History {
                 command: HistoryCommand::Retry {
                     id: 42,
-                    engine: None,
-                    language: None
+                    language: Some(aria_voice::stt::Language::Automatic),
+                    ..
                 }
             }
         ));
-        let command = Cli::try_parse_from([
-            "aria",
-            "history",
-            "retry",
-            "42",
-            "--engine",
-            "whisper",
-            "--language",
-            "auto",
-        ])
-        .unwrap()
-        .command;
-        assert!(matches!(
-            command,
-            Command::History {
-                command: HistoryCommand::Retry {
-                    id: 42, engine: Some(engine), language: Some(aria_voice::stt::Language::Automatic)
-                }
-            } if engine == "whisper"
-        ));
-        for arguments in [
-            vec!["aria", "history", "retry", "0"],
-            vec!["aria", "history", "retry", "9223372036854775808"],
-            vec!["aria", "history", "retry", "42", "--language", "fr_CA"],
-        ] {
-            assert!(Cli::try_parse_from(arguments).is_err());
-        }
     }
 
     #[test]

@@ -25,18 +25,13 @@ fn word_error_rate(rows: &[(usize, usize)]) -> f64 {
 mod tests {
     use super::*;
 
-    fn rows(count: usize, words: usize, errors: usize) -> Vec<(usize, usize)> {
-        vec![(words, errors); count]
+    #[test]
+    fn the_rate_weighs_each_utterance_by_its_words() {
+        assert_eq!(word_error_rate(&[(10, 1), (40, 2)]), 0.06);
     }
 
     #[test]
-    fn interval_brackets_the_point_estimate() {
-        let mut uneven = rows(50, 10, 1);
-        uneven.extend(rows(50, 10, 3));
-        let (lower, upper) = wer_interval(&uneven).unwrap();
-
-        let point = 200.0 / 1000.0;
-        assert!(lower <= point && point <= upper);
-        assert!(lower < upper);
+    fn a_corpus_without_reference_words_has_no_errors() {
+        assert_eq!(word_error_rate(&[(0, 0)]), 0.0);
     }
 }

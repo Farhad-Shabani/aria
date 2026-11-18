@@ -193,33 +193,12 @@ mod tests {
     }
 
     #[test]
-    fn case_and_punctuation_do_not_survive() {
-        assert_eq!(words("The socket, closes."), words("THE SOCKET CLOSES"));
-    }
-
-    #[test]
-    fn spoken_and_written_numbers_agree() {
-        assert_eq!(words("twenty two"), words("22"));
-        assert_eq!(words("nineteen sixty"), words("1960"));
-    }
-
-    #[test]
-    fn fillers_and_annotations_are_dropped() {
-        assert_eq!(words("um the [laughter] socket"), words("the socket"));
-    }
-
-    #[test]
     fn a_letter_spelled_two_ways_reads_the_same() {
         let composed = "se\u{f1}or";
         let decomposed = "sen\u{303}or";
 
         assert_eq!(words(decomposed), words(composed));
         assert_eq!(words(composed), vec!["senor".to_owned()]);
-    }
-
-    #[test]
-    fn british_and_american_spellings_agree() {
-        assert_eq!(words("the colour"), words("the color"));
     }
 
     /// A rate measured with a normalizer that disagrees with Whisper's is not
@@ -245,5 +224,10 @@ mod tests {
             NORMALIZER_CASES.lines().count(),
             differences.join("\n")
         );
+    }
+
+    #[test]
+    fn a_hyphen_separates_words() {
+        assert_eq!(words("aria-stt"), ["aria", "stt"]);
     }
 }

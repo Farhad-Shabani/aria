@@ -468,4 +468,21 @@ mod tests {
             differences.join("\n")
         );
     }
+
+    #[test]
+    fn exact_alignment_keeps_case_and_punctuation() {
+        assert!(!exact_alignment("Cargo.toml", "cargo toml").reference_span_matches(0..1));
+    }
+
+    #[test]
+    fn an_insertion_is_charged_to_the_following_reference_word() {
+        let (target, background) = partitioned_errors(
+            "open aria now",
+            "open wrong aria now",
+            &[false, true, false],
+        );
+
+        assert_eq!(target.insertions, 1);
+        assert_eq!(background, Alignment::default());
+    }
 }

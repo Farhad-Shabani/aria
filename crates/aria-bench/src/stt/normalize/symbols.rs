@@ -60,25 +60,21 @@ fn is_mark_symbol_or_punctuation(character: char) -> bool {
 mod tests {
     use super::*;
 
-    const NUMERIC: &str = ".%$¢€£";
-
     #[test]
-    fn punctuation_becomes_a_space() {
-        assert_eq!(strip("well, yes!", NUMERIC), "well  yes ");
-    }
+    fn strip_keeps_numeric_symbols_and_folds_letters() {
+        use super::super::NUMERIC_SYMBOLS;
 
-    #[test]
-    fn kept_symbols_survive() {
-        assert_eq!(strip("$20 and 5%", NUMERIC), "$20 and 5%");
-    }
-
-    #[test]
-    fn diacritics_are_dropped_without_splitting_the_word() {
-        assert_eq!(strip("café", NUMERIC), "cafe");
-    }
-
-    #[test]
-    fn undecomposed_letters_are_spelled_out() {
-        assert_eq!(strip("æther", NUMERIC), "aether");
+        for (label, input, stripped) in [
+            ("punctuation becomes a space", "well, yes!", "well  yes "),
+            ("kept symbols survive", "$20 and 5%", "$20 and 5%"),
+            (
+                "diacritics are dropped without splitting the word",
+                "café",
+                "cafe",
+            ),
+            ("undecomposed letters are spelled out", "æther", "aether"),
+        ] {
+            assert_eq!(strip(input, NUMERIC_SYMBOLS), stripped, "{label}");
+        }
     }
 }

@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn an_invalid_file_is_refused_and_left_alone() {
+    fn a_file_that_does_not_load_fails_the_check() {
         let home = home();
         let broken = "[tts]\nbackend = \"futuristic\"\n";
         fs::write(settings_path(home.path()), broken).unwrap();

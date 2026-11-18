@@ -369,25 +369,32 @@ mod tests {
     }
 
     #[test]
-    fn nothing_ranks_in_an_empty_slice() {
-        assert_eq!(percentile::<u32>(&[], 0.5), None);
-    }
-
-    #[test]
-    fn one_value_is_every_percentile() {
-        assert_eq!(percentile(&[7], 0.5), Some(&7));
-        assert_eq!(percentile(&[7], 0.95), Some(&7));
-    }
-
-    #[test]
-    fn an_even_count_takes_the_lower_of_the_middle_pair() {
-        assert_eq!(percentile(&[1, 2, 3, 4], 0.5), Some(&2));
-    }
-
-    #[test]
-    fn the_p95_of_twenty_is_the_nineteenth() {
-        let sorted: Vec<u32> = (1..=20).collect();
-        assert_eq!(percentile(&sorted, 0.95), Some(&19));
+    fn a_percentile_is_the_lower_rank_of_a_sorted_slice() {
+        let twenty: Vec<u32> = (1..=20).collect();
+        for (label, sorted, fraction, expected) in [
+            ("nothing ranks in an empty slice", &[][..], 0.5, None),
+            ("one value is every percentile", &[7][..], 0.5, Some(7)),
+            (
+                "one value is every percentile at p95",
+                &[7][..],
+                0.95,
+                Some(7),
+            ),
+            (
+                "an even count takes the lower of the middle pair",
+                &[1, 2, 3, 4][..],
+                0.5,
+                Some(2),
+            ),
+            (
+                "the p95 of twenty is the nineteenth",
+                &twenty[..],
+                0.95,
+                Some(19),
+            ),
+        ] {
+            assert_eq!(percentile(sorted, fraction), expected.as_ref(), "{label}");
+        }
     }
 
     #[test]
@@ -399,10 +406,5 @@ mod tests {
         assert_eq!(timed.failures, 1);
         assert_eq!(timed.median_ttfa_ms(), Some(30));
         assert_eq!(timed.median_rtf(), Some(1.0));
-    }
-
-    #[test]
-    fn an_attempt_without_audio_has_no_rate() {
-        assert_eq!(attempt(5, 10, 0).rtf(16_000), None);
     }
 }

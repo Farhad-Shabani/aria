@@ -209,50 +209,83 @@ mod tests {
     }
 
     #[test]
-    fn source_gone_yields_to_the_worker_cause() {
-        let error = attempt_error(
-            Some(SynthesisError::SourceGone),
-            Worker::Failed(unsupported_voice()),
-            0,
-        );
-        assert_eq!(error, Some(unsupported_voice().to_string()));
-    }
-
-    #[test]
-    fn source_gone_stands_alone_when_the_worker_finished() {
-        let error = attempt_error(Some(SynthesisError::SourceGone), Worker::Finished, 16);
-        assert_eq!(error, Some(SynthesisError::SourceGone.to_string()));
-    }
-
-    #[test]
-    fn a_real_stream_cause_outranks_the_worker() {
-        let error = attempt_error(
-            Some(unsupported_voice()),
-            Worker::Failed(SynthesisError::SourceGone),
-            0,
-        );
-        assert_eq!(error, Some(unsupported_voice().to_string()));
-    }
-
-    #[test]
-    fn a_clean_end_without_speech_is_a_failure() {
-        assert!(attempt_error(None, Worker::Finished, 0).is_some());
-        assert_eq!(attempt_error(None, Worker::Finished, 1), None);
-    }
-
-    #[test]
-    fn a_panicking_worker_is_reported() {
+    fn an_attempt_reports_the_most_specific_cause() {
         let panicked = Some("the synthesis worker panicked".to_owned());
-        assert_eq!(attempt_error(None, Worker::Panicked, 0), panicked);
-        assert_eq!(
-            attempt_error(Some(SynthesisError::SourceGone), Worker::Panicked, 0),
-            panicked
-        );
+        let unsupported = Some(unsupported_voice().to_string());
+        for (label, stream, worker, samples_written, expected) in [
+            (
+                "source gone yields to the worker cause",
+                Some(SynthesisError::SourceGone),
+                Worker::Failed(unsupported_voice()),
+                0,
+                unsupported.clone(),
+            ),
+            (
+                "source gone stands alone when the worker finished",
+                Some(SynthesisError::SourceGone),
+                Worker::Finished,
+                16,
+                Some(SynthesisError::SourceGone.to_string()),
+            ),
+            (
+                "a real stream cause outranks the worker",
+                Some(unsupported_voice()),
+                Worker::Failed(SynthesisError::SourceGone),
+                0,
+                unsupported.clone(),
+            ),
+            (
+                "a clean end without speech is a failure",
+                None,
+                Worker::Finished,
+                0,
+                Some("the synthesizer produced no speech".to_owned()),
+            ),
+            (
+                "a clean end with speech is none",
+                None,
+                Worker::Finished,
+                1,
+                None,
+            ),
+            (
+                "a panicking worker is reported",
+                None,
+                Worker::Panicked,
+                0,
+                panicked.clone(),
+            ),
+            (
+                "a panic outranks source gone",
+                Some(SynthesisError::SourceGone),
+                Worker::Panicked,
+                0,
+                panicked,
+            ),
+            (
+                "a real stream cause outranks a panic",
+                Some(unsupported_voice()),
+                Worker::Panicked,
+                0,
+                unsupported,
+            ),
+        ] {
+            let error = attempt_error(stream, worker, samples_written);
+
+            assert_eq!(error, expected, "{label}");
+        }
     }
 
     #[test]
-    fn a_real_stream_cause_outranks_a_panic() {
-        let error = attempt_error(Some(unsupported_voice()), Worker::Panicked, 0);
-        assert_eq!(error, Some(unsupported_voice().to_string()));
+    fn an_attempt_without_audio_has_no_rate() {
+        let attempt = Synthesized {
+            ttfa: Some(Duration::from_millis(5)),
+            wall: Duration::from_millis(10),
+            samples: Vec::new(),
+            samples_written: 0,
+            error: None,
+        };
+
+        assert_eq!(attempt.rtf(16_000), None);
     }
 }

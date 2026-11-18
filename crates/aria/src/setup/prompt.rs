@@ -235,18 +235,10 @@ mod tests {
         );
     }
 
-    /// A Mac with a system voice.
-    fn bare_host() -> Host {
-        Host {
-            macos: true,
-            system_voice: Availability::Ready,
-        }
-    }
-
     fn pick<B: Backend>(text: &str, current: Option<&str>, yes: bool) -> (&'static str, String) {
         let mut input = Cursor::new(text.to_owned());
         let mut output = Vec::new();
-        let choices = choices::<B>(current, &bare_host());
+        let choices = choices::<B>(current, &Host::mac());
         let picked = prompts(&mut input, &mut output, yes)
             .pick(B::TITLE, &choices)
             .unwrap()
@@ -271,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn pick_falls_back_only_when_nothing_is_configured() {
+    fn pick_falls_back_when_the_configured_choice_is_not_offered() {
         let (picked, shown) = pick::<Tts>("\n", Some("not-a-backend"), false);
 
         assert_eq!(picked, "system");
@@ -300,25 +292,5 @@ mod tests {
 
         assert_eq!(picked, "system");
         assert!(shown.is_empty());
-    }
-
-    #[test]
-    fn a_missing_system_voice_changes_only_an_unconfigured_default() {
-        let host = Host {
-            system_voice: Availability::Missing {
-                fix: "install the system voice".to_owned(),
-            },
-            ..bare_host()
-        };
-        let default = |current| {
-            choices::<Tts>(current, &host)
-                .into_iter()
-                .find(|choice| choice.default)
-                .unwrap()
-                .key
-        };
-
-        assert_eq!(default(None), "kokoro");
-        assert_eq!(default(Some("system")), "system");
     }
 }

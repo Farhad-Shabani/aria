@@ -392,6 +392,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let part = with_suffix(&dir.path().join("model.onnx"), PART_SUFFIX);
         fs::write(&part, b"half").unwrap();
+        fs::set_permissions(&part, fs::Permissions::from_mode(PART_MODE)).unwrap();
 
         discard_untrusted_part(&part).unwrap();
 
