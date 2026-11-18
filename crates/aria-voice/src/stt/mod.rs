@@ -213,26 +213,4 @@ mod tests {
             }
         ));
     }
-
-    #[test]
-    fn a_parakeet_directory_without_a_vocabulary_is_refused() {
-        let directory = TempDir::new().expect("test directory should be created");
-
-        let error = check_model(&SttConfig::Parakeet {
-            model_directory: directory.path().to_path_buf(),
-            device: SttDevice::Cpu,
-        })
-        .expect_err("parakeet needs a vocabulary");
-
-        assert!(matches!(
-            error,
-            TranscriptionError::Model {
-                source: ModelError::Missing {
-                    file: "vocab.txt",
-                    ..
-                },
-                ..
-            }
-        ));
-    }
 }

@@ -330,9 +330,9 @@ fn stt_device(device: Option<DeviceName>) -> SttDevice {
 mod tests {
     use super::*;
     use aria_kit::synthesis::{SpeakingRate, Voice};
+    use aria_settings::Loaded;
     use aria_settings::config::tts_backend;
     use aria_settings::testing::{file, test_home};
-    use aria_settings::{LlmCleanupTarget, Loaded};
 
     #[test]
     fn the_server_recognizes_and_the_local_model_stays_in_use() {
@@ -366,27 +366,15 @@ mod tests {
     }
 
     #[test]
-    fn the_cleanup_model_loads_from_its_table_alone() {
-        let home_dir = test_home();
-        assert!(
-            DictationConfig::load(&file(""), &home_dir, None)
-                .cleanup_llm
-                .is_none()
+    fn the_cleanup_model_is_the_settings_choice() {
+        let settings = file(
+            "[dictation.cleanup.llm]\nmodel = \"local-model\"\n\
+             [provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n",
         );
-        let llm = "[dictation.cleanup.llm]\nmodel = \"local-model\"\n\
-                   [provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n";
-        let config = DictationConfig::load(&file(llm), &home_dir, None);
-        assert_eq!(
-            config.cleanup_llm,
-            Some(
-                LlmCleanupTarget::new(
-                    aria_settings::LocalProvider::new("http://127.0.0.1:8080/v1/chat/completions")
-                        .unwrap(),
-                    "local-model"
-                )
-                .unwrap()
-            )
-        );
+
+        let config = DictationConfig::load(&settings, &test_home(), None);
+
+        assert_eq!(config.cleanup_llm, settings.choices().cleanup);
     }
 
     #[test]
@@ -559,20 +547,6 @@ mod tests {
             })
         );
         assert_eq!(tts.fallback, TtsFallback::System);
-    }
-
-    #[test]
-    fn an_engine_switch_ignores_the_other_engines_files() {
-        let file = file(
-            "[tts]\nbackend = \"qwen\"\n[tts.kokoro]\nvoices = \"~/models/kokoro/voices.bin\"\n",
-        );
-
-        let tts = TtsConfig::load(&file, &test_home());
-
-        assert!(matches!(
-            tts.backend,
-            TtsBackend::Model(TtsModel::Qwen { .. })
-        ));
     }
 
     #[test]

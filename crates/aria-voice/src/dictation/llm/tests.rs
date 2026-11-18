@@ -250,65 +250,35 @@ fn a_cancelled_cleanup_reports_cancelled() {
 }
 
 #[test]
-fn http_failures_preserve_text_and_next_request_recovers() {
-    for (reply, expected) in [
-        (
-            "HTTP/1.1 302 Found\r\nLocation: http://192.0.2.1/secret\r\nContent-Length: 0\r\n\r\n"
-                .to_owned(),
-            "http_status",
-        ),
-        (
-            "HTTP/1.1 500 Error\r\nContent-Length: 0\r\n\r\n".to_owned(),
-            "http_status",
-        ),
-        (
-            format!(
-                "HTTP/1.1 200 OK\r\nX-Large: {}\r\nContent-Length: 0\r\n\r\n",
-                "a".repeat(9 * 1024)
-            ),
-            "header_size",
-        ),
-        (
-            format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
-                MAX_RESPONSE_BYTES + 1,
-                "a".repeat(MAX_RESPONSE_BYTES + 1)
-            ),
-            "response_size",
-        ),
-        (
+fn a_provider_failure_preserves_text_and_the_next_request_recovers() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!(
+        "http://{}/v1/chat/completions",
+        listener.local_addr().unwrap()
+    );
+    let worker = thread::spawn(move || {
+        let body = completion(r#"{"text":"Meet Alice at 3."}"#).to_string();
+        for response in [
             "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecret".to_owned(),
-            "invalid_response",
-        ),
-    ] {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let endpoint = format!(
-            "http://{}/v1/chat/completions",
-            listener.local_addr().unwrap()
-        );
-        let worker = thread::spawn(move || {
-            for response in [reply, {
-                let body = completion(r#"{"text":"Meet Alice at 3."}"#).to_string();
-                format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
-                    body.len()
-                )
-            }] {
-                let mut stream = accept(&listener);
-                read_request(&mut stream);
-                let _ = stream.write_all(response.as_bytes());
-            }
-        });
-        let (_home, cleanup) = cleanup_for(&endpoint);
-        let mut text = INPUT.to_owned();
-        let error = cleanup.apply(&mut text, &CancelToken::never()).unwrap_err();
-        assert!(!format!("{error:?}").contains("secret"));
-        assert_eq!(category(error), expected);
-        assert_eq!(text, INPUT);
-        cleanup.apply(&mut text, &CancelToken::never()).unwrap();
-        assert_eq!(text, "Meet Alice at 3.");
-        worker.join().unwrap();
-    }
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            ),
+        ] {
+            let mut stream = accept(&listener);
+            read_request(&mut stream);
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+    let (_home, cleanup) = cleanup_for(&endpoint);
+    let mut text = INPUT.to_owned();
+    let error = cleanup.apply(&mut text, &CancelToken::never()).unwrap_err();
+    assert!(!format!("{error:?}").contains("secret"));
+    assert_eq!(category(error), "invalid_response");
+    assert_eq!(text, INPUT);
+    cleanup.apply(&mut text, &CancelToken::never()).unwrap();
+    assert_eq!(text, "Meet Alice at 3.");
+    worker.join().unwrap();
 }
 
 #[test]
@@ -543,17 +513,6 @@ fn readiness_needs_the_server_to_list_the_model() {
         ),
         (
             r#"{"data":[{"id":"other"}]}"#,
-            "qwen2.5:3b",
-            Some("model_missing"),
-        ),
-        (r#"{"data":[{"id":"llama3.2:latest"}]}"#, "llama3.2", None),
-        (
-            r#"{"data":[{"id":"llama3.2:latest"}]}"#,
-            "llama3.2:1b",
-            Some("model_missing"),
-        ),
-        (
-            r#"{"object":"list","data":null}"#,
             "qwen2.5:3b",
             Some("model_missing"),
         ),

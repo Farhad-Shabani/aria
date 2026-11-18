@@ -343,6 +343,44 @@ mod tests {
     }
 
     #[test]
+    fn the_page_cap_keeps_a_database_within_its_size_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let policy = Policy {
+            max_bytes: 32 * 1024 * 1024,
+            ..POLICY
+        };
+        let opened =
+            Database::open(&temp.path().join("data.db"), &policy, &CancelToken::never()).unwrap();
+        let page_size: i64 = opened
+            .pragma_query_value(None, "page_size", |row| row.get(0))
+            .unwrap();
+        let max_pages: i64 = opened
+            .pragma_query_value(None, "max_page_count", |row| row.get(0))
+            .unwrap();
+        assert!(page_size * max_pages <= 32 * 1024 * 1024);
+    }
+
+    #[test]
+    fn a_rollback_journal_is_private_and_within_its_allowance() {
+        let temp = tempfile::tempdir().unwrap();
+        let policy = Policy {
+            max_bytes: 32 * 1024 * 1024,
+            ..POLICY
+        };
+        let opened =
+            Database::open(&temp.path().join("data.db"), &policy, &CancelToken::never()).unwrap();
+        opened.execute_batch("CREATE TABLE entries(text)").unwrap();
+        let transaction = opened.unchecked_transaction().unwrap();
+        transaction
+            .execute("INSERT INTO entries(text) VALUES('private')", [])
+            .unwrap();
+        let journal = temp.path().join("data.db-journal");
+        assert_eq!(fs::metadata(&journal).unwrap().mode() & 0o777, 0o600);
+        assert!(fs::metadata(&journal).unwrap().len() <= 32 * 1024 * 1024 + 1024 * 1024);
+        transaction.commit().unwrap();
+    }
+
+    #[test]
     fn a_database_with_a_second_link_is_refused() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("data.db");

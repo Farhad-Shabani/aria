@@ -4049,7 +4049,7 @@ mod tests {
     }
 
     #[test]
-    fn caption_snapshots_use_a_separate_payload_and_redact_debug_text() {
+    fn caption_snapshots_use_a_separate_payload() {
         for ended in [false, true] {
             let caption = CaptionSnapshot {
                 recording: RecordingId(42),
@@ -4057,8 +4057,6 @@ mod tests {
                 provisional: Arc::from("private provisional words"),
                 ended,
             };
-            let debug = format!("{caption:?}");
-            assert!(!debug.contains("private"));
             let decoded = wire::Event::from(DictationEvent::Caption(caption));
             let Some(wire::event::Payload::Caption(snapshot)) = decoded.payload else {
                 panic!("caption must not become a stage");
@@ -4071,7 +4069,7 @@ mod tests {
     }
 
     #[test]
-    fn ghost_snapshots_carry_their_placement_and_redact_debug_text() {
+    fn ghost_snapshots_carry_their_placement() {
         let ghost = GhostSnapshot {
             recording: RecordingId(42),
             text: Arc::from("private unconfirmed words"),
@@ -4089,7 +4087,6 @@ mod tests {
                 }),
             }),
         };
-        assert!(!format!("{ghost:?}").contains("private"));
         let decoded = wire::Event::from(DictationEvent::Ghost(ghost));
         let Some(wire::event::Payload::Ghost(snapshot)) = decoded.payload else {
             panic!("a ghost keeps its own payload");

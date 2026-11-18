@@ -394,6 +394,19 @@ mod tests {
     }
 
     #[test]
+    fn a_timeout_is_valid_above_zero_up_to_the_maximum() {
+        assert!(matches!(
+            validate_timeout(Duration::ZERO),
+            Err(DeliveryError::InvalidTimeout { .. })
+        ));
+        assert!(validate_timeout(MAX_DELIVERY_TIMEOUT).is_ok());
+        assert!(matches!(
+            validate_timeout(MAX_DELIVERY_TIMEOUT + Duration::from_nanos(1)),
+            Err(DeliveryError::InvalidTimeout { .. })
+        ));
+    }
+
+    #[test]
     fn only_settings_chosen_for_another_app_refuse_delivery() {
         let anywhere = TargetPolicy::default();
         assert!(anywhere.confirm(None).is_ok());

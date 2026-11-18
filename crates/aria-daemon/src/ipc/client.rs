@@ -1133,19 +1133,12 @@ mod tests {
     }
 
     #[test]
-    fn an_rpc_failure_reads_as_its_message_without_its_code() {
+    fn an_rpc_error_displays_its_failure_unchanged() {
         let named = ClientError::Rpc(RpcFailure::new(
             RpcErrorCode::DeliveryTargetChanged,
             "the window changed".to_owned(),
         ));
-        let bare = ClientError::Rpc(RpcFailure::new(
-            RpcErrorCode::HistoryUnavailable,
-            String::new(),
-        ));
 
         assert_eq!(named.to_string(), "the window changed");
-        assert_eq!(bare.to_string(), "history unavailable");
-        let newer = ClientError::Rpc(RpcFailure::new(RpcErrorCode::Unknown(42), String::new()));
-        assert_eq!(newer.to_string(), "unknown (42)");
     }
 }

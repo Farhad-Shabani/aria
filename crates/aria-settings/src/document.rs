@@ -2259,6 +2259,32 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn the_cleanup_target_is_built_from_its_model_and_the_provider() {
+        assert!(load("").settings.choices().cleanup.is_none());
+        let llm = "[dictation.cleanup.llm]\nmodel = \"local-model\"\n\
+                   [provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n";
+        assert_eq!(
+            load(llm).settings.choices().cleanup,
+            Some(
+                LlmCleanupTarget::new(
+                    LocalProvider::new("http://127.0.0.1:8080/v1/chat/completions").unwrap(),
+                    "local-model"
+                )
+                .unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn an_engine_switch_ignores_the_other_engines_files() {
+        let loaded = load(
+            "[tts]\nbackend = \"qwen\"\n[tts.kokoro]\nvoices = \"~/models/kokoro/voices.bin\"\n",
+        );
+
+        assert_eq!(loaded.settings.choices().tts, TtsEngine::Qwen);
+    }
+
+    #[test]
     fn a_fault_in_a_setting_keeps_its_line_and_column() {
         let prompt = "name = \"P\"\nkind = \"rewrite\"\nfile = \"/p.md\"\n";
         for (text, key, line, column) in [

@@ -297,4 +297,18 @@ mod tests {
         assert_eq!(failure.message, format!("{key} does not accept that value"));
         assert!(!failure.message.contains("private"));
     }
+
+    #[test]
+    fn a_failure_reads_as_its_message_or_else_its_code() {
+        let named = RpcFailure::new(
+            RpcErrorCode::DeliveryTargetChanged,
+            "the window changed".to_owned(),
+        );
+        let bare = RpcFailure::new(RpcErrorCode::HistoryUnavailable, String::new());
+        let newer = RpcFailure::new(RpcErrorCode::Unknown(42), String::new());
+
+        assert_eq!(named.to_string(), "the window changed");
+        assert_eq!(bare.to_string(), "history unavailable");
+        assert_eq!(newer.to_string(), "unknown (42)");
+    }
 }
