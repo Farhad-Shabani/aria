@@ -244,6 +244,7 @@ version = "0.10.0"
 dependencies = [
  "aria-kit",
  "aria-speaker",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 
