@@ -21,14 +21,12 @@ pub mod vocabulary;
 use aria_harness::artifact::{Provenance, fingerprint, fingerprint_value, write_json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
 use aria_kit::audio::{
-    AudioCapture, CaptureError, Inputs, Recording, RecordingMode, RecordingReader, ReplayPace,
-    ResampleError, StopSignal, WavError, WavReplayCapture, read_wav,
+    AudioCapture, Inputs, RecordingMode, RecordingReader, ReplayPace, StopSignal, WavReplayCapture,
 };
 use aria_kit::primitives::error_chain;
 use aria_voice::stt::{Language, LanguageCode, TranscriptionError};
@@ -39,6 +37,7 @@ pub use normalize::words;
 pub use record::RecordError;
 pub use score::{Alignment, reference_matches, word_errors};
 
+use crate::replay::ReplayError;
 use backends::{Loaded, Selection};
 use conditions::{Conditions, Replay};
 use corpus::{Corpus, Utterance};
@@ -46,6 +45,9 @@ use record::{Descriptor, Preview, Record, RecordWriter, Segment};
 
 /// Longer than any single utterance a read-speech corpus holds.
 const MAXIMUM_UTTERANCE: Duration = Duration::from_secs(120);
+/// Where every timing starts, and how realtime replay hands over audio. Runs
+/// that disagree time different things, so they do not compare.
+const TIMING_ORIGIN: &str = "transcription-start-after-capture-setup; replay-chunk-at-its-end";
 
 pub use aria_voice::stt::Cadence;
 
@@ -210,7 +212,7 @@ pub fn run(request: &Request) -> Result<Report, BenchError> {
         cases,
         engines,
         language: language.as_str().to_owned(),
-        timing_origin: "transcription-start-after-capture-setup".to_owned(),
+        timing_origin: TIMING_ORIGIN.to_owned(),
         passes: request.passes,
         provisional: request.provisional,
         rows: 0,
@@ -263,7 +265,7 @@ fn measure(
     writer: &mut RecordWriter,
 ) -> Result<Summary, BenchError> {
     let descriptor = &selection.descriptor;
-    let mut loaded = selection.load().map_err(|source| BenchError::Load {
+    let loaded = selection.load().map_err(|source| BenchError::Load {
         backend: descriptor.name,
         source,
     })?;
@@ -279,7 +281,7 @@ fn measure(
                 index + 1,
                 utterance.id
             );
-            let heard = hear(&mut loaded, language, utterance, spool_dir, conditions);
+            let heard = hear(&loaded, language, utterance, spool_dir, conditions);
             let record = Record::score(
                 &heard,
                 utterance,
@@ -328,7 +330,7 @@ impl Heard {
 
 /// Replays one utterance through the backend and times the attempt.
 fn hear(
-    loaded: &mut Loaded,
+    loaded: &Loaded,
     language: &Language,
     utterance: &Utterance,
     spool_dir: &Path,
@@ -340,22 +342,18 @@ fn hear(
     // clock: one stride per finished decode. --realtime uses the wall clock
     // instead. A whole decode reads the recording once, so pacing it would
     // only slow the sweep.
-    let (replayed, advance) = match conditions.replay {
-        Replay::Stepped { stride_samples } => {
-            let (advance, gate) = mpsc::channel();
-            (
-                stepped_replay(&utterance.audio, stride_samples, gate),
-                Some(advance),
-            )
-        }
-        Replay::Realtime => (wav_replay(utterance, spool_dir, ReplayPace::Realtime), None),
-        Replay::Immediate => (
-            wav_replay(utterance, spool_dir, ReplayPace::Immediate),
-            None,
-        ),
+    let replayed = match conditions.replay {
+        Replay::Stepped { stride_samples } => loaded
+            .step
+            .replay(&utterance.audio, MAXIMUM_UTTERANCE, stride_samples)
+            .map(|(recording, armed)| (recording, Some(armed))),
+        Replay::Realtime => wav_replay(utterance, spool_dir, ReplayPace::Realtime)
+            .map(|recording| (recording, None)),
+        Replay::Immediate => wav_replay(utterance, spool_dir, ReplayPace::Immediate)
+            .map(|recording| (recording, None)),
     };
-    let mut recording = match replayed {
-        Ok(recording) => recording,
+    let (mut recording, _armed) = match replayed {
+        Ok(replayed) => replayed,
         Err(failure) => {
             // The error names the corpus path and the user running it. Keep
             // those out of the results file — log them instead.
@@ -364,7 +362,7 @@ fn hear(
         }
     };
 
-    let attempt = loaded.attempt(advance);
+    let attempt = loaded.attempt();
     let started = Instant::now();
     let mut segments = Vec::new();
     let mut previews = Vec::new();
@@ -377,7 +375,6 @@ fn hear(
     );
     let decode_ms = attempt.decode_ms();
     let decode_calls = attempt.decode_calls();
-    drop(attempt);
     let transcribe_ms = started.elapsed().as_millis();
     // Sampled after the attempt: before then, realtime replay has not
     // delivered all the audio.
@@ -416,54 +413,9 @@ fn wav_replay(
     )?)
 }
 
-/// A recording that releases one stride of audio per finished decode: the
-/// first stride is pushed up front so the opening fill returns, then each
-/// permit from `Timed` releases the next.
-///
-/// The feeder finishes the recording right after the last batch, without
-/// waiting for another permit — the decode covering that batch is the one
-/// that would send it, and its `fill_through` only returns once the
-/// recording has ended. Dropping the sender ends the feeder early.
-fn stepped_replay(
-    audio: &Path,
-    stride: usize,
-    gate: mpsc::Receiver<()>,
-) -> Result<RecordingReader, ReplayError> {
-    let clip = read_wav(audio)?;
-    // The WAV replay's limit, checked before resampling an oversized file.
-    if clip.duration() > MAXIMUM_UTTERANCE {
-        return Err(WavError::TooLong {
-            path: audio.to_path_buf(),
-            maximum_duration: MAXIMUM_UTTERANCE,
-        }
-        .into());
-    }
-    let samples = clip.into_canonical()?.into_samples();
-
-    let (recording, mut push) = Recording::open();
-    std::thread::spawn(move || {
-        let mut batches = samples.chunks(stride);
-        if let Some(first) = batches.next() {
-            push.push(first);
-        }
-        for batch in batches {
-            if gate.recv().is_err() {
-                break;
-            }
-            push.push(batch);
-        }
-        push.finish();
-    });
-    Ok(recording)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aria_kit::audio::canonical_fixture;
-
-    const FIXTURE_SAMPLES: u64 = 16_000;
-    const STRIDE: u64 = 1_600;
 
     #[test]
     fn a_missing_baseline_fails_before_corpus_or_model_work() {
@@ -482,51 +434,6 @@ mod tests {
         assert!(matches!(run(&request), Err(BenchError::Analysis(_))));
         assert!(!request.results.unwrap().exists());
     }
-
-    #[test]
-    fn a_stepped_replay_releases_one_stride_per_decode() {
-        let directory = tempfile::tempdir().expect("tempdir must be creatable");
-        let fixture = canonical_fixture(directory.path());
-        let (advance, gate) = mpsc::channel();
-        let mut recording =
-            stepped_replay(&fixture, STRIDE as usize, gate).expect("the fixture replays");
-
-        recording
-            .fill_through(STRIDE)
-            .expect("the first stride is pushed up front");
-        assert_eq!(recording.held_to(), STRIDE);
-
-        for release in 2..=FIXTURE_SAMPLES / STRIDE {
-            advance.send(()).expect("the feeder is waiting on the gate");
-            recording
-                .fill_through(release * STRIDE)
-                .expect("one permit releases exactly one stride");
-            assert_eq!(recording.held_to(), release * STRIDE);
-        }
-        recording.fill().expect("the last batch ends the recording");
-        assert!(
-            recording.reached_end(),
-            "no further permit is needed to finish"
-        );
-        assert_eq!(recording.held_to(), FIXTURE_SAMPLES);
-    }
-
-    #[test]
-    fn dropping_the_gate_finishes_the_recording() {
-        let directory = tempfile::tempdir().expect("tempdir must be creatable");
-        let fixture = canonical_fixture(directory.path());
-        let (advance, gate) = mpsc::channel();
-        let mut recording =
-            stepped_replay(&fixture, STRIDE as usize, gate).expect("the fixture replays");
-
-        drop(advance);
-
-        recording
-            .fill()
-            .expect("the feeder finishes on a closed gate");
-        assert!(recording.reached_end(), "an abandoned replay cannot hang");
-        assert_eq!(recording.held_to(), STRIDE);
-    }
 }
 
 /// Counted with the scorer's own word split, so the header and the rates share
@@ -537,16 +444,6 @@ fn reference_words(corpus: &Corpus) -> usize {
         .iter()
         .map(|utterance| normalize::words(&utterance.reference).len())
         .sum()
-}
-
-#[derive(Debug, thiserror::Error)]
-enum ReplayError {
-    #[error(transparent)]
-    Capture(#[from] CaptureError),
-    #[error(transparent)]
-    Wav(#[from] WavError),
-    #[error(transparent)]
-    Resample(#[from] ResampleError),
 }
 
 #[derive(Debug, thiserror::Error)]

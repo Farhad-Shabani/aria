@@ -1,22 +1,52 @@
-//! The system transcription stack replayed offline: a WAV heard in realtime through
+//! The system transcription stack replayed offline: a WAV heard through
 //! streaming transcription, the speech map, the speaker tracker and the gate a
-//! system transcription keeps its words by. Settled labels come afterwards, from
-//! the voice track, as they do in system transcription.
+//! system transcription keeps its words by. Settled labels come afterwards,
+//! from the voice track, as they do in system transcription.
 
 use std::path::Path;
 use std::time::Duration;
 
-use aria_kit::audio::{
-    AudioCapture, Inputs, RecordingMode, ReplayPace, StopSignal, WavReplayCapture,
-};
 use aria_kit::speaker::{Admission, Decision, Gate, Timeline, TurnFeed};
 use aria_kit::transcription::next_heard;
 use aria_kit::voice_activity::{SileroVad, SpeechDetector};
 use aria_speaker::wespeaker::WeSpeaker;
 use aria_voice::speaker::{Diarizer, Label, VoiceprintTracker};
-use aria_voice::stt::{Language, Recognizer, Streaming, Transcription, TranscriptionError};
+use aria_voice::stt::{
+    Language, Recognizer, Stream, Streaming, StreamingEngine, Transcription, TranscriptionError,
+};
 
 use crate::diarize::BenchError;
+use crate::replay::{Step, Stepped};
+
+/// Streaming transcription whose finished decodes release the replay's
+/// strides.
+pub(crate) struct SteppedTranscription<T> {
+    transcription: Transcription<Stepped<T>, Streaming>,
+    step: Step,
+    stride: usize,
+}
+
+impl<T: StreamingEngine> SteppedTranscription<T> {
+    pub(crate) fn new(engine: T) -> Result<Self, BenchError> {
+        let stride = stride(T::STREAM).ok_or(BenchError::NativeStream)?;
+        let step = Step::default();
+        Ok(Self {
+            transcription: Transcription::stream(T::STREAM, Stepped::new(engine, step.clone())),
+            step,
+            stride,
+        })
+    }
+}
+
+/// The stride a stepped replay releases per decode. `None` for an engine that
+/// streams natively: its chunk is known only once a stream opens, and a
+/// stride shorter than it stalls the replay.
+fn stride(stream: Stream) -> Option<usize> {
+    match stream {
+        Stream::Agreement(cadence) => Some(cadence.stride_samples()),
+        Stream::Native => None,
+    }
+}
 
 /// One segment the gate kept.
 pub(crate) struct Segment {
@@ -57,24 +87,18 @@ pub(crate) struct Dropped {
 /// The system transcription's loop, replayed from a WAV. With a `diarizer`, a
 /// tracker labels voices live, as system transcription's does.
 pub(crate) fn hear<T: Recognizer>(
-    transcription: &Transcription<T, Streaming>,
+    stepped: &SteppedTranscription<T>,
     wav: &Path,
-    spool_dir: &Path,
     scenario: &'static str,
-    pace: ReplayPace,
     longest: Duration,
     diarizer: Option<&mut Diarizer<WeSpeaker>>,
 ) -> Result<(Vec<Segment>, Dropped), BenchError> {
-    let replay = |source| BenchError::Replay { scenario, source };
+    let (mut recording, _armed) = stepped
+        .step
+        .replay(wav, longest, stepped.stride)
+        .map_err(|source| BenchError::Replay { scenario, source })?;
+    let transcription = &stepped.transcription;
     let transcribing = |source| BenchError::Transcription { scenario, source };
-    let mut recording = WavReplayCapture::new(spool_dir, longest, wav, pace)
-        .map_err(replay)?
-        .start(
-            RecordingMode::UntilStopped,
-            Inputs::Local,
-            StopSignal::never(),
-        )
-        .map_err(replay)?;
     let from = recording.held_from();
     let vad = SileroVad::load().map_err(BenchError::SpeechGate)?;
     let speech = SpeechDetector::new(vad, from);
@@ -133,5 +157,22 @@ impl Kept {
                 None => self.dropped.segments += 1,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aria_voice::stt::Cadence;
+
+    use super::*;
+
+    #[test]
+    fn only_an_agreement_stream_has_a_stride_to_step() {
+        let cadence = Cadence::from_millis(500, 20_000);
+        assert_eq!(
+            stride(Stream::Agreement(cadence)),
+            Some(cadence.stride_samples())
+        );
+        assert_eq!(stride(Stream::Native), None);
     }
 }

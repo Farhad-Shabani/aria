@@ -31,12 +31,7 @@ impl Rates {
 
 /// The rates a gate at `threshold` would have had on these trials.
 pub fn rates_at(scored: &[Scored], threshold: f32) -> Rates {
-    let (same, different): (Vec<_>, Vec<_>) = scored.iter().partition(|trial| trial.same_speaker);
-    Rates {
-        threshold,
-        false_accept: share(&different, |trial| trial.score >= threshold),
-        false_reject: share(&same, |trial| trial.score < threshold),
-    }
+    Sorted::of(scored).rates(threshold)
 }
 
 /// The threshold where the two errors come closest to meeting.
@@ -44,13 +39,52 @@ pub fn rates_at(scored: &[Scored], threshold: f32) -> Rates {
 /// Every observed score is a candidate: between two of them no trial changes
 /// side, so nothing in the gaps can score better.
 pub fn equal_error_rate(scored: &[Scored]) -> Option<Rates> {
+    let sorted = Sorted::of(scored);
     scored
         .iter()
-        .map(|trial| rates_at(scored, trial.score))
+        .map(|trial| sorted.rates(trial.score))
         .min_by(|a, b| {
             let gap = |rates: &Rates| (rates.false_accept - rates.false_reject).abs();
             gap(a).total_cmp(&gap(b))
         })
+}
+
+/// Each side's scores in order, so the rates at any threshold are two binary
+/// searches rather than a pass over every trial.
+struct Sorted {
+    same: Vec<f32>,
+    different: Vec<f32>,
+}
+
+impl Sorted {
+    fn of(scored: &[Scored]) -> Self {
+        let side = |same_speaker: bool| {
+            let mut scores: Vec<f32> = scored
+                .iter()
+                .filter(|trial| trial.same_speaker == same_speaker)
+                .map(|trial| trial.score)
+                .collect();
+            scores.sort_by(f32::total_cmp);
+            scores
+        };
+        Self {
+            same: side(true),
+            different: side(false),
+        }
+    }
+
+    /// A gate admits a score at or above its threshold.
+    fn rates(&self, threshold: f32) -> Rates {
+        let below = |scores: &[f32]| scores.partition_point(|&score| score < threshold);
+        Rates {
+            threshold,
+            false_accept: share(
+                self.different.len() - below(&self.different),
+                self.different.len(),
+            ),
+            false_reject: share(below(&self.same), self.same.len()),
+        }
+    }
 }
 
 /// The lowest threshold that accepts at most `rate` of the different-speaker
@@ -80,12 +114,11 @@ pub fn threshold_for_false_reject(scored: &[Scored], rate: f64) -> Option<f32> {
     same.get(rejected).copied()
 }
 
-/// A fraction of `trials`, or zero when there are none to judge.
-fn share(trials: &[&Scored], wrong: impl Fn(&Scored) -> bool) -> f64 {
-    if trials.is_empty() {
+fn share(wrong: usize, trials: usize) -> f64 {
+    if trials == 0 {
         return 0.0;
     }
-    trials.iter().filter(|trial| wrong(trial)).count() as f64 / trials.len() as f64
+    wrong as f64 / trials as f64
 }
 
 /// Everything one run measured, ready to print.

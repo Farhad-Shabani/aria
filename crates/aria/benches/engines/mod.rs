@@ -192,7 +192,7 @@ impl Options {
         Ok(())
     }
 
-    pub(crate) fn offline(&self, kind: &str, metric: &str) -> anyhow::Result<bool> {
+    pub(crate) fn offline(&self, kind: &str) -> anyhow::Result<bool> {
         let path = inputs::path_input("ARIA_BENCH_COMPARE")?;
         ensure!(
             std::env::var_os("ARIA_BENCH_COMPARE").is_none() || path.is_some(),
@@ -210,22 +210,7 @@ impl Options {
             current.kind == kind,
             "candidate has the wrong benchmark kind"
         );
-        self.compare(&current, metric)?;
-        if current
-            .entries
-            .iter()
-            .any(|entry| entry.configuration.contains("rpc-delivery-v2"))
-        {
-            self.compare(&current, "request->final-receipt")?;
-        }
-        if current.kind == "dictation-latency"
-            && current.entries.iter().any(|entry| {
-                entry.configuration.contains("rpc-delivery-v1")
-                    || entry.configuration.contains("rpc-delivery-v2")
-            })
-        {
-            self.compare(&current, "capture->delivered")?;
-        }
+        self.compare(&current)?;
         Ok(true)
     }
 
@@ -243,17 +228,57 @@ impl Options {
         Ok(())
     }
 
-    pub(crate) fn compare(&self, current: &Run, metric: &str) -> anyhow::Result<()> {
+    /// Compares every gated metric before failing, so one regression does
+    /// not hide the verdicts after it.
+    pub(crate) fn compare(&self, current: &Run) -> anyhow::Result<()> {
         let Some(recorded) = &self.baseline else {
             return Ok(());
         };
-        compare(current, recorded, metric, self.margin)
+        let failures: Vec<String> = gated_metrics(current)?
+            .iter()
+            .filter_map(|metric| {
+                compare(current, recorded, metric, self.margin)
+                    .err()
+                    .map(|error| format!("{metric}: {error:#}"))
+            })
+            .collect();
+        ensure!(failures.is_empty(), "{}", failures.join("; "));
+        Ok(())
     }
+}
+
+const STREAMING: &str = "; insert; streaming; manual;";
+pub(crate) const RELEASE_TO_DELIVERED: &str = "release->delivered";
+pub(crate) const FIRST_FINALIZED: &str = "first-finalized";
+pub(crate) const CAPTURE_TO_DELIVERED: &str = "capture->delivered";
+pub(crate) const REQUEST_TO_FIRST_RECEIPT: &str = "request->first-receipt";
+pub(crate) const REQUEST_TO_FINAL_RECEIPT: &str = "request->final-receipt";
+
+/// The metrics a comparison gates on. `release->delivered` is the daemon's
+/// wait after speech ends. The client's series add what reaches the client
+/// or the target app after that, but they span the fixture's playback, so a
+/// margin relative to their median is loose on them; the tail stays tight.
+fn gated_metrics(run: &Run) -> anyhow::Result<&'static [&'static str]> {
+    let streaming = run
+        .entries
+        .iter()
+        .any(|entry| entry.configuration.contains(STREAMING));
+    Ok(match run.kind.as_str() {
+        "first-text" => &[FIRST_FINALIZED],
+        "dictation-latency" if streaming => &[
+            RELEASE_TO_DELIVERED,
+            REQUEST_TO_FIRST_RECEIPT,
+            REQUEST_TO_FINAL_RECEIPT,
+            CAPTURE_TO_DELIVERED,
+        ],
+        "dictation-latency" => &[RELEASE_TO_DELIVERED, CAPTURE_TO_DELIVERED],
+        _ => anyhow::bail!("unknown benchmark kind"),
+    })
 }
 
 /// Bumped when a run's fields change: a baseline of another schema cannot
 /// be compared.
-const SCHEMA: u32 = 2;
+const SCHEMA: u32 = 3;
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Run {
@@ -414,7 +439,7 @@ fn validate(run: &Run) -> anyhow::Result<()> {
             "{} has an unresolved model identity",
             entry.backend
         );
-        let streaming = entry.configuration.contains("; insert; streaming; manual;");
+        let streaming = entry.configuration.contains(STREAMING);
         let receipt_evidence = streaming && entry.configuration.contains("rpc-delivery-v2");
         let metrics: &[&str] = match run.kind.as_str() {
             "dictation-latency" if receipt_evidence => &[
@@ -423,8 +448,9 @@ fn validate(run: &Run) -> anyhow::Result<()> {
                 "total (daemon)",
                 "client wall",
                 "capture->first-segment",
-                "request->first-receipt",
-                "request->final-receipt",
+                REQUEST_TO_FIRST_RECEIPT,
+                REQUEST_TO_FINAL_RECEIPT,
+                RELEASE_TO_DELIVERED,
             ],
             "dictation-latency" if streaming => &[
                 "recording",
@@ -432,14 +458,15 @@ fn validate(run: &Run) -> anyhow::Result<()> {
                 "total (daemon)",
                 "client wall",
                 "capture->first-segment",
+                RELEASE_TO_DELIVERED,
             ],
-            "first-text" => &["first-finalized"],
+            "first-text" => &[FIRST_FINALIZED],
             "dictation-latency" => &[
                 "recording",
                 "transcription",
                 "delivery",
                 "total (daemon)",
-                "release->delivered",
+                RELEASE_TO_DELIVERED,
                 "client wall",
             ],
             _ => anyhow::bail!("unknown benchmark kind"),
@@ -470,14 +497,14 @@ fn validate(run: &Run) -> anyhow::Result<()> {
             ensure!(
                 entry
                     .samples_ms
-                    .get("capture->delivered")
+                    .get(CAPTURE_TO_DELIVERED)
                     .is_some_and(|samples| samples.len() == run.runs as usize),
                 "incomplete capture-to-delivered evidence"
             );
             ensure!(
                 entry
                     .warmup_ms
-                    .get("capture->delivered")
+                    .get(CAPTURE_TO_DELIVERED)
                     .map_or(0, Vec::len)
                     == run.warmups as usize,
                 "incomplete capture-to-delivered warmup evidence"
@@ -500,8 +527,8 @@ fn validate(run: &Run) -> anyhow::Result<()> {
                     ensure!(trial > previous_trial, "target trials are out of order");
                     previous_trial = trial;
                     for (metric, field) in [
-                        ("request->first-receipt", "request_to_first_receipt_ms"),
-                        ("request->final-receipt", "request_to_final_receipt_ms"),
+                        (REQUEST_TO_FIRST_RECEIPT, "request_to_first_receipt_ms"),
+                        (REQUEST_TO_FINAL_RECEIPT, "request_to_final_receipt_ms"),
                     ] {
                         let sample = if index < run.warmups as usize {
                             entry.warmup_ms[metric][index]
@@ -536,8 +563,12 @@ fn validate(run: &Run) -> anyhow::Result<()> {
                             .checked_add(text_bytes(&segment["text_fingerprint"])?)
                             .context("segment byte count overflow")
                     })?;
+                    // The daemon spaces a segment from the one before with
+                    // one space, or none where it joins, as a deferred `.`.
+                    let gaps = segments.len() as u64 - 1;
                     ensure!(
-                        segment_bytes.checked_add(segments.len() as u64 - 1) == Some(result_bytes),
+                        (segment_bytes..=segment_bytes.saturating_add(gaps))
+                            .contains(&result_bytes),
                         "corrected segment reconstruction differs from result"
                     );
                 }
@@ -831,6 +862,7 @@ mod tests {
             "client wall",
             "capture->delivered",
             "capture->first-segment",
+            "release->delivered",
         ] {
             entry.samples_ms.insert(metric.into(), vec![100; 30]);
             entry.warmup_ms.insert(metric.into(), vec![100]);
@@ -868,11 +900,27 @@ mod tests {
     }
 
     #[test]
+    fn streaming_gates_the_wait_after_speech_and_the_receipts() {
+        assert_eq!(
+            gated_metrics(&streaming()).unwrap(),
+            [
+                "release->delivered",
+                "request->first-receipt",
+                "request->final-receipt",
+                "capture->delivered",
+            ]
+        );
+    }
+
+    #[test]
     fn streaming_comparison_requires_first_segments_and_target_readback() {
         let baseline = streaming();
         assert!(compare(&streaming(), &baseline, "capture->first-segment", 0.05).is_ok());
         assert!(compare(&streaming(), &baseline, "capture->delivered", 0.05).is_ok());
-        assert!(compare(&streaming(), &baseline, "release->delivered", 0.05).is_err());
+        assert!(compare(&streaming(), &baseline, "release->delivered", 0.05).is_ok());
+        let mut untimed = streaming();
+        untimed.entries[0].samples_ms.remove("release->delivered");
+        assert!(validate(&untimed).is_err());
         for field in [
             "capture_to_first_segment_ms",
             "target_appended_text_fingerprint",
@@ -902,6 +950,24 @@ mod tests {
             .samples_ms
             .remove("capture->first-segment");
         assert!(validate(&candidate).is_err());
+    }
+
+    #[test]
+    fn streamed_segments_may_join_without_a_space() {
+        fn ending(result: &str) -> Run {
+            let mut run = streaming();
+            for row in &mut run.entries[0].delivery_traces {
+                row["text_fingerprint"] = serde_json::json!(text_fingerprint(result).unwrap());
+                row["target_appended_text_fingerprint"] = row["text_fingerprint"].clone();
+                row["corrected_segments"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!({"text_fingerprint": text_fingerprint(".").unwrap()}));
+            }
+            run
+        }
+        assert!(validate(&ending("open aria now.")).is_ok());
+        assert!(validate(&ending("open aria")).is_err());
     }
 
     #[test]
@@ -1043,11 +1109,11 @@ mod tests {
     #[test]
     fn repetition_count_does_not_disable_comparison() {
         let baseline = run(&[100; 10]);
-        assert!(compare(&run(&[90; 3]), &baseline, "first-finalized", 0.0).is_ok());
-        assert!(compare(&run(&[110; 3]), &baseline, "first-finalized", 0.0).is_err());
-        assert!(compare(&run(&[105; 3]), &baseline, "first-finalized", 0.1).is_ok());
-        assert!(compare(&run(&[120; 3]), &baseline, "first-finalized", 0.1).is_err());
-        assert!(compare(&run(&[90]), &baseline, "first-finalized", 0.0).is_err());
+        assert!(compare(&run(&[90; 6]), &baseline, "first-finalized", 0.0).is_ok());
+        assert!(compare(&run(&[110; 6]), &baseline, "first-finalized", 0.0).is_err());
+        assert!(compare(&run(&[105; 6]), &baseline, "first-finalized", 0.1).is_ok());
+        assert!(compare(&run(&[120; 6]), &baseline, "first-finalized", 0.1).is_err());
+        assert!(compare(&run(&[90; 5]), &baseline, "first-finalized", 0.0).is_err());
     }
 
     #[test]

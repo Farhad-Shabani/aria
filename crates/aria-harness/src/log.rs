@@ -29,14 +29,24 @@ pub fn stage_samples(log: &str, stage: &str) -> Vec<u64> {
         .collect()
 }
 
-/// `after_recording_ms` values from completed-delivery lines: how long the
-/// speaker waited after they stopped talking.
+/// How long the speaker waited after they stopped talking: per finished
+/// execution, the `after_recording_ms` of its last completed stage that logs
+/// one.
+/// Complete delivery ends on its delivery stage; streaming has typed every
+/// segment by the end of transcription and logs no delivery stage.
 pub fn tail_samples(log: &str) -> Vec<u64> {
-    let stage_field = "stage=\"delivery\"";
-    log.lines()
-        .filter(|line| line.contains(STAGE_COMPLETED) && line.contains(stage_field))
-        .filter_map(|line| field(line, AFTER_RECORDING_FIELD))
-        .collect()
+    let mut tails = Vec::new();
+    let mut last = None;
+    for line in log.lines() {
+        if line.contains(STAGE_COMPLETED) {
+            if let Some(tail) = field(line, AFTER_RECORDING_FIELD) {
+                last = Some(tail);
+            }
+        } else if line.contains(EXECUTION_FINISHED) {
+            tails.extend(last.take());
+        }
+    }
+    tails
 }
 
 /// `elapsed_ms` values from finished-execution lines.
@@ -69,4 +79,23 @@ fn field(line: &str, name: &str) -> Option<u64> {
     let (_, after) = line.split_once(name)?;
     let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tail_is_each_executions_last_completed_stage() {
+        let log = "\
+INFO dictation stage completed stage=\"recording\" status=\"completed\" elapsed_ms=9000
+INFO dictation stage completed stage=\"transcription\" status=\"completed\" elapsed_ms=9300 after_recording_ms=300
+INFO dictation execution finished status=\"completed\" elapsed_ms=9310
+INFO dictation stage completed stage=\"transcription\" status=\"completed\" elapsed_ms=9200 after_recording_ms=150
+INFO dictation stage completed stage=\"delivery\" status=\"completed\" elapsed_ms=40 after_recording_ms=190
+INFO dictation execution finished status=\"completed\" elapsed_ms=9250
+INFO dictation execution finished status=\"failed\" elapsed_ms=10
+";
+        assert_eq!(tail_samples(log), [300, 190]);
+    }
 }

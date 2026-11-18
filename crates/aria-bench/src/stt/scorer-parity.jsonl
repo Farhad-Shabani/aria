@@ -18,3 +18,4 @@
 {"reference": "a a a", "hypothesis": "a a a a", "substitutions": 0, "deletions": 0, "insertions": 1}
 {"reference": "a a a a", "hypothesis": "a a a", "substitutions": 0, "deletions": 1, "insertions": 0}
 {"reference": "22 dollars", "hypothesis": "twenty two dollars", "substitutions": 1, "deletions": 0, "insertions": 1}
+{"reference": "a b c d e", "hypothesis": "d e x y z", "substitutions": 5, "deletions": 0, "insertions": 0}

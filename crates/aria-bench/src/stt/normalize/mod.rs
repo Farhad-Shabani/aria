@@ -181,7 +181,9 @@ mod tests {
     /// Cases and their expected output, produced by running Whisper's
     /// `EnglishTextNormalizer` over the inputs. Hand-picked cases cover each
     /// branch by name. The rest are sampled from ten thousand random word
-    /// sequences run through both normalizers.
+    /// sequences run through both normalizers. Cases with a `1` bound to a
+    /// symbol follow Whisper's later rule that spells out only a standalone
+    /// `1`, so older releases of the normalizer disagree on them.
     const NORMALIZER_CASES: &str = include_str!("normalizer-parity.jsonl");
 
     #[derive(Deserialize)]

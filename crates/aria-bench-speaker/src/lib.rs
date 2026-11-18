@@ -12,7 +12,7 @@ pub use report::{
 };
 pub use trials::{Trial, read_trials};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use aria_kit::audio::{WavError, read_wav};
@@ -36,7 +36,8 @@ pub struct Consistency {
     pub score: f32,
 }
 
-/// Every trial scored, plus each multi-sample trial's enrollment consistency.
+/// Every trial scored, plus each multi-sample enrollment's consistency, once
+/// per distinct enrollment however many trials reuse it.
 pub struct Measured {
     pub scored: Vec<Scored>,
     pub consistency: Vec<Consistency>,
@@ -52,6 +53,10 @@ pub struct Measured {
 /// file in many trials pays for it once.
 pub fn measure(model: &Path, trials: &[Trial]) -> Result<Measured, VerifyError> {
     let mut engine = WeSpeaker::load(model).map_err(VerifyError::Model)?;
+    measure_with(&mut engine, trials)
+}
+
+fn measure_with<E: Embedder>(engine: &mut E, trials: &[Trial]) -> Result<Measured, VerifyError> {
     let mut embeddings: HashMap<PathBuf, Option<Vec<f32>>> = HashMap::new();
     let mut measured = Measured {
         scored: Vec::new(),
@@ -59,21 +64,22 @@ pub fn measure(model: &Path, trials: &[Trial]) -> Result<Measured, VerifyError> 
         unusable: 0,
     };
 
+    let mut enrollments: HashSet<&[PathBuf]> = HashSet::new();
     for trial in trials {
         let mut samples = Vec::new();
         for recording in &trial.enrollment {
-            match embedding(&mut engine, &mut embeddings, recording)? {
+            match embedding(engine, &mut embeddings, recording)? {
                 Some(embedding) => samples.push(embedding),
                 None => break,
             }
         }
-        let heard = embedding(&mut engine, &mut embeddings, &trial.test)?;
+        let heard = embedding(engine, &mut embeddings, &trial.test)?;
         let (Some(heard), true) = (heard, samples.len() == trial.enrollment.len()) else {
             measured.unusable += 1;
             continue;
         };
 
-        if samples.len() > 1 {
+        if samples.len() > 1 && enrollments.insert(&trial.enrollment) {
             measured.consistency.push(Consistency {
                 samples: samples.len(),
                 score: consistency(&samples),
@@ -97,8 +103,8 @@ pub fn similarity(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-fn embedding(
-    engine: &mut WeSpeaker,
+fn embedding<E: Embedder>(
+    engine: &mut E,
     seen: &mut HashMap<PathBuf, Option<Vec<f32>>>,
     recording: &Path,
 ) -> Result<Option<Vec<f32>>, VerifyError> {
@@ -139,4 +145,47 @@ pub enum VerifyError {
 
     #[error("the speaker model could not be used")]
     Model(#[source] SpeakerError),
+}
+
+#[cfg(test)]
+mod tests {
+    use aria_kit::audio::canonical_fixture;
+
+    use super::*;
+
+    struct OneVoice;
+
+    impl Embedder for OneVoice {
+        fn embed(&mut self, _window: &[f32]) -> Result<Option<Vec<f32>>, SpeakerError> {
+            Ok(Some(vec![1.0, 0.0]))
+        }
+
+        fn dimension(&self) -> usize {
+            2
+        }
+    }
+
+    #[test]
+    fn an_enrollment_reused_across_trials_is_judged_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let recording = |name: &str| {
+            let at = directory.path().join(name);
+            std::fs::create_dir(&at).unwrap();
+            canonical_fixture(&at)
+        };
+        let enrollment = vec![recording("a"), recording("b")];
+        let trials: Vec<Trial> = ["c", "d", "e"]
+            .into_iter()
+            .map(|test| Trial {
+                same_speaker: true,
+                enrollment: enrollment.clone(),
+                test: recording(test),
+            })
+            .collect();
+
+        let measured = measure_with(&mut OneVoice, &trials).unwrap();
+
+        assert_eq!(measured.scored.len(), 3);
+        assert_eq!(measured.consistency.len(), 1);
+    }
 }

@@ -295,6 +295,10 @@ impl Artifact {
                 candidate.engines != baseline.engines,
             ),
             ("language", candidate.language != baseline.language),
+            (
+                "timing origin",
+                candidate.timing_origin != baseline.timing_origin,
+            ),
             ("captions", candidate.provisional != baseline.provisional),
             (
                 "build profile",
@@ -535,7 +539,7 @@ mod tests {
             }],
             passes,
             language: "en".to_owned(),
-            timing_origin: "transcription-start-after-capture-setup".to_owned(),
+            timing_origin: crate::stt::TIMING_ORIGIN.to_owned(),
             provisional: false,
             rows: passes as usize * errors.len(),
             results_sha256: fingerprint(&path).unwrap(),

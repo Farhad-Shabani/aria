@@ -402,10 +402,10 @@ fn spell_out_halves(text: &str) -> String {
 static CURRENCY_AND_CENTS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"([€£$])([0-9]+) (?:and )?¢([0-9]{1,2})\b").expect("the pattern should compile")
 });
+static TOKEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\S+").expect("the pattern should compile"));
 static BARE_CENTS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[€£$]0.([0-9]{1,2})\b").expect("the pattern should compile"));
-static LONE_ONE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b1(s?)\b").expect("the pattern should compile"));
 
 fn finish(text: &str) -> String {
     let combined = CURRENCY_AND_CENTS.replace_all(text, |captures: &Captures<'_>| {
@@ -416,9 +416,21 @@ fn finish(text: &str) -> String {
         let cents: u32 = captures[1].parse().unwrap_or_default();
         format!("¢{cents}")
     });
-    // `1` reads worse than `one` in running text, and both sides of a
-    // comparison get the same treatment.
-    LONE_ONE.replace_all(&extracted, "one$1").into_owned()
+    spell_lone_one(&extracted)
+}
+
+/// `1` reads worse than `one` in running text, and both sides of a comparison
+/// get the same treatment. Only a whole whitespace-delimited `1` or `1s`
+/// counts, as upstream's `(?<!\S)1(s?)(?!\S)`: spelling out the `1` in `$1`
+/// or `1%` would strand the symbol, which is then dropped as lone.
+fn spell_lone_one(text: &str) -> String {
+    TOKEN
+        .replace_all(text, |token: &Captures<'_>| match &token[0] {
+            "1" => "one".to_owned(),
+            "1s" => "ones".to_owned(),
+            other => other.to_owned(),
+        })
+        .into_owned()
 }
 
 #[cfg(test)]
@@ -466,6 +478,13 @@ mod tests {
     fn a_lone_one_stays_a_word() {
         assert_eq!(standardize("one"), "one");
         assert_eq!(standardize("twenty one"), "21");
+    }
+
+    #[test]
+    fn a_one_bound_to_a_symbol_keeps_it() {
+        assert_eq!(standardize("one dollar"), "$1");
+        assert_eq!(standardize("one percent"), "1%");
+        assert_eq!(standardize("three point one"), "3.1");
     }
 
     #[test]

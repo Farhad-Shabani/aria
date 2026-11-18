@@ -61,7 +61,7 @@ pub(crate) struct Cli {
     #[arg(long)]
     baseline: Option<PathBuf>,
 
-    #[arg(long, default_value_t = 0.0, value_parser = nonnegative)]
+    #[arg(long, default_value_t = 0.0, value_parser = fraction)]
     max_wer_increase: f64,
 
     #[arg(long, value_parser = ["whole", "streaming"], help = "Decode whole recordings (default) or stream them; nemotron always streams natively")]
@@ -268,14 +268,23 @@ pub(crate) struct CompareCli {
     results: PathBuf,
     #[arg(long)]
     baseline: Option<PathBuf>,
-    #[arg(long, default_value_t = 0.0, value_parser = nonnegative)]
+    #[arg(long, default_value_t = 0.0, value_parser = fraction)]
     max_wer_increase: f64,
 }
 
+/// A word error rate cap. Insertions can push a rate past 1.
 fn nonnegative(value: &str) -> Result<f64, String> {
     let number: f64 = value.parse().map_err(|_| "expected a number".to_owned())?;
     if !number.is_finite() || number < 0.0 {
         return Err("expected a finite, nonnegative fraction".to_owned());
+    }
+    Ok(number)
+}
+
+fn fraction(value: &str) -> Result<f64, String> {
+    let number: f64 = value.parse().map_err(|_| "expected a number".to_owned())?;
+    if !(0.0..1.0).contains(&number) {
+        return Err("expected a fraction from 0 to below 1: 0.005 is 0.5 points".to_owned());
     }
     Ok(number)
 }
@@ -343,13 +352,14 @@ fn compare_paths(results: &Path, baseline: &Path, margin: f64) -> anyhow::Result
     let comparisons = Artifact::load(results)?.compare(&Artifact::load(baseline)?, margin)?;
     for comparison in &comparisons {
         println!(
-            "{} {:.2}% -> {:.2}%; paired Δ WER 95% CI {:?} percentage points; {}",
+            "{} {:.2}% -> {:.2}%; paired Δ WER 95% CI {:?} percentage points; allowed increase {:.2} points; {}",
             comparison.backend,
             comparison.baseline_wer * 100.0,
             comparison.candidate_wer * 100.0,
             comparison
                 .difference_interval
                 .map(|(lower, upper)| (lower * 100.0, upper * 100.0)),
+            margin * 100.0,
             comparison.decision.label()
         );
         for change in &comparison.changes {
@@ -461,9 +471,14 @@ mod tests {
     fn invalid_cadence_and_thresholds_are_rejected() {
         assert!(parse(&["--cadence", "0/20000"]).cadence().is_err());
         assert!(parse(&["--cadence", "1000/500"]).cadence().is_err());
-        assert!(nonnegative("NaN").is_err());
+        for invalid in ["NaN", "-0.1", "1", "5"] {
+            assert!(fraction(invalid).is_err(), "{invalid}");
+        }
+        for valid in ["0", "0.005", "0.5"] {
+            assert!(fraction(valid).is_ok(), "{valid}");
+        }
+        assert!(nonnegative("1.2").is_ok(), "a cap may sit above 100%");
         assert!(nonnegative("-0.1").is_err());
-        assert!(nonnegative("0").is_ok());
     }
 
     #[test]

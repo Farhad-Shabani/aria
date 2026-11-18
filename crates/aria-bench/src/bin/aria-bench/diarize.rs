@@ -3,7 +3,7 @@
 
 use anyhow::Context;
 use aria_bench::diarize::{
-    Clustering, Grouping, Labeled, Report, Request, Run, Timeline, Tuning, Windowing,
+    ChunkCache, Clustering, Grouping, Labeled, Report, Request, Run, Timeline, Tuning, Windowing,
     label_as_attributed, label_as_shipped, label_by_segmentation, label_by_voice, label_recording,
 };
 use aria_speaker::wespeaker::Config as SpeakerConfig;
@@ -132,6 +132,13 @@ pub(crate) fn run(cli: &Cli) -> anyhow::Result<()> {
         if cli.as_shipped {
             let model = expand(&cli.segmentation_model)?;
             let cache = cli.chunk_cache.as_deref().map(expand).transpose()?;
+            let executable_sha256 = match &cache {
+                Some(_) => Some(
+                    aria_harness::artifact::fingerprint(&std::env::current_exe()?)
+                        .context("fingerprinting this executable for the chunk cache")?,
+                ),
+                None => None,
+            };
             let journal = cli.chunk_log.as_deref().map(expand).transpose()?;
             let run = Run {
                 segmentation: &model,
@@ -141,7 +148,12 @@ pub(crate) fn run(cli: &Cli) -> anyhow::Result<()> {
                     threshold: cli.cluster_threshold,
                     least_voiceprints: cli.min_voiceprints,
                 },
-                cache: cache.as_deref(),
+                cache: cache.as_deref().zip(executable_sha256.as_deref()).map(
+                    |(dir, executable_sha256)| ChunkCache {
+                        dir,
+                        executable_sha256,
+                    },
+                ),
                 journal: journal.as_deref(),
             };
             let heard = match cli.attributed {

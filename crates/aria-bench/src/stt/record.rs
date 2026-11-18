@@ -162,12 +162,15 @@ impl RecordWriter {
         })
     }
 
+    /// Flushed per row, so an interrupted run keeps every finished row.
     pub(super) fn write(&mut self, record: &Record) -> Result<(), RecordError> {
         let row = serde_json::to_string(record).map_err(RecordError::Encode)?;
-        writeln!(self.rows, "{row}").map_err(|source| RecordError::Write {
-            path: self.path.clone(),
-            source,
-        })
+        writeln!(self.rows, "{row}")
+            .and_then(|()| self.rows.flush())
+            .map_err(|source| RecordError::Write {
+                path: self.path.clone(),
+                source,
+            })
     }
 
     /// Flushes explicitly, because a dropped writer swallows the error and a

@@ -16,3 +16,7 @@ aria-kit     = { workspace = true }
 aria-speaker = { workspace = true }
 
 thiserror = { workspace = true }
+
+[dev-dependencies]
+aria-kit = { workspace = true, features = [ "test-support" ] }
+tempfile = { workspace = true }

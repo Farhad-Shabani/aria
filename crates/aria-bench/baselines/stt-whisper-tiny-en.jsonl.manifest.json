@@ -1,14 +1,14 @@
 {
   "schema": 8,
   "provenance": {
-    "run_id": "1792637660887786000-27512",
-    "os": "Darwin 25.6.0",
+    "run_id": "1794930435892588000-86817",
+    "os": "Darwin 27.2.0",
     "arch": "arm64",
     "debug_assertions": false,
-    "executable_sha256": "39376ed328619a8282b3e6181ea0bbbaa62282663571d4d8135a48db665cb3b4"
+    "executable_sha256": "61236bce13a2bd64ceac7ece525999c4665e883a8165445e2c7915a6ec9e8bed"
   },
   "corpus_sha256": "346ac0faa0416af37182a68bbedc595ebe24c5a5adf28134062f9a6d77b3feaf",
-  "scorer_sha256": "827e7bd721265e6c8f1c663c3c755c20eb86920b8ee5078593b0e811dcd6ec44",
+  "scorer_sha256": "97928400d6083180c7bde68b26f844410bcd4a67ccfe595863603a758652338e",
   "cases": {
     "1089-134686-0000": "817f2e14221e40f013b2f4e29456ed4374e0cbaca831be782c8f665b7b9fedcb",
     "1089-134686-0001": "c82b58d6b04570bdef93645ecbdcc124b2ae520c114c45aef2d8fb74e33d8bc9",
@@ -128,9 +128,9 @@
     }
   ],
   "language": "en",
-  "timing_origin": "transcription-start-after-capture-setup",
+  "timing_origin": "transcription-start-after-capture-setup; replay-chunk-at-its-end",
   "passes": 1,
   "provisional": false,
   "rows": 100,
-  "results_sha256": "6f9e55b9e9f4955910c5aabc3f1982d91ef0edde65b65791b0be6ebdcaf3708a"
+  "results_sha256": "873575880bd59c913cb0ef8fcaf6ad229a349fec24eccdd28eca1318abbde8af"
 }

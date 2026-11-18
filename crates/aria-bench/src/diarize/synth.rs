@@ -175,12 +175,13 @@ impl Scenario {
         &self,
         tts: &S,
         directory: &Path,
+        cancel: &CancelToken,
     ) -> Result<PathBuf, BenchError> {
         let scenario = self.name;
         let gap = vec![0.0_f32; canonical_samples(TURN_GAP) as usize];
         let mut conversation: Vec<f32> = gap.clone();
         for turn in &self.turns {
-            let spoken = render(tts, turn).map_err(|error| error.at(scenario))?;
+            let spoken = render(tts, turn, cancel).map_err(|error| error.at(scenario))?;
             conversation.extend(spoken.into_canonical()?.into_samples());
             conversation.extend_from_slice(&gap);
         }
@@ -213,16 +214,18 @@ impl RenderError {
     }
 }
 
-pub(crate) fn render<S: Synthesizer>(tts: &S, turn: &Turn) -> Result<Clip, RenderError> {
+pub(crate) fn render<S: Synthesizer>(
+    tts: &S,
+    turn: &Turn,
+    cancel: &CancelToken,
+) -> Result<Clip, RenderError> {
     let script = |error: ScriptError| RenderError::Script(error);
     let text = SpeechText::new(turn.text).map_err(|error| script(error.into()))?;
     let voice = Voice::new(turn.speaker).map_err(|error| script(error.into()))?;
     let rate = SpeakingRate::standard();
     let (writer, mut speech) = stream(tts.sample_rate());
     std::thread::scope(|scope| {
-        let worker = scope.spawn(|| {
-            tts.synthesize_with(&text, Some(&voice), rate, writer, &CancelToken::never())
-        });
+        let worker = scope.spawn(|| tts.synthesize_with(&text, Some(&voice), rate, writer, cancel));
         let mut samples = Vec::new();
         let mut buffer = vec![0.0_f32; 8_192];
         let ended = loop {
@@ -240,4 +243,54 @@ pub(crate) fn render<S: Synthesizer>(tts: &S, turn: &Turn) -> Result<Clip, Rende
             .map_err(RenderError::Synthesis)?;
         Clip::new(tts.sample_rate(), samples).map_err(RenderError::SampleRate)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use aria_kit::synthesis::SpeechWriter;
+
+    use super::*;
+
+    struct Mute;
+
+    impl Synthesizer for Mute {
+        fn sample_rate(&self) -> u32 {
+            16_000
+        }
+
+        fn synthesize_with(
+            &self,
+            _text: &SpeechText,
+            _voice: Option<&Voice>,
+            _rate: SpeakingRate,
+            _out: SpeechWriter,
+            cancel: &CancelToken,
+        ) -> Result<(), SynthesisError> {
+            match cancel.is_cancelled() {
+                true => Err(SynthesisError::Cancelled),
+                false => Ok(()),
+            }
+        }
+    }
+
+    #[test]
+    fn a_cancelled_conversation_stops_being_synthesized() {
+        let directory = tempfile::tempdir().expect("a temp dir");
+        let scenario = Scenario {
+            name: "one turn",
+            turns: vec![turn("am_adam", "Good morning everyone.")],
+        };
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+
+        let rendered = scenario.synthesize(&Mute, directory.path(), &cancelled);
+
+        assert!(matches!(
+            rendered,
+            Err(BenchError::Synthesis {
+                source: SynthesisError::Cancelled,
+                ..
+            })
+        ));
+    }
 }

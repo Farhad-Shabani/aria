@@ -2,8 +2,8 @@
 //!
 //! A TTS engine renders scripted multi-speaker conversations, the real
 //! system transcription stack (streaming STT, speech map, speaker tracker, gate) hears them
-//! replayed in realtime, and the tracker's and the voice track's labels are
-//! scored against the script.
+//! replayed one stride per finished decode, and the tracker's and the voice
+//! track's labels are scored against the script.
 //!
 //! The speaker engine is what this measures, so this crate owns it. TTS and
 //! STT are the harness that produces and reads the audio; the caller loads
@@ -21,25 +21,28 @@ mod sibling;
 pub(crate) mod synth;
 
 pub use aria_voice::speaker::Grouping;
+pub use cache::ChunkCache;
 pub use pyannote::{Clustering, Tuning, label_by_segmentation};
 pub use shipped::{Run, label_as_attributed, label_as_shipped};
 pub use sibling::{Windowing, label_by_voice};
 
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::time::Duration;
 
-use aria_kit::audio::{
-    CANONICAL_SAMPLE_RATE, CaptureError, ClipError, ReplayPace, ResampleError, WavError,
-};
+use aria_kit::audio::{CANONICAL_SAMPLE_RATE, ClipError, ResampleError, WavError};
+use aria_kit::cancel::CancelToken;
 use aria_kit::speaker::{Engine as _, SpeakerError};
 use aria_kit::synthesis::{SpeechTextError, Synthesizer, VoiceError};
 use aria_kit::voice_activity::VoiceActivityError;
 use aria_speaker::wespeaker::{Config as SpeakerConfig, WeSpeaker};
 use aria_voice::speaker::{Diarizer, Label};
-use aria_voice::stt::{StreamingEngine, Transcription, TranscriptionError};
+use aria_voice::stt::{StreamingEngine, TranscriptionError};
 
-/// Longer than any scenario's realtime replay.
+use replay::SteppedTranscription;
+
+/// Longer than any scenario's recording.
 const SCENARIO_LIMIT: Duration = Duration::from_secs(600);
 /// The longest recording a diarization run replays; cut longer ones first.
 const RECORDING_LIMIT: Duration = Duration::from_secs(900);
@@ -85,9 +88,9 @@ pub struct Embedded {
 
 /// Labels one real recording end to end, for scoring against a corpus's own
 /// ground truth. No script to synthesize, so no TTS — the audio already
-/// exists. It plays at its own speed because streaming transcription decodes
-/// a window at a time; handed a whole recording at once, the encoder outruns
-/// its positional limit.
+/// exists. It arrives a stride per decode because streaming transcription
+/// decodes a window at a time; handed a whole recording at once, agreement
+/// collapses into one decode.
 pub fn label_recording<Stt: StreamingEngine>(
     stt: Stt,
     speaker: SpeakerConfig,
@@ -95,19 +98,10 @@ pub fn label_recording<Stt: StreamingEngine>(
     wav: &Path,
     timeline: Timeline,
 ) -> Result<Labeled, BenchError> {
-    let transcription = Transcription::streaming(stt);
-    let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
+    let stepped = SteppedTranscription::new(stt)?;
 
     // Only the voice track's labels are scored, so no tracker runs.
-    let (segments, dropped) = replay::hear(
-        &transcription,
-        wav,
-        workspace.path(),
-        "recording",
-        ReplayPace::Realtime,
-        RECORDING_LIMIT,
-        None,
-    )?;
+    let (segments, dropped) = replay::hear(&stepped, wav, "recording", RECORDING_LIMIT, None)?;
 
     let settled = settled(segmentation, speaker, wav, &segments)?;
     let mut turns: Vec<Turn> = segments
@@ -362,31 +356,76 @@ impl<Tts: Synthesizer, Stt: StreamingEngine> Request<Tts, Stt> {
             segmentation,
         } = self;
         // The same composition the daemon runs for system transcription.
-        let transcription = Transcription::streaming(stt);
+        let stepped = SteppedTranscription::new(stt)?;
         let workspace = tempfile::tempdir().map_err(BenchError::Workspace)?;
 
-        let mut scenarios = Vec::new();
-        for scenario in synth::Scenario::all() {
-            let wav = scenario.synthesize(&tts, workspace.path())?;
-            let model = || SpeakerConfig {
-                model: speaker.model.clone(),
-            };
-            let mut diarizer = diarizer(model())?;
-            let (segments, dropped) = replay::hear(
-                &transcription,
-                &wav,
-                workspace.path(),
-                scenario.name,
-                ReplayPace::Realtime,
-                SCENARIO_LIMIT,
-                Some(&mut diarizer),
-            )?;
-            let fallbacks = replay::relabeled(&diarizer, &segments);
-            let finals = settled(&segmentation, model(), &wav, &segments)?;
-            scenarios.push(scenario.scored(&segments, fallbacks, finals, &dropped));
-        }
-        Ok(Report { scenarios })
+        let conversations = synth::Scenario::all();
+        let unheard = CancelToken::new();
+        std::thread::scope(|threads| {
+            // Synthesis runs one conversation ahead, on cores the hearing
+            // leaves idle. Stepped replay hears the same audio under any
+            // load, so the overlap cannot move a score.
+            let (synthesized, ready) = mpsc::sync_channel(0);
+            threads.spawn(|| {
+                synthesize_ahead(
+                    &tts,
+                    workspace.path(),
+                    &conversations,
+                    &unheard,
+                    synthesized,
+                );
+            });
+            let report = hear_all(&stepped, &speaker, &segmentation, &conversations, ready);
+            // The scope joins the synthesis thread. A failed hearing must not
+            // wait on a conversation nobody will hear.
+            unheard.cancel();
+            report
+        })
     }
+}
+
+fn synthesize_ahead<Tts: Synthesizer>(
+    tts: &Tts,
+    directory: &Path,
+    conversations: &[synth::Scenario],
+    cancel: &CancelToken,
+    synthesized: mpsc::SyncSender<Result<PathBuf, BenchError>>,
+) {
+    for scenario in conversations {
+        let wav = scenario.synthesize(tts, directory, cancel);
+        let failed = wav.is_err();
+        if synthesized.send(wav).is_err() || failed {
+            break;
+        }
+    }
+}
+
+fn hear_all<Stt: StreamingEngine>(
+    stepped: &SteppedTranscription<Stt>,
+    speaker: &SpeakerConfig,
+    segmentation: &Path,
+    conversations: &[synth::Scenario],
+    ready: mpsc::Receiver<Result<PathBuf, BenchError>>,
+) -> Result<Report, BenchError> {
+    let model = || SpeakerConfig {
+        model: speaker.model.clone(),
+    };
+    let mut scenarios = Vec::new();
+    for (scenario, wav) in conversations.iter().zip(ready) {
+        let wav = wav?;
+        let mut diarizer = diarizer(model())?;
+        let (segments, dropped) = replay::hear(
+            stepped,
+            &wav,
+            scenario.name,
+            SCENARIO_LIMIT,
+            Some(&mut diarizer),
+        )?;
+        let fallbacks = replay::relabeled(&diarizer, &segments);
+        let finals = settled(segmentation, model(), &wav, &segments)?;
+        scenarios.push(scenario.scored(&segments, fallbacks, finals, &dropped));
+    }
+    Ok(Report { scenarios })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -449,8 +488,11 @@ pub enum BenchError {
     Replay {
         scenario: &'static str,
         #[source]
-        source: CaptureError,
+        source: crate::replay::ReplayError,
     },
+
+    #[error("stepped replay needs an engine that streams by agreement")]
+    NativeStream,
 
     #[error("failed to transcribe speech in the {scenario} scenario")]
     Transcription {

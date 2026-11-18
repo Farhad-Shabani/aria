@@ -139,7 +139,8 @@ screen rendering or microphone-to-text latency. The `target` trace includes rece
 lengths, gaps and exact final text. Daemon segment timings remain separate in
 `capture->first-segment` and `corrected_segments`. Streaming comparisons check
 both receipt metrics; `rpc-delivery-v2` prevents comparison against older manual
-target runs. Complete-mode delivery-log metrics remain omitted in streaming mode.
+target runs. Streaming omits only the daemon's `delivery` stage; its
+`release->delivered` comes from the transcription stage, which types the last text.
 
 The native insertion check needs no speech model. It opens two test windows and
 requires Accessibility permission on the test executable. Keep the desktop idle;
