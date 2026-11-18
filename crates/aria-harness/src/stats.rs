@@ -103,8 +103,15 @@ impl Decision {
     }
 }
 
+/// The fewest samples per side whose median a 95% interval can bound: with
+/// n samples the extremes miss it with probability 2 * 0.5^n, which first
+/// drops below 5% at six.
+const MEDIAN_INTERVAL_SAMPLES: usize = 6;
+
+/// Where the candidate's median minus the baseline's plausibly lies, at 95%.
+/// `None` with fewer than `MEDIAN_INTERVAL_SAMPLES` on either side.
 pub fn difference_interval(baseline: &[u64], candidate: &[u64]) -> Option<(f64, f64)> {
-    if baseline.len() < 2 || candidate.len() < 2 {
+    if baseline.len() < MEDIAN_INTERVAL_SAMPLES || candidate.len() < MEDIAN_INTERVAL_SAMPLES {
         return None;
     }
     let mut state = 0x9E37_79B9_7F4A_7C15;
@@ -166,10 +173,10 @@ mod tests {
     #[test]
     fn unequal_counts_compare_the_change_without_pairing_unrelated_samples() {
         assert_eq!(
-            difference_interval(&[100; 10], &[110; 5]),
+            difference_interval(&[100; 10], &[110; 6]),
             Some((10.0, 10.0))
         );
-        assert_eq!(difference_interval(&[100], &[100; 5]), None);
+        assert_eq!(difference_interval(&[100; 10], &[100; 5]), None);
         assert_eq!(Decision::of(Some((10.0, 10.0)), 0.0), Decision::Regressed);
         assert_eq!(Decision::of(Some((0.0, 0.0)), 0.0), Decision::Accepted);
         assert_eq!(Decision::of(Some((-5.0, 8.0)), 5.0), Decision::Inconclusive);

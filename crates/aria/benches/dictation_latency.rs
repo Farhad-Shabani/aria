@@ -10,23 +10,17 @@ mod dictation_delivery;
 mod engines;
 
 const BENCH: &str = "dictation latency";
-const RELEASE_TO_DELIVERED: &str = "release->delivered";
 
 fn main() -> anyhow::Result<()> {
     let options = engines::Options::from_environment()?;
     let streaming = inputs::switch("ARIA_BENCH_STREAMING")?;
-    let metric = if streaming {
-        "request->first-receipt"
-    } else {
-        RELEASE_TO_DELIVERED
-    };
-    if options.offline("dictation-latency", metric)? {
+    if options.offline("dictation-latency")? {
         return Ok(());
     }
     let Some(inputs) = BenchInputs::from_environment()? else {
         return options.missing_inputs(BENCH);
     };
-    announce(&inputs, &options, streaming);
+    announce(&inputs, &options);
     if streaming {
         println!(
             "Streaming Insert, manual stop at WAV EOF; segment events contain corrected output, not raw capture ASR."
@@ -104,11 +98,7 @@ fn main() -> anyhow::Result<()> {
     run.failure = outcome.as_ref().err().map(|error| format!("{error:#}"));
     run.save()?;
     outcome?;
-    options.compare(&run, metric)?;
-    if streaming {
-        options.compare(&run, "request->final-receipt")?;
-    }
-    options.compare(&run, "capture->delivered")
+    options.compare(&run)
 }
 
 struct BenchInputs {
@@ -227,7 +217,7 @@ fn require_owner(profiles_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn announce(inputs: &BenchInputs, options: &engines::Options, streaming: bool) {
+fn announce(inputs: &BenchInputs, options: &engines::Options) {
     let backends: Vec<&str> = inputs.engines.iter().map(|engine| engine.backend).collect();
     println!(
         "dictation end-to-end bench: {}, {} measured runs, {} warmups each, fixture {}",
@@ -236,12 +226,10 @@ fn announce(inputs: &BenchInputs, options: &engines::Options, streaming: bool) {
         options.warmups,
         inputs.wav.display()
     );
-    if !streaming {
-        println!(
-            "note: the fixture replays at 1x, so `release->delivered` is what a \
-             speaker waits through after they stop talking\n"
-        );
-    }
+    println!(
+        "note: the fixture replays at 1x, so `release->delivered` is what a \
+         speaker waits through after they stop talking\n"
+    );
 }
 
 fn measure(
@@ -279,7 +267,7 @@ fn measure(
                 &mut observation.samples_ms
             };
             samples
-                .entry("capture->delivered".into())
+                .entry(engines::CAPTURE_TO_DELIVERED.into())
                 .or_default()
                 .push(
                     trace["capture_to_delivered_ms"]
@@ -296,8 +284,14 @@ fn measure(
                             .context("missing first segment duration")?,
                     );
                 for (metric, field) in [
-                    ("request->first-receipt", "request_to_first_receipt_ms"),
-                    ("request->final-receipt", "request_to_final_receipt_ms"),
+                    (
+                        engines::REQUEST_TO_FIRST_RECEIPT,
+                        "request_to_first_receipt_ms",
+                    ),
+                    (
+                        engines::REQUEST_TO_FINAL_RECEIPT,
+                        "request_to_final_receipt_ms",
+                    ),
                 ] {
                     samples.entry(metric.into()).or_default().push(
                         trace["target"][field]
@@ -317,7 +311,7 @@ fn measure(
     if let Ok(log) = &daemon_log {
         observation.daemon_log = Some(log.clone());
         for (name, values) in series(log, &client_wall) {
-            if target.is_some() && matches!(name, "delivery" | RELEASE_TO_DELIVERED) {
+            if target.is_some() && name == "delivery" {
                 continue;
             }
             let warmup_count = (options.warmups as usize).min(values.len());
@@ -465,7 +459,7 @@ fn series(log: &str, client_wall: &[Duration]) -> Vec<(&'static str, Vec<u64>)> 
         .map(|stage| (*stage, log::stage_samples(log, stage)))
         .collect();
     series.push(("total (daemon)", log::execution_samples(log)));
-    series.push((RELEASE_TO_DELIVERED, log::tail_samples(log)));
+    series.push((engines::RELEASE_TO_DELIVERED, log::tail_samples(log)));
     series.push((
         "client wall",
         client_wall

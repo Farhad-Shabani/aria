@@ -15,7 +15,9 @@ use crate::audio::spool::{WavSpool, maximum_samples};
 use crate::audio::wav::{
     WavFileReader, check_declared_length, collect_samples, open_canonical_wav,
 };
-use crate::audio::{RecordedAudio, RecordingReader, RecordingSource, canonical_samples};
+use crate::audio::{
+    RecordedAudio, RecordingReader, RecordingSource, canonical_duration, canonical_samples,
+};
 use crate::primitives::file_inspection::{InspectedFile, InspectionError};
 
 use super::RecordingMode;
@@ -115,15 +117,19 @@ impl WavReplayCapture {
 
 /// Writes the samples to `spool` at recorded speed until they run out or
 /// `stop` fires. Each chunk is due at a fixed offset from the start, so one
-/// slow write does not delay every later chunk.
+/// slow write does not delay every later chunk. That offset is where the
+/// chunk's audio ends: a microphone cannot hand over a sample before it is
+/// spoken.
 fn replay_paced(
     mut spool: WavSpool,
     samples: &[i16],
     stop: &StopSignal,
 ) -> std::result::Result<RecordedAudio, CaptureError> {
     let started = Instant::now();
-    for (index, batch) in samples.chunks(CHUNK_SAMPLES).enumerate() {
-        let due = started + PACED_CHUNK * index as u32;
+    let mut written = 0;
+    for batch in samples.chunks(CHUNK_SAMPLES) {
+        written += batch.len() as u64;
+        let due = started + canonical_duration(written);
         if let Some(wait) = due.checked_duration_since(Instant::now()) {
             thread::sleep(wait);
         }
@@ -234,6 +240,31 @@ mod tests {
 
         assert!(!arriving, "the replay must not be over after one chunk");
         assert_eq!(recording.samples().len(), FIXTURE_SAMPLES);
+    }
+
+    #[test]
+    fn a_paced_chunk_arrives_once_its_audio_has_been_spoken() {
+        let directory = tempfile::tempdir().expect("tempdir must be creatable");
+        let fixture = canonical_fixture(directory.path());
+        let capture = WavReplayCapture::new(
+            directory.path(),
+            MAXIMUM_DURATION,
+            &fixture,
+            ReplayPace::Realtime,
+        )
+        .expect("fixture must load");
+
+        let started = Instant::now();
+        let mut recording = capture
+            .start(
+                RecordingMode::UntilStopped,
+                Inputs::Local,
+                StopSignal::never(),
+            )
+            .expect("replay must start");
+        recording.fill_through(1).expect("the first chunk arrives");
+
+        assert!(started.elapsed() >= PACED_CHUNK);
     }
 
     #[test]

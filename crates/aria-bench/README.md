@@ -54,7 +54,7 @@ and build. Otherwise the comparison refuses.
 | `just bench-quality` | Accuracy while streaming |
 | `just bench-realtime` | Accuracy while streaming at real-time speed |
 | `just bench-first-text` | Time to the first text |
-| `just bench-latency` | Time from the end of speech to delivered text |
+| `just bench-latency` | Wait from the end of the recording until the text is copied, or typed with `ARIA_BENCH_STREAMING=1` |
 
 ## Updating the reference
 
@@ -93,10 +93,19 @@ Latency varies by machine, so none is committed. Compare two runs from the
 same machine, back to back, with nothing else heavy running. Fix the run
 count first. Rerunning until a comparison passes proves nothing.
 
+`just bench-latency` gates the daemon's wait after the recording ends
+(`release->delivered`) and the client's `capture->delivered`; with
+streaming, also the first and last text the target app received. The
+client series include the fixture's playback, so a nonzero margin is loose
+on them. A verdict needs at least 6 runs per side; with fewer it reads
+inconclusive, which fails.
+
 `ARIA_BENCH_BASELINE` names a saved latency JSON to compare against.
 `ARIA_BENCH_MAX_REGRESSION` allows a slowdown, as a fraction of the
-baseline's median. It defaults to 0. To recompare saved runs without the
-daemon:
+baseline's median. It defaults to 0, which an unchanged build fails: two
+runs of one build differ by noise, so the comparison reads inconclusive.
+Compare a build against itself first, then set the margin above that
+spread. To recompare saved runs without the daemon:
 
 ```sh
 just bench-latency-compare \

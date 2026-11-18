@@ -12,13 +12,22 @@ use aria_voice::stt::{Language, LanguageCode, Recognizer, Stream, Streaming, Tra
 mod engines;
 
 const BENCH: &str = "first text";
-const METRIC: &str = "first-finalized";
 const STRIDE_ENV: &str = "ARIA_TEST_STRIDE_MS";
 const MAXIMUM_UTTERANCE: Duration = Duration::from_secs(120);
 
 fn main() -> anyhow::Result<()> {
+    // Engines load in this process. Without the hook whisper.cpp writes its
+    // load report straight to stderr, around every result line.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+    aria_stt::whisper::install_logging_hooks();
     let options = engines::Options::from_environment()?;
-    if options.offline("first-text", METRIC)? {
+    if options.offline("first-text")? {
         return Ok(());
     }
     let Some(inputs) = BenchInputs::from_environment()? else {
@@ -56,7 +65,7 @@ fn main() -> anyhow::Result<()> {
             result?;
             report(
                 engine.backend,
-                &run.entries.last().expect("entry was pushed").samples_ms[METRIC],
+                &run.entries.last().expect("entry was pushed").samples_ms[engines::FIRST_FINALIZED],
                 options.runs,
             )?;
         }
@@ -65,7 +74,7 @@ fn main() -> anyhow::Result<()> {
     run.failure = outcome.as_ref().err().map(|error| format!("{error:#}"));
     run.save()?;
     outcome?;
-    options.compare(&run, METRIC)
+    options.compare(&run)
 }
 
 struct BenchInputs {
@@ -142,7 +151,10 @@ fn measure(
         } else {
             &mut observation.samples_ms
         };
-        series.entry(METRIC.into()).or_default().push(elapsed);
+        series
+            .entry(engines::FIRST_FINALIZED.into())
+            .or_default()
+            .push(elapsed);
     }
     Ok(())
 }
