@@ -508,6 +508,13 @@ mod tests {
         directory.path().join("inference").join("server.json")
     }
 
+    fn access() -> (tempfile::TempDir, PathBuf, Arc<ServerAccess>) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = path(&directory);
+        let access = ServerAccess::load_or_create(&path).unwrap();
+        (directory, path, access)
+    }
+
     fn localhost(port: u16) -> ServerEndpoint {
         ServerEndpoint::parse(&format!("https://localhost:{port}")).unwrap()
     }
@@ -551,9 +558,7 @@ mod tests {
 
     #[test]
     fn malformed_identity_is_never_replaced() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = path(&directory);
-        ServerAccess::load_or_create(&path).unwrap();
+        let (_directory, path, _) = access();
         for bytes in [b"{ invalid".as_slice(), b"{\"unknown\":true}"] {
             std::fs::write(&path, bytes).unwrap();
             assert!(ServerAccess::load_or_create(&path).is_err());
@@ -563,9 +568,7 @@ mod tests {
 
     #[test]
     fn identity_rejects_mismatched_keys_and_excess_clients() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = path(&directory);
-        ServerAccess::load_or_create(&path).unwrap();
+        let (_directory, path, _) = access();
         let document = PrivateDocument::new(&path, MAX_DOCUMENT_BYTES);
         let mut stored: StoredServer = document.read().unwrap().unwrap();
         stored.credentials.key_pem = generate().unwrap().key_pem;
@@ -585,9 +588,7 @@ mod tests {
 
     #[test]
     fn identity_rejects_public_files_symlinks_and_oversized_files() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = path(&directory);
-        ServerAccess::load_or_create(&path).unwrap();
+        let (_directory, path, _) = access();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(ServerAccess::load_or_create(&path).is_err());
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -603,9 +604,7 @@ mod tests {
 
     #[test]
     fn a_pairing_code_grants_once_and_trust_survives_reload() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = path(&directory);
-        let access = ServerAccess::load_or_create(&path).unwrap();
+        let (_directory, path, access) = access();
         let invite = access.issue(&localhost(5000)).unwrap();
         access.pair([1; 32], &invite.code).unwrap();
         assert!(matches!(
@@ -621,8 +620,7 @@ mod tests {
 
     #[test]
     fn a_tampered_invitation_does_not_parse() {
-        let directory = tempfile::tempdir().unwrap();
-        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        let (_directory, _, access) = access();
         let issued = serde_json::to_value(access.issue(&localhost(5000)).unwrap()).unwrap();
         assert!(serde_json::from_value::<Invitation>(issued.clone()).is_ok());
         for (field, tampered) in [
@@ -637,8 +635,7 @@ mod tests {
 
     #[test]
     fn revocation_ends_peer_connections_and_pairing_creates_a_fresh_lease() {
-        let directory = tempfile::tempdir().unwrap();
-        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        let (_directory, _, access) = access();
         grant(&access, [1; 32]);
         grant(&access, [2; 32]);
         let first = access.connection([1; 32]).unwrap();
@@ -666,8 +663,7 @@ mod tests {
 
     #[test]
     fn revoke_racing_connection_never_leaves_an_uncancelled_lease() {
-        let directory = tempfile::tempdir().unwrap();
-        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        let (_directory, _, access) = access();
         grant(&access, [1; 32]);
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let worker = Arc::clone(&access);
@@ -686,8 +682,7 @@ mod tests {
 
     #[test]
     fn revoked_work_is_cancelled_but_holds_admission_until_drop() {
-        let directory = tempfile::tempdir().unwrap();
-        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        let (_directory, _, access) = access();
         grant(&access, [1; 32]);
         grant(&access, [2; 32]);
         let admitted = access.admit([1; 32]).unwrap();
@@ -703,8 +698,7 @@ mod tests {
 
     #[test]
     fn revoke_racing_admission_never_leaves_uncancelled_work() {
-        let directory = tempfile::tempdir().unwrap();
-        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        let (_directory, _, access) = access();
         grant(&access, [1; 32]);
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let worker = Arc::clone(&access);
@@ -730,9 +724,7 @@ mod tests {
             WriteFault::Rename,
             WriteFault::Durability,
         ] {
-            let directory = tempfile::tempdir().unwrap();
-            let path = path(&directory);
-            let access = ServerAccess::load_or_create(&path).unwrap();
+            let (_directory, path, access) = access();
             let mut state = access.state.lock().unwrap();
             assert!(
                 access
@@ -761,9 +753,7 @@ mod tests {
             WriteFault::Rename,
             WriteFault::Durability,
         ] {
-            let directory = tempfile::tempdir().unwrap();
-            let path = path(&directory);
-            let access = ServerAccess::load_or_create(&path).unwrap();
+            let (_directory, path, access) = access();
             grant(&access, [1; 32]);
             let admitted = access.admit([1; 32]).unwrap();
             let connection = access.connection([1; 32]).unwrap();
@@ -818,9 +808,7 @@ mod tests {
 
     #[test]
     fn stopping_rejects_late_revocation_without_writing() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = path(&directory);
-        let access = ServerAccess::load_or_create(&path).unwrap();
+        let (_directory, path, access) = access();
         grant(&access, [1; 32]);
         let stored = std::fs::read(&path).unwrap();
 
@@ -837,8 +825,7 @@ mod tests {
 
     #[test]
     fn stopping_cancels_the_active_operation_and_denies_admission() {
-        let directory = tempfile::tempdir().unwrap();
-        let access = ServerAccess::load_or_create(&path(&directory)).unwrap();
+        let (_directory, _, access) = access();
         grant(&access, [1; 32]);
         let admitted = access.admit([1; 32]).unwrap();
         access.stop();

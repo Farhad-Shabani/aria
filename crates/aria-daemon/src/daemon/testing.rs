@@ -22,6 +22,13 @@ pub(in crate::daemon) struct HostedDaemon {
     runtime: SpawnedRuntime,
 }
 
+pub(in crate::daemon) fn client_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the client runtime builds")
+}
+
 impl HostedDaemon {
     /// The real assembly, reading `config(home)` as its `settings.toml`.
     pub(in crate::daemon) fn configured(config: impl FnOnce(&Path) -> String) -> Self {
@@ -80,4 +87,10 @@ impl HostedDaemon {
     pub(in crate::daemon) fn stop(self) {
         self.runtime.stop().expect("the daemon stops cleanly");
     }
+}
+
+pub(in crate::daemon) fn code(status: &tonic::Status) -> aria_settings::rpc::RpcErrorCode {
+    crate::ipc::protocol::rpc_failure(status)
+        .expect("an RpcError")
+        .code
 }

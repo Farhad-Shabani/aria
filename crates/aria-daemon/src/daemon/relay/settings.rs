@@ -228,7 +228,6 @@ mod tests {
     use super::super::super::tasks::Supervised;
     use super::super::SETTINGS_NEED_FIXING;
     use super::*;
-    use crate::ipc::protocol::failure_status;
     use aria_settings::SettingsStatus;
     use aria_settings::SettingsStore;
     use wire::settings_service_server::SettingsService;
@@ -325,29 +324,6 @@ mod tests {
         );
         let failure = crate::ipc::protocol::rpc_failure(&refused).expect("an Aria failure");
         assert!(!failure.message.contains(&home_text), "{}", failure.message);
-    }
-
-    #[test]
-    fn only_a_code_known_to_be_safe_keeps_its_message() {
-        let path = "/Users/you/.aria/settings.lock";
-        for code in [
-            RpcErrorCode::Busy,
-            RpcErrorCode::Internal,
-            RpcErrorCode::PermissionDenied,
-            RpcErrorCode::SettingsInvalid,
-            RpcErrorCode::TranscriptionFailed,
-            RpcErrorCode::Unknown(999),
-        ] {
-            let status = redacted(failure_status(RpcFailure::new(code, path)));
-            assert!(!status.message().contains(path), "{code:?}");
-        }
-        let kept = redacted(failure_status(RpcFailure::new(
-            RpcErrorCode::InvalidRequest,
-            "memory.enabled is refused",
-        )));
-        assert_eq!(kept.message(), "memory.enabled is refused");
-        let bare = redacted(Status::internal(path));
-        assert!(!bare.message().contains(path));
     }
 
     #[tokio::test]

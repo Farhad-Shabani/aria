@@ -725,7 +725,7 @@ pub(in crate::daemon) mod tests {
     }
 
     #[tokio::test]
-    async fn paired_tls_clients_reuse_one_engine_and_cannot_reach_admin() {
+    async fn an_unpaired_client_is_refused_and_a_code_pairs_once() {
         let mut fixture = Fixture::start().await;
         assert_eq!(
             info(fixture.channel.clone()).await.unwrap_err().code(),
@@ -745,6 +745,13 @@ pub(in crate::daemon) mod tests {
             info(fixture.channel.clone()).await.unwrap().engine_id,
             "whisper"
         );
+        fixture.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_paired_client_recognizes_whole_and_streaming() {
+        let mut fixture = Fixture::start().await;
+        fixture.pair().await;
         for _ in 0..2 {
             let response = recognize(fixture.channel.clone(), recording())
                 .await
@@ -765,6 +772,14 @@ pub(in crate::daemon) mod tests {
         assert!(response.text.contains("native words"));
         assert_eq!(fixture.observed.calls.load(Ordering::SeqCst), 2);
         assert_eq!(fixture.observed.native.load(Ordering::SeqCst), 1);
+        fixture.stop().await;
+    }
+
+    #[tokio::test]
+    async fn the_public_port_does_not_serve_admin() {
+        let mut fixture = Fixture::start().await;
+        fixture.pair().await;
+
         let admin = wire::inference_admin_service_client::InferenceAdminServiceClient::new(
             fixture.channel.clone(),
         )
@@ -773,6 +788,7 @@ pub(in crate::daemon) mod tests {
         })
         .await
         .unwrap_err();
+
         assert_eq!(admin.code(), tonic::Code::Unimplemented);
         fixture.stop().await;
     }

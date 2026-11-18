@@ -314,11 +314,14 @@ mod tests {
     use aria_platform::delivery::DeliveryOutcome;
 
     use super::*;
+    use aria_assistant::chat::{AssistantError, AssistantStatus};
+
     use crate::daemon::chat::{Log, logging_assistants, runtime_with};
     use crate::daemon::tasks::Supervised;
+    use crate::daemon::testing::code;
     use crate::ipc::wire::chat_service_server::ChatService;
 
-    fn rpc(directory: &Path) -> (Arc<ChatRuntime>, ChatRpc) {
+    fn rpc(directory: &Path, lifetime: DaemonLifetime) -> (Arc<ChatRuntime>, ChatRpc) {
         let log = Arc::new(Mutex::new(Log::default()));
         let (runtime, _events) = runtime_with(directory, logging_assistants(&log));
         let runtime = Arc::new(runtime);
@@ -326,7 +329,7 @@ mod tests {
         let rpc = ChatRpc::new(
             handle,
             Arc::clone(&runtime),
-            DaemonLifetime::OnDemand,
+            lifetime,
             tokio_util::sync::CancellationToken::new(),
         );
         (runtime, rpc)
@@ -336,6 +339,13 @@ mod tests {
         rpc: ChatRpc,
         shutdown: tokio_util::sync::CancellationToken,
         actor: tokio::task::JoinHandle<()>,
+    }
+
+    impl Harness {
+        async fn stop(self) {
+            self.shutdown.cancel();
+            self.actor.await.expect("the actor drains");
+        }
     }
 
     fn harness(runtime: ChatRuntime, lifetime: DaemonLifetime) -> Harness {
@@ -351,6 +361,23 @@ mod tests {
         }
     }
 
+    fn discovering(
+        directory: &Path,
+    ) -> (Harness, tokio::sync::mpsc::UnboundedReceiver<CancelToken>) {
+        let (started, observed) = tokio::sync::mpsc::unbounded_channel();
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (mut runtime, _events) = runtime_with(directory, logging_assistants(&log));
+        runtime.assistant_overrides.as_mut().unwrap().models = Box::new(move |_, cancel| {
+            started.send(cancel.clone()).expect("discovery started");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !cancel.is_cancelled() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(AssistantError::Cancelled)
+        });
+        (harness(runtime, DaemonLifetime::Persistent), observed)
+    }
+
     fn save_request(id: Option<&str>, instructions: &str) -> wire::SavePromptRequest {
         wire::SavePromptRequest {
             id: id.map(str::to_owned),
@@ -364,7 +391,7 @@ mod tests {
     #[tokio::test]
     async fn a_saved_prompt_reaches_the_settings_cache_at_once() {
         let directory = tempfile::tempdir().expect("test directory");
-        let (runtime, rpc) = rpc(directory.path());
+        let (runtime, rpc) = rpc(directory.path(), DaemonLifetime::OnDemand);
         let status = runtime.cache().status();
 
         let saved = rpc
@@ -394,8 +421,7 @@ mod tests {
             )))
             .await
             .expect_err("no prompt has that ID");
-        let failure = crate::ipc::protocol::rpc_failure(&refused).expect("a verdict");
-        assert_eq!(failure.code, RpcErrorCode::PromptMissing);
+        assert_eq!(code(&refused), RpcErrorCode::PromptMissing);
     }
 
     #[tokio::test]
@@ -419,8 +445,7 @@ mod tests {
             .into_inner();
 
         assert_eq!(delivered.outcome(), wire::DeliveryOutcome::Copied);
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     #[tokio::test]
@@ -465,8 +490,7 @@ mod tests {
         assert_eq!(second.name, "hi 2", "a taken name takes a number");
         assert_eq!(named, Some(first));
         assert_eq!(folder, None, "a folder's own chat has no key");
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     #[tokio::test]
@@ -488,31 +512,25 @@ mod tests {
         .await;
         let unnamed = delete(None).await.expect_err("names no chat");
 
-        missing.expect("a missing chat deletes");
-        assert_eq!(
-            crate::ipc::protocol::rpc_failure(&unnamed)
-                .expect("a verdict")
-                .code,
-            RpcErrorCode::InvalidRequest
+        assert!(
+            !missing
+                .expect("a missing chat deletes")
+                .into_inner()
+                .deleted
         );
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        assert_eq!(code(&unnamed), RpcErrorCode::InvalidRequest);
+        harness.stop().await;
     }
 
     #[tokio::test]
     async fn an_on_demand_daemon_neither_lists_nor_cancels_a_chats_asks() {
         let directory = tempfile::tempdir().expect("test directory");
-        let (_runtime, rpc) = rpc(directory.path());
+        let (_runtime, rpc) = rpc(directory.path(), DaemonLifetime::OnDemand);
         let chat = || {
             Some(wire::ChatKey {
                 assistant_id: wire::AssistantId::Codex.into(),
                 name: "plans".to_owned(),
             })
-        };
-        let code = |refused: tonic::Status| {
-            crate::ipc::protocol::rpc_failure(&refused)
-                .expect("a verdict")
-                .code
         };
 
         let listed = rpc
@@ -528,8 +546,8 @@ mod tests {
             .await
             .expect_err("an on-demand daemon keeps no asks");
 
-        assert_eq!(code(listed), RpcErrorCode::Unsupported);
-        assert_eq!(code(cancelled), RpcErrorCode::Unsupported);
+        assert_eq!(code(&listed), RpcErrorCode::Unsupported);
+        assert_eq!(code(&cancelled), RpcErrorCode::Unsupported);
     }
 
     #[tokio::test]
@@ -538,7 +556,7 @@ mod tests {
         use wire::get_prompt_response::Contents;
 
         let directory = tempfile::tempdir().expect("test directory");
-        let (_runtime, rpc) = rpc(directory.path());
+        let (_runtime, rpc) = rpc(directory.path(), DaemonLifetime::OnDemand);
         let saved = rpc
             .save_prompt(tonic::Request::new(save_request(None, "Three bullets.")))
             .await
@@ -555,12 +573,8 @@ mod tests {
         let contents = |response: Result<tonic::Response<wire::GetPromptResponse>, _>| {
             response.expect("reads").into_inner().contents
         };
-        let code = |response: Result<_, tonic::Status>| {
-            let refused = response.expect_err("refused");
-            crate::ipc::protocol::rpc_failure(&refused)
-                .expect("a verdict")
-                .code
-        };
+        let refused_code =
+            |response: Result<_, tonic::Status>| code(&response.expect_err("refused"));
 
         assert_eq!(
             contents(get(Source::PromptId(saved.id)).await),
@@ -575,11 +589,11 @@ mod tests {
             Some(Contents::Missing(true))
         );
         assert_eq!(
-            code(get(Source::File(file("large.md"))).await),
+            refused_code(get(Source::File(file("large.md"))).await),
             RpcErrorCode::PromptUnreadable
         );
         assert_eq!(
-            code(get(Source::PromptId("gone".to_owned())).await),
+            refused_code(get(Source::PromptId("gone".to_owned())).await),
             RpcErrorCode::PromptMissing
         );
     }
@@ -587,7 +601,7 @@ mod tests {
     #[tokio::test]
     async fn a_removed_prompt_leaves_the_list_and_keeps_its_file() {
         let directory = tempfile::tempdir().expect("test directory");
-        let (runtime, rpc) = rpc(directory.path());
+        let (runtime, rpc) = rpc(directory.path(), DaemonLifetime::OnDemand);
         let saved = rpc
             .save_prompt(tonic::Request::new(save_request(None, "Three bullets.")))
             .await
@@ -614,7 +628,152 @@ mod tests {
             .prompts;
         assert!(prompts.entries().is_empty());
         let refused = remove().await.expect_err("no prompt has that ID now");
+        assert_eq!(code(&refused), RpcErrorCode::PromptMissing);
+    }
+
+    #[tokio::test]
+    async fn an_on_demand_daemon_runs_no_prompt_and_says_how_to_start_one() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let (_runtime, rpc) = rpc(directory.path(), DaemonLifetime::OnDemand);
+
+        let refused = rpc
+            .run_prompt(tonic::Request::new(wire::RunPromptRequest {
+                input: Some(wire::run_prompt_request::Input::Text(
+                    "we met on Friday".to_owned(),
+                )),
+                prompt: Some(wire::run_prompt_request::Prompt::PromptId(
+                    "summary".to_owned(),
+                )),
+                ..Default::default()
+            }))
+            .await
+            .expect_err("an on-demand daemon runs no prompt");
+
         let failure = crate::ipc::protocol::rpc_failure(&refused).expect("a verdict");
-        assert_eq!(failure.code, RpcErrorCode::PromptMissing);
+        assert_eq!(failure.code, RpcErrorCode::Unsupported);
+        assert!(
+            failure.message.contains("aria daemon"),
+            "{}",
+            failure.message
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dropped_request_cancels_model_discovery() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let (
+            Harness {
+                rpc,
+                shutdown,
+                actor,
+            },
+            mut observed,
+        ) = discovering(directory.path());
+        let request = tokio::spawn(async move {
+            rpc.list_models(tonic::Request::new(wire::ListAssistantModelsRequest {
+                assistant_id: wire::AssistantId::Codex.into(),
+            }))
+            .await
+        });
+        let cancel = tokio::time::timeout(std::time::Duration::from_secs(1), observed.recv())
+            .await
+            .expect("discovery starts")
+            .expect("discovery token");
+
+        request.abort();
+
+        assert!(request.await.expect_err("request aborted").is_cancelled());
+        assert!(cancel.is_cancelled());
+        shutdown.cancel();
+        actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_model_discovery() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let (
+            Harness {
+                rpc,
+                shutdown,
+                actor,
+            },
+            mut observed,
+        ) = discovering(directory.path());
+        let request = tokio::spawn(async move {
+            rpc.list_models(tonic::Request::new(wire::ListAssistantModelsRequest {
+                assistant_id: wire::AssistantId::Codex.into(),
+            }))
+            .await
+        });
+        let cancel = tokio::time::timeout(std::time::Duration::from_secs(1), observed.recv())
+            .await
+            .expect("discovery starts")
+            .expect("discovery token");
+
+        shutdown.cancel();
+
+        assert!(cancel.is_cancelled());
+        assert!(request.await.expect("request finishes").is_err());
+        actor.await.expect("the actor drains");
+    }
+
+    #[tokio::test]
+    async fn listed_assistants_carry_their_status_and_fix() {
+        let directory = tempfile::tempdir().expect("test directory");
+        let log = Arc::new(Mutex::new(Log::default()));
+        let (mut runtime, _events) = runtime_with(directory.path(), logging_assistants(&log));
+        runtime.assistant_overrides.as_mut().unwrap().ready =
+            Box::new(|assistant_id, _cancel| match assistant_id {
+                AssistantId::ClaudeCode => AssistantStatus::SignedOut { fix: "sign in" },
+                AssistantId::Codex => AssistantStatus::Ready,
+                AssistantId::LocalModel => AssistantStatus::ModelMissing {
+                    model: "qwen".to_owned(),
+                },
+            });
+        let harness = harness(runtime, DaemonLifetime::Persistent);
+
+        let listed = harness
+            .rpc
+            .list_assistants(tonic::Request::new(wire::ListAssistantsRequest {}))
+            .await
+            .expect("the list")
+            .into_inner()
+            .assistants;
+
+        let statuses: Vec<_> = listed
+            .iter()
+            .map(|assistant| {
+                (
+                    assistant.id,
+                    assistant.status,
+                    assistant.fix.as_str(),
+                    assistant.needs_model,
+                )
+            })
+            .collect();
+        assert_eq!(
+            statuses,
+            [
+                (
+                    wire::AssistantId::ClaudeCode as i32,
+                    wire::AssistantStatus::SignedOut as i32,
+                    "sign in",
+                    false
+                ),
+                (
+                    wire::AssistantId::Codex as i32,
+                    wire::AssistantStatus::Ready as i32,
+                    "",
+                    false
+                ),
+                (
+                    wire::AssistantId::LocalModel as i32,
+                    wire::AssistantStatus::ModelMissing as i32,
+                    "load qwen into the model server, such as with ollama pull",
+                    true
+                ),
+            ]
+        );
+        harness.stop().await;
     }
 }

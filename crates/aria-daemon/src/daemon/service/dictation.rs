@@ -126,7 +126,7 @@ mod tests {
     use std::path::Path;
     use std::thread;
 
-    use crate::daemon::testing::HostedDaemon;
+    use crate::daemon::testing::{HostedDaemon, client_runtime};
     use crate::daemon::{
         ClientError, DaemonEvent, DictationOutcome, DictationRequest, DictationResult,
         DictationStage, StopMode,
@@ -243,10 +243,7 @@ mod tests {
     fn a_caller_that_disconnects_mid_press_cancels_it_and_frees_the_microphone() {
         let (executor, edges) = RecordsUntilStopped::new();
         let daemon = HostedDaemon::scripted(executor);
-        let client = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("the client runtime builds");
+        let client = client_runtime();
 
         // A raw gRPC call, because a `DaemonSession` can't be dropped mid-press.
         client.block_on(async {
@@ -279,13 +276,10 @@ mod tests {
     }
 
     #[test]
-    fn a_press_that_asks_for_it_is_cancelled_by_escape() {
+    fn the_escape_flag_reaches_the_press_as_its_rule() {
         let spy = PressSpy::default();
         let daemon = HostedDaemon::scripted(spy.clone());
-        let client = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("the client runtime builds");
+        let client = client_runtime();
 
         // A raw gRPC call, because a `DaemonSession` never asks for Escape.
         client.block_on(async {

@@ -318,3 +318,86 @@ impl wire::history_service_server::HistoryService for HistoryRpc {
             .map(|entry| Response::new(entry.into()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::daemon::testing::{HostedDaemon, client_runtime};
+    use crate::ipc::wire;
+
+    #[test]
+    fn an_empty_history_lists_and_clears_without_loading_a_model() {
+        let daemon = HostedDaemon::configured(|_| String::new());
+        let client = client_runtime();
+
+        client.block_on(async {
+            let mut history =
+                wire::history_service_client::HistoryServiceClient::new(daemon.channel().await);
+            let page = history
+                .list(wire::ListHistoryRequest {
+                    limit: 50,
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(page.entries.is_empty());
+            let cleared = history
+                .clear(wire::ClearHistoryRequest { section: None })
+                .await
+                .unwrap()
+                .into_inner();
+            assert_eq!(cleared.deleted_entry_count, 0);
+            assert!(!cleared.audio_cleanup_pending);
+        });
+
+        drop(client);
+        daemon.stop();
+    }
+
+    #[test]
+    fn regenerating_a_missing_entry_is_not_found() {
+        let daemon = HostedDaemon::configured(|_| String::new());
+        let client = client_runtime();
+
+        client.block_on(async {
+            let mut history =
+                wire::history_service_client::HistoryServiceClient::new(daemon.channel().await);
+            let refused = history
+                .regenerate(wire::RegenerateHistoryRequest {
+                    id: 1,
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(refused.code(), tonic::Code::NotFound);
+        });
+
+        drop(client);
+        daemon.stop();
+    }
+
+    #[test]
+    fn regenerating_with_an_unknown_engine_or_an_empty_language_is_invalid() {
+        let daemon = HostedDaemon::configured(|_| String::new());
+        let client = client_runtime();
+
+        client.block_on(async {
+            let mut history =
+                wire::history_service_client::HistoryServiceClient::new(daemon.channel().await);
+            for (engine, language) in [(Some("unknown"), None), (None, Some(""))] {
+                let refused = history
+                    .regenerate(wire::RegenerateHistoryRequest {
+                        id: 1,
+                        engine_id: engine.map(str::to_owned),
+                        language: language.map(str::to_owned),
+                    })
+                    .await
+                    .unwrap_err();
+                assert_eq!(refused.code(), tonic::Code::InvalidArgument);
+            }
+        });
+
+        drop(client);
+        daemon.stop();
+    }
+}

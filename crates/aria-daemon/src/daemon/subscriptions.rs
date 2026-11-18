@@ -153,11 +153,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_ninth_subscriber_is_refused() {
+    async fn a_subscriber_past_the_limit_is_refused() {
         let subscriptions = Subscriptions::new();
         let _streams = admitted(&subscriptions, MAX_SUBSCRIBERS);
 
-        assert!(subscriptions.subscribe().is_err());
+        assert!(matches!(
+            subscriptions.subscribe(),
+            Err(SubscribeError::Exhausted)
+        ));
     }
 
     #[tokio::test]
@@ -176,17 +179,37 @@ mod tests {
         }
 
         // Its slot is free again even though the stream was never dropped.
-        let _streams: Vec<_> = (0..MAX_SUBSCRIBERS)
-            .map(|_subscriber| {
-                subscriptions
-                    .subscribe()
-                    .expect("the full-buffer eviction should have freed the slot")
-            })
-            .collect();
+        let _streams = admitted(&subscriptions, MAX_SUBSCRIBERS);
     }
 
     #[tokio::test]
     async fn a_broadcast_reaches_every_subscriber() {
+        let subscriptions = Subscriptions::new();
+        let mut streams = admitted(&subscriptions, 2);
+
+        subscriptions.broadcast(DictationStage::Delivered {
+            outcome: None,
+            words: 0,
+        });
+
+        for stream in &mut streams {
+            let event = stream
+                .next()
+                .await
+                .expect("the event should arrive")
+                .expect("the event should not be a status");
+            assert_eq!(
+                event,
+                wire::Event::from(DictationStage::Delivered {
+                    outcome: None,
+                    words: 0
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn close_all_ends_every_stream_and_admits_nobody() {
         let subscriptions = Subscriptions::new();
         let mut streams = admitted(&subscriptions, 2);
 
@@ -214,5 +237,9 @@ mod tests {
                 "close_all should end the stream"
             );
         }
+        assert!(matches!(
+            subscriptions.subscribe(),
+            Err(SubscribeError::ShuttingDown)
+        ));
     }
 }

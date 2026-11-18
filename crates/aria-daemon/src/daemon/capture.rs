@@ -501,7 +501,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_connected_chosen_device_dismisses_the_phone() {
+    async fn a_press_on_a_connected_chosen_device_dismisses_the_phone() {
         let phone = Phone::with_devices(|_| true);
         let mut fake = FakePhone::attach(&phone.phones);
         phone.setting.send_replace(device("coreaudio:usb"));
@@ -513,7 +513,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn choosing_a_connected_mac_device_dismisses_the_phone() {
+    async fn a_setting_change_to_a_connected_device_dismisses_the_phone() {
         let phone = Phone::with_devices(|_| true);
         let mut fake = FakePhone::attach(&phone.phones);
 

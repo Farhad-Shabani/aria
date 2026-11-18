@@ -1605,7 +1605,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn separate_scopes_and_failed_refresh_preserve_the_last_snapshot() {
+    async fn one_folders_terms_stay_out_of_anothers_list() {
         let root = tempfile::tempdir().unwrap();
         let a = project(root.path(), "aria-stt");
         let b = project(root.path(), "other-stt");
@@ -1614,20 +1614,48 @@ mod tests {
         let task = tokio::spawn(worker.run(shutdown.clone()));
         assert!(is_ready(&runtime.refresh(Some(a.clone())).await.unwrap()));
         runtime.refresh(Some(b.clone())).await.unwrap();
-        {
-            let snapshot = runtime.snapshot(Some(&a));
-            assert_eq!(
-                snapshot.matcher.correct("aria dash stt").as_deref(),
-                Some("aria-stt")
-            );
-            assert_eq!(snapshot.matcher.correct("other dash stt"), None);
-            assert!(matches!(
-                runtime.refresh(Some(a.clone())).await,
-                Err(Error::Busy)
-            ));
-        }
+
+        let snapshot = runtime.snapshot(Some(&a));
+
+        assert_eq!(
+            snapshot.matcher.correct("aria dash stt").as_deref(),
+            Some("aria-stt")
+        );
+        assert_eq!(snapshot.matcher.correct("other dash stt"), None);
+        shutdown.cancel();
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_refresh_is_busy_while_a_snapshot_is_held() {
+        let root = tempfile::tempdir().unwrap();
+        let a = project(root.path(), "aria-stt");
+        let (runtime, worker) = local_runtime(root.path());
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(worker.run(shutdown.clone()));
+        assert!(is_ready(&runtime.refresh(Some(a.clone())).await.unwrap()));
+        let _held = runtime.snapshot(Some(&a));
+
+        assert!(matches!(
+            runtime.refresh(Some(a.clone())).await,
+            Err(Error::Busy)
+        ));
+        shutdown.cancel();
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_refresh_keeps_the_last_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let a = project(root.path(), "aria-stt");
+        let (runtime, worker) = local_runtime(root.path());
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(worker.run(shutdown.clone()));
+        assert!(is_ready(&runtime.refresh(Some(a.clone())).await.unwrap()));
         std::fs::rename(a.as_path(), root.path().join("moved")).unwrap();
+
         assert!(runtime.refresh(Some(a.clone())).await.is_err());
+
         let status = runtime.catalog_status(Some(&a));
         assert!(matches!(
             status,
@@ -1858,7 +1886,7 @@ mod tests {
     }
 
     #[test]
-    fn obsolete_generation_cannot_publish_and_resource_failure_keeps_snapshot() {
+    fn a_reserve_that_cannot_evict_keeps_the_protected_list() {
         let root = tempfile::tempdir().unwrap();
         let selected = directory(&root.path().join("project"));
         let (runtime, worker) = local_runtime(root.path());
@@ -1884,10 +1912,12 @@ mod tests {
                 &cancel,
             )
             .unwrap();
+
         assert!(matches!(
             worker.reserve(LIVE_BYTES, Some(&selected)),
             Err(Error::TooLarge)
         ));
+
         assert_eq!(
             runtime
                 .snapshot(Some(&selected))
@@ -1896,8 +1926,38 @@ mod tests {
                 .as_deref(),
             Some("aria-stt")
         );
+    }
+
+    #[test]
+    fn a_superseded_refresh_cannot_publish() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = directory(&root.path().join("project"));
+        let (runtime, worker) = local_runtime(root.path());
+        runtime.prepare(Some(selected.clone()));
+        let Command::Refresh { cancel, .. } = worker.requests.try_recv().unwrap() else {
+            panic!("refresh expected")
+        };
+        let matcher = Arc::new(
+            Vocabulary::compile(
+                &[Term {
+                    canonical: "aria-stt".into(),
+                    priority: 1,
+                }],
+                PersonalRules::default(),
+            )
+            .unwrap(),
+        );
+        runtime
+            .publish(
+                &selected,
+                selected.as_path(),
+                prepared(&matcher, 1),
+                &cancel,
+            )
+            .unwrap();
         runtime.registry.lock().unwrap().pending.clear();
         worker.await_idle(&AtomicBool::new(false)).unwrap();
+
         assert!(matches!(
             runtime.publish(
                 &selected,

@@ -1016,29 +1016,29 @@ mod tests {
         server.stop().await;
     }
 
+    struct Capture(std::sync::Mutex<Option<aria_kit::audio::RecordingReader>>);
+
+    impl aria_kit::audio::AudioCapture for Capture {
+        fn start(
+            &self,
+            _: aria_kit::audio::RecordingMode,
+            _: aria_kit::audio::Inputs,
+            _: aria_kit::audio::StopSignal,
+        ) -> Result<aria_kit::audio::RecordingReader, aria_kit::audio::CaptureError> {
+            Ok(self.0.lock().unwrap().take().unwrap())
+        }
+    }
+
     #[tokio::test]
     async fn a_whole_only_server_serves_streaming_dictation_under_its_own_engine() {
         use std::sync::Mutex;
 
-        use aria_kit::audio::{AudioCapture, CaptureError, Inputs, RecordingMode, StopSignal};
         use aria_platform::delivery::OutputMode;
         use aria_settings::DeliveryMode;
         use aria_voice::dictation::testing::{CallLog, Loud, settings};
         use aria_voice::dictation::{
             DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
         };
-
-        struct Capture(Mutex<Option<RecordingReader>>);
-        impl AudioCapture for Capture {
-            fn start(
-                &self,
-                _: RecordingMode,
-                _: Inputs,
-                _: StopSignal,
-            ) -> Result<RecordingReader, CaptureError> {
-                Ok(self.0.lock().unwrap().take().unwrap())
-            }
-        }
 
         let server = Fixture::with_model(
             "parakeet",
@@ -1082,7 +1082,6 @@ mod tests {
     async fn later_speech_does_not_validate_a_delayed_silence_guess() {
         use std::sync::Mutex;
 
-        use aria_kit::audio::{AudioCapture, CaptureError, Inputs, RecordingMode, StopSignal};
         use aria_kit::transcription::{ChunkStream, Emitted};
         use aria_platform::delivery::OutputMode;
         use aria_settings::DeliveryMode;
@@ -1090,18 +1089,6 @@ mod tests {
         use aria_voice::dictation::{
             DictationEventEmitter, DictationPipeline, ExecutionControl, StopMode,
         };
-
-        struct Capture(Mutex<Option<RecordingReader>>);
-        impl AudioCapture for Capture {
-            fn start(
-                &self,
-                _: RecordingMode,
-                _: Inputs,
-                _: StopSignal,
-            ) -> Result<RecordingReader, CaptureError> {
-                Ok(self.0.lock().unwrap().take().unwrap())
-            }
-        }
 
         struct DecodeGate {
             entered: tokio::sync::Notify,

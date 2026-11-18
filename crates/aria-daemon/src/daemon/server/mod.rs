@@ -647,14 +647,6 @@ mod tests {
         (directory, daemon)
     }
 
-    fn test_runtime() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
-            .build()
-            .expect("the test runtime should build")
-    }
-
     async fn connect(daemon: &RunningDaemon) -> Channel {
         let endpoint = Endpoint::from_shared(format!("unix://{}", daemon.socket_path().display()))
             .expect("the endpoint should parse");
@@ -704,7 +696,7 @@ mod tests {
     #[test]
     fn every_aria_service_reports_healthy() {
         let (_directory, daemon) = on_demand_daemon();
-        let runtime = test_runtime();
+        let runtime = crate::daemon::testing::client_runtime();
 
         runtime.block_on(async {
             let mut health = HealthClient::new(connect(&daemon).await);
@@ -751,75 +743,10 @@ mod tests {
     }
 
     #[test]
-    fn history_is_available_over_the_unix_socket_without_loading_a_model() {
-        let (_directory, daemon) = on_demand_daemon();
-        let runtime = test_runtime();
-        runtime.block_on(async {
-            let mut history =
-                wire::history_service_client::HistoryServiceClient::new(connect(&daemon).await);
-            let page = history
-                .list(wire::ListHistoryRequest {
-                    limit: 50,
-                    ..Default::default()
-                })
-                .await
-                .unwrap()
-                .into_inner();
-            assert!(page.entries.is_empty());
-            let cleared = history
-                .clear(wire::ClearHistoryRequest { section: None })
-                .await
-                .unwrap()
-                .into_inner();
-            assert_eq!(cleared.deleted_entry_count, 0);
-            assert!(!cleared.audio_cleanup_pending);
-            assert_eq!(
-                history
-                    .get(wire::GetHistoryRequest { id: 1 })
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::NotFound
-            );
-            assert_eq!(
-                history
-                    .regenerate(wire::RegenerateHistoryRequest {
-                        id: 1,
-                        ..Default::default()
-                    })
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::NotFound
-            );
-            for (engine, language) in [(Some("unknown"), None), (None, Some(""))] {
-                assert_eq!(
-                    history
-                        .regenerate(wire::RegenerateHistoryRequest {
-                            id: 1,
-                            engine_id: engine.map(str::to_owned),
-                            language: language.map(str::to_owned),
-                        })
-                        .await
-                        .unwrap_err()
-                        .code(),
-                    tonic::Code::InvalidArgument
-                );
-            }
-            history
-                .delete(wire::DeleteHistoryRequest { id: 1 })
-                .await
-                .unwrap();
-        });
-        drop(runtime);
-        daemon.stop().unwrap();
-    }
-
-    #[test]
     fn a_stop_ends_open_event_streams_within_the_grace() {
         let (_directory, daemon) = on_demand_daemon();
         let stopper = daemon.stopper();
-        let runtime = test_runtime();
+        let runtime = crate::daemon::testing::client_runtime();
 
         runtime.block_on(async {
             let mut events =
@@ -857,7 +784,7 @@ mod tests {
     #[test]
     fn a_stop_returns_while_a_client_stays_connected() {
         let (_directory, daemon) = on_demand_daemon();
-        let runtime = test_runtime();
+        let runtime = crate::daemon::testing::client_runtime();
         // A connection that has served a call and is never polled again never
         // answers the daemon's HTTP/2 GOAWAY.
         let _idle = runtime.block_on(async {

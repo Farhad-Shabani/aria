@@ -754,6 +754,11 @@ mod tests {
     }
 
     impl Harness {
+        async fn stop(self) {
+            self.shutdown.cancel();
+            self.actor.await.expect("the actor drains");
+        }
+
         fn spawn_delivery(
             &self,
         ) -> tokio::task::JoinHandle<Result<DeliveryOutcome, DeliverCallError>> {
@@ -865,8 +870,7 @@ mod tests {
             ]
         );
 
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     fn replied_within(harness: &Harness) -> Option<Ticket> {
@@ -905,9 +909,7 @@ mod tests {
         assert!(!harness.handle.cancel(second).await.expect("answered"));
 
         // The running chat's opening stage may sit ahead of the refusal.
-        let refused = (0..3)
-            .filter_map(|_| harness.events.recv_timeout(PATIENCE).ok())
-            .find_map(|stage| ended_as(&stage, second));
+        let refused = ended_within(&harness, second);
         assert_eq!(refused, Some(RpcErrorCode::Cancelled));
 
         harness.release.send(()).expect("the first is released");
@@ -934,9 +936,7 @@ mod tests {
         assert_eq!(started_within(&harness.started, PATIENCE), Some(1));
 
         assert!(harness.handle.cancel(first).await.expect("answered"));
-        let ended = (0..3)
-            .filter_map(|_| harness.events.recv_timeout(PATIENCE).ok())
-            .find_map(|stage| ended_as(&stage, first));
+        let ended = ended_within(&harness, first);
         assert_eq!(ended, Some(RpcErrorCode::Cancelled));
 
         harness
@@ -1001,8 +1001,7 @@ mod tests {
         .expect("the lane frees once the reply is out");
         assert!(deleted.is_ok(), "{deleted:?}");
 
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1074,8 +1073,7 @@ mod tests {
         );
         harness.release.send(()).expect("the ask is released");
 
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1118,8 +1116,7 @@ mod tests {
                 .expect("answered")
                 .is_empty()
         );
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1180,8 +1177,7 @@ mod tests {
             None,
             "the waiting ask never starts"
         );
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     fn pressed_job(text: &str, workdir: &Path) -> AskJob {
@@ -1351,8 +1347,7 @@ mod tests {
         assert_eq!(ended_within(&harness, older), Some(RpcErrorCode::Cancelled));
         assert!(!harness.handle.take_escape(), "nothing is left to end");
 
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1379,8 +1374,7 @@ mod tests {
             "nor does its ticket end it"
         );
 
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1423,8 +1417,7 @@ mod tests {
 
         assert!(!harness.handle.take_escape());
 
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     fn prompt(output_mode: Option<OutputMode>) -> PromptRequest {
@@ -1469,8 +1462,7 @@ mod tests {
             "the second runs while the first's assistant does; only their typing takes turns"
         );
 
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     fn deliver_call() -> DeliverCall {
@@ -1507,8 +1499,7 @@ mod tests {
             "{outcome:?}"
         );
 
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1551,7 +1542,6 @@ mod tests {
             "the delivery ends without being released"
         );
 
-        harness.shutdown.cancel();
-        harness.actor.await.expect("the actor drains");
+        harness.stop().await;
     }
 }
