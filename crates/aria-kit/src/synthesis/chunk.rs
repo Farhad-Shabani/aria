@@ -76,22 +76,30 @@ mod tests {
         let split = chunks(&long);
         assert_eq!(split.len(), 2, "two long sentences split at their seam");
         assert_eq!(split[1], sentence);
+
+        let long = format!("{}.", "word ".repeat(40).trim_end());
+        let short = format!("yyyy{}.", "ab cd ".repeat(16).trim_end());
+        let pair = format!("{long} {short}");
+        assert_eq!(
+            long.chars().count() + short.chars().count(),
+            MAX_CHUNK_CHARS
+        );
+        assert_eq!(chunks(&pair), vec![long, short], "the joining space counts");
     }
 
     #[test]
-    fn an_unbroken_sentence_still_splits() {
-        let long = "word ".repeat(120);
-        for chunk in chunks(&long) {
-            assert!(chunk.len() <= MAX_CHUNK_CHARS);
-            assert!(!chunk.is_empty());
-        }
-    }
+    fn an_overlong_sentence_splits_at_a_space() {
+        for word in ["word ", "wörd "] {
+            let long = word.repeat(120);
 
-    #[test]
-    fn multibyte_text_splits_on_character_boundaries() {
-        let long = "wörd ".repeat(120);
-        for chunk in chunks(&long) {
-            assert!(chunk.chars().count() <= MAX_CHUNK_CHARS);
+            let split = chunks(&long);
+
+            assert!(split.len() > 1, "{word:?}");
+            for chunk in &split {
+                assert!(!chunk.is_empty());
+                assert!(chunk.chars().count() <= MAX_CHUNK_CHARS, "{word:?}");
+            }
+            assert_eq!(split.join(" "), long.trim(), "{word:?}");
         }
     }
 
@@ -103,15 +111,6 @@ mod tests {
             let over = format!("{full}{character}");
             assert_eq!(chunks(&over), vec![full, character.to_owned()]);
         }
-
-        let long = format!("{}.", "word ".repeat(40).trim_end());
-        let short = format!("yyyy{}.", "ab cd ".repeat(16).trim_end());
-        let pair = format!("{long} {short}");
-        assert_eq!(
-            long.chars().count() + short.chars().count(),
-            MAX_CHUNK_CHARS
-        );
-        assert_eq!(chunks(&pair), vec![long, short], "the joining space counts");
 
         let offset = format!("a{}", "語".repeat(MAX_CHUNK_CHARS));
         let split = chunks(&offset);

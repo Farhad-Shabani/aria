@@ -213,25 +213,10 @@ impl<V: VoiceActivityDetector> SilenceRecording<V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::audio::testing::spooled;
+    use crate::audio::testing::{Loudness, silence, speech, spooled};
     use crate::audio::{RecordingWriter, canonical_duration};
-    use crate::voice_activity::VoiceActivityError;
 
     use super::*;
-
-    struct Loudness;
-
-    impl VoiceActivityDetector for Loudness {
-        const FRAME_SAMPLES: usize = 160;
-
-        fn probability(&mut self, frame: &[i16]) -> std::result::Result<f32, VoiceActivityError> {
-            Ok(if frame.iter().any(|&sample| sample != 0) {
-                1.0
-            } else {
-                0.0
-            })
-        }
-    }
 
     fn listening(
         trailing_silence: Duration,
@@ -254,14 +239,6 @@ mod tests {
         let auto_stop = AutoStop::new(auto_stop).expect("the auto-stop is in range");
         let recording = QuietRecording::new(spool, Loudness, auto_stop);
         (directory, writer, recording)
-    }
-
-    fn speech(duration: Duration) -> Vec<i16> {
-        vec![1_000; canonical_samples(duration) as usize]
-    }
-
-    fn silence(duration: Duration) -> Vec<i16> {
-        vec![0; canonical_samples(duration) as usize]
     }
 
     #[test]

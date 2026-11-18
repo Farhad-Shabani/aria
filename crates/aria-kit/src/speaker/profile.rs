@@ -123,3 +123,34 @@ pub enum SpeakerNameError {
     #[error("a speaker name cannot read like an anonymous speaker, such as \"Speaker 2\"")]
     Reserved,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_that_could_escape_the_directory_is_refused() {
+        for name in ["", " ada", "ada ", "../ada", "ada/zoe", ".hidden", "a\nb"] {
+            assert!(
+                SpeakerName::new(name).is_err(),
+                "{name:?} must not become a filename"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_that_reads_like_an_anonymous_speaker_is_refused() {
+        assert!(SpeakerName::new("Speaker 2").is_err());
+        assert!(SpeakerName::new("Speaker Two").is_ok());
+    }
+
+    #[test]
+    fn an_ordinary_name_is_accepted() {
+        assert_eq!(
+            SpeakerName::new("Alex Morgan")
+                .expect("the name is usable")
+                .as_str(),
+            "Alex Morgan"
+        );
+    }
+}

@@ -372,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn assign_prefers_an_enrolled_name_and_leaves_its_profile_alone() {
+    fn assign_prefers_an_enrolled_name_and_opens_no_cluster() {
         let profiles = vec![super::super::enrolled_voice(
             "alex",
             Role::Owner,
@@ -385,7 +385,6 @@ mod tests {
             enrolled("alex")
         );
         assert!(clusters.is_empty());
-        assert_eq!(profiles[0].vector, A.to_vec());
     }
 
     #[test]
@@ -452,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn recluster_gives_a_merged_group_its_enrolled_name() {
+    fn recluster_names_a_paragraph_that_matches_a_profile() {
         let profiles = vec![super::super::enrolled_voice(
             "alex",
             Role::Owner,

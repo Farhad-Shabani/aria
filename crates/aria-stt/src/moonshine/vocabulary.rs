@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn the_leading_word_mark_is_not_a_leading_space() {
+    fn a_piece_without_a_word_mark_continues_the_word() {
         let vocabulary = vocabulary(&[("▁the", 10), ("re", 11)]);
 
         assert_eq!(vocabulary.decode(&[10, 11]), "there");

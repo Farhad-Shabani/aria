@@ -651,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_from_keeps_the_held_word_and_the_last_chunk() {
+    fn retained_from_keeps_the_last_chunk() {
         let (_directory, mut recording) = recorded(&vec![0_i16; 3 * CHUNK]);
         let (stream, _) = Scripted::new(&["one", "", "two"]);
         let mut state = state(stream);
@@ -665,6 +665,22 @@ mod tests {
         // 2·CHUNK; the chunk before it stays as well.
         assert_eq!(state.fed, 3 * CHUNK as u64);
         assert_eq!(state.retained_from(), 2 * CHUNK as u64);
+    }
+
+    #[test]
+    fn retained_from_keeps_a_held_word_older_than_the_last_chunk() {
+        let (_directory, mut recording) = recorded(&vec![0_i16; 2 * CHUNK]);
+        let (stream, _) = Scripted::new(&["one", ""]);
+        let mut state = state(stream);
+        let cancel = CancelToken::never();
+
+        while state.fed < 2 * CHUNK as u64 {
+            state
+                .next_finalized_with(&mut recording, &cancel, true)
+                .expect("the step succeeds");
+        }
+
+        assert_eq!(state.retained_from(), 0);
     }
 
     #[test]

@@ -200,3 +200,68 @@ impl<V: VoiceActivityDetector, K: SpeakerTracker> TurnFeed<V, K> {
         self.audio.release_before(heard.min(self.spoken_to));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::VoiceprintTracker;
+    use super::*;
+    use crate::speaker::turns::testing::*;
+    use crate::speaker::{Diarizer, LevelSegmenter};
+
+    #[test]
+    fn a_feed_without_a_tracker_frees_what_the_detector_heard() {
+        let mut recording = RecordingReader::from_samples(&[0.5; SECOND]);
+        let speech = SpeechDetector::new(Loud, 0);
+        let mut feed = TurnFeed::start(
+            &mut recording,
+            speech,
+            None::<VoiceprintTracker<'_, VoiceByLevel>>,
+        );
+
+        assert_eq!(
+            feed.hear_ahead(Duration::from_millis(100), None),
+            Ahead::Heard
+        );
+
+        assert_eq!(feed.held_from(), SECOND as u64);
+    }
+
+    #[test]
+    fn a_feed_whose_tracker_breaks_still_ends() {
+        // The detector hears NaN as silence, but the segmenter cannot keep it
+        // as evidence, so the timeline breaks on the first frame.
+        let mut recording = RecordingReader::from_samples(&[f32::NAN; SECOND]);
+        let mut models = enrolled();
+        let tracker = VoiceprintTracker::owner_only(&mut models.diarizer, LevelSegmenter, 0)
+            .expect("an owner is enrolled");
+        let mut feed = TurnFeed::start(&mut recording, SpeechDetector::new(Loud, 0), Some(tracker));
+
+        let mut steps = 0;
+        while feed.hear_ahead(Duration::from_millis(100), None) != Ahead::Ended {
+            steps += 1;
+            assert!(steps < 100, "the feed keeps hearing nothing");
+        }
+
+        assert!(feed.timeline().expect("a tracker runs").is_broken());
+    }
+
+    #[test]
+    fn a_tracker_further_behind_than_the_lag_allows_skips_to_the_detector() {
+        let piece = Duration::from_millis(100);
+        for (max_lag, reached) in [
+            (None, canonical_samples(piece)),
+            (Some(Duration::from_secs(1)), 3 * SECOND as u64),
+        ] {
+            let mut recording = RecordingReader::from_samples(&[OWN_LEVEL; 3 * SECOND]);
+            let mut diarizer = Diarizer::new(VoiceByLevel, vec![]);
+            let tracker = VoiceprintTracker::numbering(&mut diarizer, 0);
+            let mut feed =
+                TurnFeed::start(&mut recording, SpeechDetector::new(Loud, 0), Some(tracker));
+
+            feed.hear_ahead(piece, max_lag);
+
+            let timeline = feed.timeline().expect("a tracker runs");
+            assert_eq!(timeline.reached(), reached, "{max_lag:?}");
+        }
+    }
+}

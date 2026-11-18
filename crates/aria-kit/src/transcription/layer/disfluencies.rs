@@ -202,3 +202,86 @@ fn words(text: &str) -> Vec<Word> {
     }
     words
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::cancel::CancelToken;
+
+    use super::super::{Layer, Layered, RemoveHesitations, RemoveRepeats};
+
+    fn applied(layer: impl Layer, input: &str) -> String {
+        let mut text = input.to_owned();
+        layer.apply(&mut text, &CancelToken::never()).unwrap();
+        text
+    }
+
+    #[test]
+    fn hesitations_preserve_sentence_punctuation() {
+        for (input, expected) in [
+            ("Well, um. Next.", "Well. Next."),
+            ("Well, uh? Next.", "Well? Next."),
+        ] {
+            assert_eq!(applied(RemoveHesitations, input), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn hesitations_preserve_delimiters_around_surviving_words() {
+        for (input, expected) in [
+            ("\"Um, hello.\"", "\"Hello.\""),
+            ("(um hello)", "(hello)"),
+            ("go (um uh now)", "go (now)"),
+            ("go (um uh) now", "go now"),
+            ("(Um) hello", "Hello"),
+            ("(hello, um)", "(hello)"),
+            ("[well; uh] next", "[well] next"),
+            ("(um hello, uh)", "(hello)"),
+            ("\"Hello. um\"", "\"Hello.\""),
+        ] {
+            assert_eq!(applied(RemoveHesitations, input), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn hesitations_alone_leave_nothing_and_keep_a_newline() {
+        assert_eq!(applied(RemoveHesitations, "Um."), "");
+        assert_eq!(applied(RemoveHesitations, "uh uh"), "");
+        assert_eq!(applied(RemoveHesitations, ""), "");
+        assert_eq!(
+            applied(RemoveHesitations, "report.\num, by friday"),
+            "report.\nby friday"
+        );
+    }
+
+    #[test]
+    fn repeats_drop_the_second_of_two_identical_words() {
+        for (input, expected) in [
+            ("The the report", "The report"),
+            ("the The report", "the report"),
+            ("so so so", "so"),
+            ("the the, report", "the, report"),
+            ("the (the report)", "the (report)"),
+            ("ok (ok) go", "ok go"),
+            ("", ""),
+        ] {
+            assert_eq!(applied(RemoveRepeats, input), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn the_disfluency_corpus_cleans_as_expected() {
+        let corpus = include_str!("../../../tests/fixtures/disfluencies.txt");
+        for case in corpus.split("\n\n") {
+            let mut lines = case.lines().filter(|line| !line.starts_with('#'));
+            let Some(heard) = lines.next() else {
+                continue;
+            };
+            let expected = lines.next().unwrap_or(heard);
+            assert_eq!(
+                applied(Layered::new(RemoveHesitations, RemoveRepeats), heard),
+                expected,
+                "heard {heard:?}"
+            );
+        }
+    }
+}

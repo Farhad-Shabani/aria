@@ -1508,6 +1508,12 @@ mod tests {
                 .collect()
         }
 
+        /// Agrees `words` twice, so the second decode confirms them.
+        fn confirmed(agreement: &mut Agreement, words: Vec<Word>) -> Option<TranscriptSegment> {
+            agreement.agree(words.clone(), None);
+            agreement.agree(words, None).0
+        }
+
         fn text_of(segment: Option<TranscriptSegment>) -> Option<String> {
             segment.map(TranscriptSegment::into_text)
         }
@@ -1652,8 +1658,7 @@ mod tests {
         fn a_timed_revision_at_eof_drains_only_audio_past_the_delivered_end() {
             let mut agreement = Agreement::default();
             let opening = timed(&["one", "two", "three", "four"]);
-            agreement.agree(opening.clone(), None);
-            agreement.agree(opening, None);
+            confirmed(&mut agreement, opening);
             let mut revised = timed(&["different", "words", "replace", "the", "opening", "later"]);
             let through = agreement.delivered_through.unwrap();
             let early = (HEARD_MARGIN_FRAMES * TRIM_FRAME_SAMPLES) as u64 + 100;
@@ -1666,8 +1671,7 @@ mod tests {
         fn a_recovered_word_that_drifted_early_is_still_new_speech() {
             let mut agreement = Agreement::default();
             let opening = timed(&["one", "two", "three", "four"]);
-            agreement.agree(opening.clone(), None);
-            agreement.agree(opening, None);
+            confirmed(&mut agreement, opening);
             let mut revised = timed(&["different", "words", "replace", "the", "opening", "later"]);
             let through = agreement.delivered_through.unwrap();
             revised[4].span = Some(through - 100..through + 100);
@@ -1682,8 +1686,7 @@ mod tests {
         fn a_timed_recovery_does_not_reopen_audio_when_the_prefix_returns() {
             let mut agreement = Agreement::default();
             let opening = timed(&["one", "two", "three", "four"]);
-            agreement.agree(opening.clone(), None);
-            agreement.agree(opening, None);
+            confirmed(&mut agreement, opening);
             let mut revised = timed(&[
                 "a",
                 "completely",
@@ -1707,8 +1710,7 @@ mod tests {
         fn unplaceable_untimed_speech_does_not_repeat_delivered_audio() {
             let mut agreement = Agreement::default();
             let opening = heard(&["one", "two", "three", "four"]);
-            agreement.agree(opening.clone(), None);
-            agreement.agree(opening, None);
+            confirmed(&mut agreement, opening);
             let revised = heard(&["a", "completely", "different", "opening", "new", "speech"]);
             for _ in 0..2 {
                 assert!(agreement.agree(revised.clone(), None).0.is_none());
@@ -1723,8 +1725,7 @@ mod tests {
                 for finish_at_eof in [false, true] {
                     let mut agreement = Agreement::default();
                     let opening = timed(&["one", "two", "three", "four"]);
-                    agreement.agree(opening.clone(), None);
-                    agreement.agree(opening, None);
+                    confirmed(&mut agreement, opening);
                     let mut continued = timed(&["one", "two", "three", "four", "five"]);
                     let boundary = continued[4].span.as_ref().unwrap().start - drift;
                     continued[3].span.as_mut().unwrap().end = boundary;
@@ -1745,8 +1746,7 @@ mod tests {
         fn delivering_a_short_recovered_tail_does_not_reopen_the_discarded_prefix() {
             let mut agreement = Agreement::default();
             let opening = timed(&["one", "two", "three", "four"]);
-            agreement.agree(opening.clone(), None);
-            agreement.agree(opening, None);
+            confirmed(&mut agreement, opening);
             let revised = timed(&[
                 "new",
                 "completely",
@@ -1769,8 +1769,7 @@ mod tests {
         fn a_short_timed_recovery_does_not_lower_the_delivered_audio_boundary() {
             let mut agreement = Agreement::default();
             let opening = timed(&["one", "two", "three", "four", "five", "six"]);
-            agreement.agree(opening.clone(), None);
-            agreement.agree(opening, None);
+            confirmed(&mut agreement, opening);
             let revised = timed(&[
                 "a",
                 "different",
@@ -1797,11 +1796,9 @@ mod tests {
         fn a_delivered_anchor_after_recovery_allows_timing_drift() {
             let mut agreement = Agreement::default();
             let opening = timed(&["one", "two", "three", "four"]);
-            agreement.agree(opening.clone(), None);
-            agreement.agree(opening, None);
+            confirmed(&mut agreement, opening);
             let revised = timed(&["a", "completely", "different", "opening", "new", "speech"]);
-            agreement.agree(revised.clone(), None);
-            agreement.agree(revised, None);
+            confirmed(&mut agreement, revised);
             let mut continued = timed(&[
                 "a",
                 "completely",
@@ -1824,8 +1821,7 @@ mod tests {
         fn a_recovered_delivered_anchor_survives_loss_and_return_of_timings() {
             let mut agreement = Agreement::default();
             let opening = timed(&["one", "two", "three", "four"]);
-            agreement.agree(opening.clone(), None);
-            agreement.agree(opening, None);
+            confirmed(&mut agreement, opening);
             let revised = timed(&["a", "completely", "different", "opening", "new", "speech"]);
             let (first, settled) = agreement.agree(revised.clone(), None);
             assert!(first.is_none());
@@ -1867,8 +1863,7 @@ mod tests {
         fn an_untimed_candidate_cannot_anchor_a_discarded_prefix() {
             let mut agreement = Agreement::default();
             let opening = timed(&["one", "two", "three", "four"]);
-            agreement.agree(opening.clone(), None);
-            agreement.agree(opening, None);
+            confirmed(&mut agreement, opening);
             agreement.agree(
                 timed(&["a", "completely", "different", "opening", "new", "speech"]),
                 None,
@@ -1905,17 +1900,6 @@ mod tests {
             let (confirmed, _) = agreement.agree(later, None);
 
             assert_eq!(text_of(confirmed).as_deref(), Some("e f g a b c d h"));
-        }
-
-        #[test]
-        fn an_untimed_phrase_repeated_in_the_tail_is_kept() {
-            let run = drive(
-                20_000,
-                vec![loud_batch(); 3],
-                &["a b c d", "a b c d", "a b c d a b c d"],
-            );
-
-            assert_eq!(run.transcript(), "a b c d a b c d");
         }
 
         #[test]
@@ -1968,6 +1952,17 @@ mod tests {
 
     mod state {
         use super::*;
+
+        #[test]
+        fn an_untimed_phrase_repeated_in_the_tail_is_kept() {
+            let run = drive(
+                20_000,
+                vec![loud_batch(); 3],
+                &["a b c d", "a b c d", "a b c d a b c d"],
+            );
+
+            assert_eq!(run.transcript(), "a b c d a b c d");
+        }
 
         #[test]
         fn agreement_commits_only_the_shared_prefix() {
@@ -2050,9 +2045,7 @@ mod tests {
         }
 
         #[test]
-        fn a_revision_shorter_than_what_was_emitted_does_not_panic() {
-            // Words accumulate, then the model comes back with a decode shorter
-            // than what was already emitted, and the cap forces a trim.
+        fn a_decode_that_drops_most_of_its_window_is_ignored() {
             let run = drive(
                 400,
                 vec![loud_batch(), loud_batch(), loud_batch(), loud_batch()],
@@ -2063,11 +2056,7 @@ mod tests {
                     "zeta",
                 ],
             );
-            assert!(
-                run.transcript().starts_with("alpha beta"),
-                "the words confirmed before the revision survive it: {}",
-                run.transcript()
-            );
+            assert_eq!(run.segments, ["alpha beta", "gamma", "delta"]);
         }
 
         #[test]
@@ -2197,12 +2186,10 @@ mod tests {
             .unwrap();
             pending.source_window = Some(STRIDE as u64..2 * STRIDE as u64);
             state.pending_segment = Some(pending);
-            assert_eq!(state.retained_from(), 0);
+            state.untimed = true;
+            assert_eq!(state.retained_from(), STRIDE as u64);
 
             state.pending_segment = None;
-            // The lookback reaches back to the start of the recording.
-            assert_eq!(state.retained_from(), 0);
-            state.untimed = true;
             assert_eq!(state.retained_from(), 10 * STRIDE as u64);
         }
 

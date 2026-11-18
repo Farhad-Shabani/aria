@@ -921,26 +921,35 @@ mod tests {
     }
 
     #[test]
-    fn stored_rules_preserve_precedence_and_bound_preparation() {
+    fn stored_rules_apply_as_new_rules_do() {
         let terms = vec!["db2".to_owned(), "vex16".to_owned()];
         let learned = vec![("db two".to_owned(), "db9".to_owned())];
-        let stored =
-            PersonalRules::from_stored(terms.clone(), learned.clone(), &CancelToken::never())
-                .unwrap();
-        let previous = PersonalRules::new(terms.clone(), learned.clone());
-        assert_eq!(
-            stored.apply("db two and Vexe16"),
-            previous.apply("db two and Vexe16")
-        );
+
+        let stored = PersonalRules::from_stored(terms, learned, &CancelToken::never()).unwrap();
+
+        let (typed, _) = stored.apply("db two and Vexe16");
+        assert_eq!(typed, "db9 and vex16");
+    }
+
+    #[test]
+    fn loading_stored_rules_stops_when_cancelled() {
+        let terms = vec!["db2".to_owned(), "vex16".to_owned()];
+        let learned = vec![("db two".to_owned(), "db9".to_owned())];
         let cancelled = CancelToken::new();
         cancelled.cancel();
+
         assert!(matches!(
             PersonalRules::from_stored(terms, learned, &cancelled),
             Err(MatchError::Cancelled)
         ));
+    }
+
+    #[test]
+    fn stored_rules_past_the_size_bound_are_refused() {
         let oversized = (0..40_000)
             .map(|index| (format!("name {index}"), "target".repeat(20)))
             .collect();
+
         assert!(matches!(
             PersonalRules::from_stored(Vec::new(), oversized, &CancelToken::never()),
             Err(MatchError::TooLarge)

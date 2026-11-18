@@ -1656,6 +1656,11 @@ mod operation_source_tests {
             Err(TranscriptionError::Cancelled)
         ));
     }
+}
+
+#[cfg(test)]
+mod segment_tests {
+    use super::*;
 
     #[cfg(all(feature = "silero", not(target_family = "wasm")))]
     #[test]

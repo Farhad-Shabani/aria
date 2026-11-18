@@ -143,18 +143,7 @@ fn grow(counts: &mut Vec<u8>, through: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Frames in which each listed local speaks.
-    fn frames(pattern: &[&[usize]]) -> Vec<Activity> {
-        pattern
-            .iter()
-            .map(|speaking| {
-                speaking
-                    .iter()
-                    .fold(Activity::SILENT, |active, &voice| active.speaking(voice))
-            })
-            .collect()
-    }
+    use crate::speaker::voices::testing::frames;
 
     /// A timeline of one chunk in which `voices` local speakers were heard.
     fn heard(voices: usize, pattern: &[&[usize]]) -> Timeline {

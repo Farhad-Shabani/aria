@@ -10,6 +10,8 @@ use crate::voice_activity::{Progress, SpeechMap};
 
 mod feed;
 mod gate;
+#[cfg(test)]
+mod testing;
 mod tracker;
 
 pub use feed::{Ahead, TurnFeed};
@@ -360,4 +362,110 @@ impl Timeline {
 
 fn overlap(a: &Range<u64>, b: &Range<u64>) -> u64 {
     a.end.min(b.end).saturating_sub(a.start.max(b.start))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::*;
+    use super::*;
+    use crate::audio::RecordingReader;
+    use crate::speaker::LevelSegmenter;
+
+    #[test]
+    fn whole_source_admission_preserves_finalized_and_unresolved_states() {
+        let mut timeline = finished_timeline(
+            &[(2..8, Judgment::Owner), (12..18, Judgment::Unverified)],
+            20,
+        );
+        assert_eq!(timeline.wholly_admitted(&(0..20)), Some(true));
+        timeline.turns[1].judgment = Judgment::Other;
+        assert_eq!(timeline.wholly_admitted(&(0..20)), Some(false));
+        timeline.turns[1].judgment = Judgment::Pending;
+        assert_eq!(timeline.wholly_admitted(&(0..20)), None);
+        timeline.turns[1].judgment = Judgment::Unverified;
+        timeline.break_off();
+        assert_eq!(timeline.wholly_admitted(&(0..20)), None);
+    }
+
+    #[test]
+    fn forgetting_keeps_the_latest_turn_and_what_comes_after() {
+        let mut timeline = Timeline {
+            turns: vec![
+                Turn {
+                    span: 0..4,
+                    judgment: Judgment::Owner,
+                },
+                Turn {
+                    span: 4..8,
+                    judgment: Judgment::Other,
+                },
+            ],
+            labels: vec![LabeledTurn {
+                span: 0..8,
+                label: None,
+            }],
+            reached: 8,
+            ..Timeline::default()
+        };
+
+        timeline.forget_before(6);
+        assert_eq!(timeline.turns.len(), 1);
+        assert_eq!(timeline.admission(&(5..7)), Some(false));
+        timeline.forget_before(100);
+        assert_eq!(timeline.turns.len(), 1);
+        assert_eq!(timeline.labels.len(), 1);
+    }
+
+    #[test]
+    fn only_owner_turns_may_leave_the_computer() {
+        let timeline = finished_timeline(
+            &[
+                (0..4, Judgment::Owner),
+                (4..6, Judgment::Unverified),
+                (6..8, Judgment::Other),
+            ],
+            8,
+        );
+        let samples = [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0];
+
+        assert_eq!(
+            timeline.admitted_audio(&samples, 0),
+            [1.0, 1.0, 1.0, 1.0, 2.0, 2.0]
+        );
+        assert_eq!(timeline.owner_audio(&samples, 0), [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(timeline.wholly_owner(&(0..4)), Some(true));
+        assert_eq!(timeline.wholly_owner(&(0..6)), Some(false));
+    }
+
+    #[test]
+    fn whole_source_admission_keeps_point_words() {
+        let timeline = finished_timeline(&[(2..8, Judgment::Owner)], 10);
+        assert_eq!(timeline.wholly_admitted(&(3..3)), Some(true));
+        assert_eq!(timeline.wholly_admitted(&(9..9)), Some(false));
+    }
+
+    #[test]
+    fn a_preview_shows_held_words_only_while_their_voice_is_the_owners() {
+        for (level, shown) in [(OWN_LEVEL, Some("hello world")), (OTHER_LEVEL, None)] {
+            let mut recording = RecordingReader::from_samples(&audio(&[(level, 1.0)]));
+            let mut models = enrolled().with_segmenter(LevelSegmenter);
+            let Listening { speech, tracker } = models.listen(Loud, 0);
+            let mut feed = TurnFeed::start(&mut recording, speech, Some(tracker));
+            let mut gate = Gate::new(Admission::OwnerOnly, feed.held_from());
+            feed.hear_through(SECOND as u64);
+            gate.hold(heard_text("hello", 8_000..16_000));
+
+            let timeline = feed.timeline().expect("a tracker runs");
+            let reached = timeline.reached;
+            assert!(
+                release(&mut gate, timeline).is_empty(),
+                "the word waits for a speaker change"
+            );
+            assert_eq!(
+                preview(&mut gate, timeline, reached, "world", None).as_deref(),
+                shown,
+                "{level}"
+            );
+        }
+    }
 }

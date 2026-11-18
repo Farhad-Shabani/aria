@@ -178,6 +178,13 @@ mod tests {
         typed
     }
 
+    /// What the whole text types in one go.
+    fn whole(heard: &str, vocabulary: &Vocabulary) -> String {
+        vocabulary
+            .correct_spoken(heard, "")
+            .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
+    }
+
     #[rstest]
     #[case::underscore(&[("user", None), ("underscore", None), ("id", None)], "user_id")]
     #[case::keeps_casing(&[("User", None), ("underscore", None), ("ID", None)], "User_ID")]
@@ -191,6 +198,7 @@ mod tests {
     #[case::hyphen_chain(&[("en hyphen us", None), ("hyphen posix", None)], "en-us-posix")]
     #[case::slash_opens_a_segment(&[("src", None), ("slash main", None)], "src/main")]
     #[case::backslash_alone(&[("c", None), ("backslash", None), ("windows", None)], "c\\windows")]
+    #[case::long_join_holds_only_its_deferred_end(&[("a underscore b underscore c underscore d underscore e underscore twenty", None), ("one", None)], "a_b_c_d_e_21")]
     fn joins_across_segments(#[case] pieces: &[(&str, Option<bool>)], #[case] typed: &str) {
         assert_eq!(streamed(pieces, &Vocabulary::default()), typed);
     }
@@ -228,6 +236,8 @@ mod tests {
     #[case::digit_word_in_prose(&[("no", None), ("one", None), ("knows", None)], "no one knows")]
     #[case::sentence_ended_after_a_number(&[("twenty.", None), ("One more.", Some(true))], "20. One more.")]
     #[case::ellipsis_after_a_number(&[("I have twenty...", None), ("or so", Some(false))], "I have 20... or so")]
+    #[case::symbol_after_a_number_run_with_no_written_form(&[("hundred", None), ("twelve hyphen", None)], "hundred twelve hyphen")]
+    #[case::symbol_after_a_number_and_its_ordinal(&[("apples", None), ("twelve second hyphen", None)], "apples twelve second hyphen")]
     fn leaves_unjoined_across_segments(
         #[case] pieces: &[(&str, Option<bool>)],
         #[case] typed: &str,
@@ -325,9 +335,7 @@ mod tests {
     #[case("zero point five percent of five dollars")]
     fn any_split_types_what_the_whole_text_would(#[case] heard: &str) {
         let vocabulary = Vocabulary::default();
-        let whole = vocabulary
-            .correct_spoken(heard, "")
-            .map(|corrected| corrected.text);
+        let whole = whole(heard, &vocabulary);
         let words: Vec<&str> = heard.split(' ').collect();
         for first in 1..words.len() {
             for second in first..words.len() {
@@ -338,11 +346,7 @@ mod tests {
                     .filter(|(piece, _)| !piece.is_empty())
                     .map(|(piece, ended)| (piece.as_str(), *ended))
                     .collect();
-                assert_eq!(
-                    streamed(&pieces, &vocabulary),
-                    whole.as_deref().unwrap_or(heard),
-                    "{pieces:?}"
-                );
+                assert_eq!(streamed(&pieces, &vocabulary), whole, "{pieces:?}");
             }
         }
     }
@@ -367,32 +371,7 @@ mod tests {
         assert_eq!(streamed(&[("cd tilde dot", None)], &vocabulary), "cd ~.");
         assert_eq!(
             streamed(&[("cd tilde dot", None), ("bashrc", None)], &vocabulary),
-            vocabulary
-                .correct_spoken("cd tilde dot bashrc", "")
-                .unwrap()
-                .text
-        );
-    }
-
-    #[test]
-    fn a_symbol_after_a_number_run_with_no_written_form_keeps_it_whole() {
-        assert_eq!(
-            streamed(
-                &[("hundred", None), ("twelve hyphen", None)],
-                &Vocabulary::default()
-            ),
-            "hundred twelve hyphen"
-        );
-    }
-
-    #[test]
-    fn a_symbol_after_a_number_and_its_ordinal_keeps_them_whole() {
-        assert_eq!(
-            streamed(
-                &[("apples", None), ("twelve second hyphen", None)],
-                &Vocabulary::default()
-            ),
-            "apples twelve second hyphen"
+            whole("cd tilde dot bashrc", &vocabulary)
         );
     }
 
@@ -405,18 +384,7 @@ mod tests {
                 &[("visit new york dot five", None), ("six", None)],
                 &vocabulary
             ),
-            vocabulary
-                .correct_spoken(heard, "")
-                .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
-        );
-    }
-
-    #[test]
-    fn a_long_join_holds_only_its_deferred_end() {
-        let heard = "a underscore b underscore c underscore d underscore e underscore twenty";
-        assert_eq!(
-            streamed(&[(heard, None), ("one", None)], &Vocabulary::default()),
-            "a_b_c_d_e_21"
+            whole(heard, &vocabulary)
         );
     }
 
@@ -466,14 +434,8 @@ mod tests {
     fn a_held_form_or_symbol_types_what_the_whole_text_would(#[case] pieces: &[&str]) {
         let vocabulary = crowded();
         let heard = pieces.join(" ");
-        let whole = vocabulary
-            .correct_spoken(&heard, "")
-            .map(|corrected| corrected.text);
         let pieces: Vec<_> = pieces.iter().map(|piece| (*piece, None)).collect();
-        assert_eq!(
-            streamed(&pieces, &vocabulary),
-            whole.as_deref().unwrap_or(&heard)
-        );
+        assert_eq!(streamed(&pieces, &vocabulary), whole(&heard, &vocabulary));
     }
 
     /// Every two-segment cut outside a term or spoken form types what the
@@ -501,20 +463,14 @@ mod tests {
                 })
             })
         };
-        let whole = vocabulary
-            .correct_spoken(heard, "")
-            .map(|corrected| corrected.text);
+        let whole = whole(heard, &vocabulary);
         for cut in (1..words.len()).filter(|cut| !splits_a_unit(*cut)) {
             if words[..cut].ends_with(&["new", "york"]) {
                 continue;
             }
             let pieces = [words[..cut].join(" "), words[cut..].join(" ")];
             let pieces: Vec<_> = pieces.iter().map(|piece| (piece.as_str(), None)).collect();
-            assert_eq!(
-                streamed(&pieces, &vocabulary),
-                whole.as_deref().unwrap_or(heard),
-                "{pieces:?}"
-            );
+            assert_eq!(streamed(&pieces, &vocabulary), whole, "{pieces:?}");
         }
     }
 
@@ -569,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn a_name_start_is_held_within_max_words_spoken_words() {
+    fn a_name_start_past_the_word_bound_is_typed_and_a_shorter_one_held() {
         let vocabulary = Vocabulary::new(["a-b-c-d-e-f", "b-c", "d-e-g"]).unwrap();
         let heard = "x a dash b dash c dash d dash e";
         let from = vocabulary.spoken_deferred_from(heard, MAX_HELD_WORDS);

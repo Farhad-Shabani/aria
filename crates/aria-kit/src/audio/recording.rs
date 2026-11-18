@@ -756,11 +756,12 @@ impl Drop for RecordingReader {
 #[cfg(test)]
 mod tests {
     use super::super::capture::MicrophoneError;
-    use super::super::testing::{recorded, spooled};
+    use super::super::testing::{paced, recorded, spooled, wav_samples};
 
     use super::*;
 
     const SAMPLES: [i16; 4] = [0, 16_384, -16_384, 32_767];
+    const EXPECTED: [f32; 4] = [0.0, 0.5, -0.5, 32_767.0 / 32_768.0];
 
     #[test]
     fn available_reads_return_at_once_then_observe_audio_and_completion() {
@@ -794,13 +795,13 @@ mod tests {
     }
 
     #[test]
-    fn live_spools_keep_stream_and_file_equal_and_own_cleanup() {
+    fn a_live_spool_feeds_the_reader_and_the_wav_the_same_samples() {
         let directory = tempfile::tempdir().unwrap();
         let (mut recording, mut writer) =
             Recording::open_spooled(directory.path(), Duration::from_secs(1)).unwrap();
         writer.push(&SAMPLES).unwrap();
         recording.fill_available().unwrap();
-        assert_eq!(recording.samples(), expected());
+        assert_eq!(recording.samples(), EXPECTED);
         assert!(!recording.reached_end());
 
         writer.finish();
@@ -810,46 +811,28 @@ mod tests {
             .path()
             .unwrap()
             .to_owned();
-        let samples = hound::WavReader::open(&path)
-            .unwrap()
-            .into_samples::<i16>()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(samples, SAMPLES);
-        assert!(path.exists());
-        drop(recording);
-        assert!(!path.exists());
+
+        assert_eq!(wav_samples(&path), SAMPLES);
     }
 
     #[test]
-    fn live_spools_enforce_the_limit_and_fail_when_abandoned() {
+    fn the_spooled_wav_is_deleted_when_its_reader_drops() {
         let directory = tempfile::tempdir().unwrap();
         let (mut recording, mut writer) =
-            Recording::open_spooled(directory.path(), Duration::from_millis(1)).unwrap();
-        assert!(matches!(
-            writer.push(&[0; 17]),
-            Err(SpoolError::LimitExceeded { .. })
-        ));
-        drop(writer);
-        assert!(matches!(recording.fill(), Err(CaptureError::SourceGone)));
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
-    }
+            Recording::open_spooled(directory.path(), Duration::from_secs(1)).unwrap();
+        writer.push(&SAMPLES).unwrap();
+        writer.finish();
+        let path = recording
+            .finished_audio()
+            .unwrap()
+            .path()
+            .unwrap()
+            .to_owned();
+        assert!(path.exists());
 
-    /// One recording fed a batch at a time from another thread, as capture feeds
-    /// one, so the reader blocks between batches.
-    fn streamed(batches: Vec<Vec<i16>>) -> (tempfile::TempDir, RecordingReader) {
-        let (directory, writer, mut spool, recording) = spooled();
-        std::thread::spawn(move || {
-            for batch in batches {
-                spool.write_samples(&batch).expect("samples are writable");
-            }
-            writer.close(spool.finish().map_err(CaptureError::from));
-        });
-        (directory, recording)
-    }
+        drop(recording);
 
-    fn expected() -> Vec<f32> {
-        SAMPLES.iter().copied().map(f32_from_pcm16).collect()
+        assert!(!path.exists());
     }
 
     #[test]
@@ -995,7 +978,7 @@ mod tests {
 
     #[test]
     fn a_failed_capture_ends_a_fork_with_the_same_verdict() {
-        let (_directory, writer, _spool, recording) = spooled();
+        let (recording, writer) = ends();
         let mut forked = recording.fork();
         writer.close(Err(CaptureError::SourceGone));
 
@@ -1040,71 +1023,64 @@ mod tests {
 
     #[test]
     fn a_reader_waits_for_samples_capture_has_not_written_yet() {
-        let batches = SAMPLES.iter().map(|&sample| vec![sample]).collect();
-        let (_directory, mut recording) = streamed(batches);
+        let (directory, writer, mut spool, mut recording) = spooled();
+        std::thread::spawn(move || {
+            for sample in SAMPLES {
+                spool
+                    .write_samples(&[sample])
+                    .expect("samples are writable");
+            }
+            writer.close(spool.finish().map_err(CaptureError::from));
+        });
 
         recording.fill().expect("the recording ends");
 
-        assert_eq!(recording.samples(), expected());
+        assert_eq!(recording.samples(), EXPECTED);
+        drop(directory);
     }
 
     #[test]
     fn a_reader_can_take_a_prefix_before_the_recording_ends() {
-        let (_directory, mut recording) = recorded(&SAMPLES);
+        let (_directory, mut recording, pace) =
+            paced(vec![SAMPLES[..2].to_vec(), SAMPLES[2..].to_vec()]);
 
         recording
             .fill_through(2)
             .expect("two samples are available");
-        let first = recording.samples()[..2].to_vec();
+
+        assert!(!recording.reached_end());
+        assert_eq!(recording.samples(), &EXPECTED[..2]);
+
+        pace.advance();
         recording.fill().expect("the rest is available");
 
-        assert_eq!(first, expected()[..2]);
-        assert_eq!(recording.samples(), expected());
+        assert_eq!(recording.samples(), EXPECTED);
     }
 
     #[test]
     fn asking_past_the_end_returns_what_was_recorded() {
         let (_directory, mut recording) = recorded(&SAMPLES);
 
-        recording
-            .fill_through(SAMPLES.len() as u64 * 4)
-            .expect("a short recording is not a failure");
+        assert!(recording.fill_through(4).expect("the recording succeeded"));
+        assert!(
+            !recording
+                .fill_through(5)
+                .expect("a short recording is not a failure")
+        );
+        assert!(
+            !recording
+                .fill_through(SAMPLES.len() as u64 * 4)
+                .expect("a short recording is not a failure")
+        );
 
         assert!(recording.reached_end());
-        assert_eq!(recording.samples(), expected());
-    }
-
-    /// The invariant everything else rests on: the reader and the WAV are fed
-    /// by the same write, so they can never disagree.
-    #[test]
-    fn what_the_reader_sees_is_what_the_wav_got() {
-        let batches = SAMPLES.iter().map(|&sample| vec![sample]).collect();
-        let (_directory, mut recording) = streamed(batches);
-        recording.fill().expect("the recording ends");
-        let read = recording.samples().to_vec();
-
-        let audio = recording.finished_audio().expect("the recording succeeded");
-        let written: Vec<f32> = hound::WavReader::open(audio.path().expect("a captured WAV"))
-            .expect("the WAV is readable")
-            .into_samples::<i16>()
-            .map(|sample| f32_from_pcm16(sample.expect("every sample reads back")))
-            .collect();
-
-        assert_eq!(read, written);
+        assert_eq!(recording.samples(), EXPECTED);
     }
 
     #[test]
     fn a_recording_as_long_as_allowed_still_gets_a_spool() {
         let samples = crate::audio::MAX_RECORDING_SAMPLES as usize;
         assert!(super::super::spool::maximum_samples(spool_room(samples)).is_ok());
-    }
-
-    #[test]
-    fn a_fill_through_says_whether_it_reached_the_position() {
-        let mut recording = RecordingReader::from_samples(&[0.0; 4]);
-
-        assert!(recording.fill_through(4).expect("the recording succeeded"));
-        assert!(!recording.fill_through(5).expect("the recording succeeded"));
     }
 
     #[test]
@@ -1136,13 +1112,8 @@ mod tests {
             .expect("the recording is written");
 
         let audio = recording.finished_audio().expect("the recording succeeded");
-        let written: Vec<i16> = hound::WavReader::open(audio.path().expect("a saved WAV"))
-            .expect("the WAV is readable")
-            .into_samples::<i16>()
-            .map(|sample| sample.expect("every sample reads back"))
-            .collect();
 
-        assert_eq!(written, SAMPLES);
+        assert_eq!(wav_samples(audio.path().expect("a saved WAV")), SAMPLES);
     }
 
     #[test]

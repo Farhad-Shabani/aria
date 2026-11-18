@@ -3,11 +3,11 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
-use crate::audio::Recording;
 use crate::audio::testing::recorded;
+use crate::audio::{Recording, RecordingReader, RecordingWriter};
 use crate::transcription::{
-    Cadence, ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Recognizer, Session,
-    Stream, TimedWord, Transcription,
+    Cadence, ChunkStream, Emitted, Hypothesis, Language, Operation, RecognitionAudio, Recognizer,
+    Session, Stream, TimedWord, Transcription,
 };
 
 struct Scripted(Mutex<VecDeque<Hypothesis>>);
@@ -40,6 +40,21 @@ impl Recognizer for Scripted {
     }
 }
 
+fn first_stride<T: Recognizer, L: Layer>(
+    operation: &mut Operation<'_, T, L>,
+    recording: &mut RecordingReader,
+    capture: &mut RecordingWriter,
+) -> Option<TranscriptUpdate> {
+    capture.push(&[0.5; 1600]);
+    operation.next_update(recording).unwrap()
+}
+
+fn last_stride(recording: &mut RecordingReader, mut capture: RecordingWriter) {
+    capture.push(&[0.5; 1600]);
+    capture.finish();
+    recording.fill().unwrap();
+}
+
 struct Replace(&'static str, &'static str);
 
 impl Layer for Replace {
@@ -50,11 +65,12 @@ impl Layer for Replace {
 }
 
 #[test]
-fn layers_apply_in_declaration_order_and_options_preserve_the_raw_path() {
+fn layers_apply_in_declaration_order() {
     let (_directory, mut recording) = recorded(&[1, 2]);
     let transcription = Transcription::complete_samples(Scripted::new(["one"]))
         .with(Replace("one", "two"))
         .with(Replace("two", "three"));
+
     assert_eq!(
         transcription
             .transcribe(&mut recording, &Language::Automatic)
@@ -62,7 +78,10 @@ fn layers_apply_in_declaration_order_and_options_preserve_the_raw_path() {
             .as_str(),
         "three"
     );
+}
 
+#[test]
+fn an_absent_layer_leaves_the_text_raw() {
     for enabled in [false, true] {
         let (_directory, mut recording) = recorded(&[1, 2]);
         let transcription = Transcription::complete_samples(Scripted::new(["Um, hello."]))
@@ -235,11 +254,8 @@ fn vocabulary_does_not_rewrite_across_finalized_segments() {
     )
     .with(Vocabulary::new(["Cargo.toml"]).unwrap());
     let mut operation = transcription.start(&Language::Automatic).unwrap();
-    capture.push(&[0.5; 1600]);
-    operation.next_update(&mut recording).unwrap();
-    capture.push(&[0.5; 1600]);
-    capture.finish();
-    recording.fill().unwrap();
+    first_stride(&mut operation, &mut recording, &mut capture);
+    last_stride(&mut recording, capture);
     let first = operation.next_finalized(&mut recording).unwrap().unwrap();
     let tail = operation.next_finalized(&mut recording).unwrap().unwrap();
     assert_eq!(first.as_str(), "cargo");
@@ -273,14 +289,11 @@ fn a_suppressed_streaming_segment_does_not_end_the_stream() {
     )
     .with(RemoveHesitations);
     let mut operation = transcription.start(&Language::Automatic).unwrap();
-    capture.push(&[0.5; 1600]);
     assert!(matches!(
-        operation.next_update(&mut recording).unwrap(),
+        first_stride(&mut operation, &mut recording, &mut capture),
         Some(TranscriptUpdate::Provisional { text, .. }) if text == "um"
     ));
-    capture.push(&[0.5; 1600]);
-    capture.finish();
-    recording.fill().unwrap();
+    last_stride(&mut recording, capture);
     assert_eq!(
         operation
             .next_finalized(&mut recording)
@@ -360,14 +373,11 @@ fn completion_includes_the_processed_tail_without_reapplying_layers() {
         )
         .with(&calls);
         let mut operation = transcription.start(&Language::Automatic).unwrap();
-        capture.push(&[0.5; 1600]);
         assert!(matches!(
-            operation.next_update(&mut recording).unwrap(),
+            first_stride(&mut operation, &mut recording, &mut capture),
             Some(TranscriptUpdate::Provisional { text, .. }) if text == "one two"
         ));
-        capture.push(&[0.5; 1600]);
-        capture.finish();
-        recording.fill().unwrap();
+        last_stride(&mut recording, capture);
         let first = operation.next_finalized(&mut recording).unwrap().unwrap();
         assert_eq!(first.as_str(), "one two!");
         assert_eq!(operation.completed().unwrap().as_str(), "one two! three!");
@@ -411,11 +421,8 @@ fn processed_segments_keep_their_audio_spans_when_recording_is_released() {
     let transcription = Transcription::agreement(Cadence::from_millis(100, 20_000), scripted)
         .with(RemoveHesitations);
     let mut operation = transcription.start(&Language::Automatic).unwrap();
-    capture.push(&[0.5; 1600]);
-    operation.next_update(&mut recording).unwrap();
-    capture.push(&[0.5; 1600]);
-    capture.finish();
-    recording.fill().unwrap();
+    first_stride(&mut operation, &mut recording, &mut capture);
+    last_stride(&mut recording, capture);
     let first = operation.next_finalized(&mut recording).unwrap().unwrap();
     assert_eq!(first.as_str(), "one");
     assert_eq!(first.span, Some(0..800));
@@ -459,11 +466,8 @@ fn cancellation_or_failure_in_the_tail_never_exposes_raw_completion() {
         let mut operation = transcription
             .start_with(&Language::Automatic, &cancel)
             .unwrap();
-        capture.push(&[0.5; 1600]);
-        operation.next_update(&mut recording).unwrap();
-        capture.push(&[0.5; 1600]);
-        capture.finish();
-        recording.fill().unwrap();
+        first_stride(&mut operation, &mut recording, &mut capture);
+        last_stride(&mut recording, capture);
         let error = operation.next_finalized(&mut recording).unwrap_err();
         if cancel_on_tail {
             assert!(matches!(error, TranscriptionError::Cancelled));
@@ -476,91 +480,6 @@ fn cancellation_or_failure_in_the_tail_never_exposes_raw_completion() {
         assert!(operation.completed().is_none());
         assert!(operation.finish(&mut recording).is_err());
         assert!(operation.completed().is_none());
-    }
-}
-
-#[test]
-fn hesitations_preserve_sentence_punctuation() {
-    for (input, expected) in [
-        ("Well, um. Next.", "Well. Next."),
-        ("Well, uh? Next.", "Well? Next."),
-        ("Go. Um, so then", "Go. So then"),
-    ] {
-        let mut text = input.to_owned();
-        RemoveHesitations
-            .apply(&mut text, &CancelToken::never())
-            .unwrap();
-        assert_eq!(text, expected);
-    }
-}
-
-#[test]
-fn hesitations_preserve_delimiters_around_surviving_words() {
-    for (input, expected) in [
-        ("\"Um, hello.\"", "\"Hello.\""),
-        ("(um hello)", "(hello)"),
-        ("go (um uh now)", "go (now)"),
-        ("go (um uh) now", "go now"),
-        ("(Um) hello", "Hello"),
-        ("(hello, um)", "(hello)"),
-        ("[well; uh] next", "[well] next"),
-        ("(um hello, uh)", "(hello)"),
-        ("\"Hello. um\"", "\"Hello.\""),
-    ] {
-        let mut text = input.to_owned();
-        RemoveHesitations
-            .apply(&mut text, &CancelToken::never())
-            .unwrap();
-        assert_eq!(text, expected);
-    }
-}
-
-fn applied(layer: impl Layer, input: &str) -> String {
-    let mut text = input.to_owned();
-    layer.apply(&mut text, &CancelToken::never()).unwrap();
-    text
-}
-
-#[test]
-fn hesitations_alone_leave_nothing_and_keep_a_newline() {
-    assert_eq!(applied(RemoveHesitations, "Um."), "");
-    assert_eq!(applied(RemoveHesitations, "uh uh"), "");
-    assert_eq!(applied(RemoveHesitations, ""), "");
-    assert_eq!(
-        applied(RemoveHesitations, "report.\num, by friday"),
-        "report.\nby friday"
-    );
-}
-
-#[test]
-fn repeats_drop_the_second_of_two_identical_words() {
-    for (input, expected) in [
-        ("The the report", "The report"),
-        ("the The report", "the report"),
-        ("so so so", "so"),
-        ("the the, report", "the, report"),
-        ("the (the report)", "the (report)"),
-        ("ok (ok) go", "ok go"),
-        ("", ""),
-    ] {
-        assert_eq!(applied(RemoveRepeats, input), expected, "{input:?}");
-    }
-}
-
-#[test]
-fn the_disfluency_corpus_cleans_as_expected() {
-    let corpus = include_str!("../../../tests/fixtures/disfluencies.txt");
-    for case in corpus.split("\n\n") {
-        let mut lines = case.lines().filter(|line| !line.starts_with('#'));
-        let Some(heard) = lines.next() else {
-            continue;
-        };
-        let expected = lines.next().unwrap_or(heard);
-        assert_eq!(
-            applied(Layered::new(RemoveHesitations, RemoveRepeats), heard),
-            expected,
-            "heard {heard:?}"
-        );
     }
 }
 
@@ -620,66 +539,11 @@ fn a_session_accumulates_past_the_segment_bound() {
     )
     .with(Expand(MAX_TEXT_BYTES / 2));
     let mut operation = transcription.start(&Language::Automatic).unwrap();
-    capture.push(&[0.5; 1600]);
-    operation.next_update(&mut recording).unwrap();
-    capture.push(&[0.5; 1600]);
-    capture.finish();
-    recording.fill().unwrap();
+    first_stride(&mut operation, &mut recording, &mut capture);
+    last_stride(&mut recording, capture);
     while operation.next_finalized(&mut recording).unwrap().is_some() {}
     assert_eq!(
         operation.completed().unwrap().as_str().len(),
         MAX_TEXT_BYTES + 1
     );
-}
-
-mod correction_order {
-    use rstest::rstest;
-
-    use super::super::Vocabulary;
-    use super::super::vocabulary::PersonalRules;
-
-    fn corrected(heard: &str, terms: &[&str], learned: &[(&str, &str)]) -> String {
-        let terms = terms.iter().map(|term| (*term).to_owned()).collect();
-        let learned = learned
-            .iter()
-            .map(|(spoken, typed)| ((*spoken).to_owned(), (*typed).to_owned()))
-            .collect();
-        let vocabulary = Vocabulary::compile(&[], PersonalRules::new(terms, learned)).unwrap();
-        vocabulary
-            .correct_spoken(heard, "")
-            .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
-    }
-
-    #[rstest]
-    #[case::spoken_form_before_a_number("i eighteen n", &["i18n"], &[], "i18n")]
-    #[case::learned_pair_before_a_number("open twenty four seven", &[], &[("twenty four seven", "24/7")], "open 24/7")]
-    #[case::number_beside_a_spoken_form("i eighteen n twenty one", &["i18n"], &[], "i18n 21")]
-    #[case::symbol_joins_a_spoken_form("i eighteen n underscore key", &["i18n"], &[], "i18n_key")]
-    #[case::symbol_joins_a_number("version twenty dot twenty one", &[], &[], "version 20.21")]
-    #[case::form_inside_punctuation("(teh, twenty one)", &[], &[("teh", "the")], "(the, 21)")]
-    #[case::near_miss_beside_a_number("kubernets twenty one", &["Kubernetes"], &[], "Kubernetes 21")]
-    #[case::form_with_a_symbol_inside("open cargo dot toml", &[], &[("cargo dot toml", "Cargo.toml")], "open Cargo.toml")]
-    #[case::form_opening_on_a_symbol_joins("example dot com", &[], &[("dot com", ".com")], "example.com")]
-    #[case::form_opening_on_a_symbol_with_no_word_before("dot com is taken", &[], &[("dot com", ".com")], ".com is taken")]
-    fn each_step_keeps_what_an_earlier_one_claimed(
-        #[case] heard: &str,
-        #[case] terms: &[&str],
-        #[case] learned: &[(&str, &str)],
-        #[case] typed: &str,
-    ) {
-        assert_eq!(corrected(heard, terms, learned), typed);
-    }
-
-    #[test]
-    fn a_term_keeps_its_number_words() {
-        let vocabulary = Vocabulary::new(["Area Fifty One"]).unwrap();
-        assert_eq!(vocabulary.correct_spoken("area fifty one", ""), None);
-        assert_eq!(
-            Vocabulary::default()
-                .correct_spoken("area fifty one", "")
-                .map(|corrected| corrected.text)
-                .as_deref(),
-            Some("area 51")
-        );
-    }
 }

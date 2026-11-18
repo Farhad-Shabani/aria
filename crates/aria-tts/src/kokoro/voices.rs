@@ -136,6 +136,15 @@ mod tests {
         let voices = VoiceStyles::from_archive(bytes).unwrap();
 
         assert_eq!(voices.names().collect::<Vec<_>>(), ["af_heart"]);
+    }
+
+    #[test]
+    fn the_style_row_is_the_one_at_the_token_count() {
+        let mut bytes = stored_archive();
+        bytes.set_position(0);
+
+        let voices = VoiceStyles::from_archive(bytes).unwrap();
+
         let row = voices.style(None, 1).unwrap();
         assert_eq!(row[0], STYLE_WIDTH as f32);
     }

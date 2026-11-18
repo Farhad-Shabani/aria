@@ -275,16 +275,10 @@ fn drain(
 
 #[cfg(test)]
 mod tests {
+    use super::super::testing::{PATIENCE, shell};
     use super::*;
 
-    const PATIENCE: Duration = Duration::from_secs(5);
     const LIMIT: usize = 1024;
-
-    fn shell(script: &str) -> Command {
-        let mut command = Command::new("/bin/sh");
-        command.arg("-c").arg(script);
-        command
-    }
 
     fn bounds(stdout: Capture, stderr: Capture) -> Bounds {
         Bounds {
@@ -426,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn the_deadline_and_a_cancel_end_the_run_distinctly() {
+    fn the_deadline_ends_the_run_as_timed_out() {
         let timeout = Duration::from_millis(100);
         let started = Instant::now();
         let error = run_script(
@@ -443,12 +437,18 @@ mod tests {
             "{error:?}"
         );
         assert!(started.elapsed() < PATIENCE);
+    }
 
-        let cancel = CancelToken::new();
-        cancel.cancel();
+    #[test]
+    fn a_cancel_arriving_while_the_child_runs_ends_the_run() {
         let started = Instant::now();
+        // The check before spawning passes, so the cancel comes from the wait.
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        let cancel = CancelToken::from_fn(move || checks.fetch_add(1, Ordering::Relaxed) > 0);
+
         let error =
             run(&mut shell("sleep 30"), b"", failing(), &cancel).expect_err("the run is cancelled");
+
         assert!(matches!(error, RunError::Cancelled), "{error:?}");
         assert!(started.elapsed() < PATIENCE);
     }

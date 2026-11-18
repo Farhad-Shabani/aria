@@ -90,10 +90,14 @@ mod tests {
     }
 
     #[test]
-    fn a_run_of_frames_converts_to_seconds_and_back() {
+    fn a_duration_rounds_down_to_whole_frames() {
         let grid = pyannote();
         // 0.3 s is pyannote's shortest turn: 17 frames at this shift.
         assert_eq!(grid.frames(0.3), 17);
-        assert_eq!(grid.start(17), 17 * 270);
+    }
+
+    #[test]
+    fn a_frame_starts_at_its_shift_times_its_index() {
+        assert_eq!(pyannote().start(17), 4_590);
     }
 }

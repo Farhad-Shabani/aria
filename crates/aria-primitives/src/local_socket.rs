@@ -339,6 +339,12 @@ mod tests {
 
         fs::write(&lock_path, "not a pid\n").expect("the lock file should be writable");
         assert_eq!(owner_pid(&lock_path), None);
+    }
+
+    #[test]
+    fn a_pid_with_surrounding_whitespace_still_names_the_owner() {
+        let directory = tempfile::tempdir().expect("test directory is created");
+        let lock_path = directory.path().join("daemon.lock");
 
         fs::write(&lock_path, " 4242\n").expect("the lock file should be writable");
         assert_eq!(owner_pid(&lock_path), Some(4242));

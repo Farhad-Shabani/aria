@@ -318,16 +318,14 @@ mod tests {
                 "meet at 3, actually, 4, then leave",
                 "meet at 4, then leave",
             ),
-            ("meet at 3—actually—4", "meet at 3—actually—4"),
             ("meet at 3—actually 4", "meet at 4"),
             ("meet at 3,actually 4", "meet at 4"),
             ("at 3 - no wait 4?", "at 4?"),
             ("to Али — scratch that — to Сара.", "to Сара."),
-            ("to علی، actually to سارا", "to علی، actually to سارا"),
             ("meet at 0003, actually 0004", "meet at 0004"),
+            ("I'm at 3, actually 4.", "I'm at 4."),
         ] {
-            let corrected = correct(heard);
-            assert_eq!(corrected.as_deref().unwrap_or(heard), expected, "{heard}");
+            assert_eq!(correct(heard), Some(expected.to_owned()), "{heard}");
         }
     }
 
@@ -359,6 +357,8 @@ mod tests {
             "at 3 actually 4.5",
             "at .3 actually 4",
             "at 3 actually .4",
+            "meet at 3—actually—4",
+            "to علی، actually to سارا",
             "at 3 actually 4.\u{200b}5",
             "at 3:30 actually 4:30",
             "at 3 actually 4:30",
@@ -434,10 +434,6 @@ mod tests {
             let heard = format!("{quoted} meet at 3 actually 4.");
             assert_eq!(correct(&heard), None);
         }
-        assert_eq!(
-            correct("I'm at 3, actually 4."),
-            Some("I'm at 4.".to_owned())
-        );
     }
 
     #[test]
