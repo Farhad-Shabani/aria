@@ -1,14 +1,14 @@
 {
   "schema": 8,
   "provenance": {
-    "run_id": "1794930435892588000-86817",
+    "run_id": "1794981545385123000-54511",
     "os": "Darwin 27.2.0",
     "arch": "arm64",
     "debug_assertions": false,
-    "executable_sha256": "61236bce13a2bd64ceac7ece525999c4665e883a8165445e2c7915a6ec9e8bed"
+    "executable_sha256": "f47360f6a3447272420380e5b4ec2c679a62041ecd3cda4c3166b4ad1c9159f3"
   },
   "corpus_sha256": "346ac0faa0416af37182a68bbedc595ebe24c5a5adf28134062f9a6d77b3feaf",
-  "scorer_sha256": "97928400d6083180c7bde68b26f844410bcd4a67ccfe595863603a758652338e",
+  "scorer_sha256": "b141e9211e4b7117ef394a8f88f48b8752dd00d0be4484587c1efd72535ba4f3",
   "cases": {
     "1089-134686-0000": "817f2e14221e40f013b2f4e29456ed4374e0cbaca831be782c8f665b7b9fedcb",
     "1089-134686-0001": "c82b58d6b04570bdef93645ecbdcc124b2ae520c114c45aef2d8fb74e33d8bc9",
@@ -132,5 +132,5 @@
   "passes": 1,
   "provisional": false,
   "rows": 100,
-  "results_sha256": "873575880bd59c913cb0ef8fcaf6ad229a349fec24eccdd28eca1318abbde8af"
+  "results_sha256": "f11db5b5c92b8afcbb1144339387e85e7329e05628a9bb232aee3826112953e4"
 }
