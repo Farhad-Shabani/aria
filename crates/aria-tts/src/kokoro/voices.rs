@@ -42,8 +42,8 @@ impl VoiceStyles {
         let mut styles = BTreeMap::new();
         for index in 0..archive.len() {
             let entry = archive.by_index(index).map_err(archive_error)?;
-            let name = entry.name();
-            let name = name.strip_suffix(".npy").unwrap_or(name).to_owned();
+            let name = entry.name().map_err(archive_error)?;
+            let name = name.strip_suffix(".npy").unwrap_or(&name).to_owned();
             let array = npyz::NpyFile::new(entry).map_err(archive_error)?;
             let shape = array.shape().to_vec();
             if shape != [MAX_TOKENS as u64, 1, STYLE_WIDTH as u64] {
