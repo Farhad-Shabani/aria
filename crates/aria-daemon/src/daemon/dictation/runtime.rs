@@ -9,7 +9,8 @@ use super::assembly::{
     RuntimeExecutor, build_dictation, transcribe_retry,
 };
 use super::follower::EngineFollower;
-use crate::daemon::config::WakeConfig;
+use crate::daemon::DaemonLifetime;
+use crate::daemon::config::{WakeConfig, auto_device};
 use crate::daemon::inference::pairing_id;
 use crate::daemon::relay::Showing;
 use aria_kit::audio::{RecordingReader, WakeWordMonitor};
@@ -20,7 +21,7 @@ use aria_settings::config::{ConfigError, backend};
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::{Categorized, RpcErrorCode};
 use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
-use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend, SttDevice};
+use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
     ActiveDictation, Announcement, CapturedMicrophone, DeliveredRecording, DictationCoordinator,
     DictationError, DictationEvent, DictationEventEmitter, DictationOutcome, DictationRequest,
@@ -137,7 +138,7 @@ impl DictationRuntime {
                         &settings,
                         &retry_home,
                         pairing_id(&retry_home),
-                        SttDevice::Cpu,
+                        auto_device(DaemonLifetime::OnDemand),
                     ),
                     speaker: SpeakerConfig::load(&settings.speaker, &retry_home),
                     vocabulary: Arc::clone(&retry_vocabulary),
@@ -151,8 +152,12 @@ impl DictationRuntime {
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(
                 move || {
                     let settings = cache.effective();
-                    let config =
-                        DictationConfig::load(&settings, &home, pairing_id(&home), SttDevice::Cpu);
+                    let config = DictationConfig::load(
+                        &settings,
+                        &home,
+                        pairing_id(&home),
+                        auto_device(DaemonLifetime::OnDemand),
+                    );
                     let speaker = SpeakerConfig::load(&settings.speaker, &home);
                     // Only a daemon that deferred its build reaches here, and
                     // one of those lives for a single press. A wake-word monitor
@@ -1359,7 +1364,7 @@ mod history_tests {
                 &aria_settings::testing::file(""),
                 &home_dir,
                 None,
-                SttDevice::Cpu,
+                aria_voice::config::SttDevice::Cpu,
             );
             config.stt = SttBackend::Server(crate::daemon::inference::pairing_id(&home_dir));
             config.capture = aria_voice::config::CaptureConfig::WavFile {

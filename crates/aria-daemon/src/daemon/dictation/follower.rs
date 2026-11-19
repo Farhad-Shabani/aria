@@ -10,11 +10,13 @@ use std::time::Duration;
 use aria_kit::cancel::CancelToken;
 use aria_primitives::error_chain;
 use aria_settings::SettingsCache;
-use aria_voice::config::{SttBackend, SttDevice};
+use aria_voice::config::SttBackend;
 use aria_voice::microphone::Gate;
 use aria_voice::stt::TranscriptionError;
 use tokio_util::sync::CancellationToken;
 
+use super::super::DaemonLifetime;
+use super::super::config::auto_device;
 use super::super::inference::pairing_id;
 use super::super::tasks::Supervised;
 use super::assembly::{BuildEngine, DictationEngine, EngineParts, EngineSlot};
@@ -91,7 +93,9 @@ impl EngineFollower {
 
     fn follow(&self, stop: &CancelToken) {
         let pairing = pairing_id(&self.home);
-        let target = SttBackend::load(&self.cache.effective(), &self.home, pairing, SttDevice::Cpu);
+        // Only a persistent daemon follows the settings.
+        let auto = auto_device(DaemonLifetime::Persistent);
+        let target = SttBackend::load(&self.cache.effective(), &self.home, pairing, auto);
         settle(&self.slot, &self.microphone, target, &self.build, stop);
     }
 
