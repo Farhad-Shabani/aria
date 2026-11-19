@@ -223,6 +223,9 @@ mod tests {
     #[case::year(&[("in twenty", None), ("fifteen", None)], "in 2015")]
     #[case::year_split_after_oh(&[("twenty oh", None), ("five", None)], "2005")]
     #[case::digit_words(&[("nine five", None), ("five", None)], "955")]
+    #[case::time(&[("at nine fifty five", None), ("pm", None)], "at 9:55 PM")]
+    #[case::date(&[("on March", None), ("fifth", None)], "on March 5")]
+    #[case::date_and_year(&[("March fifth", None), ("twenty fifteen", None)], "March 5, 2015")]
     fn writes_numbers_across_segments(
         #[case] pieces: &[(&str, Option<bool>)],
         #[case] typed: &str,
@@ -242,6 +245,7 @@ mod tests {
     #[case::symbol_after_a_number_run_with_no_written_form(&[("hundred", None), ("twelve hyphen", None)], "hundred twelve hyphen")]
     #[case::symbol_after_a_number_and_its_ordinal(&[("apples", None), ("twelve second hyphen", None)], "apples twelve second hyphen")]
     #[case::year_before_dollars(&[("nineteen ninety nine", None), ("dollars", None)], "nineteen ninety nine dollars")]
+    #[case::month_before_words(&[("the end of March", None), ("and then", None)], "the end of March and then")]
     fn leaves_unjoined_across_segments(
         #[case] pieces: &[(&str, Option<bool>)],
         #[case] typed: &str,
@@ -339,6 +343,8 @@ mod tests {
     #[case("zero point five percent of five dollars")]
     #[case("in twenty oh five and nineteen ninety nine")]
     #[case("room nine five five at ten oh five")]
+    #[case("meet at nine fifty five pm or three am")]
+    #[case("on March twenty first twenty fifteen and June five")]
     fn any_split_types_what_the_whole_text_would(#[case] heard: &str) {
         let vocabulary = Vocabulary::default();
         let whole = whole(heard, &vocabulary);

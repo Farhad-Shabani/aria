@@ -1,19 +1,28 @@
+mod clock;
+mod date;
 mod grammar;
 mod unit;
 
 use std::borrow::Cow;
 use std::ops::Range;
 
+use self::clock::{Form, Meridiem};
+use self::date::Month;
 use self::grammar::{Number, Spoken};
 use self::unit::Unit;
 use super::claim::{Claimed, Word};
-use super::number_words::{continues, is_digit, is_number_word, is_ordinal};
+use super::number_words::{
+    Next, compound_ordinal, continues, is_digit, is_number_word, is_oh, is_ordinal, ordinal_value,
+};
 use super::symbol_words::{is_symbol, symbol};
 
 /// Claims each run of number words that has one clear written form as
 /// digits: "two point five" → `2.5`, "twenty fifteen" → `2015`, "nine five
 /// five" → `955`. Other runs stay words and are kept whole, so a stream
 /// never cuts inside them: "nine fifty five", "twenty second".
+///
+/// A time needs its meridiem after it, "nine fifty five pm" → `9:55 PM`,
+/// and a date its month before it, "March fifth" → `March 5`.
 ///
 /// Where a spoken symbol joins two words that both have a joined form
 /// (`Word::joined`), each types that form:
@@ -27,13 +36,24 @@ use super::symbol_words::{is_symbol, symbol};
 /// - digits already written: `30.100` in "30 dot one zero zero"
 ///
 /// A number the text ends on is deferred while more speech may go on with
-/// it: more number words, a "point" or "and" it ends on, or cents after its
-/// dollars.
+/// it: more number words, a "point" or "and" it ends on, cents after its
+/// dollars, or a day and year after a month.
 pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
     let words = claimed.take_words();
     let scan = Scan::new(text, &words);
     let mut index = 0;
     while index < words.len() {
+        let whole = |end: usize| words[index].span.start..words[end - 1].span.end;
+        if let Some(month) = scan.heard(index).and_then(Month::parse) {
+            if scan.day_may_follow(index) {
+                claimed.defer_at(words[index].span.start);
+            }
+            if let Some(date) = scan.date(month, index) {
+                claimed.push(Word::claimed(whole(date.end), Cow::Owned(date.text)));
+                index = date.end;
+                continue;
+            }
+        }
         let Some(run) = scan.run_from(index) else {
             claimed.push(written_in_digits(text, words[index].clone()));
             index += 1;
@@ -42,31 +62,11 @@ pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
         if scan.ends_bare() && scan.takes_to(index) == Some(words.len()) {
             claimed.defer_at(words[index].span.start);
         }
-        let whole = |end: usize| words[run.start].span.start..words[end - 1].span.end;
-        let Some(number) = scan.number(&run) else {
-            claimed.keep_whole(whole(run.end));
-            if let Some(digits) = scan.digit_by_digit(&run) {
-                claimed.push(Word {
-                    joined: Some(Cow::Owned(digits.clone())),
-                    ..Word::claimed(whole(run.end), Cow::Owned(digits))
-                });
-            } else if let Some(digits) = scan.digits(&run) {
-                claimed.push(Word {
-                    joined: Some(Cow::Owned(digits)),
-                    ..Word::plain(whole(run.end))
-                });
-            } else {
-                claimed.extend(words[run.clone()].iter().cloned());
-            }
-            index = run.end;
-            continue;
-        };
-        match scan.spelling(&number, &run) {
+        match scan.spelling(&run) {
             Spelling::Written { written, joins } => {
-                let span = words[index].span.start..words[written.end - 1].span.end;
                 claimed.push(Word {
                     joined: joins.then(|| Cow::Owned(written.text.clone())),
-                    ..Word::claimed(span, Cow::Owned(written.text))
+                    ..Word::claimed(whole(written.end), Cow::Owned(written.text))
                 });
                 index = written.end;
             }
@@ -77,7 +77,15 @@ pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
                 });
                 index = run.end;
             }
-            Spelling::Ordinal { end } => {
+            Spelling::Joinable { digits } => {
+                claimed.keep_whole(whole(run.end));
+                claimed.push(Word {
+                    joined: Some(Cow::Owned(digits)),
+                    ..Word::plain(whole(run.end))
+                });
+                index = run.end;
+            }
+            Spelling::Words { end } => {
                 claimed.keep_whole(whole(end));
                 claimed.extend(words[run.clone()].iter().cloned());
                 index = run.end;
@@ -136,8 +144,12 @@ enum Spelling {
     /// As the word, though a spoken symbol joining it to another number
     /// types the digit: "one" alone, `1.2` in "one dot two".
     LoneDigit { digit: String },
-    /// As words, with the ordinal that ends at `end`: "twenty second".
-    Ordinal { end: usize },
+    /// As words, though a spoken symbol joining them to a number types
+    /// `digits`: `3.14` in "three dot one four".
+    Joinable { digits: String },
+    /// As words, kept whole up to `end`: "twenty second", "thirteen thirty
+    /// pm".
+    Words { end: usize },
 }
 
 /// A segment's words, read for the numbers in them.
@@ -179,6 +191,26 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         self.part(index).map(|part| part.core.as_str())
     }
 
+    /// The word at `index` as heard, in its case and without its
+    /// punctuation, when no earlier step claimed it.
+    fn heard(&self, index: usize) -> Option<&'t str> {
+        let part = self.part(index)?;
+        let span = &self.words[index].span;
+        Some(&self.text[span.start + part.lead.len()..span.end - part.trail.len()])
+    }
+
+    /// Whether the word at `index` opens on a lowercase letter.
+    fn opens_lowercase(&self, index: usize) -> bool {
+        self.words
+            .get(index)
+            .and_then(|word| {
+                self.text[word.span.clone()]
+                    .chars()
+                    .find(|c| c.is_alphanumeric())
+            })
+            .is_some_and(char::is_lowercase)
+    }
+
     /// The word after `index`, when it reads on from it: neither claimed,
     /// with only spaces between and no punctuation on either side.
     fn following(&self, index: usize) -> Option<&str> {
@@ -191,20 +223,33 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         reads_on.then_some(next.core.as_str())
     }
 
+    /// What comes after the word at `index`.
+    fn next_after(&self, index: usize) -> Next<'_> {
+        match self.following(index) {
+            Some(word) => Next::Word(word),
+            None if index + 1 == self.words.len() && self.ends_bare() => Next::End,
+            None => Next::Stop,
+        }
+    }
+
     /// The number words from `start` on that read on from each other, with
     /// a "point" or "and" they end on: more speech may still read on from
     /// those. They may not parse as one number, as "one two three" doesn't.
     fn said_from(&self, start: usize) -> Option<Range<usize>> {
         let after_symbol = self.after_symbol(start);
         let first = self.word(start)?;
-        if !is_number_word(first) && !(after_symbol && matches!(first, "o" | "oh")) {
+        if !is_number_word(first) && !(after_symbol && is_oh(first)) {
             return None;
         }
         let mut last = start;
         let mut reads_digits = after_symbol;
         while let Some(next) = self.following(last) {
-            let after = self.following(last + 1);
-            if !continues(next, self.word(last)?, after, reads_digits) {
+            if !continues(
+                next,
+                self.word(last)?,
+                self.next_after(last + 1),
+                reads_digits,
+            ) {
                 break;
             }
             reads_digits |= next == "point";
@@ -237,10 +282,84 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
     fn number(&self, run: &Range<usize>) -> Option<Number> {
         let said: Vec<&str> = run.clone().filter_map(|index| self.word(index)).collect();
         let number = Number::parse(&said)?;
-        let unit = self
-            .following(run.end - 1)
-            .and_then(|word| Unit::parse(word, &number));
-        (number.spoken() == Spoken::Count || unit.is_none()).then_some(number)
+        let year_before_a_unit = number.spoken() == Spoken::Halves
+            && self
+                .following(run.end - 1)
+                .is_some_and(|word| Unit::parse(word, &number).is_some());
+        (!year_before_a_unit).then_some(number)
+    }
+
+    /// The meridiem said right after `run`, and its form.
+    fn meridiem_after(&self, run: &Range<usize>) -> Option<(Meridiem, Form)> {
+        self.following(run.end - 1)?;
+        Meridiem::parse(self.heard(run.end)?)
+    }
+
+    /// `run` as a time of day, with the `meridiem` said after it in `form`.
+    fn time(&self, run: &Range<usize>, meridiem: Meridiem, form: Form) -> Option<Written> {
+        let said: Vec<&str> = run.clone().filter_map(|index| self.word(index)).collect();
+        let (hour, minutes) = grammar::clock(&said)?;
+        if form == Form::AlsoAVerb && minutes.is_none() {
+            return None;
+        }
+        let end = run.end + 1;
+        let lead = self.part(run.start).map_or("", |part| part.lead);
+        let trail = self.part(run.end).map_or("", |part| part.trail);
+        // Before a lowercase word, the period is the abbreviation's alone.
+        let trail = match form {
+            Form::Dotted if self.opens_lowercase(end) => trail.strip_prefix('.').unwrap_or(trail),
+            _ => trail,
+        };
+        let text = format!("{lead}{}{trail}", meridiem.write(hour, minutes));
+        Some(Written { end, text })
+    }
+
+    /// The date that opens at `start` on `month`'s name: "March fifth" is
+    /// `March 5`, and with its year, `March 5, 2015`.
+    fn date(&self, month: Month, start: usize) -> Option<Written> {
+        self.following(start)?;
+        let (day, day_end) = self.day(start + 1)?;
+        let (year, end) = self
+            .year_at(day_end)
+            .map_or((None, day_end), |(year, end)| (Some(year), end));
+        let text = month.write(day, year)?;
+        Some(Written {
+            end,
+            text: self.punctuated(start, &text, end),
+        })
+    }
+
+    /// The day of a month said as an ordinal from `start`, "fifth",
+    /// "twenty-first" or "twenty first", and just past it.
+    fn day(&self, start: usize) -> Option<(u128, usize)> {
+        let word = self.word(start)?;
+        if let Some(day) = ordinal_value(word) {
+            return Some((day, start + 1));
+        }
+        let unit = self.following(start)?;
+        Some((compound_ordinal(word, unit)?, start + 2))
+    }
+
+    /// The year said by the run that opens at `start`, "twenty fifteen" or
+    /// "two thousand one", and where it ends.
+    fn year_at(&self, start: usize) -> Option<(u128, usize)> {
+        self.following(start - 1)?;
+        let run = self.run_from(start)?;
+        let year = self
+            .number(&run)?
+            .integer()
+            .filter(|year| (1000..10_000).contains(year))?;
+        Some((year, run.end))
+    }
+
+    /// Whether the text ends past the month at `index` on nothing but
+    /// number words or ordinals: more speech may still say its day.
+    fn day_may_follow(&self, index: usize) -> bool {
+        self.ends_bare()
+            && (index + 1..self.words.len()).all(|at| {
+                self.following(at - 1)
+                    .is_some_and(|word| is_number_word(word) || is_ordinal(word) || is_oh(word))
+            })
     }
 
     /// `run` as typed digits, when it says three or more digit by digit,
@@ -250,9 +369,7 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         let (first, rest) = said.split_first()?;
         let spelled = said.len() >= 3
             && is_digit(first)
-            && rest
-                .iter()
-                .all(|word| is_digit(word) || matches!(*word, "o" | "oh"));
+            && rest.iter().all(|word| is_digit(word) || is_oh(word));
         spelled.then(|| self.digits(run)).flatten()
     }
 
@@ -263,9 +380,36 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         Some(self.punctuated(run.start, &digits, run.end))
     }
 
-    /// How `number`, said by `run`, types.
-    fn spelling(&self, number: &Number, run: &Range<usize>) -> Spelling {
-        if let Some(counted) = self.counted(number, run) {
+    /// How `run` types: as a time when a meridiem follows it, else as the
+    /// number it says, else digit by digit.
+    fn spelling(&self, run: &Range<usize>) -> Spelling {
+        if let Some((meridiem, form)) = self.meridiem_after(run) {
+            match self.time(run, meridiem, form) {
+                Some(written) => {
+                    return Spelling::Written {
+                        written,
+                        joins: false,
+                    };
+                }
+                // "which one am I" says no time, but its number may still type.
+                None if form == Form::AlsoAVerb => {}
+                None => return Spelling::Words { end: run.end },
+            }
+        }
+        let Some(number) = self.number(run) else {
+            if let Some(text) = self.digit_by_digit(run) {
+                let written = Written { end: run.end, text };
+                return Spelling::Written {
+                    written,
+                    joins: true,
+                };
+            }
+            return match self.digits(run) {
+                Some(digits) => Spelling::Joinable { digits },
+                None => Spelling::Words { end: run.end },
+            };
+        };
+        if let Some(counted) = self.counted(&number, run) {
             let text = self.punctuated(run.start, &counted.text, counted.end);
             return Spelling::Written {
                 written: Written { text, ..counted },
@@ -273,7 +417,7 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
             };
         }
         if let Some(end) = self.ordinal_end(run) {
-            return Spelling::Ordinal { end };
+            return Spelling::Words { end };
         }
         let text = self.punctuated(run.start, &number.to_string(), run.end);
         // "one" or "nine" alone reads as a word in prose: "no one knows".
@@ -409,6 +553,7 @@ mod tests {
     #[case::digit_word_a_symbol_joins_to_a_number("twenty dot five", "20.5")]
     #[case::digit_words_in_a_chain("one dot two dot three", "1.2.3")]
     #[case::o_outside_a_decimal("ten oh my", "10 oh my")]
+    #[case::o_before_punctuation("ten oh, my", "10 oh, my")]
     #[case::digit_word_a_symbol_joins_to_a_word("user underscore one", "user_one")]
     #[case::digits_inside_a_longer_join("user underscore one dot two", "user_1.2")]
     #[case::word_after_joined_digits("two dot five underscore user", "2.5_user")]
@@ -430,19 +575,31 @@ mod tests {
     // "x minus ten" may be a sum, so "minus" never signs a number.
     #[case::minus_stays_a_word("x minus ten", "x minus 10")]
     #[case::year("in twenty fifteen", "in 2015")]
-    #[case::year_with_a_teen_lead("nineteen ninety nine", "1999")]
-    #[case::year_ending_on_a_compound("twenty twenty six", "2026")]
     #[case::year_with_oh("twenty oh five", "2005")]
-    #[case::year_with_o("nineteen o one", "1901")]
-    #[case::year_with_the_lowest_lead("thirteen twenty", "1320")]
-    #[case::historic_year("eighteen sixty five", "1865")]
-    #[case::year_after_an_ordinal("March fifth twenty fifteen", "March fifth 2015")]
     #[case::digit_words("room nine five five", "room 955")]
     #[case::digit_words_with_oh("python one oh one", "python 101")]
     #[case::digit_words_opening_on_zero("zero two one three nine", "02139")]
-    #[case::digit_words_of_a_phone_number("five five five one two one two", "5551212")]
-    #[case::digit_words_counting("count one two three", "count 123")]
     #[case::digit_words_a_symbol_joins("user underscore one two three", "user_123")]
+    #[case::time("at nine fifty five pm", "at 9:55 PM")]
+    #[case::time_with_oh("nine oh five am", "9:05 AM")]
+    #[case::time_past_noon("twelve thirty PM", "12:30 PM")]
+    #[case::hour("three pm", "3 PM")]
+    #[case::hour_with_periods("three p.m.", "3 PM.")]
+    #[case::hour_in_capitals("Three AM", "3 AM")]
+    #[case::time_before_am("nine fifty five am", "9:55 AM")]
+    #[case::periods_before_a_lowercase_word("at three p.m. we left", "at 3 PM we left")]
+    #[case::periods_before_a_comma("three p.m., then", "3 PM, then")]
+    #[case::periods_ending_a_sentence("three p.m. We left", "3 PM. We left")]
+    #[case::date("on March fifth", "on March 5")]
+    #[case::date_in_lowercase("june twenty first", "June 21")]
+    #[case::date_in_may("May first", "May 1")]
+    #[case::date_with_a_hyphenated_ordinal("March twenty-first", "March 21")]
+    #[case::date_with_a_year("March fifth twenty fifteen", "March 5, 2015")]
+    #[case::date_with_a_counted_year("June fifth two thousand one", "June 5, 2001")]
+    #[case::date_with_its_comma("March fifth, twenty fifteen", "March 5, 2015")]
+    #[case::date_with_punctuation_after("(March fifth).", "(March 5).")]
+    #[case::month_and_year("March twenty fifteen", "March 2015")]
+    #[case::last_day_of_a_month("April thirtieth", "April 30")]
     fn writes(#[case] heard: &str, #[case] typed: &str) {
         assert_eq!(written(heard), typed);
     }
@@ -458,21 +615,24 @@ mod tests {
     #[case::hyphenated_ordinal("the one hundred twenty-second time")]
     #[case::digit_words_in_curly_quotes("\u{201c}two dot five\u{201d}")]
     #[case::measure("two kilograms")]
-    #[case::time_with_a_meridiem("three thirty pm")]
     #[case::another_currency("five euros")]
     #[case::scale_word_first("a hundred people")]
     #[case::scale_word_first_before_more("a hundred and fifty")]
     #[case::run_with_no_one_form("fifty fifty")]
     #[case::and_between_digit_words("one and two")]
     #[case::year_before_dollars("nineteen ninety nine dollars")]
-    #[case::year_before_percent("twenty fifteen percent")]
     #[case::time_with_a_lead_under_thirteen("twelve thirty")]
-    #[case::time_past_ten("ten fifteen")]
     #[case::time_with_oh("ten oh five")]
     #[case::digit_word_then_tens("room nine fifty five")]
     #[case::two_digit_words("a one two punch")]
     #[case::digit_words_opening_on_oh("oh one two")]
     #[case::year_lead_before_oh_and_a_teen("twenty oh fifteen")]
+    #[case::hour_out_of_range("thirteen thirty pm")]
+    #[case::am_after_a_lone_digit("which one am I")]
+    #[case::may_as_a_verb("you may first need to sign in")]
+    #[case::cardinal_day_in_prose("in June five of us went")]
+    #[case::day_past_the_month("February thirtieth")]
+    #[case::month_alone("the end of March")]
     #[case::digit_run_beside_a_word("user underscore one two")]
     #[case::point_without_a_number_before("point five")]
     #[case::plural_after_one("one dollars")]

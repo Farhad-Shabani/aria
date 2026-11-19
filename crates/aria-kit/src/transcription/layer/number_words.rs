@@ -152,29 +152,72 @@ pub(super) fn is_ordinal(word: &str) -> bool {
     }
 }
 
+/// What comes after a word in a run of number words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Next<'w> {
+    /// A word that reads on from it, in lowercase.
+    Word(&'w str),
+    /// The bare end of the text, where more speech may go on.
+    End,
+    /// Punctuation, or a word an earlier step claimed.
+    Stop,
+}
+
 /// Whether `word` carries on a number that `previous` belongs to, with
-/// `next` the word after it: a number word, "point" after one, "and" after
+/// `next` after it: a number word, "point" after one, "and" after
 /// "hundred" or a scale, or "o" for a zero. "o" carries on once the number
 /// `reads_digits`, as it does past "point" or a spoken symbol, and before a
-/// number word or the end: "twenty oh five", but "ten oh my". All in
-/// lowercase.
-pub(super) fn continues(
-    word: &str,
-    previous: &str,
-    next: Option<&str>,
-    reads_digits: bool,
-) -> bool {
+/// number word or the end: "twenty oh five", but "ten oh my" and "ten oh,
+/// my". All in lowercase.
+pub(super) fn continues(word: &str, previous: &str, next: Next<'_>, reads_digits: bool) -> bool {
     match word {
         "point" => is_number_word(previous),
         "and" => ends_on_hundred_or_scale(previous),
-        "o" | "oh" => reads_digits || next.is_none_or(is_number_word),
+        word if is_oh(word) => {
+            reads_digits
+                || match next {
+                    Next::Word(next) => is_number_word(next),
+                    Next::End => true,
+                    Next::Stop => false,
+                }
+        }
         word => is_number_word(word),
     }
+}
+
+/// Whether `word`, in lowercase, is "o" or "oh", said for a zero.
+pub(super) fn is_oh(word: &str) -> bool {
+    matches!(word, "o" | "oh")
 }
 
 /// Whether `word`, in lowercase, is "zero" through "nine".
 pub(super) fn is_digit(word: &str) -> bool {
     matches!(NumberWord::parse(word), Some(NumberWord::Digit(_)))
+}
+
+/// The value of `word`, in lowercase, when it is an ordinal under a hundred:
+/// "fifth" is 5, "twenty-first" is 21.
+pub(super) fn ordinal_value(word: &str) -> Option<u128> {
+    if let Some((tens, unit)) = word.rsplit_once('-') {
+        return compound_ordinal(tens, unit);
+    }
+    // "first" through "twentieth", then "thirtieth" through "ninetieth".
+    match place(&ORDINALS, word)? {
+        place @ 0..20 => Some(place + 1),
+        place @ 20..27 => Some((place - 17) * 10),
+        _ => None,
+    }
+}
+
+/// The value of the ordinal said as `tens` then `unit`, in lowercase:
+/// "twenty" and "first" are 21.
+pub(super) fn compound_ordinal(tens: &str, unit: &str) -> Option<u128> {
+    let Some(NumberWord::Tens(tens)) = NumberWord::parse(tens) else {
+        return None;
+    };
+    ordinal_value(unit)
+        .filter(|unit| *unit < 10)
+        .map(|unit| tens + unit)
 }
 
 fn ends_on_hundred_or_scale(word: &str) -> bool {
@@ -191,28 +234,29 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case::number_after_number("twenty", "one", None, false, true)]
-    #[case::hyphenated("twenty-one", "hundred", None, false, true)]
-    #[case::point_after_number("two", "point", None, false, true)]
-    #[case::number_after_point("point", "five", None, true, true)]
-    #[case::and_after_hundred("hundred", "and", None, false, true)]
-    #[case::and_after_scale("thousand", "and", None, false, true)]
-    #[case::and_after_a_hyphenated_scale("twenty-thousand", "and", None, false, true)]
-    #[case::o_after_point("point", "o", Some("my"), true, true)]
-    #[case::o_after_a_digit_past_the_point("five", "oh", Some("my"), true, true)]
-    #[case::o_before_a_word("ten", "oh", Some("my"), false, false)]
-    #[case::o_before_a_digit("twenty", "oh", Some("five"), false, true)]
-    #[case::o_before_a_teen("twenty", "oh", Some("fifteen"), false, true)]
-    #[case::o_before_nothing("twenty", "oh", None, false, true)]
-    #[case::point_after_a_word("the", "point", None, false, false)]
-    #[case::and_after_tens("twenty", "and", None, false, false)]
-    #[case::and_after_a_word_ending_like_a_scale("foo-hundred", "and", None, false, false)]
-    #[case::other_word("twenty", "apples", None, false, false)]
-    #[case::ordinal("twenty", "second", None, false, false)]
+    #[case::number_after_number("twenty", "one", Next::End, false, true)]
+    #[case::hyphenated("twenty-one", "hundred", Next::End, false, true)]
+    #[case::point_after_number("two", "point", Next::End, false, true)]
+    #[case::number_after_point("point", "five", Next::End, true, true)]
+    #[case::and_after_hundred("hundred", "and", Next::End, false, true)]
+    #[case::and_after_scale("thousand", "and", Next::End, false, true)]
+    #[case::and_after_a_hyphenated_scale("twenty-thousand", "and", Next::End, false, true)]
+    #[case::o_after_point("point", "o", Next::Word("my"), true, true)]
+    #[case::o_after_a_digit_past_the_point("five", "oh", Next::Word("my"), true, true)]
+    #[case::o_before_a_word("ten", "oh", Next::Word("my"), false, false)]
+    #[case::o_before_a_digit("twenty", "oh", Next::Word("five"), false, true)]
+    #[case::o_before_a_teen("twenty", "oh", Next::Word("fifteen"), false, true)]
+    #[case::o_before_nothing("twenty", "oh", Next::End, false, true)]
+    #[case::o_before_punctuation("ten", "oh", Next::Stop, false, false)]
+    #[case::point_after_a_word("the", "point", Next::End, false, false)]
+    #[case::and_after_tens("twenty", "and", Next::End, false, false)]
+    #[case::and_after_a_word_ending_like_a_scale("foo-hundred", "and", Next::End, false, false)]
+    #[case::other_word("twenty", "apples", Next::End, false, false)]
+    #[case::ordinal("twenty", "second", Next::End, false, false)]
     fn continues_a_number(
         #[case] previous: &str,
         #[case] word: &str,
-        #[case] next: Option<&str>,
+        #[case] next: Next<'_>,
         #[case] reads_digits: bool,
         #[case] expected: bool,
     ) {
@@ -226,6 +270,18 @@ mod tests {
     #[case::word_before_the_hyphen("split-second", false)]
     fn knows_an_ordinal(#[case] word: &str, #[case] expected: bool) {
         assert_eq!(is_ordinal(word), expected);
+    }
+
+    #[rstest]
+    #[case::first("first", Some(1))]
+    #[case::twentieth("twentieth", Some(20))]
+    #[case::thirtieth("thirtieth", Some(30))]
+    #[case::hyphenated("twenty-first", Some(21))]
+    #[case::hyphen_before_a_tens_ordinal("twenty-thirtieth", None)]
+    #[case::number_word("twenty", None)]
+    #[case::other_word("second-hand", None)]
+    fn values_an_ordinal(#[case] word: &str, #[case] expected: Option<u128>) {
+        assert_eq!(ordinal_value(word), expected);
     }
 
     #[test]
