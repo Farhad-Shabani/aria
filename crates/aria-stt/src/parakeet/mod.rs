@@ -114,11 +114,6 @@ impl ParakeetConfig {
             joint: Device::Cpu,
         }
     }
-
-    pub fn with_joint(mut self, joint: Device) -> Self {
-        self.joint = joint;
-        self
-    }
 }
 
 impl Parakeet {
@@ -275,7 +270,8 @@ mod tests {
     #[cfg(all(target_os = "macos", feature = "parakeet-gpu"))]
     #[test]
     fn a_joint_set_to_the_gpu_runs_there() {
-        let config = ParakeetConfig::new("/model", Device::Gpu).with_joint(Device::Gpu);
+        let mut config = ParakeetConfig::new("/model", Device::Gpu);
+        config.joint = Device::Gpu;
         let graphs = Graphs::from_config(&config).expect("the gpu device should be supported");
 
         assert_eq!(graphs.joint.execution_provider, ExecutionProvider::WebGPU);
@@ -284,7 +280,8 @@ mod tests {
     #[cfg(not(all(target_os = "macos", feature = "parakeet-gpu")))]
     #[test]
     fn a_gpu_joint_is_refused_without_gpu_support() {
-        let config = ParakeetConfig::new("/model", Device::Cpu).with_joint(Device::Gpu);
+        let mut config = ParakeetConfig::new("/model", Device::Cpu);
+        config.joint = Device::Gpu;
 
         assert!(matches!(
             Graphs::from_config(&config),
