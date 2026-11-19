@@ -1,7 +1,7 @@
 use super::execution::{ArmedReturn, TakenReturn};
 use super::{
     Delivered, DeliveryMode, DeliveryOutcome, DictationError, DictationSettings, ExecutionControl,
-    TranscriptSink, Utterance,
+    LateReturn, TranscriptSink, Utterance,
 };
 use aria_kit::transcription::Spacing;
 use aria_platform::delivery::{
@@ -13,8 +13,12 @@ use std::sync::Arc;
 /// it arrives; complete types the whole transcript once. A transcript-only
 /// press binds no target and types nothing.
 pub struct Cursor<D: TextDelivery> {
-    delivery: D,
+    /// Shared with the late Return, which presses after the press ends.
+    delivery: Arc<D>,
     target: Option<Target<D::Prepared>>,
+    /// Offered by the dictation that finished last, until taken or the next
+    /// one starts.
+    late_return: Option<LateReturn>,
 }
 
 /// Where the dictation under way lands, picked before any text.
@@ -23,6 +27,8 @@ struct Target<P> {
     /// The app in front as the press started, when the platform can tell.
     start: Option<aria_platform::delivery::Application>,
     mode: DeliveryMode,
+    /// The output `prepared` was made for.
+    output: OutputMode,
     absence: Absence,
     control: Arc<ExecutionControl>,
     prepared: P,
@@ -39,6 +45,9 @@ struct Target<P> {
     /// with that mark.
     owes_mark: bool,
     finished: bool,
+    /// The text typed whole, and no Return followed it: none was taken,
+    /// and submission pressed none.
+    offers_return: bool,
     delivered: Option<Delivered>,
 }
 
@@ -80,8 +89,9 @@ impl<P> Target<P> {
 impl<D: TextDelivery> Cursor<D> {
     pub fn new(delivery: D) -> Self {
         Self {
-            delivery,
+            delivery: Arc::new(delivery),
             target: None,
+            late_return: None,
         }
     }
 
@@ -113,7 +123,7 @@ impl<D: TextDelivery> Cursor<D> {
         if target.queue.is_empty() {
             return Ok(());
         }
-        let typed = target.policy.confirm_front(&self.delivery).and_then(|()| {
+        let typed = target.policy.confirm_front(&*self.delivery).and_then(|()| {
             // Kept only once text lands: a read while the field is away
             // would space the queue against the wrong text.
             let mut caret = target
@@ -231,7 +241,31 @@ fn spaced(queue: &[Queued], caret: &mut Caret) -> String {
         .collect()
 }
 
-impl<D: TextDelivery> TranscriptSink for Cursor<D> {
+impl<D: TextDelivery> Cursor<D>
+where
+    D::Prepared: 'static,
+{
+    /// The Return `target` leaves to offer once its text typed whole.
+    fn late_return_after(&self, target: Target<D::Prepared>) -> Option<LateReturn> {
+        // Only plain insertion knows the field the text went to; insert or
+        // copy checks just the app.
+        if !target.offers_return || target.output != OutputMode::Insert {
+            return None;
+        }
+        self.delivery.target_process(&target.prepared)?;
+        let application = target.start;
+        let delivery = Arc::clone(&self.delivery);
+        let prepared = target.prepared;
+        Some(LateReturn::new(application, move |cancel| {
+            delivery.press_return(&prepared, || cancel.is_cancelled())
+        }))
+    }
+}
+
+impl<D: TextDelivery> TranscriptSink for Cursor<D>
+where
+    D::Prepared: 'static,
+{
     type Error = DeliveryError;
     const STREAMS: bool = D::STREAMS;
 
@@ -240,6 +274,7 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         settings: &DictationSettings,
         control: &Arc<ExecutionControl>,
     ) -> Result<(), DeliveryError> {
+        self.late_return = None;
         if !settings.route.delivers() {
             self.target = None;
             return Ok(());
@@ -264,9 +299,9 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
             }
             (DeliveryMode::Streaming, _) => Absence::Queues(Leftover::Nowhere),
         };
-        settings.target.confirm_front(&self.delivery)?;
+        settings.target.confirm_front(&*self.delivery)?;
         let prepared = self.delivery.prepare(output, should_cancel(control))?;
-        settings.target.confirm_front(&self.delivery)?;
+        settings.target.confirm_front(&*self.delivery)?;
         // The read binds a queueing press to the field it starts in, before
         // the user can leave it. Spacing is read again when text types.
         if matches!(absence, Absence::Queues(_)) {
@@ -281,6 +316,7 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
             policy: settings.target.clone(),
             start: self.delivery.frontmost(),
             mode: settings.delivery_mode,
+            output,
             absence,
             control: Arc::clone(control),
             prepared,
@@ -289,6 +325,7 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
             queue: Vec::new(),
             owes_mark: false,
             finished: false,
+            offers_return: false,
             delivered: None,
         });
         Ok(())
@@ -327,14 +364,16 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         let finished = self
             .delivery
             .finish(&target.prepared, should_cancel(&target.control))?;
-        if let Some(taken) = taken {
-            let pressed = match finished {
-                Finished::Submitted => true,
-                Finished::Typed => Self::press_return(&self.delivery, target),
-            };
-            if pressed {
-                taken.mark_pressed();
-            }
+        let Some(taken) = taken else {
+            target.offers_return = finished == Finished::Typed;
+            return Ok(());
+        };
+        let pressed = match finished {
+            Finished::Submitted => true,
+            Finished::Typed => Self::press_return(&self.delivery, target),
+        };
+        if pressed {
+            taken.mark_pressed();
         }
         Ok(())
     }
@@ -379,15 +418,21 @@ impl<D: TextDelivery> TranscriptSink for Cursor<D> {
         let Some(mut target) = self.target.take() else {
             return;
         };
-        let Some(taken) = target.finish() else {
-            return;
-        };
-        let owed = matches!(result, Err(DictationError::NoSpeech))
-            && target.delivered.is_none()
-            && matches!(target.absence, Absence::Queues(_));
-        if owed && Self::press_return(&self.delivery, &target) {
-            taken.mark_pressed();
+        if let Some(taken) = target.finish() {
+            let owed = matches!(result, Err(DictationError::NoSpeech))
+                && target.delivered.is_none()
+                && matches!(target.absence, Absence::Queues(_));
+            if owed && Self::press_return(&self.delivery, &target) {
+                taken.mark_pressed();
+            }
         }
+        if result.is_ok() {
+            self.late_return = self.late_return_after(target);
+        }
+    }
+
+    fn take_late_return(&mut self) -> Option<LateReturn> {
+        self.late_return.take()
     }
 }
 
@@ -910,7 +955,7 @@ mod tests {
             )
             .unwrap();
         cursor.segment(Utterance::anonymous("hello")).unwrap();
-        cursor.delivery.fail = true;
+        Arc::get_mut(&mut cursor.delivery).unwrap().fail = true;
         assert!(cursor.segment(Utterance::anonymous("there")).is_err());
         cursor
             .completed(Utterance::anonymous("hello there"))
@@ -932,7 +977,7 @@ mod tests {
             )
             .unwrap();
         cursor.segment(Utterance::anonymous("hello")).unwrap();
-        cursor.delivery.fail = true;
+        Arc::get_mut(&mut cursor.delivery).unwrap().fail = true;
         assert!(cursor.completed(Utterance::anonymous("hello")).is_err());
         cursor.completed(Utterance::anonymous("hello")).unwrap();
         assert_eq!(
@@ -988,7 +1033,7 @@ mod tests {
             )
             .unwrap();
         assert!(control.take_return());
-        cursor.delivery.fail = true;
+        Arc::get_mut(&mut cursor.delivery).unwrap().fail = true;
         assert!(cursor.segment(Utterance::anonymous("hello")).is_err());
 
         assert!(!control.take_return(), "typing ended with the failure");
@@ -1122,6 +1167,159 @@ mod tests {
         cancel.cancel();
         cursor.dictation_finished(Err(&DictationError::Cancelled));
 
+        assert!(!log.entries().iter().any(|entry| entry == "return"));
+    }
+
+    /// A complete press in `mode`, started under `control`.
+    fn started(mode: OutputMode, control: &Arc<ExecutionControl>) -> (CallLog, Cursor<Wandering>) {
+        let log = CallLog::default();
+        let mut cursor = Cursor::new(wandering(&log));
+        cursor
+            .dictation_started(&settings(DeliveryMode::Complete, mode), control)
+            .unwrap();
+        (log, cursor)
+    }
+
+    #[test]
+    fn text_typed_into_its_field_offers_a_late_return_once() {
+        let (log, mut cursor) = started(
+            OutputMode::Insert,
+            &ExecutionControl::for_test(StopMode::Manual),
+        );
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+        cursor.dictation_finished(Ok(()));
+
+        let late = cursor.take_late_return().expect("typed text offers one");
+        late.press(&aria_kit::cancel::CancelToken::new())
+            .expect("the field still holds the text");
+
+        assert_eq!(log.entries(), ["prepare:Insert", "deliver:hello", "return"]);
+        assert!(cursor.take_late_return().is_none());
+    }
+
+    #[test]
+    fn a_late_return_names_the_app_the_text_went_to() {
+        let log = CallLog::default();
+        let mut cursor = Cursor::new(wandering(&log));
+        *cursor.delivery.front.lock().unwrap() = Some(app("Messages", "com.apple.MobileSMS"));
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Complete, OutputMode::Insert),
+                &ExecutionControl::for_test(StopMode::Manual),
+            )
+            .unwrap();
+        // Where the text went, not where the person looks once it landed.
+        *cursor.delivery.front.lock().unwrap() = Some(app("Safari", "com.apple.Safari"));
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+        cursor.dictation_finished(Ok(()));
+
+        let late = cursor.take_late_return().expect("typed text offers one");
+        assert_eq!(
+            late.application().map(|app| app.name.as_str()),
+            Some("Messages")
+        );
+    }
+
+    #[test]
+    fn submission_copying_or_a_clipboard_fallback_offers_no_late_return() {
+        for mode in [
+            OutputMode::InsertAndSubmit,
+            OutputMode::Copy,
+            OutputMode::InsertOrCopy,
+        ] {
+            let (_log, mut cursor) = started(mode, &ExecutionControl::for_test(StopMode::Manual));
+            cursor.completed(Utterance::anonymous("hello")).unwrap();
+            cursor.dictation_finished(Ok(()));
+
+            assert!(cursor.take_late_return().is_none(), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_delivery_with_no_target_process_offers_no_late_return() {
+        let mut cursor = Cursor::new(FieldWithText {
+            delivery: RecordingDelivery {
+                log: CallLog::default(),
+                fail: false,
+            },
+            caret: Caret::default(),
+            front: None,
+        });
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Complete, OutputMode::Insert),
+                &ExecutionControl::for_test(StopMode::Manual),
+            )
+            .unwrap();
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+        cursor.dictation_finished(Ok(()));
+
+        assert!(cursor.take_late_return().is_none());
+    }
+
+    #[test]
+    fn a_taken_return_leaves_no_late_return() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let (log, mut cursor) = started(OutputMode::Insert, &control);
+        assert!(control.take_return());
+
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+        cursor.dictation_finished(Ok(()));
+
+        assert!(cursor.take_late_return().is_none());
+        assert_eq!(log.entries(), ["prepare:Insert", "deliver:hello", "return"]);
+    }
+
+    #[test]
+    fn a_dictation_that_failed_after_typing_offers_no_late_return() {
+        let (_log, mut cursor) = started(
+            OutputMode::Insert,
+            &ExecutionControl::for_test(StopMode::Manual),
+        );
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+
+        cursor.dictation_finished(Err(&DictationError::Cancelled));
+
+        assert!(cursor.take_late_return().is_none());
+    }
+
+    #[test]
+    fn the_next_dictation_drops_an_unpressed_late_return() {
+        let (log, mut cursor) = started(
+            OutputMode::Insert,
+            &ExecutionControl::for_test(StopMode::Manual),
+        );
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+        cursor.dictation_finished(Ok(()));
+
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Complete, OutputMode::Insert),
+                &ExecutionControl::for_test(StopMode::Manual),
+            )
+            .unwrap();
+
+        assert!(cursor.take_late_return().is_none());
+        assert!(!log.entries().iter().any(|entry| entry == "return"));
+    }
+
+    #[test]
+    fn a_late_return_after_the_field_left_is_refused() {
+        let (log, mut cursor) = started(
+            OutputMode::Insert,
+            &ExecutionControl::for_test(StopMode::Manual),
+        );
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+        cursor.dictation_finished(Ok(()));
+        let late = cursor.take_late_return().expect("typed text offers one");
+        *cursor.delivery.return_refusal.lock().unwrap() = Some(|| DeliveryError::TargetChanged);
+
+        let pressed = late.press(&aria_kit::cancel::CancelToken::new());
+
+        assert!(matches!(
+            pressed,
+            Err(DictationError::DeliveryTargetChanged)
+        ));
         assert!(!log.entries().iter().any(|entry| entry == "return"));
     }
 

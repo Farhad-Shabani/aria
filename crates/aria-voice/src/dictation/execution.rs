@@ -31,13 +31,21 @@ struct OutputSlot {
 
 use super::{
     Cleanup, DictationEventEmitter, DictationOutcome, DictationResult, DictationSettings,
-    DictationStage, RecordingId, SoundMuting, StopMode, TranscriptRoute,
+    DictationStage, LateReturn, RecordingId, SoundMuting, StopMode, TranscriptRoute,
 };
 
 /// What a recording said, and the engine that heard it.
 pub struct Transcribed {
     pub transcript: Transcript,
     pub engine: &'static str,
+}
+
+/// A recording captured elsewhere, once its text went where a press's would.
+#[derive(Debug)]
+pub struct DeliveredRecording {
+    pub text: String,
+    /// Return after the text, for whoever captured the recording to ask for.
+    pub late_return: Option<LateReturn>,
 }
 
 pub trait DictationExecutor: Send + Sync + 'static {
@@ -65,14 +73,15 @@ pub trait DictationExecutor: Send + Sync + 'static {
 
     /// Hears a recording captured somewhere else and publishes it to the
     /// sinks exactly as a complete-delivery press would: history first, then
-    /// the cursor. The caller holds the microphone already.
+    /// the cursor. The caller holds the microphone already. Only this path
+    /// hands back a late Return: a press has the person's own Return key.
     fn deliver_recording(
         &self,
         recording: &mut RecordingReader,
         settings: DictationSettings,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<String, DictationError>;
+    ) -> Result<DeliveredRecording, DictationError>;
 }
 
 impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
@@ -110,7 +119,7 @@ impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
         settings: DictationSettings,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<String, DictationError> {
+    ) -> Result<DeliveredRecording, DictationError> {
         (**self).deliver_recording(recording, settings, control, events)
     }
 }
@@ -952,7 +961,7 @@ where
         settings: DictationSettings,
         cancellation: CancelToken,
         events: &DictationEventEmitter,
-    ) -> Result<String, DictationError> {
+    ) -> Result<DeliveredRecording, DictationError> {
         let control = Arc::new(ExecutionControl::new(
             RecordingId(self.next_recording.fetch_add(1, Ordering::Relaxed)),
             settings.stop_mode,
@@ -1668,7 +1677,7 @@ mod tests {
                 _: DictationSettings,
                 _: &Arc<ExecutionControl>,
                 _: &DictationEventEmitter,
-            ) -> Result<String, DictationError> {
+            ) -> Result<DeliveredRecording, DictationError> {
                 panic!("this test never delivers a relayed recording");
             }
         }

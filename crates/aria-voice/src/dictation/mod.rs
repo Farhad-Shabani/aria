@@ -30,15 +30,15 @@ pub use event::{
 };
 pub use event::{CapturedMicrophone, DictationStage, HeardSpeaker};
 pub use execution::{
-    ActiveDictation, DictationCoordinator, DictationError, DictationExecutor, DictationPolicy,
-    DictationPolicyError, EscapeRule, ExecutionControl, Transcribed,
+    ActiveDictation, DeliveredRecording, DictationCoordinator, DictationError, DictationExecutor,
+    DictationPolicy, DictationPolicyError, EscapeRule, ExecutionControl, Transcribed,
 };
 use level::Meter;
 pub use level::MicLevel;
 pub use llm::{LlmCleanup, LlmCleanupError};
 pub use pipeline::DictationPipeline;
 pub use rewrites::{Cleanup, ConfiguredLayers, Rewrites};
-pub use transcripts::{Delivered, DeliveryOutcome, TranscriptSink, Utterance};
+pub use transcripts::{Delivered, DeliveryOutcome, LateReturn, TranscriptSink, Utterance};
 
 /// Names one recording for as long as the daemon that took it runs. What
 /// `Stop` names.

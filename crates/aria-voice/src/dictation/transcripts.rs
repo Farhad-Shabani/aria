@@ -1,12 +1,14 @@
 //! Domain values shared by live transcript publication and recent history.
 
+use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
 
-use super::{DictationSettings, ExecutionControl};
+use super::{DictationError, DictationSettings, ExecutionControl};
 use crate::speaker::Label;
+use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::Spacing;
-use aria_platform::delivery::Placement;
+use aria_platform::delivery::{Application, DeliveryError, Placement};
 
 /// What the pipeline heard in one stretch of speech.
 ///
@@ -71,6 +73,45 @@ pub struct Delivered {
     pub words: Option<u32>,
 }
 
+/// The Return a dictation offers once its text landed whole: pressed at
+/// most once, and only where the text went. Dropping it presses nothing.
+pub struct LateReturn {
+    /// Where the text went, when the platform can name it.
+    application: Option<Application>,
+    press: Box<Press>,
+}
+
+type Press = dyn FnOnce(&CancelToken) -> Result<(), DeliveryError> + Send;
+
+impl LateReturn {
+    pub(super) fn new(
+        application: Option<Application>,
+        press: impl FnOnce(&CancelToken) -> Result<(), DeliveryError> + Send + 'static,
+    ) -> Self {
+        Self {
+            application,
+            press: Box::new(press),
+        }
+    }
+
+    pub fn application(&self) -> Option<&Application> {
+        self.application.as_ref()
+    }
+
+    /// Presses Return after the text. Refused once its app left the front,
+    /// or, where the field can be read, once that field lost focus or its
+    /// caret left the text.
+    pub fn press(self, cancel: &CancelToken) -> Result<(), DictationError> {
+        (self.press)(cancel).map_err(DictationError::from)
+    }
+}
+
+impl fmt::Debug for LateReturn {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("LateReturn").finish_non_exhaustive()
+    }
+}
+
 /// Where the pipeline publishes what it heard. Segments arrive as they
 /// finalize. The completion reaches every sink once the decoder has it, even
 /// after a later sink failed, so a rejected last insertion still leaves the
@@ -126,6 +167,13 @@ pub trait TranscriptSink {
 
     /// The dictation ended, as `result` says.
     fn dictation_finished(&mut self, _result: Result<(), &super::DictationError>) {}
+
+    /// The Return the dictation that just finished offers after its text.
+    /// `None` once taken, once the next dictation starts, or when it offers
+    /// none.
+    fn take_late_return(&mut self) -> Option<LateReturn> {
+        None
+    }
 
     fn recording_finished(
         &mut self,

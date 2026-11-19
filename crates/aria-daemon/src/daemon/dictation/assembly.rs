@@ -20,9 +20,10 @@ use aria_settings::config::ConfigError;
 use aria_settings::rpc::RpcErrorCode;
 use aria_voice::config::{DictationConfig, PairingId, SpeakerConfig, SttBackend, SttConfig};
 use aria_voice::dictation::{
-    Cleanup, ConfiguredLayers, Cursor, DictationCoordinator, DictationError, DictationEventEmitter,
-    DictationExecutor, DictationPipeline, DictationPolicy, DictationPolicyError, DictationResult,
-    DictationSettings, ExecutionControl, LlmCleanupError, Rewrites, SoundMuting, Transcribed,
+    Cleanup, ConfiguredLayers, Cursor, DeliveredRecording, DictationCoordinator, DictationError,
+    DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
+    DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, LlmCleanupError,
+    Rewrites, SoundMuting, Transcribed,
 };
 use aria_voice::stt::{
     Language, Mode, Recognizer, Streaming, Transcription, TranscriptionError, Whole,
@@ -135,7 +136,7 @@ where
         settings: DictationSettings,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<String, DictationError> {
+    ) -> Result<DeliveredRecording, DictationError> {
         let project = settings.project.clone();
         self.prepared(project.as_ref(), |vocabulary| {
             self.pipeline
@@ -441,7 +442,7 @@ impl DictationExecutor for EngineSlot {
         settings: DictationSettings,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<String, DictationError> {
+    ) -> Result<DeliveredRecording, DictationError> {
         self.current()
             .executor
             .deliver_recording(recording, settings, control, events)
@@ -526,7 +527,7 @@ impl DictationExecutor for Unusable {
         settings: DictationSettings,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<String, DictationError> {
+    ) -> Result<DeliveredRecording, DictationError> {
         self.engine()?
             .executor
             .deliver_recording(recording, settings, control, events)
@@ -745,9 +746,9 @@ pub(in crate::daemon::dictation) mod tests {
     use aria_kit::audio::RecordingReader;
     use aria_settings::Settings;
     use aria_voice::dictation::{
-        Cleanup, DictationCoordinator, DictationError, DictationEventEmitter, DictationExecutor,
-        DictationOutcome, DictationPolicy, DictationRequest, DictationResult, DictationSettings,
-        ExecutionControl, StopMode, Transcribed,
+        Cleanup, DeliveredRecording, DictationCoordinator, DictationError, DictationEventEmitter,
+        DictationExecutor, DictationOutcome, DictationPolicy, DictationRequest, DictationResult,
+        DictationSettings, ExecutionControl, StopMode, Transcribed,
     };
     use aria_voice::stt::{Language, TranscriptionError};
 
@@ -795,7 +796,7 @@ pub(in crate::daemon::dictation) mod tests {
             _: DictationSettings,
             _: &Arc<ExecutionControl>,
             _: &DictationEventEmitter,
-        ) -> Result<String, DictationError> {
+        ) -> Result<DeliveredRecording, DictationError> {
             panic!("these tests only press");
         }
     }

@@ -1,9 +1,9 @@
 //! Spies and builders the dictation tests share.
 
 use super::{
-    Cursor, DeliveryMode, DictationError, DictationEventEmitter, DictationExecutor,
-    DictationResult, DictationSettings, EscapeRule, ExecutionControl, RecordingId, StopMode,
-    Transcribed, TranscriptSink, Utterance,
+    Cursor, DeliveredRecording, DeliveryMode, DictationError, DictationEventEmitter,
+    DictationExecutor, DictationResult, DictationSettings, EscapeRule, ExecutionControl,
+    LateReturn, RecordingId, StopMode, Transcribed, TranscriptSink, Utterance,
 };
 use crate::history::HistorySource;
 use crate::stt::{
@@ -326,6 +326,15 @@ pub fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> Dictati
     }
 }
 
+/// A late Return into `application` that runs `press` in place of the
+/// cursor's checked one.
+pub fn late_return(
+    application: Option<aria_platform::delivery::Application>,
+    press: impl FnOnce(&CancelToken) -> Result<(), DeliveryError> + Send + 'static,
+) -> LateReturn {
+    LateReturn::new(application, press)
+}
+
 /// How long a test waits for a scripted press to reach its next edge.
 pub const EDGE_WAIT: Duration = Duration::from_secs(5);
 /// What every scripted press hears.
@@ -407,7 +416,7 @@ impl DictationExecutor for RecordsUntilStopped {
         _settings: DictationSettings,
         _control: &Arc<ExecutionControl>,
         _events: &DictationEventEmitter,
-    ) -> Result<String, DictationError> {
+    ) -> Result<DeliveredRecording, DictationError> {
         Err(DictationError::NoSpeech)
     }
 }
@@ -458,7 +467,7 @@ impl DictationExecutor for PressSpy {
         _settings: DictationSettings,
         _control: &Arc<ExecutionControl>,
         _events: &DictationEventEmitter,
-    ) -> Result<String, DictationError> {
+    ) -> Result<DeliveredRecording, DictationError> {
         panic!("a press spy never delivers a relayed recording");
     }
 }

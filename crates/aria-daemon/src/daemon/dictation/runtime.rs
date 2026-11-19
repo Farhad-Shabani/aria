@@ -21,9 +21,9 @@ use aria_settings::rpc::{Categorized, RpcErrorCode};
 use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
-    ActiveDictation, DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter,
-    DictationOutcome, DictationRequest, DictationSettings, DictationStage, EscapeRule, RecordingId,
-    StopMode, Transcribed, subscribers::DictationSubscribers,
+    ActiveDictation, DeliveredRecording, DictationCoordinator, DictationError, DictationEvent,
+    DictationEventEmitter, DictationOutcome, DictationRequest, DictationSettings, DictationStage,
+    EscapeRule, RecordingId, StopMode, Transcribed, subscribers::DictationSubscribers,
 };
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
@@ -63,6 +63,12 @@ pub(in crate::daemon) enum AutoStopRule {
     Setting,
     /// A hold: its release is the stop.
     Off,
+}
+
+/// What a relayed recording reads at admission, from one settings snapshot.
+pub(in crate::daemon) struct RelaySettings {
+    pub(in crate::daemon) dictation: DictationSettings,
+    pub(in crate::daemon) press_return: bool,
 }
 
 pub(in crate::daemon) struct DictationRuntime {
@@ -320,35 +326,28 @@ impl DictationRuntime {
     pub(in crate::daemon) fn history_settings(
         &self,
     ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.settings_for(None, HistorySource::Local)
+        Ok(resolved(self.snapshot()?, None, HistorySource::Local))
     }
 
     /// A phone's dictation lands in whatever app is in front on this Mac.
-    pub(in crate::daemon) fn relay_settings(
-        &self,
-    ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.settings_for(
-            aria_platform::delivery::frontmost_application(),
-            HistorySource::Relay,
-        )
+    pub(in crate::daemon) fn relay_settings(&self) -> Result<RelaySettings, DictationRuntimeError> {
+        let settings = self.snapshot()?;
+        Ok(RelaySettings {
+            press_return: settings.phone_press_return,
+            dictation: resolved(
+                settings,
+                aria_platform::delivery::frontmost_application(),
+                HistorySource::Relay,
+            ),
+        })
     }
 
-    fn settings_for(
-        &self,
-        application: Option<aria_platform::delivery::Application>,
-        source: HistorySource,
-    ) -> Result<DictationSettings, DictationRuntimeError> {
+    fn snapshot(&self) -> Result<aria_settings::Settings, DictationRuntimeError> {
         let snapshot = self
             .settings
             .snapshot()
             .map_err(DictationRuntimeError::Settings)?;
-        let mut settings = DictationSettings::resolve(
-            snapshot.settings,
-            DictationRequest::new(StopMode::OnSilence),
-            application,
-        );
-        settings.source = source;
-        Ok(settings)
+        Ok(snapshot.settings)
     }
 
     /// Announces a failure the pipeline never saw: a relay job that panicked.
@@ -364,7 +363,7 @@ impl DictationRuntime {
         recording: &mut RecordingReader,
         settings: DictationSettings,
         cancel: CancelToken,
-    ) -> Result<String, DictationRuntimeError> {
+    ) -> Result<DeliveredRecording, DictationRuntimeError> {
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled.into());
         }
@@ -555,6 +554,20 @@ impl DictationRuntime {
             CoordinatorState::Deferred(deferred) => deferred.built(),
         }
     }
+}
+
+fn resolved(
+    settings: aria_settings::Settings,
+    application: Option<aria_platform::delivery::Application>,
+    source: HistorySource,
+) -> DictationSettings {
+    let mut settings = DictationSettings::resolve(
+        settings,
+        DictationRequest::new(StopMode::OnSilence),
+        application,
+    );
+    settings.source = source;
+    settings
 }
 
 /// `DEFERRED_ENGINE` and `backend::SERVER` label a dictation, not an engine,
@@ -1039,7 +1052,7 @@ mod history_tests {
             _: DictationSettings,
             _: &Arc<aria_voice::dictation::ExecutionControl>,
             _: &DictationEventEmitter,
-        ) -> Result<String, DictationError> {
+        ) -> Result<DeliveredRecording, DictationError> {
             panic!("this test never delivers a relayed recording");
         }
     }

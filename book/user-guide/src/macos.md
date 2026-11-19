@@ -177,6 +177,11 @@ managers and wiped when the code expires. Universal Clipboard may still carry
 it to your other devices meanwhile. **Revoke All…** unpairs every phone at
 once, and each phone scans a new code to pair again.
 
+**Allow your iPhone to press Return**, under **Settings → Phone**, is on by
+default. Your iPhone and Apple Watch can then ask your Mac to press
+**Return** after their text. Your Mac presses it only where that text went.
+It also sends the device the name of the app the text went to.
+
 ## Keep Aria running
 
 Dictation needs Aria's background service. Opening the app starts it; choosing

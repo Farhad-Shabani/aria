@@ -30,6 +30,7 @@ enum SettingsRow: CaseIterable, Identifiable {
     case keepAudio
     case memory
     case phonePairing
+    case phoneReturn
     case checkForUpdates
     case installUpdates
 
@@ -65,6 +66,7 @@ enum SettingsRow: CaseIterable, Identifiable {
         case .keepAudio: "Keep audio for 24 hours"
         case .memory: "Memory"
         case .phonePairing: "Phone pairing"
+        case .phoneReturn: "Allow your iPhone to press Return"
         case .checkForUpdates: "Automatically check for updates"
         case .installUpdates: "Automatically download and install"
         }
@@ -100,6 +102,7 @@ enum SettingsRow: CaseIterable, Identifiable {
         case .keepAudio: ["History", "recordings", "transcribe again"]
         case .memory: ["Claude", "facts", "remember"]
         case .phonePairing: ["iPhone", "Apple Watch", "pair", "code"]
+        case .phoneReturn: ["iPhone", "Return", "Enter", "send", "hold"]
         case .checkForUpdates: ["updates", "version"]
         case .installUpdates: ["updates", "version"]
         }
@@ -116,7 +119,7 @@ enum SettingsRow: CaseIterable, Identifiable {
         case .language, .onlyTypeMyVoice, .useProjectVocabulary, .vocabularyFolder, .serverRecognition: .recognition
         case .ariaKey, .openAria, .ask: .shortcuts
         case .saveHistory, .keepAudio, .memory: .privacy
-        case .phonePairing: .phone
+        case .phonePairing, .phoneReturn: .phone
         case .checkForUpdates, .installUpdates: .about
         }
     }

@@ -11,5 +11,5 @@ pub(in crate::daemon) use actor::{DictationActor, DictationCallError, DictationH
 pub use assembly::DictationInitializationError;
 pub(in crate::daemon) use follower::EngineFollower;
 pub(in crate::daemon) use runtime::{
-    AutoStopRule, DictationRuntime, DictationRuntimeError, DictationSetup,
+    AutoStopRule, DictationRuntime, DictationRuntimeError, DictationSetup, RelaySettings,
 };

@@ -424,14 +424,29 @@ impl From<wire::DictationResult> for DictationResult {
 
 impl From<RelayStage> for wire::RelayEvent {
     fn from(outcome: RelayStage) -> Self {
-        let (stage, text) = match outcome {
-            RelayStage::Transcribing => (wire::RelayStage::Transcribing, String::new()),
-            RelayStage::Completed(text) => (wire::RelayStage::Completed, text),
-            RelayStage::NoSpeech => (wire::RelayStage::NoSpeech, String::new()),
+        let (stage, text, submitted, late_return) = match outcome {
+            RelayStage::Transcribing => {
+                (wire::RelayStage::Transcribing, String::new(), false, None)
+            }
+            RelayStage::Completed { text, late_return } => (
+                wire::RelayStage::Completed,
+                text,
+                false,
+                late_return.map(|offered| wire::LateReturn {
+                    application_name: offered.application_name,
+                }),
+            ),
+            RelayStage::CompletedAndSubmitted(text) => {
+                (wire::RelayStage::Completed, text, true, None)
+            }
+            RelayStage::NoSpeech => (wire::RelayStage::NoSpeech, String::new(), false, None),
+            RelayStage::Submitted => (wire::RelayStage::Submitted, String::new(), false, None),
         };
         Self {
             stage: stage as i32,
             text,
+            submitted,
+            late_return,
         }
     }
 }
@@ -2618,6 +2633,7 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                         .prompt_list_shortcut
                         .ok_or(ProtocolError::MissingBody("prompt list hotkey"))?,
                 )?,
+                phone_press_return: settings.phone_press_return,
                 stt_language: settings.stt_language.parse()?,
                 tts_rate: SpeakingRate::new(settings.tts_rate as f32)
                     .map_err(ProtocolError::InvalidSpeakingRate)?,
@@ -2758,6 +2774,7 @@ impl From<SettingsPatch> for wire::SettingsPatch {
             aria_key: patch.aria_key.map(|key| wire::AriaKey::from(key) as i32),
             ask_shortcut: patch.ask_shortcut.map(wire::Shortcut::from),
             prompt_list_shortcut: patch.prompt_list_shortcut.map(wire::Shortcut::from),
+            phone_press_return: patch.phone_press_return,
             stt_language: patch
                 .stt_language
                 .map(|language| language.as_str().to_owned()),
@@ -2879,6 +2896,7 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
                 aria_key: wire::AriaKey::from(snapshot.settings.aria_key) as i32,
                 ask_shortcut: Some(snapshot.settings.ask_shortcut.into()),
                 prompt_list_shortcut: Some(snapshot.settings.prompt_list_shortcut.into()),
+                phone_press_return: snapshot.settings.phone_press_return,
                 stt_language: snapshot.settings.stt_language.as_str().to_owned(),
                 tts_rate: f64::from(snapshot.settings.tts_rate.get()),
             }),
@@ -2989,6 +3007,7 @@ impl TryFrom<wire::SettingsPatch> for SettingsPatch {
                 .prompt_list_shortcut
                 .map(Option::<Shortcut>::try_from)
                 .transpose()?,
+            phone_press_return: patch.phone_press_return,
             stt_language: patch.stt_language.as_deref().map(str::parse).transpose()?,
             tts_rate: patch
                 .tts_rate
@@ -3654,6 +3673,21 @@ mod tests {
     use aria_voice::dictation::DictationError;
 
     use super::*;
+
+    #[test]
+    fn submitted_text_reads_as_completed_to_a_phone_that_ignores_the_return() {
+        let submitted =
+            wire::RelayEvent::from(RelayStage::CompletedAndSubmitted("ship it".to_owned()));
+        assert_eq!(submitted.stage(), wire::RelayStage::Completed);
+        assert_eq!(submitted.text, "ship it");
+        assert!(submitted.submitted);
+        let completed = wire::RelayEvent::from(RelayStage::Completed {
+            text: "ship it".to_owned(),
+            late_return: None,
+        });
+        assert!(!completed.submitted);
+        assert_eq!(completed.late_return, None);
+    }
 
     #[test]
     fn an_oversized_failure_message_is_bounded_and_keeps_its_verdict() {
@@ -4675,6 +4709,32 @@ mod tests {
                 ..Default::default()
             };
             let decoded = wire::SettingsPatch::from(patch.clone());
+            assert_eq!(SettingsPatch::try_from(decoded).unwrap(), patch);
+        }
+    }
+
+    #[test]
+    fn phone_press_return_survives_the_wire() {
+        for phone_press_return in [false, true] {
+            let snapshot = SettingsSnapshot {
+                streaming_unavailable: StreamingSupport::default(),
+                revision: 4,
+                settings: Settings {
+                    phone_press_return,
+                    ..Default::default()
+                },
+            };
+            let encoded = wire::SettingsSnapshot::from(&snapshot).encode_to_vec();
+            let decoded = wire::SettingsSnapshot::decode(encoded.as_slice()).unwrap();
+            assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
+        }
+        for phone_press_return in [None, Some(false), Some(true)] {
+            let patch = SettingsPatch {
+                phone_press_return,
+                ..Default::default()
+            };
+            let encoded = wire::SettingsPatch::from(patch.clone()).encode_to_vec();
+            let decoded = wire::SettingsPatch::decode(encoded.as_slice()).unwrap();
             assert_eq!(SettingsPatch::try_from(decoded).unwrap(), patch);
         }
     }

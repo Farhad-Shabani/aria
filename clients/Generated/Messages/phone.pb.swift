@@ -34,11 +34,16 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
   /// The upload is complete; transcribing is starting.
   case transcribing // = 1
 
-  /// Transcription and delivery succeeded. Terminal.
+  /// Transcription and delivery succeeded. Terminal, unless it carries a
+  /// `late_return`: the stream then stays open for a `RelaySubmit`, and the
+  /// daemon ends it once the offer lapses.
   case completed // = 2
 
   /// No audio arrived, or no eligible speech was recognized. Terminal.
   case noSpeech // = 3
+
+  /// Return was pressed after the text. Terminal.
+  case submitted // = 4
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -51,6 +56,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
     case 1: self = .transcribing
     case 2: self = .completed
     case 3: self = .noSpeech
+    case 4: self = .submitted
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -61,6 +67,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
     case .transcribing: return 1
     case .completed: return 2
     case .noSpeech: return 3
+    case .submitted: return 4
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -71,6 +78,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
     .transcribing,
     .completed,
     .noSpeech,
+    .submitted,
   ]
 
 }
@@ -228,12 +236,21 @@ public nonisolated struct Aria_Daemon_V1_RelayRequest: Sendable {
     set {body = .stop(newValue)}
   }
 
+  public var submit: Aria_Daemon_V1_RelaySubmit {
+    get {
+      if case .submit(let v)? = body {return v}
+      return Aria_Daemon_V1_RelaySubmit()
+    }
+    set {body = .submit(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Body: Equatable, Sendable {
     case start(Aria_Daemon_V1_RelayStart)
     case audio(Aria_Daemon_V1_RelayAudio)
     case stop(Aria_Daemon_V1_RelayStop)
+    case submit(Aria_Daemon_V1_RelaySubmit)
 
   }
 
@@ -247,6 +264,12 @@ public nonisolated struct Aria_Daemon_V1_RelayStart: Sendable {
   // methods supported on all messages.
 
   public var format: Aria_Daemon_V1_AudioFormat = .unspecified
+
+  /// Press Return once the text is inserted, checked as a `RelaySubmit` is,
+  /// before COMPLETED. Changes nothing where the app only copies. An app set
+  /// to insert and press Return does this without it. Ignored unless the Mac
+  /// lets the phone press Return (`Settings.phone_press_return`).
+  public var submit: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -265,8 +288,28 @@ public nonisolated struct Aria_Daemon_V1_RelayAudio: Sendable {
   public init() {}
 }
 
-/// Ends the recording. A half-closed stream ends it too.
+/// Ends the recording. A half-closed stream ends it too, but only a stop
+/// leaves the stream open for a `RelaySubmit`.
 public nonisolated struct Aria_Daemon_V1_RelayStop: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Press Return where the text went. Taken once, within 10 seconds of
+/// COMPLETED, and only when COMPLETED carries a `late_return`. That takes a
+/// `RelayStop`, the Mac letting the phone press Return
+/// (`Settings.phone_press_return`), and text typed whole by plain
+/// insertion. One sent after the stop waits for COMPLETED. Pressed only
+/// while that field has focus with the caret after the text, or, where the
+/// field can't be read, while its app is in front. Refused with
+/// INVALID_REQUEST before the stop, DELIVERY_TARGET_CHANGED once focus
+/// moved, and BUSY while a recording runs.
+public nonisolated struct Aria_Daemon_V1_RelaySubmit: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -286,9 +329,53 @@ public nonisolated struct Aria_Daemon_V1_RelayEvent: Sendable {
   /// The text; only on COMPLETED.
   public var text: String = String()
 
+  /// On COMPLETED: Return was pressed after the text, as `RelayStart.submit`
+  /// or an app set to insert and press Return asks, so no `RelaySubmit` is
+  /// taken. Terminal. Only while the Mac lets the phone press Return
+  /// (`Settings.phone_press_return`); otherwise such an app only types,
+  /// and this stays false.
+  public var submitted: Bool = false
+
+  /// On COMPLETED: the Mac takes one `RelaySubmit` for this text, and the
+  /// stream stays open for it. Absent when it takes none.
+  public var lateReturn: Aria_Daemon_V1_LateReturn {
+    get {_lateReturn ?? Aria_Daemon_V1_LateReturn()}
+    set {_lateReturn = newValue}
+  }
+  /// Returns true if `lateReturn` has been explicitly set.
+  public var hasLateReturn: Bool {self._lateReturn != nil}
+  /// Clears the value of `lateReturn`. Subsequent reads from it will return its default value.
+  public mutating func clearLateReturn() {self._lateReturn = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _lateReturn: Aria_Daemon_V1_LateReturn? = nil
+}
+
+/// The Return the Mac offers after a relayed recording's text.
+public nonisolated struct Aria_Daemon_V1_LateReturn: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The app the text went to, as macOS names it, for the phone to show.
+  /// Absent when the Mac can't name it.
+  public var applicationName: String {
+    get {_applicationName ?? String()}
+    set {_applicationName = newValue}
+  }
+  /// Returns true if `applicationName` has been explicitly set.
+  public var hasApplicationName: Bool {self._applicationName != nil}
+  /// Clears the value of `applicationName`. Subsequent reads from it will return its default value.
+  public mutating func clearApplicationName() {self._applicationName = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _applicationName: String? = nil
 }
 
 public nonisolated struct Aria_Daemon_V1_PhoneMicrophoneRequest: Sendable {
@@ -438,7 +525,7 @@ public nonisolated struct Aria_Daemon_V1_PhoneMicrophoneStop: Sendable {
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
 nonisolated extension Aria_Daemon_V1_RelayStage: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RELAY_STAGE_UNSPECIFIED\0\u{1}RELAY_STAGE_TRANSCRIBING\0\u{1}RELAY_STAGE_COMPLETED\0\u{1}RELAY_STAGE_NO_SPEECH\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RELAY_STAGE_UNSPECIFIED\0\u{1}RELAY_STAGE_TRANSCRIBING\0\u{1}RELAY_STAGE_COMPLETED\0\u{1}RELAY_STAGE_NO_SPEECH\0\u{1}RELAY_STAGE_SUBMITTED\0")
 }
 
 nonisolated extension Aria_Daemon_V1_AudioFormat: SwiftProtobuf._ProtoNameProviding {
@@ -607,7 +694,7 @@ nonisolated extension Aria_Daemon_V1_RevokePhonesResponse: SwiftProtobuf.Message
 
 nonisolated extension Aria_Daemon_V1_RelayRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RelayRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}audio\0\u{1}stop\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}audio\0\u{1}stop\0\u{1}submit\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -654,6 +741,19 @@ nonisolated extension Aria_Daemon_V1_RelayRequest: SwiftProtobuf.Message, SwiftP
           self.body = .stop(v)
         }
       }()
+      case 4: try {
+        var v: Aria_Daemon_V1_RelaySubmit?
+        var hadOneofValue = false
+        if let current = self.body {
+          hadOneofValue = true
+          if case .submit(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.body = .submit(v)
+        }
+      }()
       default: break
       }
     }
@@ -677,6 +777,10 @@ nonisolated extension Aria_Daemon_V1_RelayRequest: SwiftProtobuf.Message, SwiftP
       guard case .stop(let v)? = self.body else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
     }()
+    case .submit?: try {
+      guard case .submit(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -691,7 +795,7 @@ nonisolated extension Aria_Daemon_V1_RelayRequest: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Aria_Daemon_V1_RelayStart: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RelayStart"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}format\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}format\0\u{1}submit\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -700,6 +804,7 @@ nonisolated extension Aria_Daemon_V1_RelayStart: SwiftProtobuf.Message, SwiftPro
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.format) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.submit) }()
       default: break
       }
     }
@@ -709,11 +814,15 @@ nonisolated extension Aria_Daemon_V1_RelayStart: SwiftProtobuf.Message, SwiftPro
     if self.format != .unspecified {
       try visitor.visitSingularEnumField(value: self.format, fieldNumber: 1)
     }
+    if self.submit != false {
+      try visitor.visitSingularBoolField(value: self.submit, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_RelayStart, rhs: Aria_Daemon_V1_RelayStart) -> Bool {
     if lhs.format != rhs.format {return false}
+    if lhs.submit != rhs.submit {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -768,9 +877,28 @@ nonisolated extension Aria_Daemon_V1_RelayStop: SwiftProtobuf.Message, SwiftProt
   }
 }
 
+nonisolated extension Aria_Daemon_V1_RelaySubmit: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RelaySubmit"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RelaySubmit, rhs: Aria_Daemon_V1_RelaySubmit) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Aria_Daemon_V1_RelayEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RelayEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{1}submitted\0\u{3}late_return\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -780,24 +908,72 @@ nonisolated extension Aria_Daemon_V1_RelayEvent: SwiftProtobuf.Message, SwiftPro
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.stage) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.submitted) }()
+      case 4: try { try decoder.decodeSingularMessageField(value: &self._lateReturn) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if self.stage != .unspecified {
       try visitor.visitSingularEnumField(value: self.stage, fieldNumber: 1)
     }
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 2)
     }
+    if self.submitted != false {
+      try visitor.visitSingularBoolField(value: self.submitted, fieldNumber: 3)
+    }
+    try { if let v = self._lateReturn {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_RelayEvent, rhs: Aria_Daemon_V1_RelayEvent) -> Bool {
     if lhs.stage != rhs.stage {return false}
     if lhs.text != rhs.text {return false}
+    if lhs.submitted != rhs.submitted {return false}
+    if lhs._lateReturn != rhs._lateReturn {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_LateReturn: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".LateReturn"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}application_name\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self._applicationName) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._applicationName {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_LateReturn, rhs: Aria_Daemon_V1_LateReturn) -> Bool {
+    if lhs._applicationName != rhs._applicationName {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
