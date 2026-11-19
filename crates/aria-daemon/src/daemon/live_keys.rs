@@ -103,6 +103,7 @@ impl LiveHarness {
                 &settings,
                 &self.home,
                 super::inference::pairing_id(&self.home),
+                aria_voice::config::SttDevice::Cpu,
             )
             .stt
         )

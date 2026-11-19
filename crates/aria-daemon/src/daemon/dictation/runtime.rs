@@ -20,7 +20,7 @@ use aria_settings::config::{ConfigError, backend};
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::{Categorized, RpcErrorCode};
 use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
-use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
+use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend, SttDevice};
 use aria_voice::dictation::{
     ActiveDictation, Announcement, CapturedMicrophone, DeliveredRecording, DictationCoordinator,
     DictationError, DictationEvent, DictationEventEmitter, DictationOutcome, DictationRequest,
@@ -137,6 +137,7 @@ impl DictationRuntime {
                         &settings,
                         &retry_home,
                         pairing_id(&retry_home),
+                        SttDevice::Cpu,
                     ),
                     speaker: SpeakerConfig::load(&settings.speaker, &retry_home),
                     vocabulary: Arc::clone(&retry_vocabulary),
@@ -150,7 +151,8 @@ impl DictationRuntime {
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(
                 move || {
                     let settings = cache.effective();
-                    let config = DictationConfig::load(&settings, &home, pairing_id(&home));
+                    let config =
+                        DictationConfig::load(&settings, &home, pairing_id(&home), SttDevice::Cpu);
                     let speaker = SpeakerConfig::load(&settings.speaker, &home);
                     // Only a daemon that deferred its build reaches here, and
                     // one of those lives for a single press. A wake-word monitor
@@ -1353,8 +1355,12 @@ mod history_tests {
                 })
                 .unwrap();
             let home_dir = home.clone();
-            let mut config =
-                DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
+            let mut config = DictationConfig::load(
+                &aria_settings::testing::file(""),
+                &home_dir,
+                None,
+                SttDevice::Cpu,
+            );
             config.stt = SttBackend::Server(crate::daemon::inference::pairing_id(&home_dir));
             config.capture = aria_voice::config::CaptureConfig::WavFile {
                 path: audio,

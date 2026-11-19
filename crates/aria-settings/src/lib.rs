@@ -48,8 +48,8 @@ pub use directory::{Directory, DirectoryError};
 pub use document::{
     ApplicationOverrideEntry, AriaKeyName, Capture, CaptureBackendName, Delivery, DeliveryModeName,
     DeviceName, Dictation, Keyed, Loaded, Memory, OutputModeName, PaceName, Phone, PromptEntry,
-    Revision, RunsOn, SettingsFile, ShortcutEntry, Speaker, Stt, Tts, TtsFallbackName, Wake,
-    invalid,
+    Revision, RunsOn, SettingsFile, ShortcutEntry, Speaker, Stt, SttDeviceName, Tts,
+    TtsFallbackName, Wake, invalid,
 };
 pub use keys::Scope;
 pub use keys::{Apply, Key};

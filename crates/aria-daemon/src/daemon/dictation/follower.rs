@@ -10,7 +10,7 @@ use std::time::Duration;
 use aria_kit::cancel::CancelToken;
 use aria_primitives::error_chain;
 use aria_settings::SettingsCache;
-use aria_voice::config::SttBackend;
+use aria_voice::config::{SttBackend, SttDevice};
 use aria_voice::microphone::Gate;
 use aria_voice::stt::TranscriptionError;
 use tokio_util::sync::CancellationToken;
@@ -91,7 +91,7 @@ impl EngineFollower {
 
     fn follow(&self, stop: &CancelToken) {
         let pairing = pairing_id(&self.home);
-        let target = SttBackend::load(&self.cache.effective(), &self.home, pairing);
+        let target = SttBackend::load(&self.cache.effective(), &self.home, pairing, SttDevice::Cpu);
         settle(&self.slot, &self.microphone, target, &self.build, stop);
     }
 

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use aria_settings::config::{ConfigError, model_location, wake_backend};
 use aria_settings::{CheckedSettings, InvalidValue, Key, Phone, WakeEngine};
 
-use aria_voice::config::{CaptureConfig, DictationConfig};
+use aria_voice::config::{CaptureConfig, DictationConfig, SttDevice};
 
 pub struct DaemonConfig {
     pub dictation: DictationConfig,
@@ -68,7 +68,12 @@ impl DaemonConfig {
         home: &Path,
         wake_word: WakeWordOverride,
     ) -> Result<Self, ConfigError> {
-        let dictation = DictationConfig::load(settings, home, super::inference::pairing_id(home));
+        let dictation = DictationConfig::load(
+            settings,
+            home,
+            super::inference::pairing_id(home),
+            SttDevice::Cpu,
+        );
         let wake = wake(settings, home, &dictation.capture, wake_word)?;
         Ok(Self {
             dictation,

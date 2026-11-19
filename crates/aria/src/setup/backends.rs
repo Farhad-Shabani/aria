@@ -331,9 +331,13 @@ mod tests {
         {
             let home = home_with_downloads("stt", stt.key(), stt.model().assets());
             let home_dir = home.path().to_path_buf();
-            let aria_voice::config::SttBackend::Local(engine) =
-                DictationConfig::load(&aria_settings::load(&home_dir).unwrap(), &home_dir, None)
-                    .stt
+            let aria_voice::config::SttBackend::Local(engine) = DictationConfig::load(
+                &aria_settings::load(&home_dir).unwrap(),
+                &home_dir,
+                None,
+                config::SttDevice::Cpu,
+            )
+            .stt
             else {
                 panic!("{} is a local engine", stt.key());
             };

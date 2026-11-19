@@ -873,7 +873,7 @@ pub(in crate::daemon::dictation) mod tests {
 
     use crate::daemon::config::WakeConfig;
     use aria_kit::audio::ReplayPace;
-    use aria_voice::config::CaptureConfig;
+    use aria_voice::config::{CaptureConfig, SttDevice};
 
     #[tokio::test]
     async fn one_server_build_dictates_and_fails_only_the_press_the_server_misses() {
@@ -899,8 +899,12 @@ pub(in crate::daemon::dictation) mod tests {
                     aria_voice::vocabulary::extract::LocalExtractor,
                 ),
             );
-            let mut dictation =
-                DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
+            let mut dictation = DictationConfig::load(
+                &aria_settings::testing::file(""),
+                &home_dir,
+                None,
+                SttDevice::Cpu,
+            );
             dictation.stt = SttBackend::Server(crate::daemon::inference::pairing_id(&home_dir));
             dictation.capture = CaptureConfig::WavFile {
                 path: audio,
@@ -980,7 +984,12 @@ pub(in crate::daemon::dictation) mod tests {
     fn capture_is_validated_before_the_model_loads() {
         let home = tempfile::tempdir().unwrap();
         let home_dir = home.path().to_owned();
-        let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
+        let mut config = DictationConfig::load(
+            &aria_settings::testing::file(""),
+            &home_dir,
+            None,
+            SttDevice::Cpu,
+        );
         config.stt = SttBackend::Local(SttConfig::Whisper {
             model: home.path().join("missing-model.bin"),
         });
@@ -1033,7 +1042,12 @@ pub(in crate::daemon::dictation) mod tests {
         std::fs::create_dir_all(&prompts).unwrap();
         std::fs::write(prompts.join("cleanup.md"), [0xff]).unwrap();
         let home_dir = home.path().to_owned();
-        let mut config = DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
+        let mut config = DictationConfig::load(
+            &aria_settings::testing::file(""),
+            &home_dir,
+            None,
+            SttDevice::Cpu,
+        );
         config.cleanup_llm = Some(
             aria_settings::LlmCleanupTarget::new(
                 aria_settings::LocalProvider::new("http://127.0.0.1:8080/v1/chat/completions")

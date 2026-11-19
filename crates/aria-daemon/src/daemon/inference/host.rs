@@ -31,7 +31,7 @@ use aria_primitives::cancel::CancelToken;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_settings::config::ConfigError;
 use aria_settings::{SettingsCache, SettingsPoll};
-use aria_voice::config::SttBackend;
+use aria_voice::config::{SttBackend, SttDevice};
 use aria_voice::stt::TranscriptionError;
 
 use super::engine::Engine;
@@ -55,7 +55,7 @@ fn run(address: SocketAddr) -> Result<(), HostFailure> {
         SettingsCache::open(aria_settings::default_path(&home), home.clone())
             .map_err(ConfigError::from)?,
     );
-    let serving = SttBackend::load(&cache.effective(), &home, pairing_id(&home));
+    let serving = SttBackend::load(&cache.effective(), &home, pairing_id(&home), SttDevice::Cpu);
     let config = match serving.clone() {
         SttBackend::Local(engine) => EngineConfig::try_from(engine)?,
         SttBackend::Server(_) => {
@@ -88,7 +88,7 @@ async fn warn_on_drift(cache: Arc<SettingsCache>, serving: SttBackend, home: Pat
     let mut status = cache.status();
     let mut drifted = false;
     while status.changed().await.is_ok() {
-        let named = SttBackend::load(&cache.effective(), &home, pairing_id(&home));
+        let named = SttBackend::load(&cache.effective(), &home, pairing_id(&home), SttDevice::Cpu);
         let now = named != serving;
         if now && !drifted {
             tracing::warn!(
