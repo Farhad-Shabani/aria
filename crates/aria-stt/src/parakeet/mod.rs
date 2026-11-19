@@ -49,6 +49,17 @@ pub enum Device {
     Gpu,
 }
 
+impl Device {
+    /// Whether this build can run a graph here, so a caller can pick a device
+    /// a load won't refuse.
+    pub const fn is_supported(self) -> bool {
+        match self {
+            Self::Cpu => true,
+            Self::Gpu => cfg!(all(target_os = "macos", feature = "parakeet-gpu")),
+        }
+    }
+}
+
 const BACKEND: &str = NAME;
 const VOCABULARY_FILE: &str = "vocab.txt";
 
@@ -275,6 +286,17 @@ mod tests {
         let graphs = Graphs::from_config(&config).expect("the gpu device should be supported");
 
         assert_eq!(graphs.joint.execution_provider, ExecutionProvider::WebGPU);
+    }
+
+    #[test]
+    fn a_device_is_supported_exactly_when_a_load_accepts_it() {
+        for device in [Device::Cpu, Device::Gpu] {
+            assert_eq!(
+                device.is_supported(),
+                execution(device).is_ok(),
+                "{device:?}"
+            );
+        }
     }
 
     #[cfg(not(all(target_os = "macos", feature = "parakeet-gpu")))]
