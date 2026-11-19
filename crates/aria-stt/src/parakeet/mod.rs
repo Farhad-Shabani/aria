@@ -133,13 +133,16 @@ impl Engine for Parakeet {
         check_cancelled(cancel)?;
         let directory = Self::check_from(&config)?;
 
-        let execution = Some(execution(config.device)?);
-        let model = ParakeetTDT::from_pretrained(&directory, execution).map_err(|source| {
-            TranscriptionError::Load {
-                backend: BACKEND,
-                model: directory.display().to_string(),
-                source: BackendError::engine(source),
-            }
+        let sessions = Sessions::on(config.device)?;
+        let model = ParakeetTDT::from_pretrained_with_joint_config(
+            &directory,
+            Some(sessions.encoder),
+            Some(sessions.joint),
+        )
+        .map_err(|source| TranscriptionError::Load {
+            backend: BACKEND,
+            model: directory.display().to_string(),
+            source: BackendError::engine(source),
         })?;
         check_cancelled(cancel)?;
         Ok(Self {
@@ -187,6 +190,24 @@ impl Recognizer for Parakeet {
     }
 }
 
+/// Where each of the model's two graphs runs.
+struct Sessions {
+    encoder: ExecutionConfig,
+    joint: ExecutionConfig,
+}
+
+impl Sessions {
+    // The joint runs once per token on tiny tensors. On the GPU each call pays
+    // a dispatch that costs more than the CPU spends computing it, so only the
+    // encoder follows the device.
+    fn on(device: Device) -> Result<Self, TranscriptionError> {
+        Ok(Self {
+            encoder: execution(device)?,
+            joint: execution(Device::Cpu)?,
+        })
+    }
+}
+
 // Use available CPU parallelism instead of the bindings' four-thread default.
 fn execution(device: Device) -> Result<ExecutionConfig, TranscriptionError> {
     let threads = std::thread::available_parallelism().map_or(4, usize::from);
@@ -224,6 +245,18 @@ fn decode_window(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(target_os = "macos", feature = "parakeet-gpu"))]
+    #[test]
+    fn on_the_gpu_only_the_encoder_leaves_the_cpu() {
+        let sessions = Sessions::on(Device::Gpu).expect("the gpu device should be supported");
+
+        assert_eq!(
+            sessions.encoder.execution_provider,
+            ExecutionProvider::WebGPU
+        );
+        assert_eq!(sessions.joint.execution_provider, ExecutionProvider::Cpu);
+    }
 
     #[test]
     fn cancelled_load_stops_before_model_validation() {
