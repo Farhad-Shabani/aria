@@ -40,7 +40,7 @@ pub(super) use pairing::{
     load_or_create as load_pairing, mint, presented, require_paired, to_hex,
 };
 pub(super) use settings::LanSettings;
-pub(crate) use stage::{LateReturn, RelayStage};
+pub(crate) use stage::{RelayStage, ReturnOffer};
 
 /// The longest recording's PCM, so an oversized upload stops as it streams.
 const MAX_AUDIO_BYTES: usize = decode::MAX_PCM_BYTES;

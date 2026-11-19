@@ -425,15 +425,15 @@ impl From<wire::DictationResult> for DictationResult {
 
 impl From<RelayStage> for wire::RelayEvent {
     fn from(outcome: RelayStage) -> Self {
-        let (stage, text, submitted, late_return) = match outcome {
+        let (stage, text, submitted, return_offer) = match outcome {
             RelayStage::Transcribing => {
                 (wire::RelayStage::Transcribing, String::new(), false, None)
             }
-            RelayStage::Completed { text, late_return } => (
+            RelayStage::Completed { text, return_offer } => (
                 wire::RelayStage::Completed,
                 text,
                 false,
-                late_return.map(|offered| wire::LateReturn {
+                return_offer.map(|offered| wire::ReturnOffer {
                     application_name: offered.application_name,
                 }),
             ),
@@ -447,7 +447,7 @@ impl From<RelayStage> for wire::RelayEvent {
             stage: stage as i32,
             text,
             submitted,
-            late_return,
+            return_offer,
         }
     }
 }
@@ -3717,10 +3717,10 @@ mod tests {
         assert!(submitted.submitted);
         let completed = wire::RelayEvent::from(RelayStage::Completed {
             text: "ship it".to_owned(),
-            late_return: None,
+            return_offer: None,
         });
         assert!(!completed.submitted);
-        assert_eq!(completed.late_return, None);
+        assert_eq!(completed.return_offer, None);
     }
 
     #[test]

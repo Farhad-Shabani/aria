@@ -35,7 +35,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
   case transcribing // = 1
 
   /// Transcription and delivery succeeded. Terminal, unless it carries a
-  /// `late_return`: the stream then stays open for a `RelaySubmit`, and the
+  /// `return_offer`: the stream then stays open for a `RelaySubmit`, and the
   /// daemon ends it once the offer lapses.
   case completed // = 2
 
@@ -367,7 +367,7 @@ public nonisolated struct Aria_Daemon_V1_RelayStop: Sendable {
 }
 
 /// Press Return where the text went. Taken once, within 10 seconds of
-/// COMPLETED, and only when COMPLETED carries a `late_return`. That takes a
+/// COMPLETED, and only when COMPLETED carries a `return_offer`. That takes a
 /// `RelayStop`, the Mac letting the phone press Return
 /// (`Settings.phone_press_return`), and text typed whole by plain
 /// insertion. One sent after the stop waits for COMPLETED. Pressed only
@@ -404,24 +404,24 @@ public nonisolated struct Aria_Daemon_V1_RelayEvent: Sendable {
 
   /// On COMPLETED: the Mac takes one `RelaySubmit` for this text, and the
   /// stream stays open for it. Absent when it takes none.
-  public var lateReturn: Aria_Daemon_V1_LateReturn {
-    get {_lateReturn ?? Aria_Daemon_V1_LateReturn()}
-    set {_lateReturn = newValue}
+  public var returnOffer: Aria_Daemon_V1_ReturnOffer {
+    get {_returnOffer ?? Aria_Daemon_V1_ReturnOffer()}
+    set {_returnOffer = newValue}
   }
-  /// Returns true if `lateReturn` has been explicitly set.
-  public var hasLateReturn: Bool {self._lateReturn != nil}
-  /// Clears the value of `lateReturn`. Subsequent reads from it will return its default value.
-  public mutating func clearLateReturn() {self._lateReturn = nil}
+  /// Returns true if `returnOffer` has been explicitly set.
+  public var hasReturnOffer: Bool {self._returnOffer != nil}
+  /// Clears the value of `returnOffer`. Subsequent reads from it will return its default value.
+  public mutating func clearReturnOffer() {self._returnOffer = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _lateReturn: Aria_Daemon_V1_LateReturn? = nil
+  fileprivate var _returnOffer: Aria_Daemon_V1_ReturnOffer? = nil
 }
 
 /// The Return the Mac offers after a relayed recording's text.
-public nonisolated struct Aria_Daemon_V1_LateReturn: Sendable {
+public nonisolated struct Aria_Daemon_V1_ReturnOffer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1087,7 +1087,7 @@ nonisolated extension Aria_Daemon_V1_RelaySubmit: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Aria_Daemon_V1_RelayEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RelayEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{1}submitted\0\u{3}late_return\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{1}submitted\0\u{3}return_offer\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1098,7 +1098,7 @@ nonisolated extension Aria_Daemon_V1_RelayEvent: SwiftProtobuf.Message, SwiftPro
       case 1: try { try decoder.decodeSingularEnumField(value: &self.stage) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.text) }()
       case 3: try { try decoder.decodeSingularBoolField(value: &self.submitted) }()
-      case 4: try { try decoder.decodeSingularMessageField(value: &self._lateReturn) }()
+      case 4: try { try decoder.decodeSingularMessageField(value: &self._returnOffer) }()
       default: break
       }
     }
@@ -1118,7 +1118,7 @@ nonisolated extension Aria_Daemon_V1_RelayEvent: SwiftProtobuf.Message, SwiftPro
     if self.submitted != false {
       try visitor.visitSingularBoolField(value: self.submitted, fieldNumber: 3)
     }
-    try { if let v = self._lateReturn {
+    try { if let v = self._returnOffer {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
     } }()
     try unknownFields.traverse(visitor: &visitor)
@@ -1128,14 +1128,14 @@ nonisolated extension Aria_Daemon_V1_RelayEvent: SwiftProtobuf.Message, SwiftPro
     if lhs.stage != rhs.stage {return false}
     if lhs.text != rhs.text {return false}
     if lhs.submitted != rhs.submitted {return false}
-    if lhs._lateReturn != rhs._lateReturn {return false}
+    if lhs._returnOffer != rhs._returnOffer {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
 }
 
-nonisolated extension Aria_Daemon_V1_LateReturn: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".LateReturn"
+nonisolated extension Aria_Daemon_V1_ReturnOffer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ReturnOffer"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}application_name\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -1161,7 +1161,7 @@ nonisolated extension Aria_Daemon_V1_LateReturn: SwiftProtobuf.Message, SwiftPro
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Daemon_V1_LateReturn, rhs: Aria_Daemon_V1_LateReturn) -> Bool {
+  public static func ==(lhs: Aria_Daemon_V1_ReturnOffer, rhs: Aria_Daemon_V1_ReturnOffer) -> Bool {
     if lhs._applicationName != rhs._applicationName {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

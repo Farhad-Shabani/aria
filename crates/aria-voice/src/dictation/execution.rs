@@ -22,7 +22,7 @@ const MUTE_WAIT: Duration = Duration::from_millis(150);
 
 use super::{
     CapturedMicrophone, Cleanup, DictationEventEmitter, DictationOutcome, DictationResult,
-    DictationSettings, DictationStage, LateReturn, RecordingId, RecordingOrigin, SoundMuting,
+    DictationSettings, DictationStage, RecordingId, RecordingOrigin, ReturnOffer, SoundMuting,
     StopMode, TranscriptRoute,
 };
 
@@ -46,7 +46,7 @@ pub enum Relayed {
 pub struct DeliveredRecording {
     pub text: String,
     /// Return after the text, for whoever captured the recording to ask for.
-    pub late_return: Option<LateReturn>,
+    pub return_offer: Option<ReturnOffer>,
 }
 
 pub trait DictationExecutor: Send + Sync + 'static {
@@ -75,7 +75,7 @@ pub trait DictationExecutor: Send + Sync + 'static {
     /// Hears a recording captured somewhere else and publishes it to the
     /// sinks exactly as a complete-delivery press would: history first, then
     /// the cursor. The caller holds the microphone already. Only this path
-    /// hands back a late Return: a press has the person's own Return key.
+    /// hands back a Return offer: a press has the person's own Return key.
     fn deliver_recording(
         &self,
         recording: &mut RecordingReader,

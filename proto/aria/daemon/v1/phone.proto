@@ -149,7 +149,7 @@ message RelayAudio {
 message RelayStop {}
 
 // Press Return where the text went. Taken once, within 10 seconds of
-// COMPLETED, and only when COMPLETED carries a `late_return`. That takes a
+// COMPLETED, and only when COMPLETED carries a `return_offer`. That takes a
 // `RelayStop`, the Mac letting the phone press Return
 // (`Settings.phone_press_return`), and text typed whole by plain
 // insertion. One sent after the stop waits for COMPLETED. Pressed only
@@ -171,11 +171,11 @@ message RelayEvent {
   bool submitted = 3;
   // On COMPLETED: the Mac takes one `RelaySubmit` for this text, and the
   // stream stays open for it. Absent when it takes none.
-  LateReturn late_return = 4;
+  ReturnOffer return_offer = 4;
 }
 
 // The Return the Mac offers after a relayed recording's text.
-message LateReturn {
+message ReturnOffer {
   // The app the text went to, as macOS names it, for the phone to show.
   // Absent when the Mac can't name it.
   optional string application_name = 1;
@@ -186,7 +186,7 @@ enum RelayStage {
   // The upload is complete; transcribing is starting.
   RELAY_STAGE_TRANSCRIBING = 1;
   // Transcription and delivery succeeded. Terminal, unless it carries a
-  // `late_return`: the stream then stays open for a `RelaySubmit`, and the
+  // `return_offer`: the stream then stays open for a `RelaySubmit`, and the
   // daemon ends it once the offer lapses.
   RELAY_STAGE_COMPLETED = 2;
   // No audio arrived, or no eligible speech was recognized. Terminal.

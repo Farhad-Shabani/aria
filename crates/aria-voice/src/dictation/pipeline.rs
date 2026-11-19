@@ -34,7 +34,7 @@ use aria_speaker::wespeaker::WeSpeaker;
 use super::{
     CaptionSnapshot, Delivered, DeliveredRecording, DeliveryMode, DictationError,
     DictationEventEmitter, DictationResult, DictationSettings, DictationStage, ExecutionControl,
-    GhostSnapshot, HeardSpeaker, LateReturn, StopMode, Transcribed, TranscriptSink, Utterance,
+    GhostSnapshot, HeardSpeaker, ReturnOffer, StopMode, Transcribed, TranscriptSink, Utterance,
 };
 use super::{CapturedMicrophone, Cleanup, Meter, Rewrites, rewrites};
 
@@ -447,7 +447,7 @@ where
         let result = self.execute_stages(settings, control, events, &mut *sinks, vocabulary);
         sinks.dictation_finished(result.as_ref().map(|_| ()));
         // The person at the keyboard has their own Return key.
-        drop(sinks.take_late_return());
+        drop(sinks.take_return_offer());
         if captions {
             events.emit(CaptionSnapshot::empty(control.recording_id(), true));
         }
@@ -489,14 +489,14 @@ where
             vocabulary,
         );
         sinks.dictation_finished(result.as_ref().map(|_| ()));
-        let late_return = sinks.take_late_return();
+        let return_offer = sinks.take_return_offer();
         if let Err(error) = &result {
             events.emit(DictationStage::ended_by(error.into()));
         }
         if control.return_dropped() && !control.is_cancelled() {
             events.emit(DictationStage::ReturnDropped);
         }
-        result.map(|text| DeliveredRecording { text, late_return })
+        result.map(|text| DeliveredRecording { text, return_offer })
     }
 
     fn deliver_recording_stages(
@@ -1679,9 +1679,9 @@ where
         self.1.dictation_finished(result);
     }
 
-    fn take_late_return(&mut self) -> Option<LateReturn> {
-        let first = self.0.take_late_return();
-        let second = self.1.take_late_return();
+    fn take_return_offer(&mut self) -> Option<ReturnOffer> {
+        let first = self.0.take_return_offer();
+        let second = self.1.take_return_offer();
         first.or(second)
     }
 
@@ -2905,7 +2905,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_delivered_recording_hands_back_a_late_return() {
+    fn only_a_delivered_recording_hands_back_a_return_offer() {
         let (directory, capture) = capture();
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
@@ -2920,7 +2920,7 @@ mod tests {
             )
             .expect("the press completes");
         assert!(
-            pipeline.sinks().take_late_return().is_none(),
+            pipeline.sinks().take_return_offer().is_none(),
             "a press leaves Return to the keyboard"
         );
 
@@ -2936,7 +2936,7 @@ mod tests {
             )
             .expect("the relayed recording is delivered");
         delivered
-            .late_return
+            .return_offer
             .expect("typed text offers a Return")
             .press(&CancelToken::new())
             .expect("the field still holds the text");

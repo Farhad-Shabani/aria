@@ -15,7 +15,7 @@ use tonic::{Request, Response, Status, Streaming};
 use crate::ipc::wire;
 use aria_platform::delivery::OutputMode;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_voice::dictation::{DictationError, DictationSettings, LateReturn, RecordingId};
+use aria_voice::dictation::{DictationError, DictationSettings, RecordingId, ReturnOffer};
 use aria_voice::microphone::{Claim, Gate};
 
 use super::super::dictation::{DictationRuntime, DictationRuntimeError, RelaySettings};
@@ -158,7 +158,7 @@ impl wire::relay_service_server::RelayService for RelayRpc {
 /// phone's ask for Return after it.
 struct Session {
     client: Client,
-    /// Taken again for the late Return, so no recording types under it.
+    /// Taken again for the offered Return, so no recording types under it.
     microphone: Arc<Gate>,
     upload: Upload,
 }
@@ -273,7 +273,7 @@ impl ReturnPolicy {
     }
 
     /// Submission's own check waits for the field to read back the text,
-    /// which a terminal that redraws never does. The late Return's check
+    /// which a terminal that redraws never does. The Return offer's check
     /// holds in both cases, so a press types plainly.
     fn output_mode(self, chosen: OutputMode) -> OutputMode {
         match self {
@@ -285,17 +285,17 @@ impl ReturnPolicy {
 
     fn after_text(
         self,
-        late_return: Option<LateReturn>,
+        return_offer: Option<ReturnOffer>,
         cancel: &CancelToken,
     ) -> Result<AfterText, DictationError> {
-        let Some(late_return) = late_return else {
+        let Some(return_offer) = return_offer else {
             return Ok(AfterText::Nothing);
         };
         match self {
             Self::Never => Ok(AfterText::Nothing),
-            Self::Offer => Ok(AfterText::Offered(late_return)),
+            Self::Offer => Ok(AfterText::Offered(return_offer)),
             Self::Press => {
-                late_return.press(cancel)?;
+                return_offer.press(cancel)?;
                 Ok(AfterText::Submitted)
             }
         }
@@ -311,7 +311,7 @@ async fn complete<S>(
 ) where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
 {
-    let late_return = match heard.after {
+    let return_offer = match heard.after {
         AfterText::Submitted => {
             tracing::info!(method = METHOD, status = "submitted", "request served");
             client
@@ -320,22 +320,24 @@ async fn complete<S>(
             return;
         }
         // A half-close says the client won't ask, so nothing is offered.
-        AfterText::Offered(late_return) if end == UploadEnd::Stopped => Some(late_return),
+        AfterText::Offered(return_offer) if end == UploadEnd::Stopped => Some(return_offer),
         AfterText::Offered(_) | AfterText::Nothing => None,
     };
-    let offered = late_return.as_ref().map(|late_return| relay::LateReturn {
-        application_name: late_return.application().map(|app| app.name.clone()),
-    });
+    let offered = return_offer
+        .as_ref()
+        .map(|return_offer| relay::ReturnOffer {
+            application_name: return_offer.application().map(|app| app.name.clone()),
+        });
     client
         .emit(Ok(RelayStage::Completed {
             text: heard.text,
-            late_return: offered,
+            return_offer: offered,
         }
         .into()))
         .await;
-    match late_return {
-        Some(late_return) => {
-            if let Some(event) = submit_on_reply(late_return, microphone, client, requests).await {
+    match return_offer {
+        Some(return_offer) => {
+            if let Some(event) = submit_on_reply(return_offer, microphone, client, requests).await {
                 client.emit(event).await;
             }
         }
@@ -357,10 +359,10 @@ impl Client {
     }
 }
 
-/// Presses the late Return if the client asks before the offer lapses. `None`
+/// Presses the offered Return if the client asks before the offer lapses. `None`
 /// when it asked nothing, so the stream ends after COMPLETED.
 async fn submit_on_reply<S>(
-    late_return: LateReturn,
+    return_offer: ReturnOffer,
     microphone: &Arc<Gate>,
     client: &Client,
     requests: &mut S,
@@ -380,7 +382,7 @@ where
     let cancel = client.cancel();
     let pressed = super::blocking(METHOD, move || {
         let _claim = microphone.admit_relay().ok_or(DictationError::Busy)?;
-        late_return.press(&cancel)
+        return_offer.press(&cancel)
     })
     .await;
     Some(match pressed {
@@ -399,7 +401,7 @@ struct Heard {
 }
 
 enum AfterText {
-    Offered(LateReturn),
+    Offered(ReturnOffer),
     Submitted,
     Nothing,
 }
@@ -433,7 +435,7 @@ fn hear(upload: Upload, audio: Vec<u8>, cancel: CancelToken) -> Result<Option<He
             Err(error) => return Err(RpcFailure::from(&error)),
         };
     let after = return_policy
-        .after_text(delivered.late_return, &cancel)
+        .after_text(delivered.return_offer, &cancel)
         .map_err(|error| RpcFailure::from(&error))?;
     Ok(Some(Heard {
         text: delivered.text,
@@ -476,7 +478,7 @@ mod tests {
         }
     }
 
-    /// The session from the landed text on, with a late Return that counts
+    /// The session from the landed text on, with a Return offer that counts
     /// its presses.
     async fn after_landing<S>(
         policy: ReturnPolicy,
@@ -494,12 +496,12 @@ mod tests {
             name: typed_into.to_owned(),
             bundle_id: None,
         };
-        let late_return = testing::late_return(Some(application), move |_cancel| {
+        let return_offer = testing::return_offer(Some(application), move |_cancel| {
             counted.fetch_add(1, Ordering::SeqCst);
             Ok(())
         });
         let after = policy
-            .after_text(Some(late_return), &CancelToken::new())
+            .after_text(Some(return_offer), &CancelToken::new())
             .expect("the press succeeds");
         let heard = Heard {
             text: "ship it".to_owned(),
@@ -530,9 +532,9 @@ mod tests {
     fn offered_in(event: &Result<wire::RelayEvent, Status>) -> Option<Option<String>> {
         let event = event.as_ref().expect("an event, not a failure");
         event
-            .late_return
+            .return_offer
             .as_ref()
-            .map(|late_return| late_return.application_name.clone())
+            .map(|return_offer| return_offer.application_name.clone())
     }
 
     #[tokio::test]

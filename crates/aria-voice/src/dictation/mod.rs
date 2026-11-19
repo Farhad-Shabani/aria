@@ -41,7 +41,7 @@ pub use level::MicLevel;
 pub use llm::{LlmCleanup, LlmCleanupError};
 pub use pipeline::DictationPipeline;
 pub use rewrites::{Cleanup, ConfiguredLayers, Rewrites};
-pub use transcripts::{Delivered, DeliveryOutcome, LateReturn, TranscriptSink, Utterance};
+pub use transcripts::{Delivered, DeliveryOutcome, ReturnOffer, TranscriptSink, Utterance};
 
 /// Names one recording for as long as the daemon that took it runs. What
 /// `Stop` names.

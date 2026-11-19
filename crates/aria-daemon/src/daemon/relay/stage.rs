@@ -7,7 +7,7 @@ pub(crate) enum RelayStage {
     /// phone's Return.
     Completed {
         text: String,
-        late_return: Option<LateReturn>,
+        return_offer: Option<ReturnOffer>,
     },
     /// Return pressed after the text before the phone heard of it.
     CompletedAndSubmitted(String),
@@ -16,8 +16,8 @@ pub(crate) enum RelayStage {
     Submitted,
 }
 
-/// A late Return the phone may still ask for, as the phone learns of it.
-pub(crate) struct LateReturn {
+/// A Return offer the phone may still ask for, as the phone learns of it.
+pub(crate) struct ReturnOffer {
     /// The app the text went to: personal context, so never logged.
     pub(crate) application_name: Option<String>,
 }

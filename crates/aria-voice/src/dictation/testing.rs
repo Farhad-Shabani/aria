@@ -3,7 +3,7 @@
 use super::{
     Cursor, DeliveredRecording, DeliveryMode, DictationError, DictationEventEmitter,
     DictationExecutor, DictationResult, DictationSettings, EscapeRule, ExecutionControl,
-    LateReturn, RecordingId, StopMode, Transcribed, TranscriptSink, Utterance,
+    RecordingId, ReturnOffer, StopMode, Transcribed, TranscriptSink, Utterance,
 };
 use crate::history::HistorySource;
 use crate::stt::{
@@ -326,13 +326,13 @@ pub fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> Dictati
     }
 }
 
-/// A late Return into `application` that runs `press` in place of the
+/// A Return offer into `application` that runs `press` in place of the
 /// cursor's checked one.
-pub fn late_return(
+pub fn return_offer(
     application: Option<aria_platform::delivery::Application>,
     press: impl FnOnce(&CancelToken) -> Result<(), DeliveryError> + Send + 'static,
-) -> LateReturn {
-    LateReturn::new(application, press)
+) -> ReturnOffer {
+    ReturnOffer::new(application, press)
 }
 
 /// How long a test waits for a scripted press to reach its next edge.

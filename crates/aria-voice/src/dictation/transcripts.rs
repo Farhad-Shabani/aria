@@ -75,7 +75,7 @@ pub struct Delivered {
 
 /// The Return a dictation offers once its text landed whole: pressed at
 /// most once, and only where the text went. Dropping it presses nothing.
-pub struct LateReturn {
+pub struct ReturnOffer {
     /// Where the text went, when the platform can name it.
     application: Option<Application>,
     press: Box<Press>,
@@ -83,7 +83,7 @@ pub struct LateReturn {
 
 type Press = dyn FnOnce(&CancelToken) -> Result<(), DeliveryError> + Send;
 
-impl LateReturn {
+impl ReturnOffer {
     pub(super) fn new(
         application: Option<Application>,
         press: impl FnOnce(&CancelToken) -> Result<(), DeliveryError> + Send + 'static,
@@ -106,9 +106,11 @@ impl LateReturn {
     }
 }
 
-impl fmt::Debug for LateReturn {
+impl fmt::Debug for ReturnOffer {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("LateReturn").finish_non_exhaustive()
+        formatter
+            .debug_struct("ReturnOffer")
+            .finish_non_exhaustive()
     }
 }
 
@@ -171,7 +173,7 @@ pub trait TranscriptSink {
     /// The Return the dictation that just finished offers after its text.
     /// `None` once taken, once the next dictation starts, or when it offers
     /// none.
-    fn take_late_return(&mut self) -> Option<LateReturn> {
+    fn take_return_offer(&mut self) -> Option<ReturnOffer> {
         None
     }
 
