@@ -40,7 +40,7 @@ tokenizers = { version = "0.23", default-features = false, features = [ "unstabl
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 ort         = { workspace = true, optional = true }
-parakeet-rs = { version = "0.3.7", optional = true }
+parakeet-rs = { version = "0.3.8", optional = true }
 serde       = { workspace = true, optional = true }
 tracing     = { workspace = true, optional = true }
 whisper-rs  = { version = "0.16", features = [ "tracing_backend" ], optional = true }
