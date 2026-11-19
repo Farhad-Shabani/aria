@@ -2573,113 +2573,6 @@ mod tests {
             assert_eq!(run.ended_before, [None, None]);
         }
 
-        #[test]
-        fn a_pause_that_outlives_the_cap_is_still_a_pause() {
-            // A pause cut, then nothing but silence past the cap: the cap
-            // cut must not make the next buffer hear the hallucination.
-            let mut batches = vec![loud_batch(); 3];
-            batches.extend(vec![faint_batch(); 40]);
-            let (_directory, mut recording, pace) = paced(batches);
-            let run = run(
-                AgreementState::new(cadence(2_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let loud = window.iter().any(|sample| sample.abs() > 0.01);
-                    Hypothesis::new(if loud { "one" } else { "thank you" })
-                },
-                |_| {},
-            );
-
-            assert_eq!(run.transcript(), "one");
-        }
-
-        #[test]
-        fn soft_speech_after_louder_speech_and_a_pause_is_heard() {
-            // Speech at -25 dBFS, a faint pause, then speech 16 dB softer:
-            // under TRIM_QUIET_FRACTION of the first, over SILENCE_FLOOR and
-            // over the pause. The decode names what it hears by level.
-            let mut batches = vec![vec![1_900_i16; STRIDE]; 3];
-            batches.extend(vec![faint_batch(); 8]);
-            batches.extend(vec![vec![300_i16; STRIDE]; 3]);
-            batches.extend(vec![faint_batch(); 8]);
-            let (_directory, mut recording, pace) = paced(batches);
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let peak = window
-                        .iter()
-                        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
-                    Hypothesis::new(if peak > 0.03 {
-                        "one"
-                    } else if peak > 0.008 {
-                        "two"
-                    } else {
-                        ""
-                    })
-                },
-                |_| {},
-            );
-
-            assert_eq!(run.transcript(), "one two");
-        }
-
-        #[test]
-        fn quiet_speech_after_a_quieter_pause_is_heard() {
-            // A distant voice: both spans of speech stay under
-            // SILENCE_FLOOR, and the second rises well over the pause
-            // between them.
-            let mut batches = vec![vec![220_i16; STRIDE]; 3];
-            batches.extend(vec![vec![40_i16; STRIDE]; 8]);
-            batches.extend(vec![vec![150_i16; STRIDE]; 3]);
-            batches.extend(vec![vec![40_i16; STRIDE]; 8]);
-            let (_directory, mut recording, pace) = paced(batches);
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let peak = window
-                        .iter()
-                        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
-                    Hypothesis::new(if peak > 0.0055 {
-                        "one"
-                    } else if peak > 0.003 {
-                        "two"
-                    } else {
-                        ""
-                    })
-                },
-                |_| {},
-            );
-
-            assert_eq!(run.transcript(), "one two");
-        }
-
-        #[test]
-        fn noise_a_little_over_the_pause_stays_the_pause() {
-            // Room noise that drifts under 6 dB over the pause it follows
-            // still holds no words, so its decode is ignored.
-            let mut batches = vec![loud_batch(); 3];
-            batches.extend(vec![vec![40_i16; STRIDE]; 8]);
-            batches.extend(vec![vec![70_i16; STRIDE]; 8]);
-            let (_directory, mut recording, pace) = paced(batches);
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let loud = window.iter().any(|sample| sample.abs() > 0.01);
-                    Hypothesis::new(if loud { "one" } else { "thank you" })
-                },
-                |_| {},
-            );
-
-            assert_eq!(run.transcript(), "one");
-        }
-
         /// Loud speech, a pause, then `after`, with a decode that hears a
         /// word only in the loud speech.
         fn transcript_after_a_pause(pause: i16, after: Vec<Vec<i16>>, max_ms: usize) -> String {
@@ -2698,6 +2591,88 @@ mod tests {
                 |_| {},
             );
             run.transcript().to_owned()
+        }
+
+        /// What a 20 s cadence types of `batches`, with a decode that names
+        /// a window's word by its loudest sample.
+        fn transcript_by_peak(
+            batches: Vec<Vec<i16>>,
+            word: impl Fn(f32) -> &'static str,
+        ) -> String {
+            let (_directory, mut recording, pace) = paced(batches);
+            let run = run(
+                AgreementState::new(cadence(20_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let peak = window
+                        .iter()
+                        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+                    Hypothesis::new(word(peak))
+                },
+                |_| {},
+            );
+            run.transcript().to_owned()
+        }
+
+        #[test]
+        fn a_pause_that_outlives_the_cap_is_still_a_pause() {
+            // A pause cut, then nothing but silence past the cap: the cap
+            // cut must not make the next buffer hear the hallucination.
+            let after = vec![faint_batch(); 32];
+            assert_eq!(transcript_after_a_pause(225, after, 2_000), "one");
+        }
+
+        #[test]
+        fn soft_speech_after_louder_speech_and_a_pause_is_heard() {
+            // Speech at -25 dBFS, a faint pause, then speech 16 dB softer:
+            // under TRIM_QUIET_FRACTION of the first, over SILENCE_FLOOR and
+            // over the pause. The decode names what it hears by level.
+            let mut batches = vec![vec![1_900_i16; STRIDE]; 3];
+            batches.extend(vec![faint_batch(); 8]);
+            batches.extend(vec![vec![300_i16; STRIDE]; 3]);
+            batches.extend(vec![faint_batch(); 8]);
+            let transcript = transcript_by_peak(batches, |peak| {
+                if peak > 0.03 {
+                    "one"
+                } else if peak > 0.008 {
+                    "two"
+                } else {
+                    ""
+                }
+            });
+
+            assert_eq!(transcript, "one two");
+        }
+
+        #[test]
+        fn quiet_speech_after_a_quieter_pause_is_heard() {
+            // A distant voice: both spans of speech stay under
+            // SILENCE_FLOOR, and the second rises well over the pause
+            // between them.
+            let mut batches = vec![vec![220_i16; STRIDE]; 3];
+            batches.extend(vec![vec![40_i16; STRIDE]; 8]);
+            batches.extend(vec![vec![150_i16; STRIDE]; 3]);
+            batches.extend(vec![vec![40_i16; STRIDE]; 8]);
+            let transcript = transcript_by_peak(batches, |peak| {
+                if peak > 0.0055 {
+                    "one"
+                } else if peak > 0.003 {
+                    "two"
+                } else {
+                    ""
+                }
+            });
+
+            assert_eq!(transcript, "one two");
+        }
+
+        #[test]
+        fn noise_a_little_over_the_pause_stays_the_pause() {
+            // Room noise that drifts under 6 dB over the pause it follows
+            // still holds no words, so its decode is ignored.
+            let after = vec![vec![70_i16; STRIDE]; 8];
+            assert_eq!(transcript_after_a_pause(40, after, 20_000), "one");
         }
 
         #[test]
@@ -2737,27 +2712,17 @@ mod tests {
             batches.extend(vec![vec![40_i16; STRIDE]; 8]);
             batches.extend(vec![vec![150_i16; STRIDE]; 3]);
             batches.extend(vec![vec![40_i16; STRIDE]; 8]);
-            let (_directory, mut recording, pace) = paced(batches);
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let peak = window
-                        .iter()
-                        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
-                    Hypothesis::new(if peak > 0.1 {
-                        "one"
-                    } else if peak > 0.003 && peak < 0.006 {
-                        "two"
-                    } else {
-                        ""
-                    })
-                },
-                |_| {},
-            );
+            let transcript = transcript_by_peak(batches, |peak| {
+                if peak > 0.1 {
+                    "one"
+                } else if peak > 0.003 && peak < 0.006 {
+                    "two"
+                } else {
+                    ""
+                }
+            });
 
-            assert_eq!(run.transcript(), "one two");
+            assert_eq!(transcript, "one two");
         }
 
         #[test]
