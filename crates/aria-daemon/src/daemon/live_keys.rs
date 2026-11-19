@@ -9,11 +9,13 @@
 //! speech, and the config load a chat, a memory run and a system transcription each
 //! make on start.
 
+use super::DaemonLifetime;
+use super::config::auto_device;
 use super::speech::next_utterance;
 use aria_platform::delivery::{Application, PlatformTextDelivery, TextDelivery};
 use aria_settings::TtsEngine;
 use aria_settings::{Apply, Key, Patch, SettingsCache, SettingsError, SettingsStore, modify};
-use aria_voice::config::SystemTranscriptionConfig;
+use aria_voice::config::{SttDevice, SystemTranscriptionConfig};
 use aria_voice::dictation::{DictationRequest, StopMode};
 use aria_voice::speech::SpeechRequest;
 use std::fs;
@@ -103,8 +105,7 @@ impl LiveHarness {
                 &settings,
                 &self.home,
                 super::inference::pairing_id(&self.home),
-                // Fixed, so setting stt.device to gpu always changes the engine.
-                aria_voice::config::SttDevice::Cpu,
+                auto_device(DaemonLifetime::Persistent),
             )
             .stt
         )
@@ -262,7 +263,11 @@ fn change(key: Key) -> Patch {
         Key::TtsSystemVoice | Key::TtsKokoroVoice | Key::TtsQwenVoice => set(key, "a-voice"),
         Key::SystemTranscriptionBackend | Key::SttBackend => set(key, "moonshine"),
         Key::SystemTranscriptionModel | Key::SttModel => set(key, "/model"),
-        Key::SystemTranscriptionDevice | Key::SttDevice => set(key, "gpu"),
+        Key::SystemTranscriptionDevice => set(key, "gpu"),
+        Key::SttDevice => match auto_device(DaemonLifetime::Persistent) {
+            SttDevice::Gpu => set(key, "cpu"),
+            SttDevice::Cpu => set(key, "gpu"),
+        },
         Key::SystemTranscriptionTranscriptsDir => set(key, "/transcripts"),
         // Each key needs the one engine that takes it, so the patch sets it too.
         Key::SttInterpreter => {
