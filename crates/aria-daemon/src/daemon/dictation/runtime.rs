@@ -498,9 +498,9 @@ impl DictationRuntime {
         }
     }
 
-    /// The live coordinator serves a retry for its own engine, or for any
-    /// engine its server runs. Anything else builds a one-off pipeline, so a
-    /// retry never initializes capture.
+    /// The live coordinator serves a retry for its own engine, for a label
+    /// that names no engine, or for any engine its server runs. Anything else
+    /// builds a one-off pipeline, so a retry never initializes capture.
     fn retry_on(
         &self,
         requested: &str,
@@ -509,10 +509,11 @@ impl DictationRuntime {
         cancel: &CancelToken,
     ) -> Result<Transcribed, HistoryError> {
         let running = self.ready().map(|ready| ready.slot.current());
-        if running
-            .as_ref()
-            .is_some_and(|engine| engine.name == requested || engine.name == backend::SERVER)
-        {
+        if running.as_ref().is_some_and(|engine| {
+            engine.name == requested
+                || engine.name == backend::SERVER
+                || !names_an_engine(requested)
+        }) {
             let transcribed = self
                 .transcribe(recording, settings, cancel)
                 .map_err(transcription)?;
@@ -1219,6 +1220,33 @@ mod history_tests {
         ));
         assert_eq!(*fixture.seen.lock().unwrap(), [("fr".to_owned(), true)]);
         assert!(fixture.runtime.microphone.admit_relay().is_some());
+    }
+
+    #[test]
+    fn a_retry_of_a_label_runs_on_the_engine_already_loaded() {
+        let fixture = Fixture::new(None);
+        fixture
+            .runtime
+            .settings
+            .modify(aria_settings::SettingsPatch {
+                history_keep_audio: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        for label in [DEFERRED_ENGINE, backend::SERVER] {
+            let entry = fixture
+                .runtime
+                .retry_history(
+                    fixture.original.id,
+                    RetryOptions {
+                        engine: Some(label.to_owned()),
+                        language: None,
+                    },
+                    CancelToken::never(),
+                )
+                .expect("the running engine serves a label");
+            assert_eq!(entry.dictation().unwrap().engine, "test");
+        }
     }
 
     #[test]
