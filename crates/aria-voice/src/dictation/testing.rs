@@ -346,9 +346,12 @@ pub enum Edge {
     Recording(RecordingId),
     Stopped,
     Cancelled,
+    /// A recording captured elsewhere reached delivery under this id.
+    Relayed(RecordingId),
 }
 
 /// Records until a stop or a cancel, reports each edge, and hears `HEARD`.
+/// A relayed recording reports its id and hears no speech.
 pub struct RecordsUntilStopped {
     edges: Mutex<mpsc::Sender<Edge>>,
 }
@@ -414,9 +417,10 @@ impl DictationExecutor for RecordsUntilStopped {
         &self,
         _recording: &mut RecordingReader,
         _settings: DictationSettings,
-        _control: &Arc<ExecutionControl>,
+        control: &Arc<ExecutionControl>,
         _events: &DictationEventEmitter,
     ) -> Result<DeliveredRecording, DictationError> {
+        self.report(Edge::Relayed(control.recording_id()));
         Err(DictationError::NoSpeech)
     }
 }

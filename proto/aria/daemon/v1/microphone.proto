@@ -27,6 +27,18 @@ message ListMicrophonesResponse {
 
 message AttachedPhone {}
 
+// A paired phone or watch recording on its own microphone, for its audio to
+// be relayed once it ends.
+message RemoteMicrophone {
+  RemoteDevice device = 1;
+}
+
+enum RemoteDevice {
+  REMOTE_DEVICE_UNSPECIFIED = 0;
+  REMOTE_DEVICE_PHONE = 1;
+  REMOTE_DEVICE_WATCH = 2;
+}
+
 // A Mac input device a recording captures from.
 message MicrophoneDevice {
   // As `Microphone.id` names it.

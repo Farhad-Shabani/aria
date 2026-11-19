@@ -25,9 +25,8 @@ final class StatusController: ObservableObject {
     private var startApp = StartApp(bundleID: nil)
     /// That recording's route, which also only its opening event names.
     private var route = Aria_Daemon_V1_TranscriptRoute.unspecified
-    /// Whether that recording captures from an iPhone, as its CAPTURING
-    /// event says.
-    private var isFromIPhone = false
+    /// Where that recording captures, as its CAPTURING event says.
+    private var capturedOn: CapturedOn?
     private var asks = AsksInFlight()
     /// The last recording a chat press started. Its events carry no sign of
     /// the chat, so the press reports it.
@@ -55,7 +54,7 @@ final class StatusController: ObservableObject {
             guard let event else {
                 self.heard.apply(nil)
                 self.lastRecording = nil
-                self.isFromIPhone = false
+                self.capturedOn = nil
                 // A new daemon numbers its recordings from 1 again.
                 self.askRecording = nil
                 self.show(nil)
@@ -65,10 +64,10 @@ final class StatusController: ObservableObject {
                 self.lastRecording = event.recordingID
                 self.route = event.route
                 self.startApp = StartApp(bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
-                self.isFromIPhone = false
+                self.capturedOn = nil
             }
             if event.stage == .capturing, event.recordingID == self.lastRecording {
-                self.isFromIPhone = Pill.capturesFromIPhone(event)
+                self.capturedOn = CapturedOn(event)
             }
             self.hear(event)
             if let state = self.foregroundState?.segment(event.stage, startApp: self.startApp) {
@@ -163,7 +162,7 @@ final class StatusController: ObservableObject {
         let glows = Pill.glows(run: run, chat: askRecording, prompt: prompt)
         let wanted =
             enabled
-            ? live.map { Pill(state: $0, prompt: prompt, voice: voice, glows: glows, isFromIPhone: isFromIPhone) } : nil
+            ? live.map { Pill(state: $0, prompt: prompt, voice: voice, glows: glows, capturedOn: capturedOn) } : nil
         guard wanted != shown else { return }
         shown = wanted
         // A new press starts from silence rather than the last one's level.

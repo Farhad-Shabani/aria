@@ -15,13 +15,17 @@ use tonic::{Request, Response, Status, Streaming};
 use crate::ipc::wire;
 use aria_platform::delivery::OutputMode;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_voice::dictation::{DictationError, DictationSettings, LateReturn};
+use aria_voice::dictation::{DictationError, DictationSettings, LateReturn, RecordingId};
 use aria_voice::microphone::{Claim, Gate};
 
 use super::super::dictation::{DictationRuntime, DictationRuntimeError, RelaySettings};
-use super::super::relay::{self, Collected, Opening, RelayError, RelayStage, Reply, UploadEnd};
+use super::super::relay::{
+    self, Announcements, Collected, Opening, RelayError, RelayStage, Reply, Showing, UploadEnd,
+};
 
 const METHOD: &str = "RelayService/Relay";
+const START_REMOTE_RECORDING: &str = "RelayService/StartRemoteRecording";
+const END_REMOTE_RECORDING: &str = "RelayService/EndRemoteRecording";
 
 /// Room for every event one session emits, so the worker never waits on a
 /// client that is slow to read.
@@ -30,6 +34,8 @@ const EVENT_CAPACITY: usize = 8;
 /// Served only by persistent daemons with relay enabled.
 pub(in crate::daemon) struct RelayRpc {
     dictation: Arc<DictationRuntime>,
+    /// Every phone's and watch's, so one shows at a time.
+    announcements: Arc<Announcements>,
     microphone: Arc<Gate>,
     /// Temporary WAV directory for engines that read recordings from files.
     spool_dir: Arc<Path>,
@@ -46,6 +52,7 @@ impl RelayRpc {
         shutdown: CancellationToken,
     ) -> Self {
         Self {
+            announcements: Announcements::new(Arc::clone(&dictation)),
             dictation,
             microphone,
             spool_dir: Arc::from(spool_dir),
@@ -72,6 +79,8 @@ impl wire::relay_service_server::RelayService for RelayRpc {
         let opening = relay::open(&mut requests)
             .await
             .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
+        // Taken first, so every refusal below ends the announcement too.
+        let showing = self.announcements.showing(&opening);
         let claim = self
             .microphone
             .admit_relay()
@@ -103,6 +112,7 @@ impl wire::relay_service_server::RelayService for RelayRpc {
                 dictation: Arc::clone(&self.dictation),
                 spool_dir: Arc::clone(&self.spool_dir),
                 opening,
+                showing,
                 return_policy,
                 _claim: claim,
                 settings,
@@ -110,6 +120,37 @@ impl wire::relay_service_server::RelayService for RelayRpc {
         };
         tokio::spawn(session.run(requests));
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
+    }
+
+    async fn start_remote_recording(
+        &self,
+        request: Request<wire::StartRemoteRecordingRequest>,
+    ) -> Result<Response<wire::StartRemoteRecordingResponse>, Status> {
+        let device =
+            crate::ipc::protocol::remote_device(request.into_inner().device).ok_or_else(|| {
+                relay::redacted(super::failed(
+                    START_REMOTE_RECORDING,
+                    &RelayError::DeviceUnspecified,
+                ))
+            })?;
+        let id = self
+            .announcements
+            .start(device)
+            .map_err(|error| relay::redacted(super::failed(START_REMOTE_RECORDING, &error)))?;
+        super::served(START_REMOTE_RECORDING);
+        Ok(Response::new(wire::StartRemoteRecordingResponse {
+            recording_id: id.0,
+        }))
+    }
+
+    async fn end_remote_recording(
+        &self,
+        request: Request<wire::EndRemoteRecordingRequest>,
+    ) -> Result<Response<wire::EndRemoteRecordingResponse>, Status> {
+        self.announcements
+            .end(RecordingId(request.into_inner().recording_id));
+        super::served(END_REMOTE_RECORDING);
+        Ok(Response::new(wire::EndRemoteRecordingResponse {}))
     }
 }
 
@@ -132,11 +173,13 @@ struct Client {
 /// What hearing the upload takes. Owns the claim until the text lands, and
 /// any Return pressed with it: dropping it there — or earlier, as the client
 /// vanished or the daemon stopped — frees the recorder before the phone gets
-/// COMPLETED.
+/// COMPLETED. Dropped before the dictation, it ends the announcement it
+/// continues.
 struct Upload {
     dictation: Arc<DictationRuntime>,
     spool_dir: Arc<Path>,
     opening: Opening,
+    showing: Showing,
     return_policy: ReturnPolicy,
     _claim: Claim,
     settings: DictationSettings,
@@ -368,6 +411,7 @@ fn hear(upload: Upload, audio: Vec<u8>, cancel: CancelToken) -> Result<Option<He
         dictation,
         spool_dir,
         opening,
+        showing,
         return_policy,
         settings,
         _claim,
@@ -382,11 +426,12 @@ fn hear(upload: Upload, audio: Vec<u8>, cancel: CancelToken) -> Result<Option<He
         .map_err(|error| RpcFailure::from(&DictationError::from(error)))?;
     drop(samples);
 
-    let delivered = match dictation.dictate_recording(&mut recording, settings, cancel.clone()) {
-        Ok(delivered) => delivered,
-        Err(error) if is_silence(&error) => return Ok(None),
-        Err(error) => return Err(RpcFailure::from(&error)),
-    };
+    let delivered =
+        match dictation.dictate_recording(&mut recording, showing, settings, cancel.clone()) {
+            Ok(delivered) => delivered,
+            Err(error) if is_silence(&error) => return Ok(None),
+            Err(error) => return Err(RpcFailure::from(&error)),
+        };
     let after = return_policy
         .after_text(delivered.late_return, &cancel)
         .map_err(|error| RpcFailure::from(&error))?;
@@ -418,6 +463,7 @@ mod tests {
             body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                 format: wire::AudioFormat::PcmS16le as i32,
                 submit,
+                ..Default::default()
             })),
         };
         let mut stream = tokio_stream::iter([Ok(start)]);
@@ -597,6 +643,31 @@ mod tests {
         let refused = events[1].as_ref().expect_err("the press is refused");
         let failure = crate::ipc::protocol::rpc_failure(refused).expect("an Aria failure");
         assert_eq!(failure.code, RpcErrorCode::Busy);
+    }
+
+    #[tokio::test]
+    async fn a_remote_recording_must_name_its_device() {
+        use wire::relay_service_server::RelayService;
+        let directory = tempfile::tempdir().unwrap();
+        let settings = Arc::new(
+            aria_settings::SettingsStore::open(directory.path().join("settings.toml")).unwrap(),
+        );
+        let rpc = RelayRpc::new(
+            Arc::new(DictationRuntime::detached(settings)),
+            Gate::new(),
+            directory.path(),
+            CancellationToken::new(),
+        );
+
+        let refused = rpc
+            .start_remote_recording(Request::new(wire::StartRemoteRecordingRequest {
+                device: wire::RemoteDevice::Unspecified as i32,
+            }))
+            .await
+            .expect_err("an unspecified device is refused");
+
+        let failure = crate::ipc::protocol::rpc_failure(&refused).expect("an Aria failure");
+        assert_eq!(failure.code, RpcErrorCode::InvalidRequest);
     }
 
     #[tokio::test]

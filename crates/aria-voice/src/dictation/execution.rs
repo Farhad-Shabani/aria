@@ -1,5 +1,5 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -30,14 +30,24 @@ struct OutputSlot {
 }
 
 use super::{
-    Cleanup, DictationEventEmitter, DictationOutcome, DictationResult, DictationSettings,
-    DictationStage, LateReturn, RecordingId, SoundMuting, StopMode, TranscriptRoute,
+    CapturedMicrophone, Cleanup, DictationEventEmitter, DictationOutcome, DictationResult,
+    DictationSettings, DictationStage, LateReturn, RecordingId, RecordingOrigin, SoundMuting,
+    StopMode, TranscriptRoute,
 };
 
 /// What a recording said, and the engine that heard it.
 pub struct Transcribed {
     pub transcript: Transcript,
     pub engine: &'static str,
+}
+
+/// Whether the pill already shows a recording captured elsewhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Relayed {
+    /// An announcement showed its `Recording` and `Capturing` under this id.
+    Announced(RecordingId),
+    /// Nothing shows it yet, so delivery announces it from this microphone.
+    Unannounced(CapturedMicrophone),
 }
 
 /// A recording captured elsewhere, once its text went where a press's would.
@@ -531,6 +541,7 @@ impl ExecutionControl {
         self.mute_other_apps();
         events.emit(DictationStage::Recording {
             id: self.id,
+            origin: RecordingOrigin::Local,
             delivery,
             route,
         });
@@ -835,8 +846,10 @@ pub struct DictationCoordinator<E> {
     executor: E,
     microphone: Arc<Gate>,
     sound_muting: SoundMuting,
-    /// Counts from one; zero is what the wire refuses.
-    next_recording: AtomicU64,
+    /// Counts from one; zero is what the wire refuses. A lock rather than an
+    /// atomic, so no recording starts between deciding an announcement is
+    /// the newest and saying it ended.
+    next_recording: Mutex<u64>,
 }
 
 impl<E> DictationCoordinator<E>
@@ -849,7 +862,7 @@ where
             executor,
             microphone,
             sound_muting: SoundMuting::Never,
-            next_recording: AtomicU64::new(1),
+            next_recording: Mutex::new(1),
         }
     }
 
@@ -896,7 +909,7 @@ where
         cancellation: CancelToken,
     ) -> Result<Admission, DictationError> {
         let control = Arc::new(ExecutionControl::new(
-            RecordingId(self.next_recording.fetch_add(1, Ordering::Relaxed)),
+            take_recording_id(&mut self.counter()),
             settings.stop_mode,
             escape,
             cancellation,
@@ -952,18 +965,74 @@ where
         }
     }
 
+    /// Shows a recording another device makes, before its audio arrives:
+    /// `Recording`, then `Capturing` from `microphone`, under a fresh id.
+    /// Claims nothing, so a press still starts.
+    pub fn announce_recording(
+        &self,
+        microphone: CapturedMicrophone,
+        events: &DictationEventEmitter,
+    ) -> RecordingId {
+        self.announce(TranscriptRoute::Deliver, microphone, events)
+    }
+
+    /// Ends an announced recording that won't be delivered, with
+    /// `Cancelled`. Says nothing once a newer recording started, whose
+    /// stages the pill shows instead. True when it said it.
+    pub fn cancel_announced(&self, recording: RecordingId, events: &DictationEventEmitter) -> bool {
+        let next = self.counter();
+        let is_newest = *next == recording.0 + 1;
+        if is_newest {
+            events.emit(DictationStage::Cancelled);
+        }
+        is_newest
+    }
+
+    fn announce(
+        &self,
+        route: TranscriptRoute,
+        microphone: CapturedMicrophone,
+        events: &DictationEventEmitter,
+    ) -> RecordingId {
+        let mut next = self.counter();
+        let id = take_recording_id(&mut next);
+        // Under the lock, so a `Cancelled` for an older announcement can't
+        // land after these.
+        events.emit(DictationStage::Recording {
+            id,
+            origin: RecordingOrigin::Remote,
+            delivery: DeliveryMode::Complete,
+            route,
+        });
+        events.emit(DictationStage::Capturing { id, microphone });
+        id
+    }
+
+    fn counter(&self) -> MutexGuard<'_, u64> {
+        self.next_recording
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Delivers a recording captured elsewhere through the press's own
     /// sinks. The caller holds the microphone claim, so there is no
-    /// admission here, and its client bounds the work, so no deadline.
+    /// admission here, and its client bounds the work, so no deadline. An
+    /// unannounced recording is announced first, so the pill shows it from
+    /// its own `Recording` rather than a stale one.
     pub fn deliver_recording(
         &self,
         recording: &mut RecordingReader,
+        relayed: Relayed,
         settings: DictationSettings,
         cancellation: CancelToken,
         events: &DictationEventEmitter,
     ) -> Result<DeliveredRecording, DictationError> {
+        let id = match relayed {
+            Relayed::Announced(id) => id,
+            Relayed::Unannounced(microphone) => self.announce(settings.route, microphone, events),
+        };
         let control = Arc::new(ExecutionControl::new(
-            RecordingId(self.next_recording.fetch_add(1, Ordering::Relaxed)),
+            id,
             settings.stop_mode,
             EscapeRule::Passes,
             cancellation,
@@ -1006,6 +1075,12 @@ where
     pub fn stop_recording(&self, recording: RecordingId) -> bool {
         self.microphone.stop_recording(recording)
     }
+}
+
+fn take_recording_id(next: &mut u64) -> RecordingId {
+    let id = RecordingId(*next);
+    *next += 1;
+    id
 }
 
 fn log_execution_result<T>(result: &Result<T, DictationError>, started: Instant) {
@@ -1371,6 +1446,7 @@ mod tests {
             stages.recv().expect("recording is announced"),
             DictationStage::Recording {
                 id: RecordingId(0),
+                origin: crate::dictation::RecordingOrigin::Local,
                 delivery: DeliveryMode::Complete,
                 route: crate::dictation::TranscriptRoute::Deliver
             }
@@ -1728,6 +1804,7 @@ mod tests {
             stages.iter().collect::<Vec<_>>(),
             [DictationStage::Recording {
                 id: RecordingId(1),
+                origin: crate::dictation::RecordingOrigin::Local,
                 delivery: DeliveryMode::Complete,
                 route: crate::dictation::TranscriptRoute::Deliver
             }]
@@ -1803,5 +1880,90 @@ mod tests {
         let active = ActiveDictation::new(Arc::clone(&dictation));
         assert_eq!(active.target_process(), None);
         assert!(!active.take_return());
+    }
+
+    /// The stages a coordinator's caller hears, in order.
+    fn heard() -> (
+        DictationEventEmitter,
+        std::sync::mpsc::Receiver<DictationStage>,
+    ) {
+        let (sent, received) = std::sync::mpsc::channel();
+        let events = DictationEventEmitter::forwarded_by(move |event| {
+            if let crate::dictation::DictationEvent::Stage(stage) = event {
+                sent.send(stage).expect("the test is listening");
+            }
+        });
+        (events, received)
+    }
+
+    #[test]
+    fn a_relayed_recording_keeps_its_announced_id_or_announces_itself() {
+        use crate::dictation::{CapturedMicrophone, RemoteDevice};
+        let (coordinator, edges, _) = coordinator();
+        let (events, stages) = heard();
+        let deliver = |relayed| {
+            let _no_speech = coordinator.deliver_recording(
+                &mut RecordingReader::from_samples(&[0.0; 16]),
+                relayed,
+                settings(StopMode::OnSilence),
+                CancelToken::never(),
+                &events,
+            );
+        };
+
+        let watch = CapturedMicrophone::Remote(RemoteDevice::Watch);
+        let announced = coordinator.announce_recording(watch.clone(), &events);
+        deliver(Relayed::Announced(announced));
+        deliver(Relayed::Unannounced(CapturedMicrophone::Remote(
+            RemoteDevice::Phone,
+        )));
+
+        let unannounced = RecordingId(announced.0 + 1);
+        assert_eq!(edges.try_recv(), Ok(Edge::Relayed(announced)));
+        assert_eq!(edges.try_recv(), Ok(Edge::Relayed(unannounced)));
+        assert_eq!(
+            stages.try_iter().collect::<Vec<_>>(),
+            [
+                DictationStage::Recording {
+                    id: announced,
+                    origin: crate::dictation::RecordingOrigin::Remote,
+                    delivery: DeliveryMode::Complete,
+                    route: TranscriptRoute::Deliver,
+                },
+                DictationStage::Capturing {
+                    id: announced,
+                    microphone: watch,
+                },
+                DictationStage::Recording {
+                    id: unannounced,
+                    origin: crate::dictation::RecordingOrigin::Remote,
+                    delivery: DeliveryMode::Complete,
+                    route: TranscriptRoute::TranscriptOnly,
+                },
+                DictationStage::Capturing {
+                    id: unannounced,
+                    microphone: CapturedMicrophone::Remote(RemoteDevice::Phone),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_announcement_ends_silently_once_a_newer_recording_started() {
+        let (coordinator, _edges, _) = coordinator();
+        let microphone = crate::dictation::CapturedMicrophone::Prerecorded;
+        let older = coordinator
+            .announce_recording(microphone.clone(), &DictationEventEmitter::unsubscribed());
+        let newer =
+            coordinator.announce_recording(microphone, &DictationEventEmitter::unsubscribed());
+        let (events, stages) = heard();
+
+        assert!(!coordinator.cancel_announced(older, &events));
+        assert!(coordinator.cancel_announced(newer, &events));
+
+        assert_eq!(
+            stages.try_iter().collect::<Vec<_>>(),
+            [DictationStage::Cancelled]
+        );
     }
 }

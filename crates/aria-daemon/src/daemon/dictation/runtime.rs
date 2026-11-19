@@ -11,6 +11,7 @@ use super::assembly::{
 use super::follower::EngineFollower;
 use crate::daemon::config::WakeConfig;
 use crate::daemon::inference::pairing_id;
+use crate::daemon::relay::Showing;
 use aria_kit::audio::{RecordingReader, WakeWordMonitor};
 use aria_kit::cancel::{CancelToken, Deadline};
 use aria_platform::delivery::DeliveryFactory;
@@ -21,9 +22,10 @@ use aria_settings::rpc::{Categorized, RpcErrorCode};
 use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
-    ActiveDictation, DeliveredRecording, DictationCoordinator, DictationError, DictationEvent,
-    DictationEventEmitter, DictationOutcome, DictationRequest, DictationSettings, DictationStage,
-    EscapeRule, RecordingId, StopMode, Transcribed, subscribers::DictationSubscribers,
+    ActiveDictation, CapturedMicrophone, DeliveredRecording, DictationCoordinator, DictationError,
+    DictationEvent, DictationEventEmitter, DictationOutcome, DictationRequest, DictationSettings,
+    DictationStage, EscapeRule, RecordingId, StopMode, Transcribed,
+    subscribers::DictationSubscribers,
 };
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
@@ -200,6 +202,11 @@ impl DictationRuntime {
     }
 
     #[cfg(test)]
+    pub(in crate::daemon) fn set_emitter(&mut self, emitter: EventEmitter<DictationEvent>) {
+        self.emitter = emitter;
+    }
+
+    #[cfg(test)]
     pub(in crate::daemon) fn execute_with(&mut self, executor: RuntimeExecutor) {
         let policy = aria_voice::dictation::DictationPolicy::new(MAX_DICTATION_TIMEOUT)
             .expect("the longest timeout is a valid policy");
@@ -355,12 +362,37 @@ impl DictationRuntime {
         self.emitter.emit(DictationStage::Failed(code));
     }
 
+    /// Shows a remote recording to every subscriber as it starts, under a
+    /// fresh id from the counter presses use. Claims nothing. Only a daemon
+    /// that built its coordinator at startup serves a relay, so this never
+    /// waits on a model.
+    pub(in crate::daemon) fn announce_recording(
+        &self,
+        microphone: CapturedMicrophone,
+    ) -> Result<RecordingId, DictationRuntimeError> {
+        let ready = self.loaded()?;
+        Ok(ready
+            .coordinator
+            .announce_recording(microphone, &self.emitter))
+    }
+
+    /// Ends an announced recording nothing delivers. False when a newer
+    /// recording started since, so nothing was said.
+    pub(in crate::daemon) fn cancel_announced(&self, recording: RecordingId) -> bool {
+        // A coordinator that was never built announced nothing.
+        self.ready()
+            .is_some_and(|ready| ready.coordinator.cancel_announced(recording, &self.emitter))
+    }
+
     /// Delivers a recording captured elsewhere through the press pipeline.
     /// The same stages reach every subscriber, so the Mac's status pill
-    /// follows a relayed recording as it follows a press.
+    /// follows a relayed recording as it follows a press. An announcement
+    /// `showing` continues ends with the pipeline's own terminal stage, or,
+    /// returned before that, as its drop ends it.
     pub(in crate::daemon) fn dictate_recording(
         &self,
         recording: &mut RecordingReader,
+        showing: Showing,
         settings: DictationSettings,
         cancel: CancelToken,
     ) -> Result<DeliveredRecording, DictationRuntimeError> {
@@ -371,12 +403,14 @@ impl DictationRuntime {
         let coordinator = match self.loaded() {
             Ok(ready) => &ready.coordinator,
             Err(error) => {
+                // The failure is the announcement's terminal stage.
+                drop(showing.into_relayed());
                 events.emit(DictationStage::Failed((&error).into()));
                 return Err(error.into());
             }
         };
         coordinator
-            .deliver_recording(recording, settings, cancel, &events)
+            .deliver_recording(recording, showing.into_relayed(), settings, cancel, &events)
             .map_err(DictationRuntimeError::Execution)
     }
 
@@ -727,6 +761,7 @@ mod event_tests {
         });
         emitter.emit(DictationStage::Recording {
             id: RecordingId(1),
+            origin: aria_voice::dictation::RecordingOrigin::Local,
             delivery: aria_settings::DeliveryMode::Complete,
             route: aria_voice::dictation::TranscriptRoute::Deliver,
         });
@@ -819,6 +854,7 @@ mod event_tests {
         };
         let recording = DictationStage::Recording {
             id: RecordingId(2),
+            origin: aria_voice::dictation::RecordingOrigin::Local,
             delivery: aria_settings::DeliveryMode::Complete,
             route: aria_voice::dictation::TranscriptRoute::Deliver,
         };

@@ -18,10 +18,11 @@ use super::{RecordingId, TranscriptRoute};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DictationStage {
     /// The recording scope is open. The id is what a stop names,
-    /// `delivery` is how the press delivers: Complete where it can't stream,
-    /// and `route` is where its text goes.
+    /// `origin` is what records it, `delivery` is how the press delivers:
+    /// Complete where it can't stream, and `route` is where its text goes.
     Recording {
         id: RecordingId,
+        origin: RecordingOrigin,
         delivery: DeliveryMode,
         route: TranscriptRoute,
     },
@@ -61,6 +62,16 @@ pub enum DictationStage {
     ReturnDropped,
 }
 
+/// What records a recording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordingOrigin {
+    /// This machine's capture: its own microphone, or the attached phone.
+    Local,
+    /// A remote recording: the device records it itself, and this machine
+    /// only shows it.
+    Remote,
+}
+
 /// What a live recording captures from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapturedMicrophone {
@@ -70,6 +81,15 @@ pub enum CapturedMicrophone {
     Pushed,
     /// Audio recorded earlier, such as a replay.
     Prerecorded,
+    /// A remote recording: the device records it itself.
+    Remote(RemoteDevice),
+}
+
+/// A paired device that makes a remote recording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteDevice {
+    Phone,
+    Watch,
 }
 
 /// What a press does with the current speaker's words.

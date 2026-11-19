@@ -28,10 +28,10 @@ pub use cursor::Cursor;
 pub use event::{
     CaptionSnapshot, DictationEvent, DictationEventEmitter, EVENT_THREAD, GhostSnapshot,
 };
-pub use event::{CapturedMicrophone, DictationStage, HeardSpeaker};
+pub use event::{CapturedMicrophone, DictationStage, HeardSpeaker, RecordingOrigin, RemoteDevice};
 pub use execution::{
     ActiveDictation, DeliveredRecording, DictationCoordinator, DictationError, DictationExecutor,
-    DictationPolicy, DictationPolicyError, EscapeRule, ExecutionControl, Transcribed,
+    DictationPolicy, DictationPolicyError, EscapeRule, ExecutionControl, Relayed, Transcribed,
 };
 use level::Meter;
 pub use level::MicLevel;

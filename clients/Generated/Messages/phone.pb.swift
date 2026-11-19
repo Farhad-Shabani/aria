@@ -205,6 +205,54 @@ public nonisolated struct Aria_Daemon_V1_RevokePhonesResponse: Sendable {
   public init() {}
 }
 
+public nonisolated struct Aria_Daemon_V1_StartRemoteRecordingRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var device: Aria_Daemon_V1_RemoteDevice = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_StartRemoteRecordingResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The recording's id, as its dictation events carry it.
+  public var recordingID: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_EndRemoteRecordingRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// As `StartRemoteRecordingResponse` gave it.
+  public var recordingID: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_EndRemoteRecordingResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Aria_Daemon_V1_RelayRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -271,9 +319,27 @@ public nonisolated struct Aria_Daemon_V1_RelayStart: Sendable {
   /// lets the phone press Return (`Settings.phone_press_return`).
   public var submit: Bool = false
 
+  /// The announced recording this relay continues, as
+  /// `StartRemoteRecordingResponse` gave it. Its dictation events then carry
+  /// this id. Absent, or an id no longer shown: the relay announces itself
+  /// from `device` once its audio is in.
+  public var recordingID: UInt64 {
+    get {_recordingID ?? 0}
+    set {_recordingID = newValue}
+  }
+  /// Returns true if `recordingID` has been explicitly set.
+  public var hasRecordingID: Bool {self._recordingID != nil}
+  /// Clears the value of `recordingID`. Subsequent reads from it will return its default value.
+  public mutating func clearRecordingID() {self._recordingID = nil}
+
+  /// The phone or watch that recorded. Unspecified for an older client.
+  public var device: Aria_Daemon_V1_RemoteDevice = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _recordingID: UInt64? = nil
 }
 
 public nonisolated struct Aria_Daemon_V1_RelayAudio: Sendable {
@@ -692,6 +758,115 @@ nonisolated extension Aria_Daemon_V1_RevokePhonesResponse: SwiftProtobuf.Message
   }
 }
 
+nonisolated extension Aria_Daemon_V1_StartRemoteRecordingRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".StartRemoteRecordingRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}device\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.device) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.device != .unspecified {
+      try visitor.visitSingularEnumField(value: self.device, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_StartRemoteRecordingRequest, rhs: Aria_Daemon_V1_StartRemoteRecordingRequest) -> Bool {
+    if lhs.device != rhs.device {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_StartRemoteRecordingResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".StartRemoteRecordingResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recording_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.recordingID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.recordingID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.recordingID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_StartRemoteRecordingResponse, rhs: Aria_Daemon_V1_StartRemoteRecordingResponse) -> Bool {
+    if lhs.recordingID != rhs.recordingID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_EndRemoteRecordingRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".EndRemoteRecordingRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recording_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.recordingID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.recordingID != 0 {
+      try visitor.visitSingularUInt64Field(value: self.recordingID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_EndRemoteRecordingRequest, rhs: Aria_Daemon_V1_EndRemoteRecordingRequest) -> Bool {
+    if lhs.recordingID != rhs.recordingID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_EndRemoteRecordingResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".EndRemoteRecordingResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_EndRemoteRecordingResponse, rhs: Aria_Daemon_V1_EndRemoteRecordingResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Aria_Daemon_V1_RelayRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RelayRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}audio\0\u{1}stop\0\u{1}submit\0")
@@ -795,7 +970,7 @@ nonisolated extension Aria_Daemon_V1_RelayRequest: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Aria_Daemon_V1_RelayStart: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RelayStart"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}format\0\u{1}submit\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}format\0\u{1}submit\0\u{3}recording_id\0\u{1}device\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -805,17 +980,29 @@ nonisolated extension Aria_Daemon_V1_RelayStart: SwiftProtobuf.Message, SwiftPro
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.format) }()
       case 2: try { try decoder.decodeSingularBoolField(value: &self.submit) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self._recordingID) }()
+      case 4: try { try decoder.decodeSingularEnumField(value: &self.device) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if self.format != .unspecified {
       try visitor.visitSingularEnumField(value: self.format, fieldNumber: 1)
     }
     if self.submit != false {
       try visitor.visitSingularBoolField(value: self.submit, fieldNumber: 2)
+    }
+    try { if let v = self._recordingID {
+      try visitor.visitSingularUInt64Field(value: v, fieldNumber: 3)
+    } }()
+    if self.device != .unspecified {
+      try visitor.visitSingularEnumField(value: self.device, fieldNumber: 4)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -823,6 +1010,8 @@ nonisolated extension Aria_Daemon_V1_RelayStart: SwiftProtobuf.Message, SwiftPro
   public static func ==(lhs: Aria_Daemon_V1_RelayStart, rhs: Aria_Daemon_V1_RelayStart) -> Bool {
     if lhs.format != rhs.format {return false}
     if lhs.submit != rhs.submit {return false}
+    if lhs._recordingID != rhs._recordingID {return false}
+    if lhs.device != rhs.device {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

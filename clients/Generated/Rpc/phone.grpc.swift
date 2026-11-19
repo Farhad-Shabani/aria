@@ -35,9 +35,37 @@ public enum Aria_Daemon_V1_RelayService: Sendable {
                 type: .bidirectionalStreaming
             )
         }
+        /// Namespace for "StartRemoteRecording" metadata.
+        public enum StartRemoteRecording: Sendable {
+            /// Request type for "StartRemoteRecording".
+            public typealias Input = Aria_Daemon_V1_StartRemoteRecordingRequest
+            /// Response type for "StartRemoteRecording".
+            public typealias Output = Aria_Daemon_V1_StartRemoteRecordingResponse
+            /// Descriptor for "StartRemoteRecording".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.RelayService"),
+                method: "StartRemoteRecording",
+                type: .unary
+            )
+        }
+        /// Namespace for "EndRemoteRecording" metadata.
+        public enum EndRemoteRecording: Sendable {
+            /// Request type for "EndRemoteRecording".
+            public typealias Input = Aria_Daemon_V1_EndRemoteRecordingRequest
+            /// Response type for "EndRemoteRecording".
+            public typealias Output = Aria_Daemon_V1_EndRemoteRecordingResponse
+            /// Descriptor for "EndRemoteRecording".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.RelayService"),
+                method: "EndRemoteRecording",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "aria.daemon.v1.RelayService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
-            Relay.descriptor
+            Relay.descriptor,
+            StartRemoteRecording.descriptor,
+            EndRemoteRecording.descriptor
         ]
     }
 }
@@ -102,6 +130,62 @@ extension Aria_Daemon_V1_RelayService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_RelayEvent>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Aria_Daemon_V1_RelayEvent>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "StartRemoteRecording" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Announces a remote recording as it starts, before its audio arrives, so
+        /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
+        /// > `RemoteMicrophone`. Claims nothing, so a press on the Mac still starts.
+        /// > One shows at a time: a second replaces the first, which ends without a
+        /// > word. The recording's `Relay` continues it by `recording_id`.
+        /// > `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
+        /// > and so does a `Relay` that continues it but fails before transcribing.
+        /// > Once a newer recording started, as a press on the Mac, it ends without a
+        /// > word instead, so the newer one's stages keep the pill.
+        /// >   INVALID_REQUEST - the device is unspecified
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_StartRemoteRecordingRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_StartRemoteRecordingRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_StartRemoteRecordingResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func startRemoteRecording<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_StartRemoteRecordingRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_StartRemoteRecordingRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_StartRemoteRecordingResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_StartRemoteRecordingResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "EndRemoteRecording" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Ends an announced recording that won't be relayed, as when the device
+        /// > discards it. An id that isn't the one shown changes nothing.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_EndRemoteRecordingRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_EndRemoteRecordingRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_EndRemoteRecordingResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func endRemoteRecording<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_EndRemoteRecordingRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_EndRemoteRecordingRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_EndRemoteRecordingResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_EndRemoteRecordingResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -176,6 +260,84 @@ extension Aria_Daemon_V1_RelayService {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "StartRemoteRecording" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Announces a remote recording as it starts, before its audio arrives, so
+        /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
+        /// > `RemoteMicrophone`. Claims nothing, so a press on the Mac still starts.
+        /// > One shows at a time: a second replaces the first, which ends without a
+        /// > word. The recording's `Relay` continues it by `recording_id`.
+        /// > `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
+        /// > and so does a `Relay` that continues it but fails before transcribing.
+        /// > Once a newer recording started, as a press on the Mac, it ends without a
+        /// > word instead, so the newer one's stages keep the pill.
+        /// >   INVALID_REQUEST - the device is unspecified
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_StartRemoteRecordingRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_StartRemoteRecordingRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_StartRemoteRecordingResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func startRemoteRecording<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_StartRemoteRecordingRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_StartRemoteRecordingRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_StartRemoteRecordingResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_StartRemoteRecordingResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_RelayService.Method.StartRemoteRecording.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "EndRemoteRecording" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Ends an announced recording that won't be relayed, as when the device
+        /// > discards it. An id that isn't the one shown changes nothing.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_EndRemoteRecordingRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_EndRemoteRecordingRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_EndRemoteRecordingResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func endRemoteRecording<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_EndRemoteRecordingRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_EndRemoteRecordingRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_EndRemoteRecordingResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_EndRemoteRecordingResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_RelayService.Method.EndRemoteRecording.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -228,6 +390,74 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RelayRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_RelayEvent>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "StartRemoteRecording" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Announces a remote recording as it starts, before its audio arrives, so
+    /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
+    /// > `RemoteMicrophone`. Claims nothing, so a press on the Mac still starts.
+    /// > One shows at a time: a second replaces the first, which ends without a
+    /// > word. The recording's `Relay` continues it by `recording_id`.
+    /// > `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
+    /// > and so does a `Relay` that continues it but fails before transcribing.
+    /// > Once a newer recording started, as a press on the Mac, it ends without a
+    /// > word instead, so the newer one's stages keep the pill.
+    /// >   INVALID_REQUEST - the device is unspecified
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_StartRemoteRecordingRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func startRemoteRecording<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_StartRemoteRecordingRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_StartRemoteRecordingResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.startRemoteRecording(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_StartRemoteRecordingRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_StartRemoteRecordingResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "EndRemoteRecording" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Ends an announced recording that won't be relayed, as when the device
+    /// > discards it. An id that isn't the one shown changes nothing.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_EndRemoteRecordingRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func endRemoteRecording<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_EndRemoteRecordingRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_EndRemoteRecordingResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.endRemoteRecording(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_EndRemoteRecordingRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_EndRemoteRecordingResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -287,6 +517,82 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
             producer: producer
         )
         return try await self.relay(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "StartRemoteRecording" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Announces a remote recording as it starts, before its audio arrives, so
+    /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
+    /// > `RemoteMicrophone`. Claims nothing, so a press on the Mac still starts.
+    /// > One shows at a time: a second replaces the first, which ends without a
+    /// > word. The recording's `Relay` continues it by `recording_id`.
+    /// > `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
+    /// > and so does a `Relay` that continues it but fails before transcribing.
+    /// > Once a newer recording started, as a press on the Mac, it ends without a
+    /// > word instead, so the newer one's stages keep the pill.
+    /// >   INVALID_REQUEST - the device is unspecified
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func startRemoteRecording<Result>(
+        _ message: Aria_Daemon_V1_StartRemoteRecordingRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_StartRemoteRecordingResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_StartRemoteRecordingRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.startRemoteRecording(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "EndRemoteRecording" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Ends an announced recording that won't be relayed, as when the device
+    /// > discards it. An id that isn't the one shown changes nothing.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func endRemoteRecording<Result>(
+        _ message: Aria_Daemon_V1_EndRemoteRecordingRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_EndRemoteRecordingResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_EndRemoteRecordingRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.endRemoteRecording(
             request: request,
             options: options,
             onResponse: handleResponse

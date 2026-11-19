@@ -977,11 +977,13 @@ mod tests {
         assert!(matches!(
             decode_event(wire::Event::from(DictationStage::Recording {
                 id: RecordingId(1),
+                origin: aria_voice::dictation::RecordingOrigin::Local,
                 delivery: aria_settings::DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::Deliver
             })),
             Some(Ok(DaemonEvent::Dictation(DictationStage::Recording {
                 id: RecordingId(1),
+                origin: aria_voice::dictation::RecordingOrigin::Local,
                 delivery: aria_settings::DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::Deliver
             })))
@@ -1016,6 +1018,7 @@ mod tests {
             Ok(wire::StartDictationResponse::from(
                 DictationStage::Recording {
                     id: RecordingId(3),
+                    origin: aria_voice::dictation::RecordingOrigin::Local,
                     delivery: aria_settings::DeliveryMode::Complete,
                     route: aria_voice::dictation::TranscriptRoute::Deliver,
                 },
@@ -1045,6 +1048,7 @@ mod tests {
             [
                 DictationStage::Recording {
                     id: RecordingId(3),
+                    origin: aria_voice::dictation::RecordingOrigin::Local,
                     delivery: aria_settings::DeliveryMode::Complete,
                     route: aria_voice::dictation::TranscriptRoute::Deliver
                 },
@@ -1086,6 +1090,7 @@ mod tests {
         let messages = [Ok(wire::StartDictationResponse::from(
             DictationStage::Recording {
                 id: RecordingId(3),
+                origin: aria_voice::dictation::RecordingOrigin::Local,
                 delivery: aria_settings::DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::Deliver,
             },
@@ -1103,6 +1108,7 @@ mod tests {
             Ok(wire::StartDictationResponse::from(
                 DictationStage::Recording {
                     id: RecordingId(3),
+                    origin: aria_voice::dictation::RecordingOrigin::Local,
                     delivery: aria_settings::DeliveryMode::Complete,
                     route: aria_voice::dictation::TranscriptRoute::Deliver,
                 },

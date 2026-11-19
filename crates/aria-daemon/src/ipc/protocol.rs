@@ -29,7 +29,7 @@ use aria_settings::{
 use aria_voice::dictation::{
     CaptionSnapshot, CapturedMicrophone, DeliveryOutcome, DictationEvent, DictationOutcome,
     DictationRequest, DictationResult, DictationRoute, DictationStage, EscapeRule, GhostSnapshot,
-    HeardSpeaker, MicLevel, RecordingId, StopMode, TranscriptRoute,
+    HeardSpeaker, MicLevel, RecordingId, RecordingOrigin, RemoteDevice, StopMode, TranscriptRoute,
 };
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
@@ -3279,6 +3279,25 @@ fn delivery_outcome(code: i32) -> Option<DeliveryOutcome> {
     }
 }
 
+impl From<RemoteDevice> for wire::RemoteDevice {
+    fn from(device: RemoteDevice) -> Self {
+        match device {
+            RemoteDevice::Phone => Self::Phone,
+            RemoteDevice::Watch => Self::Watch,
+        }
+    }
+}
+
+/// The device a remote recording names, or `None` for one left unspecified
+/// or unknown to this daemon.
+pub(crate) fn remote_device(code: i32) -> Option<RemoteDevice> {
+    match wire::RemoteDevice::try_from(code) {
+        Ok(wire::RemoteDevice::Phone) => Some(RemoteDevice::Phone),
+        Ok(wire::RemoteDevice::Watch) => Some(RemoteDevice::Watch),
+        Ok(wire::RemoteDevice::Unspecified) | Err(..) => None,
+    }
+}
+
 impl From<DictationStage> for wire::DictationEvent {
     fn from(stage: DictationStage) -> Self {
         let mut text = String::new();
@@ -3293,6 +3312,9 @@ impl From<DictationStage> for wire::DictationEvent {
         let (code, error) = match stage {
             DictationStage::Recording {
                 id,
+                // Only this daemon's own cues read it. Clients learn a remote
+                // device from CAPTURING.
+                origin: _,
                 delivery,
                 route,
             } => {
@@ -3316,6 +3338,11 @@ impl From<DictationStage> for wire::DictationEvent {
                     // The daemon pushes in only the attached phone's audio.
                     CapturedMicrophone::Pushed => Some(Microphone::Phone(wire::AttachedPhone {})),
                     CapturedMicrophone::Prerecorded => None,
+                    CapturedMicrophone::Remote(device) => {
+                        Some(Microphone::Remote(wire::RemoteMicrophone {
+                            device: wire::RemoteDevice::from(device) as i32,
+                        }))
+                    }
                 };
                 (wire::DictationStage::Capturing, 0)
             }
@@ -3379,6 +3406,8 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
         match wire::DictationStage::try_from(event.stage) {
             Ok(wire::DictationStage::Recording) => Ok(Self::Recording {
                 id: RecordingId(event.recording_id),
+                // The wire doesn't carry it; a client plays no cues.
+                origin: RecordingOrigin::Local,
                 delivery: decode_enum::<wire::DeliveryMode>(event.delivery_mode, "delivery mode")?,
                 route: decode_enum::<wire::TranscriptRoute>(event.route, "transcript route")?,
             }),
@@ -3391,6 +3420,10 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
                             id: InputDeviceId::new(device.id.as_str()),
                         },
                         Some(Microphone::Phone(_)) => CapturedMicrophone::Pushed,
+                        // A device a newer daemon names reads as no microphone,
+                        // which a pill shows without a glyph.
+                        Some(Microphone::Remote(remote)) => remote_device(remote.device)
+                            .map_or(CapturedMicrophone::Prerecorded, CapturedMicrophone::Remote),
                         None => CapturedMicrophone::Prerecorded,
                     },
                 })
@@ -4138,16 +4171,19 @@ mod tests {
         let stages = [
             DictationStage::Recording {
                 id: RecordingId(7),
+                origin: aria_voice::dictation::RecordingOrigin::Local,
                 delivery: DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::Deliver,
             },
             DictationStage::Recording {
                 id: RecordingId(8),
+                origin: aria_voice::dictation::RecordingOrigin::Local,
                 delivery: DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::TranscriptOnly,
             },
             DictationStage::Recording {
                 id: RecordingId(9),
+                origin: aria_voice::dictation::RecordingOrigin::Local,
                 delivery: DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::HistoryOnly,
             },
@@ -4164,6 +4200,14 @@ mod tests {
             DictationStage::Capturing {
                 id: RecordingId(7),
                 microphone: CapturedMicrophone::Prerecorded,
+            },
+            DictationStage::Capturing {
+                id: RecordingId(7),
+                microphone: CapturedMicrophone::Remote(RemoteDevice::Phone),
+            },
+            DictationStage::Capturing {
+                id: RecordingId(7),
+                microphone: CapturedMicrophone::Remote(RemoteDevice::Watch),
             },
             DictationStage::Transcribing,
             DictationStage::Delivering,
@@ -4244,6 +4288,28 @@ mod tests {
             phone.microphone,
             Some(Microphone::Phone(wire::AttachedPhone {}))
         );
+    }
+
+    #[test]
+    fn a_remote_device_this_daemon_does_not_know_reads_as_no_microphone() {
+        for device in [wire::RemoteDevice::Unspecified as i32, 99] {
+            let event = wire::DictationEvent {
+                stage: wire::DictationStage::Capturing as i32,
+                recording_id: 3,
+                microphone: Some(wire::dictation_event::Microphone::Remote(
+                    wire::RemoteMicrophone { device },
+                )),
+                ..Default::default()
+            };
+
+            assert_eq!(
+                DictationStage::try_from(&event).expect("an unknown device is not fatal"),
+                DictationStage::Capturing {
+                    id: RecordingId(3),
+                    microphone: CapturedMicrophone::Prerecorded,
+                }
+            );
+        }
     }
 
     #[test]

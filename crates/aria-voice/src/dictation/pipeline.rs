@@ -6111,6 +6111,7 @@ mod tests {
             stages.first(),
             Some(&DictationStage::Recording {
                 id: RecordingId(0),
+                origin: crate::dictation::RecordingOrigin::Local,
                 delivery: DeliveryMode::Streaming,
                 route: crate::dictation::TranscriptRoute::Deliver
             })

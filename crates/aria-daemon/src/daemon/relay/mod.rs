@@ -11,6 +11,7 @@
 //! a server; only [`crate::daemon::service::RelayRpc`] knows about tonic.
 
 mod advert;
+mod announcement;
 mod code;
 mod decode;
 mod pairing;
@@ -26,9 +27,11 @@ use tonic::Status;
 
 use crate::ipc::wire;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_voice::dictation::{RecordingId, RemoteDevice};
 
 pub use advert::SERVICE_TYPE;
 pub(super) use advert::{Advert, instance_name};
+pub(super) use announcement::{Announcements, Showing};
 pub(crate) use code::Invite;
 pub(super) use code::{PairingCode, PairingCodes};
 pub(crate) use pairing::RELATIVE_PATH as PAIRING_RELATIVE_PATH;
@@ -52,6 +55,10 @@ const SUBMIT_WAIT: Duration = Duration::from_secs(10);
 pub(super) struct Opening {
     format: wire::AudioFormat,
     submit: bool,
+    /// The announced recording the relay says it continues.
+    recording: Option<RecordingId>,
+    /// `None` from an older client.
+    device: Option<RemoteDevice>,
 }
 
 impl Opening {
@@ -63,6 +70,8 @@ impl Opening {
         Ok(Self {
             format,
             submit: start.submit,
+            recording: start.recording_id.map(RecordingId),
+            device: crate::ipc::protocol::remote_device(start.device),
         })
     }
 
@@ -268,6 +277,9 @@ pub(super) enum RelayError {
     #[error("a recording is already running on this Mac")]
     Busy,
 
+    #[error("a remote recording must name its device")]
+    DeviceUnspecified,
+
     #[error(transparent)]
     Decode(#[from] decode::DecodeError),
 
@@ -284,6 +296,7 @@ impl From<&RelayError> for RpcErrorCode {
             | RelayError::SubmittedMidUpload
             | RelayError::RecordingEnded
             | RelayError::UnsupportedFormat
+            | RelayError::DeviceUnspecified
             | RelayError::Decode(DecodeError::Empty | DecodeError::OddPcmLength { .. }) => {
                 Self::InvalidRequest
             }
@@ -379,7 +392,7 @@ mod tests {
         wire::RelayRequest {
             body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                 format: format as i32,
-                submit: false,
+                ..Default::default()
             })),
         }
     }
@@ -433,6 +446,7 @@ mod tests {
             body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                 format: wire::AudioFormat::PcmS16le as i32,
                 submit: true,
+                ..Default::default()
             })),
         }]);
 
@@ -442,12 +456,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_opening_keeps_the_recording_it_continues_and_its_device() {
+        let opening = |recording_id, device: wire::RemoteDevice| {
+            requests(vec![wire::RelayRequest {
+                body: Some(wire::relay_request::Body::Start(wire::RelayStart {
+                    format: wire::AudioFormat::PcmS16le as i32,
+                    recording_id,
+                    device: device as i32,
+                    ..Default::default()
+                })),
+            }])
+        };
+
+        let continued = open(&mut opening(Some(7), wire::RemoteDevice::Watch))
+            .await
+            .expect("a valid opening");
+        let older = open(&mut opening(None, wire::RemoteDevice::Unspecified))
+            .await
+            .expect("an older client's opening is valid");
+
+        assert_eq!(continued.recording, Some(RecordingId(7)));
+        assert_eq!(continued.device, Some(RemoteDevice::Watch));
+        assert_eq!((older.recording, older.device), (None, None));
+    }
+
+    #[tokio::test]
     async fn unspecified_and_unknown_formats_are_refused() {
         for format in [0, 2, i32::MAX] {
             let mut stream = requests(vec![wire::RelayRequest {
                 body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                     format,
-                    submit: false,
+                    ..Default::default()
                 })),
             }]);
 

@@ -4,6 +4,7 @@ syntax = "proto3";
 
 package aria.daemon.v1;
 
+import "aria/daemon/v1/microphone.proto";
 import "google/protobuf/duration.proto";
 
 service RelayService {
@@ -33,6 +34,21 @@ service RelayService {
   //     DELIVERY_TARGET_CHANGED - as for a press on the Mac
   // Delivery failures do not return the text and can include partial delivery.
   rpc Relay(stream RelayRequest) returns (stream RelayEvent);
+
+  // Announces a remote recording as it starts, before its audio arrives, so
+  // the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
+  // `RemoteMicrophone`. Claims nothing, so a press on the Mac still starts.
+  // One shows at a time: a second replaces the first, which ends without a
+  // word. The recording's `Relay` continues it by `recording_id`.
+  // `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
+  // and so does a `Relay` that continues it but fails before transcribing.
+  // Once a newer recording started, as a press on the Mac, it ends without a
+  // word instead, so the newer one's stages keep the pill.
+  //   INVALID_REQUEST - the device is unspecified
+  rpc StartRemoteRecording(StartRemoteRecordingRequest) returns (StartRemoteRecordingResponse);
+  // Ends an announced recording that won't be relayed, as when the device
+  // discards it. An id that isn't the one shown changes nothing.
+  rpc EndRemoteRecording(EndRemoteRecordingRequest) returns (EndRemoteRecordingResponse);
 }
 
 // Pins the certificate the phone presented on this connection, in exchange
@@ -82,6 +98,22 @@ message RevokePhonesRequest {}
 
 message RevokePhonesResponse {}
 
+message StartRemoteRecordingRequest {
+  RemoteDevice device = 1;
+}
+
+message StartRemoteRecordingResponse {
+  // The recording's id, as its dictation events carry it.
+  uint64 recording_id = 1;
+}
+
+message EndRemoteRecordingRequest {
+  // As `StartRemoteRecordingResponse` gave it.
+  uint64 recording_id = 1;
+}
+
+message EndRemoteRecordingResponse {}
+
 message RelayRequest {
   oneof body {
     RelayStart start = 1;
@@ -99,6 +131,13 @@ message RelayStart {
   // to insert and press Return does this without it. Ignored unless the Mac
   // lets the phone press Return (`Settings.phone_press_return`).
   bool submit = 2;
+  // The announced recording this relay continues, as
+  // `StartRemoteRecordingResponse` gave it. Its dictation events then carry
+  // this id. Absent, or an id no longer shown: the relay announces itself
+  // from `device` once its audio is in.
+  optional uint64 recording_id = 3;
+  // The phone or watch that recorded. Unspecified for an older client.
+  RemoteDevice device = 4;
 }
 
 message RelayAudio {

@@ -22,6 +22,44 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+public nonisolated enum Aria_Daemon_V1_RemoteDevice: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case phone // = 1
+  case watch // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .phone
+    case 2: self = .watch
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .phone: return 1
+    case .watch: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Aria_Daemon_V1_RemoteDevice] = [
+    .unspecified,
+    .phone,
+    .watch,
+  ]
+
+}
+
 public nonisolated struct Aria_Daemon_V1_ListMicrophonesRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -85,6 +123,20 @@ public nonisolated struct Aria_Daemon_V1_AttachedPhone: Sendable {
   public init() {}
 }
 
+/// A paired phone or watch recording on its own microphone, for its audio to
+/// be relayed once it ends.
+public nonisolated struct Aria_Daemon_V1_RemoteMicrophone: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var device: Aria_Daemon_V1_RemoteDevice = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// A Mac input device a recording captures from.
 public nonisolated struct Aria_Daemon_V1_MicrophoneDevice: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -119,6 +171,10 @@ public nonisolated struct Aria_Daemon_V1_Microphone: Sendable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
+
+nonisolated extension Aria_Daemon_V1_RemoteDevice: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0REMOTE_DEVICE_UNSPECIFIED\0\u{1}REMOTE_DEVICE_PHONE\0\u{1}REMOTE_DEVICE_WATCH\0")
+}
 
 nonisolated extension Aria_Daemon_V1_ListMicrophonesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListMicrophonesRequest"
@@ -220,6 +276,36 @@ nonisolated extension Aria_Daemon_V1_AttachedPhone: SwiftProtobuf.Message, Swift
   }
 
   public static func ==(lhs: Aria_Daemon_V1_AttachedPhone, rhs: Aria_Daemon_V1_AttachedPhone) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_RemoteMicrophone: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RemoteMicrophone"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}device\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.device) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.device != .unspecified {
+      try visitor.visitSingularEnumField(value: self.device, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RemoteMicrophone, rhs: Aria_Daemon_V1_RemoteMicrophone) -> Bool {
+    if lhs.device != rhs.device {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
