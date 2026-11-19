@@ -20,7 +20,7 @@ use aria_voice::microphone::{Claim, Gate};
 
 use super::super::dictation::{DictationRuntime, DictationRuntimeError, RelaySettings};
 use super::super::relay::{
-    self, Announcements, Collected, Opening, RelayError, RelayStage, Reply, Showing, UploadEnd,
+    self, Announcements, Collected, Opening, RelayError, RelayStage, Reply, ReplyChannel, Showing,
 };
 
 const METHOD: &str = "RelayService/Relay";
@@ -192,8 +192,8 @@ impl Session {
             microphone,
             upload,
         } = self;
-        let (audio, end) = match relay::collect(&mut requests, &client.shutdown).await {
-            Ok(Collected::Audio { audio, end }) => (audio, end),
+        let (audio, channel) = match relay::collect(&mut requests, &client.shutdown).await {
+            Ok(Collected::Audio { audio, channel }) => (audio, channel),
             Ok(Collected::Silent) => {
                 tracing::info!(method = METHOD, status = "no_speech", "request served");
                 client.emit(Ok(RelayStage::NoSpeech.into())).await;
@@ -243,7 +243,7 @@ impl Session {
             }
         };
 
-        complete(heard, end, &microphone, &client, &mut requests).await;
+        complete(heard, channel, &microphone, &client, &mut requests).await;
     }
 }
 
@@ -304,7 +304,7 @@ impl ReturnPolicy {
 
 async fn complete<S>(
     heard: Heard,
-    end: UploadEnd,
+    channel: ReplyChannel,
     microphone: &Arc<Gate>,
     client: &Client,
     requests: &mut S,
@@ -320,7 +320,7 @@ async fn complete<S>(
             return;
         }
         // A half-close says the client won't ask, so nothing is offered.
-        AfterText::Offered(return_offer) if end == UploadEnd::Stopped => Some(return_offer),
+        AfterText::Offered(return_offer) if channel == ReplyChannel::Open => Some(return_offer),
         AfterText::Offered(_) | AfterText::Nothing => None,
     };
     let offered = return_offer
@@ -483,7 +483,7 @@ mod tests {
     async fn after_landing<S>(
         policy: ReturnPolicy,
         typed_into: &str,
-        end: UploadEnd,
+        channel: ReplyChannel,
         microphone: &Arc<Gate>,
         mut requests: S,
     ) -> (Vec<Result<wire::RelayEvent, Status>>, usize)
@@ -513,7 +513,7 @@ mod tests {
             shutdown: CancellationToken::new(),
         };
 
-        complete(heard, end, microphone, &client, &mut requests).await;
+        complete(heard, channel, microphone, &client, &mut requests).await;
         drop(client);
 
         let mut emitted = Vec::new();
@@ -572,7 +572,7 @@ mod tests {
         let (events, presses) = after_landing(
             ReturnPolicy::Press,
             "Messages",
-            UploadEnd::Stopped,
+            ReplyChannel::Open,
             &Gate::new(),
             requests,
         )
@@ -591,7 +591,7 @@ mod tests {
         let (events, presses) = after_landing(
             ReturnPolicy::Offer,
             "Messages",
-            UploadEnd::Stopped,
+            ReplyChannel::Open,
             &Gate::new(),
             requests,
         )
@@ -611,7 +611,7 @@ mod tests {
         let (events, presses) = after_landing(
             ReturnPolicy::Offer,
             "Messages",
-            UploadEnd::HalfClosed,
+            ReplyChannel::Closed,
             &Gate::new(),
             Box::pin(tokio_stream::pending()),
         )
@@ -633,7 +633,7 @@ mod tests {
         let (events, presses) = after_landing(
             ReturnPolicy::Offer,
             "Messages",
-            UploadEnd::Stopped,
+            ReplyChannel::Open,
             &microphone,
             requests,
         )
@@ -679,7 +679,7 @@ mod tests {
         let (events, presses) = after_landing(
             ReturnPolicy::Never,
             "Messages",
-            UploadEnd::Stopped,
+            ReplyChannel::Open,
             &Gate::new(),
             requests,
         )

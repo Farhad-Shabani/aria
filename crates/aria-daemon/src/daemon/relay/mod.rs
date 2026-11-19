@@ -84,18 +84,21 @@ impl Opening {
 #[derive(Debug)]
 pub(super) enum Collected {
     /// Audio to decode and hear.
-    Audio { audio: Vec<u8>, end: UploadEnd },
+    Audio {
+        audio: Vec<u8>,
+        channel: ReplyChannel,
+    },
     /// Nothing arrived before the idle timeout, or the stream closed empty.
     Silent,
 }
 
-/// How the phone ended its upload.
+/// Whether the phone can still ask for Return once its audio is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum UploadEnd {
-    /// A `RelayStop`, which leaves the stream open for a `RelaySubmit`.
-    Stopped,
-    /// A half-close: the phone sends nothing more.
-    HalfClosed,
+pub(super) enum ReplyChannel {
+    /// It ended with a `RelayStop`, so a `RelaySubmit` can follow.
+    Open,
+    /// It half-closed, so it sends nothing more.
+    Closed,
 }
 
 /// What the phone said once the text landed.
@@ -154,7 +157,7 @@ where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
 {
     let mut audio: Vec<u8> = Vec::new();
-    let end = loop {
+    let channel = loop {
         // A gap this long ends the stream wherever it falls. A silent TCP
         // death — the phone out of range, no FIN — looks exactly like a
         // client thinking, and only the clock tells them apart.
@@ -172,7 +175,7 @@ where
                     }
                     audio.extend_from_slice(&chunk.chunk);
                 }
-                Some(wire::relay_request::Body::Stop(_stop)) => break UploadEnd::Stopped,
+                Some(wire::relay_request::Body::Stop(_stop)) => break ReplyChannel::Open,
                 Some(wire::relay_request::Body::Start(_start)) => {
                     return Err(RelayError::RestartedMidStream);
                 }
@@ -185,14 +188,14 @@ where
             },
             Some(Err(status)) => return Err(RelayError::ClientStream(status)),
             // A half-close ends the recording, the same as a `RelayStop`.
-            None => break UploadEnd::HalfClosed,
+            None => break ReplyChannel::Closed,
         }
     };
 
     Ok(if audio.is_empty() {
         Collected::Silent
     } else {
-        Collected::Audio { audio, end }
+        Collected::Audio { audio, channel }
     })
 }
 
@@ -525,7 +528,7 @@ mod tests {
 
         assert!(matches!(
             collected,
-            Collected::Audio { audio, end: UploadEnd::Stopped } if audio == b"onetwo"
+            Collected::Audio { audio, channel: ReplyChannel::Open } if audio == b"onetwo"
         ));
     }
 
@@ -551,7 +554,7 @@ mod tests {
 
         assert!(matches!(
             collected,
-            Collected::Audio { audio, end: UploadEnd::HalfClosed } if audio == b"one"
+            Collected::Audio { audio, channel: ReplyChannel::Closed } if audio == b"one"
         ));
     }
 
