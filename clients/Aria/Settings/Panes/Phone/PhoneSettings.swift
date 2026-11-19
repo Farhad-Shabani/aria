@@ -46,7 +46,7 @@ struct PhoneSettings: View {
             if let snapshot = settings.snapshot {
                 let editor = SettingsEditor(snapshot: snapshot, settings: settings)
                 Section {
-                    Toggle(isOn: editor.binding(\.phonePressReturn, \.phonePressReturn)) {
+                    Toggle(isOn: editor.binding(\.phoneSubmits, \.phoneSubmits)) {
                         Text(SettingsRow.phoneReturn.title)
                         Text("Your Mac presses Return only where your iPhone’s text went.")
                     }

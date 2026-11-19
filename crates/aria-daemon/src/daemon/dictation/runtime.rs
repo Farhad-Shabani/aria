@@ -70,7 +70,7 @@ pub(in crate::daemon) enum AutoStopRule {
 /// What a relayed recording reads at admission, from one settings snapshot.
 pub(in crate::daemon) struct RelaySettings {
     pub(in crate::daemon) dictation: DictationSettings,
-    pub(in crate::daemon) press_return: bool,
+    pub(in crate::daemon) phone_submits: bool,
 }
 
 pub(in crate::daemon) struct DictationRuntime {
@@ -340,7 +340,7 @@ impl DictationRuntime {
     pub(in crate::daemon) fn relay_settings(&self) -> Result<RelaySettings, DictationRuntimeError> {
         let settings = self.snapshot()?;
         Ok(RelaySettings {
-            press_return: settings.phone_press_return,
+            phone_submits: settings.phone_submits,
             dictation: resolved(
                 settings,
                 aria_platform::delivery::frontmost_application(),

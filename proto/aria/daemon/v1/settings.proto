@@ -177,7 +177,7 @@ message Settings {
   // Lets a paired phone press Return after its relayed text, only where the
   // text went: `RelayStart.submit`, `RelaySubmit`, and an app set to insert
   // and press Return. On by default. Only the Mac changes it.
-  bool phone_press_return = 27;
+  bool phone_submits = 27;
 
   // Speech to text
 
@@ -251,7 +251,7 @@ message SettingsPatch {
 
   // Phone
 
-  optional bool phone_press_return = 27;
+  optional bool phone_submits = 27;
 
   // Speech to text
 

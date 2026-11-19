@@ -598,9 +598,9 @@ public nonisolated struct Aria_Daemon_V1_Settings: @unchecked Sendable {
   /// Lets a paired phone press Return after its relayed text, only where the
   /// text went: `RelayStart.submit`, `RelaySubmit`, and an app set to insert
   /// and press Return. On by default. Only the Mac changes it.
-  public var phonePressReturn: Bool {
-    get {_storage._phonePressReturn}
-    set {_uniqueStorage()._phonePressReturn = newValue}
+  public var phoneSubmits: Bool {
+    get {_storage._phoneSubmits}
+    set {_uniqueStorage()._phoneSubmits = newValue}
   }
 
   /// A language code such as "en" or "en-us", or "auto" to detect.
@@ -852,14 +852,14 @@ public nonisolated struct Aria_Daemon_V1_SettingsPatch: @unchecked Sendable {
   /// Clears the value of `promptListShortcut`. Subsequent reads from it will return its default value.
   public mutating func clearPromptListShortcut() {_uniqueStorage()._promptListShortcut = nil}
 
-  public var phonePressReturn: Bool {
-    get {_storage._phonePressReturn ?? false}
-    set {_uniqueStorage()._phonePressReturn = newValue}
+  public var phoneSubmits: Bool {
+    get {_storage._phoneSubmits ?? false}
+    set {_uniqueStorage()._phoneSubmits = newValue}
   }
-  /// Returns true if `phonePressReturn` has been explicitly set.
-  public var hasPhonePressReturn: Bool {_storage._phonePressReturn != nil}
-  /// Clears the value of `phonePressReturn`. Subsequent reads from it will return its default value.
-  public mutating func clearPhonePressReturn() {_uniqueStorage()._phonePressReturn = nil}
+  /// Returns true if `phoneSubmits` has been explicitly set.
+  public var hasPhoneSubmits: Bool {_storage._phoneSubmits != nil}
+  /// Clears the value of `phoneSubmits`. Subsequent reads from it will return its default value.
+  public mutating func clearPhoneSubmits() {_uniqueStorage()._phoneSubmits = nil}
 
   /// A language code such as "en" or "en-us", or "auto" to detect.
   public var sttLanguage: String {
@@ -1548,7 +1548,7 @@ nonisolated extension Aria_Daemon_V1_AssistantModelSetting: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Settings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0\u{3}return_sends\0\u{1}microphone\0\u{3}phone_press_return\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0\u{3}return_sends\0\u{1}microphone\0\u{3}phone_submits\0")
 
   fileprivate class _StorageClass {
     var _outputMode: Aria_Daemon_V1_OutputMode = .unspecified
@@ -1575,7 +1575,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
     var _ariaKey: Aria_Daemon_V1_AriaKey = .unspecified
     var _askShortcut: Aria_Daemon_V1_Shortcut? = nil
     var _promptListShortcut: Aria_Daemon_V1_Shortcut? = nil
-    var _phonePressReturn: Bool = false
+    var _phoneSubmits: Bool = false
     var _sttLanguage: String = String()
     var _ttsRate: Double = 0
 
@@ -1612,7 +1612,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
       _ariaKey = source._ariaKey
       _askShortcut = source._askShortcut
       _promptListShortcut = source._promptListShortcut
-      _phonePressReturn = source._phonePressReturn
+      _phoneSubmits = source._phoneSubmits
       _sttLanguage = source._sttLanguage
       _ttsRate = source._ttsRate
     }
@@ -1659,7 +1659,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
         case 24: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupLlmEnabled) }()
         case 25: try { try decoder.decodeSingularBoolField(value: &_storage._returnSends) }()
         case 26: try { try decoder.decodeSingularStringField(value: &_storage._microphone) }()
-        case 27: try { try decoder.decodeSingularBoolField(value: &_storage._phonePressReturn) }()
+        case 27: try { try decoder.decodeSingularBoolField(value: &_storage._phoneSubmits) }()
         default: break
         }
       }
@@ -1750,8 +1750,8 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
       if !_storage._microphone.isEmpty {
         try visitor.visitSingularStringField(value: _storage._microphone, fieldNumber: 26)
       }
-      if _storage._phonePressReturn != false {
-        try visitor.visitSingularBoolField(value: _storage._phonePressReturn, fieldNumber: 27)
+      if _storage._phoneSubmits != false {
+        try visitor.visitSingularBoolField(value: _storage._phoneSubmits, fieldNumber: 27)
       }
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -1786,7 +1786,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
         if _storage._ariaKey != rhs_storage._ariaKey {return false}
         if _storage._askShortcut != rhs_storage._askShortcut {return false}
         if _storage._promptListShortcut != rhs_storage._promptListShortcut {return false}
-        if _storage._phonePressReturn != rhs_storage._phonePressReturn {return false}
+        if _storage._phoneSubmits != rhs_storage._phoneSubmits {return false}
         if _storage._sttLanguage != rhs_storage._sttLanguage {return false}
         if _storage._ttsRate != rhs_storage._ttsRate {return false}
         return true
@@ -1800,7 +1800,7 @@ nonisolated extension Aria_Daemon_V1_Settings: SwiftProtobuf.Message, SwiftProto
 
 nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SettingsPatch"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0\u{3}return_sends\0\u{1}microphone\0\u{3}phone_press_return\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}silence_duration_ms\0\u{3}mute_sound\0\u{3}stt_language\0\u{3}own_voice_only\0\u{3}vocabulary_enabled\0\u{3}vocabulary_dir\0\u{3}assistant_id\0\u{3}assistant_models\0\u{3}output_mode\0\u{3}delivery_mode\0\u{3}aria_key\0\u{3}ask_shortcut\0\u{3}prompt_list_shortcut\0\u{1}prompts\0\u{3}application_overrides\0\u{3}history_enabled\0\u{3}history_keep_audio\0\u{3}auto_stop_ms\0\u{3}memory_enabled\0\u{3}cleanup_backtrack\0\u{3}tts_rate\0\u{3}cleanup_enabled\0\u{3}cleanup_fillers\0\u{3}cleanup_llm_enabled\0\u{3}return_sends\0\u{1}microphone\0\u{3}phone_submits\0")
 
   fileprivate class _StorageClass {
     var _outputMode: Aria_Daemon_V1_OutputMode? = nil
@@ -1827,7 +1827,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
     var _ariaKey: Aria_Daemon_V1_AriaKey? = nil
     var _askShortcut: Aria_Daemon_V1_Shortcut? = nil
     var _promptListShortcut: Aria_Daemon_V1_Shortcut? = nil
-    var _phonePressReturn: Bool? = nil
+    var _phoneSubmits: Bool? = nil
     var _sttLanguage: String? = nil
     var _ttsRate: Double? = nil
 
@@ -1864,7 +1864,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
       _ariaKey = source._ariaKey
       _askShortcut = source._askShortcut
       _promptListShortcut = source._promptListShortcut
-      _phonePressReturn = source._phonePressReturn
+      _phoneSubmits = source._phoneSubmits
       _sttLanguage = source._sttLanguage
       _ttsRate = source._ttsRate
     }
@@ -1911,7 +1911,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
         case 24: try { try decoder.decodeSingularBoolField(value: &_storage._cleanupLlmEnabled) }()
         case 25: try { try decoder.decodeSingularBoolField(value: &_storage._returnSends) }()
         case 26: try { try decoder.decodeSingularStringField(value: &_storage._microphone) }()
-        case 27: try { try decoder.decodeSingularBoolField(value: &_storage._phonePressReturn) }()
+        case 27: try { try decoder.decodeSingularBoolField(value: &_storage._phoneSubmits) }()
         default: break
         }
       }
@@ -2002,7 +2002,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
       try { if let v = _storage._microphone {
         try visitor.visitSingularStringField(value: v, fieldNumber: 26)
       } }()
-      try { if let v = _storage._phonePressReturn {
+      try { if let v = _storage._phoneSubmits {
         try visitor.visitSingularBoolField(value: v, fieldNumber: 27)
       } }()
     }
@@ -2038,7 +2038,7 @@ nonisolated extension Aria_Daemon_V1_SettingsPatch: SwiftProtobuf.Message, Swift
         if _storage._ariaKey != rhs_storage._ariaKey {return false}
         if _storage._askShortcut != rhs_storage._askShortcut {return false}
         if _storage._promptListShortcut != rhs_storage._promptListShortcut {return false}
-        if _storage._phonePressReturn != rhs_storage._phonePressReturn {return false}
+        if _storage._phoneSubmits != rhs_storage._phoneSubmits {return false}
         if _storage._sttLanguage != rhs_storage._sttLanguage {return false}
         if _storage._ttsRate != rhs_storage._ttsRate {return false}
         return true

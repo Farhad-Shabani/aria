@@ -88,12 +88,12 @@ impl wire::relay_service_server::RelayService for RelayRpc {
 
         let RelaySettings {
             dictation: mut settings,
-            press_return,
+            phone_submits,
         } = self
             .dictation
             .relay_settings()
             .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
-        let return_policy = ReturnPolicy::new(press_return, opening, settings.output_mode);
+        let return_policy = ReturnPolicy::new(phone_submits, opening, settings.output_mode);
         settings.output_mode = return_policy.output_mode(settings.output_mode);
         if settings.application_excluded() {
             return Err(relay::redacted(super::failed(

@@ -2634,7 +2634,7 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                         .prompt_list_shortcut
                         .ok_or(ProtocolError::MissingBody("prompt list hotkey"))?,
                 )?,
-                phone_press_return: settings.phone_press_return,
+                phone_submits: settings.phone_submits,
                 stt_language: settings.stt_language.parse()?,
                 tts_rate: SpeakingRate::new(settings.tts_rate as f32)
                     .map_err(ProtocolError::InvalidSpeakingRate)?,
@@ -2775,7 +2775,7 @@ impl From<SettingsPatch> for wire::SettingsPatch {
             aria_key: patch.aria_key.map(|key| wire::AriaKey::from(key) as i32),
             ask_shortcut: patch.ask_shortcut.map(wire::Shortcut::from),
             prompt_list_shortcut: patch.prompt_list_shortcut.map(wire::Shortcut::from),
-            phone_press_return: patch.phone_press_return,
+            phone_submits: patch.phone_submits,
             stt_language: patch
                 .stt_language
                 .map(|language| language.as_str().to_owned()),
@@ -2897,7 +2897,7 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
                 aria_key: wire::AriaKey::from(snapshot.settings.aria_key) as i32,
                 ask_shortcut: Some(snapshot.settings.ask_shortcut.into()),
                 prompt_list_shortcut: Some(snapshot.settings.prompt_list_shortcut.into()),
-                phone_press_return: snapshot.settings.phone_press_return,
+                phone_submits: snapshot.settings.phone_submits,
                 stt_language: snapshot.settings.stt_language.as_str().to_owned(),
                 tts_rate: f64::from(snapshot.settings.tts_rate.get()),
             }),
@@ -3008,7 +3008,7 @@ impl TryFrom<wire::SettingsPatch> for SettingsPatch {
                 .prompt_list_shortcut
                 .map(Option::<Shortcut>::try_from)
                 .transpose()?,
-            phone_press_return: patch.phone_press_return,
+            phone_submits: patch.phone_submits,
             stt_language: patch.stt_language.as_deref().map(str::parse).transpose()?,
             tts_rate: patch
                 .tts_rate
@@ -4781,13 +4781,13 @@ mod tests {
     }
 
     #[test]
-    fn phone_press_return_survives_the_wire() {
-        for phone_press_return in [false, true] {
+    fn phone_submits_survives_the_wire() {
+        for phone_submits in [false, true] {
             let snapshot = SettingsSnapshot {
                 streaming_unavailable: StreamingSupport::default(),
                 revision: 4,
                 settings: Settings {
-                    phone_press_return,
+                    phone_submits,
                     ..Default::default()
                 },
             };
@@ -4795,9 +4795,9 @@ mod tests {
             let decoded = wire::SettingsSnapshot::decode(encoded.as_slice()).unwrap();
             assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
         }
-        for phone_press_return in [None, Some(false), Some(true)] {
+        for phone_submits in [None, Some(false), Some(true)] {
             let patch = SettingsPatch {
-                phone_press_return,
+                phone_submits,
                 ..Default::default()
             };
             let encoded = wire::SettingsPatch::from(patch.clone()).encode_to_vec();

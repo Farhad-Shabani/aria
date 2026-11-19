@@ -316,7 +316,7 @@ public nonisolated struct Aria_Daemon_V1_RelayStart: Sendable {
   /// Press Return once the text is inserted, checked as a `RelaySubmit` is,
   /// before COMPLETED. Changes nothing where the app only copies. An app set
   /// to insert and press Return does this without it. Ignored unless the Mac
-  /// lets the phone press Return (`Settings.phone_press_return`).
+  /// lets the phone press Return (`Settings.phone_submits`).
   public var submit: Bool = false
 
   /// The announced recording this relay continues, as
@@ -369,7 +369,7 @@ public nonisolated struct Aria_Daemon_V1_RelayStop: Sendable {
 /// Press Return where the text went. Taken once, within 10 seconds of
 /// COMPLETED, and only when COMPLETED carries a `return_offer`. That takes a
 /// `RelayStop`, the Mac letting the phone press Return
-/// (`Settings.phone_press_return`), and text typed whole by plain
+/// (`Settings.phone_submits`), and text typed whole by plain
 /// insertion. One sent after the stop waits for COMPLETED. Pressed only
 /// while that field has focus with the caret after the text, or, where the
 /// field can't be read, while its app is in front. Refused with
@@ -398,7 +398,7 @@ public nonisolated struct Aria_Daemon_V1_RelayEvent: Sendable {
   /// On COMPLETED: Return was pressed after the text, as `RelayStart.submit`
   /// or an app set to insert and press Return asks, so no `RelaySubmit` is
   /// taken. Terminal. Only while the Mac lets the phone press Return
-  /// (`Settings.phone_press_return`); otherwise such an app only types,
+  /// (`Settings.phone_submits`); otherwise such an app only types,
   /// and this stays false.
   public var submitted: Bool = false
 

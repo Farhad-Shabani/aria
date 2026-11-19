@@ -49,7 +49,7 @@ pub struct Settings {
     /// Only the Mac app reads these. `None` is off.
     pub ask_shortcut: Option<Shortcut>,
     pub prompt_list_shortcut: Option<Shortcut>,
-    pub phone_press_return: bool,
+    pub phone_submits: bool,
     pub stt_language: Language,
     pub tts_rate: SpeakingRate,
 }
@@ -144,7 +144,7 @@ impl Default for Settings {
             aria_key: AriaKey::RightOption,
             ask_shortcut: Some(Shortcut::Combo(Combo::Shift)),
             prompt_list_shortcut: Some(Shortcut::Combo(Combo::Command)),
-            phone_press_return: true,
+            phone_submits: true,
             stt_language: Language::Specific(LanguageCode::english()),
             tts_rate: SpeakingRate::standard(),
         }

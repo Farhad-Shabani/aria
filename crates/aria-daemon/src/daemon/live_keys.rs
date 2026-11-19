@@ -153,7 +153,7 @@ impl LiveHarness {
             | Key::ShortcutsPromptList
             | Key::Prompts
             // A relayed recording reads it from the settings at admission.
-            | Key::PhonePressReturn => self.next_setting_read(),
+            | Key::PhoneSubmits => self.next_setting_read(),
             Key::ShortcutsAriaKey => format!("{:?}", *self.cache.aria_key().borrow()),
             // The capture takes it from the watch, between recordings.
             Key::DictationMicrophone => format!("{:?}", *self.cache.microphone().borrow()),
@@ -274,7 +274,7 @@ fn change(key: Key) -> Patch {
         | Key::HistoryKeepAudio
         | Key::MemoryEnabled => set(key, true),
         Key::DictationReturnSends
-        | Key::PhonePressReturn
+        | Key::PhoneSubmits
         | Key::DictationCleanupFillers
         | Key::DictationCleanupBacktrack
         | Key::DictationCleanupLlmEnabled => set(key, false),
