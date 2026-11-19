@@ -29,7 +29,8 @@ use aria_settings::{
 use aria_voice::dictation::{
     CaptionSnapshot, CapturedMicrophone, DeliveryOutcome, DictationEvent, DictationOutcome,
     DictationRequest, DictationResult, DictationRoute, DictationStage, EscapeRule, GhostSnapshot,
-    HeardSpeaker, MicLevel, RecordingId, RecordingOrigin, RemoteDevice, StopMode, TranscriptRoute,
+    HeardSpeaker, MicLevel, RecordingDevice, RecordingId, RecordingOrigin, StopMode,
+    TranscriptRoute,
 };
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
@@ -3279,22 +3280,22 @@ fn delivery_outcome(code: i32) -> Option<DeliveryOutcome> {
     }
 }
 
-impl From<RemoteDevice> for wire::RemoteDevice {
-    fn from(device: RemoteDevice) -> Self {
+impl From<RecordingDevice> for wire::RecordingDevice {
+    fn from(device: RecordingDevice) -> Self {
         match device {
-            RemoteDevice::Phone => Self::Phone,
-            RemoteDevice::Watch => Self::Watch,
+            RecordingDevice::Phone => Self::Phone,
+            RecordingDevice::Watch => Self::Watch,
         }
     }
 }
 
 /// The device a remote recording names, or `None` for one left unspecified
 /// or unknown to this daemon.
-pub(crate) fn remote_device(code: i32) -> Option<RemoteDevice> {
-    match wire::RemoteDevice::try_from(code) {
-        Ok(wire::RemoteDevice::Phone) => Some(RemoteDevice::Phone),
-        Ok(wire::RemoteDevice::Watch) => Some(RemoteDevice::Watch),
-        Ok(wire::RemoteDevice::Unspecified) | Err(..) => None,
+pub(crate) fn recording_device(code: i32) -> Option<RecordingDevice> {
+    match wire::RecordingDevice::try_from(code) {
+        Ok(wire::RecordingDevice::Phone) => Some(RecordingDevice::Phone),
+        Ok(wire::RecordingDevice::Watch) => Some(RecordingDevice::Watch),
+        Ok(wire::RecordingDevice::Unspecified) | Err(..) => None,
     }
 }
 
@@ -3339,8 +3340,8 @@ impl From<DictationStage> for wire::DictationEvent {
                     CapturedMicrophone::Pushed => Some(Microphone::Phone(wire::AttachedPhone {})),
                     CapturedMicrophone::Prerecorded => None,
                     CapturedMicrophone::Remote(device) => {
-                        Some(Microphone::Remote(wire::RemoteMicrophone {
-                            device: wire::RemoteDevice::from(device) as i32,
+                        Some(Microphone::Remote(wire::RemoteRecording {
+                            device: wire::RecordingDevice::from(device) as i32,
                         }))
                     }
                 };
@@ -3422,7 +3423,7 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
                         Some(Microphone::Phone(_)) => CapturedMicrophone::Pushed,
                         // A device a newer daemon names reads as no microphone,
                         // which a pill shows without a glyph.
-                        Some(Microphone::Remote(remote)) => remote_device(remote.device)
+                        Some(Microphone::Remote(remote)) => recording_device(remote.device)
                             .map_or(CapturedMicrophone::Prerecorded, CapturedMicrophone::Remote),
                         None => CapturedMicrophone::Prerecorded,
                     },
@@ -4203,11 +4204,11 @@ mod tests {
             },
             DictationStage::Capturing {
                 id: RecordingId(7),
-                microphone: CapturedMicrophone::Remote(RemoteDevice::Phone),
+                microphone: CapturedMicrophone::Remote(RecordingDevice::Phone),
             },
             DictationStage::Capturing {
                 id: RecordingId(7),
-                microphone: CapturedMicrophone::Remote(RemoteDevice::Watch),
+                microphone: CapturedMicrophone::Remote(RecordingDevice::Watch),
             },
             DictationStage::Transcribing,
             DictationStage::Delivering,
@@ -4292,12 +4293,12 @@ mod tests {
 
     #[test]
     fn a_remote_device_this_daemon_does_not_know_reads_as_no_microphone() {
-        for device in [wire::RemoteDevice::Unspecified as i32, 99] {
+        for device in [wire::RecordingDevice::Unspecified as i32, 99] {
             let event = wire::DictationEvent {
                 stage: wire::DictationStage::Capturing as i32,
                 recording_id: 3,
                 microphone: Some(wire::dictation_event::Microphone::Remote(
-                    wire::RemoteMicrophone { device },
+                    wire::RemoteRecording { device },
                 )),
                 ..Default::default()
             };

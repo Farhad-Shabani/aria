@@ -22,7 +22,7 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
-public nonisolated enum Aria_Daemon_V1_RemoteDevice: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Aria_Daemon_V1_RecordingDevice: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case phone // = 1
@@ -52,7 +52,7 @@ public nonisolated enum Aria_Daemon_V1_RemoteDevice: SwiftProtobuf.Enum, Swift.C
   }
 
   // The compiler won't synthesize support with the UNRECOGNIZED case.
-  public static let allCases: [Aria_Daemon_V1_RemoteDevice] = [
+  public static let allCases: [Aria_Daemon_V1_RecordingDevice] = [
     .unspecified,
     .phone,
     .watch,
@@ -125,12 +125,12 @@ public nonisolated struct Aria_Daemon_V1_AttachedPhone: Sendable {
 
 /// A paired phone or watch recording on its own microphone, for its audio to
 /// be relayed once it ends.
-public nonisolated struct Aria_Daemon_V1_RemoteMicrophone: Sendable {
+public nonisolated struct Aria_Daemon_V1_RemoteRecording: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var device: Aria_Daemon_V1_RemoteDevice = .unspecified
+  public var device: Aria_Daemon_V1_RecordingDevice = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -172,8 +172,8 @@ public nonisolated struct Aria_Daemon_V1_Microphone: Sendable {
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
-nonisolated extension Aria_Daemon_V1_RemoteDevice: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0REMOTE_DEVICE_UNSPECIFIED\0\u{1}REMOTE_DEVICE_PHONE\0\u{1}REMOTE_DEVICE_WATCH\0")
+nonisolated extension Aria_Daemon_V1_RecordingDevice: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RECORDING_DEVICE_UNSPECIFIED\0\u{1}RECORDING_DEVICE_PHONE\0\u{1}RECORDING_DEVICE_WATCH\0")
 }
 
 nonisolated extension Aria_Daemon_V1_ListMicrophonesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -281,8 +281,8 @@ nonisolated extension Aria_Daemon_V1_AttachedPhone: SwiftProtobuf.Message, Swift
   }
 }
 
-nonisolated extension Aria_Daemon_V1_RemoteMicrophone: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".RemoteMicrophone"
+nonisolated extension Aria_Daemon_V1_RemoteRecording: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RemoteRecording"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}device\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -304,7 +304,7 @@ nonisolated extension Aria_Daemon_V1_RemoteMicrophone: SwiftProtobuf.Message, Sw
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Daemon_V1_RemoteMicrophone, rhs: Aria_Daemon_V1_RemoteMicrophone) -> Bool {
+  public static func ==(lhs: Aria_Daemon_V1_RemoteRecording, rhs: Aria_Daemon_V1_RemoteRecording) -> Bool {
     if lhs.device != rhs.device {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

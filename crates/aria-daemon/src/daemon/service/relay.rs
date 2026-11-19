@@ -126,8 +126,8 @@ impl wire::relay_service_server::RelayService for RelayRpc {
         &self,
         request: Request<wire::StartRemoteRecordingRequest>,
     ) -> Result<Response<wire::StartRemoteRecordingResponse>, Status> {
-        let device =
-            crate::ipc::protocol::remote_device(request.into_inner().device).ok_or_else(|| {
+        let device = crate::ipc::protocol::recording_device(request.into_inner().device)
+            .ok_or_else(|| {
                 relay::redacted(super::failed(
                     START_REMOTE_RECORDING,
                     &RelayError::DeviceUnspecified,
@@ -661,7 +661,7 @@ mod tests {
 
         let refused = rpc
             .start_remote_recording(Request::new(wire::StartRemoteRecordingRequest {
-                device: wire::RemoteDevice::Unspecified as i32,
+                device: wire::RecordingDevice::Unspecified as i32,
             }))
             .await
             .expect_err("an unspecified device is refused");

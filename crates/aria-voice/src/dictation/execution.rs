@@ -1688,7 +1688,7 @@ mod tests {
         coordinator.acquire_mute = mute;
 
         let announced = coordinator.announce_recording(
-            crate::dictation::CapturedMicrophone::Remote(crate::dictation::RemoteDevice::Watch),
+            crate::dictation::CapturedMicrophone::Remote(crate::dictation::RecordingDevice::Watch),
             true,
             &DictationEventEmitter::unsubscribed(),
         );
@@ -1943,7 +1943,7 @@ mod tests {
 
     #[test]
     fn a_relayed_recording_keeps_its_announced_id_or_announces_itself() {
-        use crate::dictation::{CapturedMicrophone, RemoteDevice};
+        use crate::dictation::{CapturedMicrophone, RecordingDevice};
         let (coordinator, edges, _) = coordinator();
         let (events, stages) = heard();
         let deliver = |relayed| {
@@ -1956,13 +1956,13 @@ mod tests {
             );
         };
 
-        let watch = CapturedMicrophone::Remote(RemoteDevice::Watch);
+        let watch = CapturedMicrophone::Remote(RecordingDevice::Watch);
         let announced = coordinator
             .announce_recording(watch.clone(), false, &events)
             .id();
         deliver(Relayed::Announced(announced));
         deliver(Relayed::Unannounced(CapturedMicrophone::Remote(
-            RemoteDevice::Phone,
+            RecordingDevice::Phone,
         )));
 
         let unannounced = RecordingId(announced.0 + 1);
@@ -1989,7 +1989,7 @@ mod tests {
                 },
                 DictationStage::Capturing {
                     id: unannounced,
-                    microphone: CapturedMicrophone::Remote(RemoteDevice::Phone),
+                    microphone: CapturedMicrophone::Remote(RecordingDevice::Phone),
                 },
             ]
         );

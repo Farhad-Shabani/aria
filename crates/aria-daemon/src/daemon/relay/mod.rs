@@ -27,7 +27,7 @@ use tonic::Status;
 
 use crate::ipc::wire;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_voice::dictation::{RecordingId, RemoteDevice};
+use aria_voice::dictation::{RecordingDevice, RecordingId};
 
 pub use advert::SERVICE_TYPE;
 pub(super) use advert::{Advert, instance_name};
@@ -58,7 +58,7 @@ pub(super) struct Opening {
     /// The announced recording the relay says it continues.
     recording: Option<RecordingId>,
     /// `None` from an older client.
-    device: Option<RemoteDevice>,
+    device: Option<RecordingDevice>,
 }
 
 impl Opening {
@@ -71,7 +71,7 @@ impl Opening {
             format,
             submit: start.submit,
             recording: start.recording_id.map(RecordingId),
-            device: crate::ipc::protocol::remote_device(start.device),
+            device: crate::ipc::protocol::recording_device(start.device),
         })
     }
 
@@ -457,7 +457,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_opening_keeps_the_recording_it_continues_and_its_device() {
-        let opening = |recording_id, device: wire::RemoteDevice| {
+        let opening = |recording_id, device: wire::RecordingDevice| {
             requests(vec![wire::RelayRequest {
                 body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                     format: wire::AudioFormat::PcmS16le as i32,
@@ -468,15 +468,15 @@ mod tests {
             }])
         };
 
-        let continued = open(&mut opening(Some(7), wire::RemoteDevice::Watch))
+        let continued = open(&mut opening(Some(7), wire::RecordingDevice::Watch))
             .await
             .expect("a valid opening");
-        let older = open(&mut opening(None, wire::RemoteDevice::Unspecified))
+        let older = open(&mut opening(None, wire::RecordingDevice::Unspecified))
             .await
             .expect("an older client's opening is valid");
 
         assert_eq!(continued.recording, Some(RecordingId(7)));
-        assert_eq!(continued.device, Some(RemoteDevice::Watch));
+        assert_eq!(continued.device, Some(RecordingDevice::Watch));
         assert_eq!((older.recording, older.device), (None, None));
     }
 

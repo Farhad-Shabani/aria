@@ -37,7 +37,7 @@ service RelayService {
 
   // Announces a remote recording as it starts, before its audio arrives, so
   // the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
-  // `RemoteMicrophone`. Claims nothing, so a press on the Mac still starts.
+  // `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
   // One shows at a time: a second replaces the first, which ends without a
   // word. The recording's `Relay` continues it by `recording_id`.
   // `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
@@ -99,7 +99,7 @@ message RevokePhonesRequest {}
 message RevokePhonesResponse {}
 
 message StartRemoteRecordingRequest {
-  RemoteDevice device = 1;
+  RecordingDevice device = 1;
 }
 
 message StartRemoteRecordingResponse {
@@ -137,7 +137,7 @@ message RelayStart {
   // from `device` once its audio is in.
   optional uint64 recording_id = 3;
   // The phone or watch that recorded. Unspecified for an older client.
-  RemoteDevice device = 4;
+  RecordingDevice device = 4;
 }
 
 message RelayAudio {

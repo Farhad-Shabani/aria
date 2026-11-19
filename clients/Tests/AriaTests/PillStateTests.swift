@@ -171,8 +171,8 @@ final class PillStateTests: XCTestCase {
     func testOnlyAnIPhoneOrAnAppleWatchMarksTheRecording() {
         var event = Aria_Daemon_V1_DictationEvent()
         event.stage = .capturing
-        func remote(_ device: Aria_Daemon_V1_RemoteDevice) -> CapturedOn? {
-            var microphone = Aria_Daemon_V1_RemoteMicrophone()
+        func remote(_ device: Aria_Daemon_V1_RecordingDevice) -> CapturedOn? {
+            var microphone = Aria_Daemon_V1_RemoteRecording()
             microphone.device = device
             event.remote = microphone
             return CapturedOn(event)

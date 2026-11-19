@@ -132,7 +132,7 @@ message DictationEvent {
     MicrophoneDevice device = 11;
     AttachedPhone phone = 12;
     // A remote recording: the phone or watch records it itself.
-    RemoteMicrophone remote = 13;
+    RemoteRecording remote = 13;
   }
 }
 

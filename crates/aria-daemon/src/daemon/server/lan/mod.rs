@@ -561,7 +561,7 @@ mod tests {
     async fn announce(channel: &Channel) -> tonic::Code {
         wire::relay_service_client::RelayServiceClient::new(channel.clone())
             .start_remote_recording(wire::StartRemoteRecordingRequest {
-                device: wire::RemoteDevice::Watch as i32,
+                device: wire::RecordingDevice::Watch as i32,
             })
             .await
             .expect_err("the stand-in relay refuses every call")

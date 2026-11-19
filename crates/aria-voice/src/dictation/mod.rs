@@ -28,7 +28,9 @@ pub use cursor::Cursor;
 pub use event::{
     CaptionSnapshot, DictationEvent, DictationEventEmitter, EVENT_THREAD, GhostSnapshot,
 };
-pub use event::{CapturedMicrophone, DictationStage, HeardSpeaker, RecordingOrigin, RemoteDevice};
+pub use event::{
+    CapturedMicrophone, DictationStage, HeardSpeaker, RecordingDevice, RecordingOrigin,
+};
 pub use execution::{
     ActiveDictation, Announced, DeliveredRecording, DictationCoordinator, DictationError,
     DictationExecutor, DictationPolicy, DictationPolicyError, EscapeRule, ExecutionControl,

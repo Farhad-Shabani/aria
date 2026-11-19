@@ -82,12 +82,12 @@ pub enum CapturedMicrophone {
     /// Audio recorded earlier, such as a replay.
     Prerecorded,
     /// A remote recording: the device records it itself.
-    Remote(RemoteDevice),
+    Remote(RecordingDevice),
 }
 
 /// A paired device that makes a remote recording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RemoteDevice {
+pub enum RecordingDevice {
     Phone,
     Watch,
 }

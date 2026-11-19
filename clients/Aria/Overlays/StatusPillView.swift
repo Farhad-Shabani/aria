@@ -16,9 +16,9 @@ enum CapturedOn: Equatable {
     /// The attached iPhone, recording for a press on your Mac.
     case attachedPhone
     /// A remote recording: the device records it itself.
-    case remote(RemoteDevice)
+    case remote(RecordingDevice)
 
-    enum RemoteDevice: Equatable {
+    enum RecordingDevice: Equatable {
         case phone
         case watch
     }

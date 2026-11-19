@@ -691,10 +691,10 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   }
 
   /// A remote recording: the phone or watch records it itself.
-  public var remote: Aria_Daemon_V1_RemoteMicrophone {
+  public var remote: Aria_Daemon_V1_RemoteRecording {
     get {
       if case .remote(let v)? = microphone {return v}
-      return Aria_Daemon_V1_RemoteMicrophone()
+      return Aria_Daemon_V1_RemoteRecording()
     }
     set {microphone = .remote(newValue)}
   }
@@ -707,7 +707,7 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
     case device(Aria_Daemon_V1_MicrophoneDevice)
     case phone(Aria_Daemon_V1_AttachedPhone)
     /// A remote recording: the phone or watch records it itself.
-    case remote(Aria_Daemon_V1_RemoteMicrophone)
+    case remote(Aria_Daemon_V1_RemoteRecording)
 
   }
 
@@ -1335,7 +1335,7 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
         }
       }()
       case 13: try {
-        var v: Aria_Daemon_V1_RemoteMicrophone?
+        var v: Aria_Daemon_V1_RemoteRecording?
         var hadOneofValue = false
         if let current = self.microphone {
           hadOneofValue = true

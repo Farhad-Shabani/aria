@@ -138,7 +138,7 @@ extension Aria_Daemon_V1_RelayService {
         /// >
         /// > Announces a remote recording as it starts, before its audio arrives, so
         /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
-        /// > `RemoteMicrophone`. Claims nothing, so a press on the Mac still starts.
+        /// > `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
         /// > One shows at a time: a second replaces the first, which ends without a
         /// > word. The recording's `Relay` continues it by `recording_id`.
         /// > `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
@@ -267,7 +267,7 @@ extension Aria_Daemon_V1_RelayService {
         /// >
         /// > Announces a remote recording as it starts, before its audio arrives, so
         /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
-        /// > `RemoteMicrophone`. Claims nothing, so a press on the Mac still starts.
+        /// > `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
         /// > One shows at a time: a second replaces the first, which ends without a
         /// > word. The recording's `Relay` continues it by `recording_id`.
         /// > `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
@@ -401,7 +401,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// >
     /// > Announces a remote recording as it starts, before its audio arrives, so
     /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
-    /// > `RemoteMicrophone`. Claims nothing, so a press on the Mac still starts.
+    /// > `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
     /// > One shows at a time: a second replaces the first, which ends without a
     /// > word. The recording's `Relay` continues it by `recording_id`.
     /// > `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
@@ -529,7 +529,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// >
     /// > Announces a remote recording as it starts, before its audio arrives, so
     /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
-    /// > `RemoteMicrophone`. Claims nothing, so a press on the Mac still starts.
+    /// > `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
     /// > One shows at a time: a second replaces the first, which ends without a
     /// > word. The recording's `Relay` continues it by `recording_id`.
     /// > `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,

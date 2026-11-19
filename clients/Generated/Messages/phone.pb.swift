@@ -210,7 +210,7 @@ public nonisolated struct Aria_Daemon_V1_StartRemoteRecordingRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var device: Aria_Daemon_V1_RemoteDevice = .unspecified
+  public var device: Aria_Daemon_V1_RecordingDevice = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -333,7 +333,7 @@ public nonisolated struct Aria_Daemon_V1_RelayStart: Sendable {
   public mutating func clearRecordingID() {self._recordingID = nil}
 
   /// The phone or watch that recorded. Unspecified for an older client.
-  public var device: Aria_Daemon_V1_RemoteDevice = .unspecified
+  public var device: Aria_Daemon_V1_RecordingDevice = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 

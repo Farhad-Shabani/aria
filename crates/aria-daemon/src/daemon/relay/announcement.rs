@@ -13,7 +13,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
-use aria_voice::dictation::{Announced, CapturedMicrophone, RecordingId, Relayed, RemoteDevice};
+use aria_voice::dictation::{Announced, CapturedMicrophone, RecordingDevice, RecordingId, Relayed};
 
 use super::super::dictation::{DictationRuntime, DictationRuntimeError};
 use super::{IDLE_TIMEOUT, Opening, decode::MAX_RECORDING_SECONDS};
@@ -61,7 +61,7 @@ impl Announcements {
     /// Shows a remote recording from `device` and returns its id.
     pub(in crate::daemon) fn start(
         self: &Arc<Self>,
-        device: RemoteDevice,
+        device: RecordingDevice,
     ) -> Result<RecordingId, DictationRuntimeError> {
         // Held while announcing, so the one on show is always the newest.
         let mut shown = self.lock();
@@ -138,7 +138,7 @@ pub(in crate::daemon) enum Showing {
     Continued(Continued),
     /// No announcement shows it, so its dictation announces itself from the
     /// device the relay named, if any.
-    Unannounced(Option<RemoteDevice>),
+    Unannounced(Option<RecordingDevice>),
 }
 
 impl Showing {
@@ -242,7 +242,7 @@ mod tests {
                 format: wire::AudioFormat::PcmS16le,
                 submit: false,
                 recording: Some(recording),
-                device: Some(RemoteDevice::Phone),
+                device: Some(RecordingDevice::Phone),
             })
         }
 
@@ -289,7 +289,7 @@ mod tests {
     async fn a_start_shows_the_device_recording() {
         let harness = Harness::new();
 
-        let id = harness.announcements.start(RemoteDevice::Watch).unwrap();
+        let id = harness.announcements.start(RecordingDevice::Watch).unwrap();
 
         assert_eq!(
             harness.heard(),
@@ -302,7 +302,7 @@ mod tests {
                 },
                 DictationStage::Capturing {
                     id,
-                    microphone: CapturedMicrophone::Remote(RemoteDevice::Watch),
+                    microphone: CapturedMicrophone::Remote(RecordingDevice::Watch),
                 },
             ]
         );
@@ -311,7 +311,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_end_cancels_the_announcement_once() {
         let harness = Harness::new();
-        let id = harness.announcements.start(RemoteDevice::Phone).unwrap();
+        let id = harness.announcements.start(RecordingDevice::Phone).unwrap();
         harness.heard();
 
         harness.announcements.end(id);
@@ -323,7 +323,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_announcement_nobody_ends_is_cancelled_after_610_seconds() {
         let harness = Harness::new();
-        harness.announcements.start(RemoteDevice::Phone).unwrap();
+        harness.announcements.start(RecordingDevice::Phone).unwrap();
         harness.heard();
 
         tokio::time::sleep(Duration::from_millis(609_999)).await;
@@ -336,9 +336,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_second_start_replaces_the_first_silently() {
         let harness = Harness::new();
-        let first = harness.announcements.start(RemoteDevice::Phone).unwrap();
+        let first = harness.announcements.start(RecordingDevice::Phone).unwrap();
         tokio::time::sleep(Duration::from_secs(100)).await;
-        let second = harness.announcements.start(RemoteDevice::Watch).unwrap();
+        let second = harness.announcements.start(RecordingDevice::Watch).unwrap();
         harness.heard();
 
         harness.announcements.end(first);
@@ -352,7 +352,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_press_started_meanwhile_silences_a_stale_end() {
         let harness = Harness::new();
-        let announced = harness.announcements.start(RemoteDevice::Phone).unwrap();
+        let announced = harness.announcements.start(RecordingDevice::Phone).unwrap();
         let pressing = std::thread::spawn({
             let dictation = Arc::clone(&harness.dictation);
             move || {
@@ -381,7 +381,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_relay_naming_the_announcement_continues_it_under_its_id() {
         let harness = Harness::new();
-        let id = harness.announcements.start(RemoteDevice::Phone).unwrap();
+        let id = harness.announcements.start(RecordingDevice::Phone).unwrap();
         harness.heard();
 
         harness.dictate(harness.relay(id));
@@ -395,7 +395,7 @@ mod tests {
     #[tokio::test]
     async fn a_relay_that_fails_before_its_dictation_ends_the_announcement() {
         let harness = Harness::new();
-        let id = harness.announcements.start(RemoteDevice::Phone).unwrap();
+        let id = harness.announcements.start(RecordingDevice::Phone).unwrap();
         harness.heard();
 
         drop(harness.relay(id));
@@ -406,7 +406,7 @@ mod tests {
     #[tokio::test]
     async fn an_id_not_on_show_changes_nothing() {
         let harness = Harness::new();
-        let id = harness.announcements.start(RemoteDevice::Phone).unwrap();
+        let id = harness.announcements.start(RecordingDevice::Phone).unwrap();
         let other = RecordingId(id.0 + 1);
         harness.heard();
 
@@ -414,7 +414,7 @@ mod tests {
         let relay = harness.relay(other);
         assert!(matches!(
             relay,
-            Showing::Unannounced(Some(RemoteDevice::Phone))
+            Showing::Unannounced(Some(RecordingDevice::Phone))
         ));
         assert_eq!(harness.heard(), []);
 
