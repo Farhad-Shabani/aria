@@ -5,14 +5,13 @@ use std::path::Path;
 
 use aria_kit::cancel::CancelToken;
 
+use super::DB_FILE;
 use super::extract::{
     ClaudeExtractor, ConsolidateError, ConsolidationResult, Extractor, Window, build_system_prompt,
     consolidate_session,
 };
-use super::lexicon::load_terms;
 use super::profile::write_profile;
 use super::store::{Store, StoreError};
-use super::{DB_FILE, LEXICON_FILE};
 use crate::chat::AssistantError;
 use crate::memory::MemoryConfig;
 use aria_primitives::error_chain;
@@ -29,8 +28,8 @@ pub(crate) fn consolidate_backlog(
     cancel: &CancelToken,
     dir: &Path,
     max_facts: u32,
+    terms: &[String],
 ) -> Result<ConsolidationReport, StoreError> {
-    let terms = load_terms(&dir.join(LEXICON_FILE));
     let sessions = store.sessions()?;
     let mut report = ConsolidationReport::default();
     for (session, through) in sessions {
@@ -38,7 +37,7 @@ pub(crate) fn consolidate_backlog(
             break;
         }
         let outcome = consolidate_one(
-            store, extractor, cancel, &session, through, max_facts, &terms,
+            store, extractor, cancel, &session, through, max_facts, terms,
         );
         match outcome {
             Ok(Some(result)) => report.results.push(result),
@@ -94,9 +93,11 @@ fn consolidate_one(
 
 /// The backlog as the memory section configures it: nothing when memory is
 /// off. A session that fails is logged and left for the next run; a store
-/// that cannot be opened is the caller's to report.
+/// that cannot be opened is the caller's to report. `terms` are the
+/// dictionary's words, the only targets a learned pair may name.
 pub fn run_backlog(
     config: MemoryConfig,
+    terms: &[String],
     home: &Path,
     cancel: &CancelToken,
 ) -> Result<ConsolidationReport, StoreError> {
@@ -115,6 +116,7 @@ pub fn run_backlog(
         cancel,
         &config.dir,
         config.max_facts_per_session,
+        terms,
     )?;
     if !report.results.is_empty() {
         tracing::info!(
@@ -179,7 +181,7 @@ mod tests {
     }
 
     fn backlog(store: &Store, extractor: &impl Extractor, dir: &Path) -> ConsolidationReport {
-        consolidate_backlog(store, extractor, &CancelToken::never(), dir, 10).expect("runs")
+        consolidate_backlog(store, extractor, &CancelToken::never(), dir, 10, &[]).expect("runs")
     }
 
     const ONE_FACT: &str =
@@ -305,7 +307,14 @@ mod tests {
         std::fs::create_dir(&profile).expect("blocks profile publication");
 
         assert!(matches!(
-            consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10),
+            consolidate_backlog(
+                &store,
+                &extractor,
+                &CancelToken::never(),
+                dir.path(),
+                10,
+                &[]
+            ),
             Err(StoreError::Profile(_))
         ));
         assert_eq!(store.consolidated_through("a").expect("watermark"), 1);
@@ -345,7 +354,7 @@ mod tests {
         let extractor = Scripted::new(Vec::new());
         let cancel = CancelToken::from_fn(|| true);
         assert!(
-            consolidate_backlog(&store, &extractor, &cancel, dir.path(), 10)
+            consolidate_backlog(&store, &extractor, &cancel, dir.path(), 10, &[])
                 .expect("runs")
                 .results
                 .is_empty()
@@ -365,6 +374,7 @@ mod tests {
                     max_facts_per_session: 10,
                     dir: home.path().join(".aria/memory"),
                 },
+                &[],
                 home.path(),
                 &CancelToken::never()
             )

@@ -2,6 +2,7 @@ mod context;
 pub use context::{Activity, Context, Failure, List, Status};
 pub mod catalog;
 pub mod collection;
+pub mod dictionary;
 pub mod discover;
 #[cfg(test)]
 mod evaluation;

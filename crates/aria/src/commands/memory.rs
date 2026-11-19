@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use aria_assistant::memory::Store;
+use aria_voice::vocabulary::dictionary;
 use clap::Subcommand;
 use tracing_subscriber::EnvFilter;
 
@@ -132,8 +133,8 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
                 println!("Pair forgotten");
                 return Ok(());
             }
-            let path = dir.join(aria_assistant::memory::LEXICON_FILE);
-            let terms = aria_assistant::memory::load_terms(&path);
+            let path = dir.join(dictionary::FILE);
+            let terms = dictionary::load_words(&path);
             if json {
                 println!("{}", lexicon_json(&terms, &store.list_pairs()?));
                 return Ok(());
@@ -195,8 +196,11 @@ fn consolidate() -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
     let home = aria_settings::config::home_directory()?;
     let settings = aria_settings::load(&home)?;
+    let config = aria_daemon::config::load_memory(&settings.memory, &home);
+    let terms = dictionary::load_words(&config.dir.join(dictionary::FILE));
     let report = aria_assistant::memory::run_backlog(
-        aria_daemon::config::load_memory(&settings.memory, &home),
+        config,
+        &terms,
         &home,
         &aria_kit::cancel::CancelToken::never(),
     )?;

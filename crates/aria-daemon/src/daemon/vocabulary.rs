@@ -1,5 +1,5 @@
 use super::tasks::Supervised;
-use aria_assistant::memory::Lexicon;
+use aria_assistant::memory::{PairsError, learned_pairs};
 use aria_kit::cancel::{CancelToken, Deadline};
 use aria_primitives::Cause;
 use aria_primitives::error_chain;
@@ -9,6 +9,7 @@ use aria_voice::vocabulary::{
     Activity, Completeness, Failure, List, MatchError, PersonalRules, Status, Term, Vocabulary,
     catalog::{self, Catalog},
     collection::{self, Collector},
+    dictionary::{Dictionary, DictionaryError},
     discover, select,
 };
 use std::collections::{HashMap, VecDeque};
@@ -211,14 +212,46 @@ pub(super) struct Worker<C: Collector> {
     runtime: Arc<Runtime>,
     requests: mpsc::Receiver<Command>,
     directory: PathBuf,
-    lexicon: Option<Lexicon>,
+    sources: Option<PersonalSources>,
     personal: PersonalRules,
+}
+
+/// Where personal rules come from: your dictionary, and the pairs memory
+/// learned in its directory.
+pub(super) struct PersonalSources {
+    dictionary: Dictionary,
+    memory: PathBuf,
+}
+
+impl PersonalSources {
+    pub(super) fn new(dictionary: Dictionary, memory: PathBuf) -> Self {
+        Self { dictionary, memory }
+    }
+
+    /// No dictionary file means no rules, whatever memory learned.
+    fn rules(&self, cancel: &CancelToken) -> Result<PersonalRules, PersonalError> {
+        let Some(words) = self.dictionary.words()? else {
+            return Ok(PersonalRules::default());
+        };
+        let learned = learned_pairs(&self.memory)?;
+        Ok(PersonalRules::from_stored(words, learned, cancel)?)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum PersonalError {
+    #[error(transparent)]
+    Dictionary(#[from] DictionaryError),
+    #[error(transparent)]
+    Pairs(#[from] PairsError),
+    #[error(transparent)]
+    Rules(#[from] MatchError),
 }
 
 impl Runtime {
     pub(super) fn new<C: Collector>(
         directory: PathBuf,
-        lexicon: Option<Lexicon>,
+        sources: Option<PersonalSources>,
         persistent: bool,
         settings: Arc<SettingsStore>,
         collector: C,
@@ -250,7 +283,7 @@ impl Runtime {
             runtime: Arc::clone(&runtime),
             requests: receiver,
             directory,
-            lexicon,
+            sources,
             personal: PersonalRules::default(),
         };
         (runtime, worker)
@@ -893,8 +926,8 @@ impl<C: Collector> Worker<C> {
     fn refresh_personal(&mut self) -> Result<(), Error> {
         let interrupt = Arc::clone(&self.runtime.interrupt);
         let cancel = CancelToken::from_fn(move || interrupt.load(Ordering::Acquire));
-        let rules = match &self.lexicon {
-            Some(lexicon) => lexicon.snapshot_cancellable(&cancel).map_err(|_| {
+        let rules = match &self.sources {
+            Some(sources) => sources.rules(&cancel).map_err(|_| {
                 if self.runtime.interrupt.load(Ordering::Acquire) {
                     Error::Busy
                 } else {
@@ -1586,7 +1619,10 @@ mod tests {
         std::fs::write(root.path().join("lexicon.txt"), "db2\n").unwrap();
         let (runtime, mut worker) = Runtime::new(
             root.path().join("catalog"),
-            Some(Lexicon::new(root.path())),
+            Some(PersonalSources::new(
+                Dictionary::new(root.path().join("lexicon.txt")),
+                root.path().to_owned(),
+            )),
             true,
             settings(root.path()),
             LocalCollector::new(LocalExtractor),

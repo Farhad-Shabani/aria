@@ -14,6 +14,7 @@ use super::tasks::Supervised;
 use aria_assistant::memory::run_backlog;
 use aria_primitives::error_chain;
 use aria_settings::SettingsCache;
+use aria_voice::vocabulary::dictionary;
 
 /// How long the chats have to go quiet before their turns are extracted.
 const QUIET: Duration = Duration::from_secs(120);
@@ -52,7 +53,9 @@ impl MemoryBacklog {
         let cache = std::sync::Arc::clone(&self.cache);
         let backlog = move || {
             let settings = cache.effective();
-            run_backlog(load_memory(&settings.memory, &home), &home, &cancel)
+            let config = load_memory(&settings.memory, &home);
+            let terms = dictionary::load_words(&config.dir.join(dictionary::FILE));
+            run_backlog(config, &terms, &home, &cancel)
         };
         match tokio::task::spawn_blocking(backlog).await {
             Ok(Ok(_)) => self.vocabulary.prepare(None),

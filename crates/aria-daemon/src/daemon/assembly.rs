@@ -1,7 +1,6 @@
 //! Concrete assembly and execution of the Aria daemon.
 
 use crate::daemon::config::{DaemonConfig, HotkeyConfig, RelayConfig, WakeWordOverride};
-use aria_assistant::memory::Lexicon;
 use aria_kit::audio::{WakeWordMonitor, remove_all_spools};
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_primitives::error_chain;
@@ -12,6 +11,7 @@ use aria_settings::{SettingsStore, StoreError};
 use aria_voice::config::SpeakerConfig;
 use aria_voice::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use aria_voice::microphone::Gate;
+use aria_voice::vocabulary::dictionary::{self, Dictionary};
 
 use std::sync::Arc;
 
@@ -146,13 +146,14 @@ fn compose(
     let microphone = Gate::new();
     let relay_microphone = Arc::clone(&microphone);
     let tasks = RuntimeTasks::new();
-    let lexicon = Some(Lexicon::new(&memory_directory(
-        &startup.memory,
-        &context.home,
-    )));
+    let memory = memory_directory(&startup.memory, &context.home);
+    let personal = Some(super::vocabulary::PersonalSources::new(
+        Dictionary::new(memory.join(dictionary::FILE)),
+        memory,
+    ));
     let (vocabulary, mut vocabulary_worker) = super::vocabulary::Runtime::new(
         context.home.join(".aria/vocabulary"),
-        lexicon,
+        personal,
         matches!(context.lifetime, DaemonLifetime::Persistent),
         Arc::clone(&settings),
         aria_voice::vocabulary::discover::LocalCollector::new(
