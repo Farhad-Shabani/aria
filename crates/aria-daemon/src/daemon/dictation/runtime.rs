@@ -22,9 +22,9 @@ use aria_settings::rpc::{Categorized, RpcErrorCode};
 use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
-    ActiveDictation, CapturedMicrophone, DeliveredRecording, DictationCoordinator, DictationError,
-    DictationEvent, DictationEventEmitter, DictationOutcome, DictationRequest, DictationSettings,
-    DictationStage, EscapeRule, RecordingId, StopMode, Transcribed,
+    ActiveDictation, Announced, CapturedMicrophone, DeliveredRecording, DictationCoordinator,
+    DictationError, DictationEvent, DictationEventEmitter, DictationOutcome, DictationRequest,
+    DictationSettings, DictationStage, EscapeRule, RecordingId, StopMode, Transcribed,
     subscribers::DictationSubscribers,
 };
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
@@ -369,11 +369,12 @@ impl DictationRuntime {
     pub(in crate::daemon) fn announce_recording(
         &self,
         microphone: CapturedMicrophone,
-    ) -> Result<RecordingId, DictationRuntimeError> {
+    ) -> Result<Announced, DictationRuntimeError> {
         let ready = self.loaded()?;
+        let mute_sound = self.snapshot()?.mute_sound;
         Ok(ready
             .coordinator
-            .announce_recording(microphone, &self.emitter))
+            .announce_recording(microphone, mute_sound, &self.emitter))
     }
 
     /// Ends an announced recording nothing delivers. False when a newer

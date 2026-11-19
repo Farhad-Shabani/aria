@@ -6,11 +6,14 @@
 //! `Recording` already took the pill. `EndRemoteRecording` or [`DEADLINE`]
 //! ends one with `Cancelled`, unless a newer recording started since, whose
 //! stages the pill shows instead. A relay naming its id continues it.
+//!
+//! Other apps stay muted while one is on show, as for a press. However it
+//! leaves show, their sound comes back: the device stopped recording.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
-use aria_voice::dictation::{CapturedMicrophone, RecordingId, Relayed, RemoteDevice};
+use aria_voice::dictation::{Announced, CapturedMicrophone, RecordingId, Relayed, RemoteDevice};
 
 use super::super::dictation::{DictationRuntime, DictationRuntimeError};
 use super::{IDLE_TIMEOUT, Opening, decode::MAX_RECORDING_SECONDS};
@@ -27,13 +30,23 @@ pub(in crate::daemon) struct Announcements {
 /// The announcement on show, and the timer that ends it.
 struct Shown {
     id: RecordingId,
+    /// Holds other apps muted. `None` only once dropped.
+    muted: Option<Announced>,
     deadline: tokio::task::AbortHandle,
 }
 
 impl Drop for Shown {
-    /// However it ends, its timer goes with it.
+    /// However it ends, its timer goes with it, and other apps get their
+    /// sound back. That restore is CoreAudio work, so it runs off the async
+    /// workers that drop this.
     fn drop(&mut self) {
         self.deadline.abort();
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        if let Some(muted) = self.muted.take() {
+            runtime.spawn_blocking(move || drop(muted));
+        }
     }
 }
 
@@ -52,11 +65,18 @@ impl Announcements {
     ) -> Result<RecordingId, DictationRuntimeError> {
         // Held while announcing, so the one on show is always the newest.
         let mut shown = self.lock();
-        let id = self
+        let announced = self
             .dictation
             .announce_recording(CapturedMicrophone::Remote(device))?;
+        let id = announced.id();
         let deadline = tokio::spawn(lapse(Arc::downgrade(self), id)).abort_handle();
-        let replaced = shown.replace(Shown { id, deadline }).map(|shown| shown.id);
+        let replaced = shown
+            .replace(Shown {
+                id,
+                muted: Some(announced),
+                deadline,
+            })
+            .map(|shown| shown.id);
         tracing::info!(
             recording = %id,
             ?device,
@@ -68,7 +88,7 @@ impl Announcements {
 
     /// Ends the announcement on show, if `id` names it.
     pub(in crate::daemon) fn end(&self, id: RecordingId) {
-        self.finish(id, "ended");
+        self.cancel(id, "ended");
     }
 
     /// How the relay `opening` shows: continuing the announcement on show
@@ -84,7 +104,7 @@ impl Announcements {
         })
     }
 
-    fn finish(&self, id: RecordingId, reason: &'static str) {
+    fn cancel(&self, id: RecordingId, reason: &'static str) {
         let Some(shown) = self.take(id) else {
             return;
         };
@@ -109,7 +129,7 @@ impl Announcements {
 async fn lapse(announcements: Weak<Announcements>, id: RecordingId) {
     tokio::time::sleep(DEADLINE).await;
     if let Some(announcements) = announcements.upgrade() {
-        announcements.finish(id, "lapsed");
+        announcements.cancel(id, "lapsed");
     }
 }
 
@@ -237,6 +257,32 @@ mod tests {
                 CancelToken::never(),
             );
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_dropped_announcement_restores_the_sound_off_the_async_workers() {
+        let (sent, restored) = channel();
+        let id = RecordingId(1);
+        let shown = Shown {
+            id,
+            muted: Some(Announced::for_test(id, move || {
+                sent.send(std::thread::current().id())
+                    .expect("the test is listening");
+            })),
+            deadline: tokio::spawn(async {}).abort_handle(),
+        };
+
+        drop(shown);
+
+        let restored_on = tokio::task::spawn_blocking(move || {
+            restored
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the sound comes back")
+        })
+        .await
+        .unwrap();
+        assert_ne!(restored_on, std::thread::current().id());
     }
 
     #[tokio::test]

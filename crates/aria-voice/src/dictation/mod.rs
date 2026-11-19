@@ -30,8 +30,9 @@ pub use event::{
 };
 pub use event::{CapturedMicrophone, DictationStage, HeardSpeaker, RecordingOrigin, RemoteDevice};
 pub use execution::{
-    ActiveDictation, DeliveredRecording, DictationCoordinator, DictationError, DictationExecutor,
-    DictationPolicy, DictationPolicyError, EscapeRule, ExecutionControl, Relayed, Transcribed,
+    ActiveDictation, Announced, DeliveredRecording, DictationCoordinator, DictationError,
+    DictationExecutor, DictationPolicy, DictationPolicyError, EscapeRule, ExecutionControl,
+    Relayed, Transcribed,
 };
 use level::Meter;
 pub use level::MicLevel;
