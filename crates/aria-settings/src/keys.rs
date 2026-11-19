@@ -235,7 +235,7 @@ keys! {
     SttModel: "stt.model", Live, Mac, [], Kind::Text, None,
         "A model file or folder. parakeet-mlx takes a Hugging Face repo ID.";
     SttDevice: "stt.device", Live, Mac, [], Kind::Choice(&["auto", "cpu", "gpu"]), Some("auto"),
-        "auto, cpu or gpu. parakeet only. auto runs the gpu in the running daemon on macOS, and the cpu for a one-off dictate.";
+        "auto, cpu or gpu. parakeet only. auto runs dictation on the gpu on macOS while its model stays loaded, else on the cpu.";
     SttInterpreter: "stt.interpreter", Live, Mac, [], Kind::Path, None,
         "A Python with parakeet-mlx installed. parakeet-mlx only, and required there.";
     SttRunsOn: "stt.runs_on", Live, Mac, [], Kind::Choice(&["local", "server"]), Some("local"),

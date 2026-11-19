@@ -103,6 +103,7 @@ impl LiveHarness {
                 &settings,
                 &self.home,
                 super::inference::pairing_id(&self.home),
+                // Fixed, so setting stt.device to gpu always changes the engine.
                 aria_voice::config::SttDevice::Cpu,
             )
             .stt
