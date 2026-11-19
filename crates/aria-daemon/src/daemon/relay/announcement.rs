@@ -13,7 +13,9 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
-use aria_voice::dictation::{Announced, CapturedMicrophone, RecordingDevice, RecordingId, Relayed};
+#[cfg(target_os = "macos")]
+use aria_voice::dictation::Announced;
+use aria_voice::dictation::{CapturedMicrophone, RecordingDevice, RecordingId, Relayed};
 
 use super::super::dictation::{DictationRuntime, DictationRuntimeError};
 use super::{IDLE_TIMEOUT, Opening, decode::MAX_RECORDING_SECONDS};
@@ -31,16 +33,26 @@ pub(in crate::daemon) struct Announcements {
 struct Shown {
     id: RecordingId,
     /// Holds other apps muted. `None` only once dropped.
+    #[cfg(target_os = "macos")]
     muted: Option<Announced>,
     deadline: tokio::task::AbortHandle,
 }
 
 impl Drop for Shown {
     /// However it ends, its timer goes with it, and other apps get their
-    /// sound back. That restore is CoreAudio work, so it runs off the async
-    /// workers that drop this.
+    /// sound back.
     fn drop(&mut self) {
         self.deadline.abort();
+        #[cfg(target_os = "macos")]
+        self.restore_sound();
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Shown {
+    /// That restore is CoreAudio work, so it runs off the async workers that
+    /// drop this.
+    fn restore_sound(&mut self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -73,6 +85,7 @@ impl Announcements {
         let replaced = shown
             .replace(Shown {
                 id,
+                #[cfg(target_os = "macos")]
                 muted: Some(announced),
                 deadline,
             })
