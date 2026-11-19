@@ -10,7 +10,20 @@ use std::path::{Path, PathBuf};
 use aria_settings::config::{ConfigError, model_location, wake_backend};
 use aria_settings::{CheckedSettings, InvalidValue, Key, Phone, WakeEngine};
 
-use aria_voice::config::{CaptureConfig, DictationConfig};
+use aria_voice::config::{CaptureConfig, DictationConfig, SttDevice};
+
+use super::host::DaemonLifetime;
+
+/// What `stt.device = "auto"` runs on. A model that stays loaded serves many
+/// presses, so the GPU's slower load is paid once. A one-off daemon loads per
+/// press, and the CPU's 1.5 s load hides behind speech where the GPU's 6 s
+/// doesn't.
+pub(crate) fn auto_device(lifetime: DaemonLifetime) -> SttDevice {
+    match lifetime {
+        DaemonLifetime::Persistent if SttDevice::Gpu.is_supported() => SttDevice::Gpu,
+        DaemonLifetime::Persistent | DaemonLifetime::OnDemand => SttDevice::Cpu,
+    }
+}
 
 pub struct DaemonConfig {
     pub dictation: DictationConfig,
@@ -63,12 +76,18 @@ pub enum WakeConfig {
 }
 
 impl DaemonConfig {
+    /// The persistent daemon's config.
     pub fn load(
         settings: &CheckedSettings,
         home: &Path,
         wake_word: WakeWordOverride,
     ) -> Result<Self, ConfigError> {
-        let dictation = DictationConfig::load(settings, home, super::inference::pairing_id(home));
+        let dictation = DictationConfig::load(
+            settings,
+            home,
+            super::inference::pairing_id(home),
+            auto_device(DaemonLifetime::Persistent),
+        );
         let wake = wake(settings, home, &dictation.capture, wake_word)?;
         Ok(Self {
             dictation,
@@ -143,6 +162,18 @@ mod tests {
     use super::*;
     use aria_kit::audio::ReplayPace;
     use aria_settings::testing::{file, test_home};
+
+    #[test]
+    fn auto_runs_the_gpu_only_where_the_model_stays_loaded() {
+        assert_eq!(auto_device(DaemonLifetime::OnDemand), SttDevice::Cpu);
+        // aria-voice builds parakeet's GPU support on every macOS target.
+        let persistent = if cfg!(target_os = "macos") {
+            SttDevice::Gpu
+        } else {
+            SttDevice::Cpu
+        };
+        assert_eq!(auto_device(DaemonLifetime::Persistent), persistent);
+    }
 
     #[test]
     fn disabled_wake_ignores_its_dormant_settings() {

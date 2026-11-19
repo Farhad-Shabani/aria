@@ -41,12 +41,23 @@ use aria_kit::transcription::{
 /// Names this engine under `stt.backend` and in its own errors.
 pub const NAME: &str = "parakeet";
 
-/// Where inference runs. Gpu means WebGPU (Metal), which needs macOS and the
-/// `parakeet-gpu` feature; without them a load refuses it.
+/// Where one of the model's graphs runs. Gpu means WebGPU (Metal), which needs
+/// macOS and the `parakeet-gpu` feature; without them a load refuses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Device {
     Cpu,
     Gpu,
+}
+
+impl Device {
+    /// Whether this build can run a graph here, so a caller can pick a device
+    /// a load won't refuse.
+    pub const fn is_supported(self) -> bool {
+        match self {
+            Self::Cpu => true,
+            Self::Gpu => cfg!(all(target_os = "macos", feature = "parakeet-gpu")),
+        }
+    }
 }
 
 const BACKEND: &str = NAME;
@@ -97,14 +108,21 @@ pub struct Parakeet {
 #[derive(Clone)]
 pub struct ParakeetConfig {
     pub model_directory: PathBuf,
+    /// Where the encoder runs.
     pub device: Device,
+    /// Where the decoder and joint run.
+    pub joint: Device,
 }
 
 impl ParakeetConfig {
+    // The joint runs once per token on tiny tensors. On the GPU each call pays
+    // a dispatch that costs more than the CPU spends computing it, so the joint
+    // starts on the CPU whatever the encoder's device.
     pub fn new(model_directory: impl Into<PathBuf>, device: Device) -> Self {
         Self {
             model_directory: model_directory.into(),
             device,
+            joint: Device::Cpu,
         }
     }
 }
@@ -133,13 +151,16 @@ impl Engine for Parakeet {
         check_cancelled(cancel)?;
         let directory = Self::check_from(&config)?;
 
-        let execution = Some(execution(config.device)?);
-        let model = ParakeetTDT::from_pretrained(&directory, execution).map_err(|source| {
-            TranscriptionError::Load {
-                backend: BACKEND,
-                model: directory.display().to_string(),
-                source: BackendError::engine(source),
-            }
+        let graphs = Graphs::from_config(&config)?;
+        let model = ParakeetTDT::from_pretrained_with_joint_config(
+            &directory,
+            Some(graphs.encoder),
+            Some(graphs.joint),
+        )
+        .map_err(|source| TranscriptionError::Load {
+            backend: BACKEND,
+            model: directory.display().to_string(),
+            source: BackendError::engine(source),
         })?;
         check_cancelled(cancel)?;
         Ok(Self {
@@ -187,6 +208,21 @@ impl Recognizer for Parakeet {
     }
 }
 
+/// How each of the model's two graphs executes.
+struct Graphs {
+    encoder: ExecutionConfig,
+    joint: ExecutionConfig,
+}
+
+impl Graphs {
+    fn from_config(config: &ParakeetConfig) -> Result<Self, TranscriptionError> {
+        Ok(Self {
+            encoder: execution(config.device)?,
+            joint: execution(config.joint)?,
+        })
+    }
+}
+
 // Use available CPU parallelism instead of the bindings' four-thread default.
 fn execution(device: Device) -> Result<ExecutionConfig, TranscriptionError> {
     let threads = std::thread::available_parallelism().map_or(4, usize::from);
@@ -224,6 +260,56 @@ fn decode_window(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_config_keeps_the_joint_on_the_cpu() {
+        let config = ParakeetConfig::new("/model", Device::Gpu);
+
+        assert_eq!(config.joint, Device::Cpu);
+    }
+
+    #[cfg(all(target_os = "macos", feature = "parakeet-gpu"))]
+    #[test]
+    fn on_the_gpu_only_the_encoder_leaves_the_cpu() {
+        let graphs = Graphs::from_config(&ParakeetConfig::new("/model", Device::Gpu))
+            .expect("the gpu device should be supported");
+
+        assert_eq!(graphs.encoder.execution_provider, ExecutionProvider::WebGPU);
+        assert_eq!(graphs.joint.execution_provider, ExecutionProvider::Cpu);
+    }
+
+    #[cfg(all(target_os = "macos", feature = "parakeet-gpu"))]
+    #[test]
+    fn a_joint_set_to_the_gpu_runs_there() {
+        let mut config = ParakeetConfig::new("/model", Device::Gpu);
+        config.joint = Device::Gpu;
+        let graphs = Graphs::from_config(&config).expect("the gpu device should be supported");
+
+        assert_eq!(graphs.joint.execution_provider, ExecutionProvider::WebGPU);
+    }
+
+    #[test]
+    fn a_device_is_supported_exactly_when_a_load_accepts_it() {
+        for device in [Device::Cpu, Device::Gpu] {
+            assert_eq!(
+                device.is_supported(),
+                execution(device).is_ok(),
+                "{device:?}"
+            );
+        }
+    }
+
+    #[cfg(not(all(target_os = "macos", feature = "parakeet-gpu")))]
+    #[test]
+    fn a_gpu_joint_is_refused_without_gpu_support() {
+        let mut config = ParakeetConfig::new("/model", Device::Cpu);
+        config.joint = Device::Gpu;
+
+        assert!(matches!(
+            Graphs::from_config(&config),
+            Err(TranscriptionError::UnsupportedDevice { .. })
+        ));
+    }
 
     #[test]
     fn cancelled_load_stops_before_model_validation() {

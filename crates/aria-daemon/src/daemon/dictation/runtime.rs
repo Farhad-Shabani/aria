@@ -9,7 +9,8 @@ use super::assembly::{
     RuntimeExecutor, build_dictation, transcribe_retry,
 };
 use super::follower::EngineFollower;
-use crate::daemon::config::WakeConfig;
+use crate::daemon::DaemonLifetime;
+use crate::daemon::config::{WakeConfig, auto_device};
 use crate::daemon::inference::pairing_id;
 use crate::daemon::relay::Showing;
 use aria_kit::audio::{RecordingReader, WakeWordMonitor};
@@ -137,6 +138,7 @@ impl DictationRuntime {
                         &settings,
                         &retry_home,
                         pairing_id(&retry_home),
+                        auto_device(DaemonLifetime::OnDemand),
                     ),
                     speaker: SpeakerConfig::load(&settings.speaker, &retry_home),
                     vocabulary: Arc::clone(&retry_vocabulary),
@@ -150,7 +152,12 @@ impl DictationRuntime {
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(
                 move || {
                     let settings = cache.effective();
-                    let config = DictationConfig::load(&settings, &home, pairing_id(&home));
+                    let config = DictationConfig::load(
+                        &settings,
+                        &home,
+                        pairing_id(&home),
+                        auto_device(DaemonLifetime::OnDemand),
+                    );
                     let speaker = SpeakerConfig::load(&settings.speaker, &home);
                     // Only a daemon that deferred its build reaches here, and
                     // one of those lives for a single press. A wake-word monitor
@@ -491,9 +498,9 @@ impl DictationRuntime {
         }
     }
 
-    /// The live coordinator serves a retry for its own engine, or for any
-    /// engine its server runs. Anything else builds a one-off pipeline, so a
-    /// retry never initializes capture.
+    /// The live coordinator serves a retry for its own engine, for a label
+    /// that names no engine, or for any engine its server runs. Anything else
+    /// builds a one-off pipeline, so a retry never initializes capture.
     fn retry_on(
         &self,
         requested: &str,
@@ -502,10 +509,11 @@ impl DictationRuntime {
         cancel: &CancelToken,
     ) -> Result<Transcribed, HistoryError> {
         let running = self.ready().map(|ready| ready.slot.current());
-        if running
-            .as_ref()
-            .is_some_and(|engine| engine.name == requested || engine.name == backend::SERVER)
-        {
+        if running.as_ref().is_some_and(|engine| {
+            engine.name == requested
+                || engine.name == backend::SERVER
+                || !names_an_engine(requested)
+        }) {
             let transcribed = self
                 .transcribe(recording, settings, cancel)
                 .map_err(transcription)?;
@@ -1215,6 +1223,33 @@ mod history_tests {
     }
 
     #[test]
+    fn a_retry_of_a_label_runs_on_the_engine_already_loaded() {
+        let fixture = Fixture::new(None);
+        fixture
+            .runtime
+            .settings
+            .modify(aria_settings::SettingsPatch {
+                history_keep_audio: Some(true),
+                ..Default::default()
+            })
+            .unwrap();
+        for label in [DEFERRED_ENGINE, backend::SERVER] {
+            let entry = fixture
+                .runtime
+                .retry_history(
+                    fixture.original.id,
+                    RetryOptions {
+                        engine: Some(label.to_owned()),
+                        language: None,
+                    },
+                    CancelToken::never(),
+                )
+                .expect("the running engine serves a label");
+            assert_eq!(entry.dictation().unwrap().engine, "test");
+        }
+    }
+
+    #[test]
     fn language_override_is_saved_and_retained_audio_can_regenerate_again() {
         let fixture = Fixture::new(None);
         fixture
@@ -1353,8 +1388,12 @@ mod history_tests {
                 })
                 .unwrap();
             let home_dir = home.clone();
-            let mut config =
-                DictationConfig::load(&aria_settings::testing::file(""), &home_dir, None);
+            let mut config = DictationConfig::load(
+                &aria_settings::testing::file(""),
+                &home_dir,
+                None,
+                aria_voice::config::SttDevice::Cpu,
+            );
             config.stt = SttBackend::Server(crate::daemon::inference::pairing_id(&home_dir));
             config.capture = aria_voice::config::CaptureConfig::WavFile {
                 path: audio,

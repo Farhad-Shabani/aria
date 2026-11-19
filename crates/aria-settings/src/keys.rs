@@ -234,8 +234,8 @@ keys! {
         "A language code such as \"en\" or \"en-us\", or \"auto\" to detect.";
     SttModel: "stt.model", Live, Mac, [], Kind::Text, None,
         "A model file or folder. parakeet-mlx takes a Hugging Face repo ID.";
-    SttDevice: "stt.device", Live, Mac, [], Kind::Choice(&["cpu", "gpu"]), None,
-        "cpu or gpu. parakeet only.";
+    SttDevice: "stt.device", Live, Mac, [], Kind::Choice(&["auto", "cpu", "gpu"]), Some("auto"),
+        "auto, cpu or gpu. parakeet only. auto runs dictation on the gpu on macOS while its model stays loaded, else on the cpu.";
     SttInterpreter: "stt.interpreter", Live, Mac, [], Kind::Path, None,
         "A Python with parakeet-mlx installed. parakeet-mlx only, and required there.";
     SttRunsOn: "stt.runs_on", Live, Mac, [], Kind::Choice(&["local", "server"]), Some("local"),
@@ -377,6 +377,18 @@ mod tests {
             .collect();
         let Kind::Choice(words) = Key::SttRunsOn.kind() else {
             panic!("stt.runs_on is a choice");
+        };
+        assert_eq!(words, names);
+    }
+
+    #[test]
+    fn the_stt_device_choices_are_every_stt_device_name() {
+        let names: Vec<&str> = crate::SttDeviceName::ALL
+            .iter()
+            .map(|device| device.name())
+            .collect();
+        let Kind::Choice(words) = Key::SttDevice.kind() else {
+            panic!("stt.device is a choice");
         };
         assert_eq!(words, names);
     }

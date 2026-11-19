@@ -164,8 +164,8 @@ language = "en"
 # A model file or folder. Absent means setup's download in ~/.aria/models.
 # parakeet-mlx takes a Hugging Face repo ID, by default mlx-community/parakeet-tdt-0.6b-v3.
 # model = "~/.aria/models/parakeet/parakeet-tdt-0.6b-v3"
-# cpu or gpu. parakeet only.
-device = "cpu"
+# auto, cpu or gpu. parakeet only. auto runs dictation on the gpu on macOS while its model stays loaded, else on the cpu.
+# device = "auto"
 # A Python with parakeet-mlx installed. parakeet-mlx only, and required there.
 # interpreter = "~/.local/share/aria/parakeet-mlx/bin/python3"
 # Where speech recognition runs: local, or server for your paired server.

@@ -12,7 +12,7 @@ use super::{
 use aria_settings::config::{ConfigError, backend, model_file, model_folder, model_location};
 use aria_settings::{
     CaptureChoice, CheckedSettings, DeviceName, InvalidValue, Key, LocalStt, PaceName, RunsOn,
-    Speaker, SttChoice, TtsEngine, TtsFallbackName,
+    Speaker, SttChoice, SttDeviceName, TtsEngine, TtsFallbackName,
 };
 
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
@@ -30,11 +30,14 @@ fn chosen_system_transcription_engine(
         Some(engine) => Some(local(
             engine,
             settings.system_transcription.model.as_deref(),
-            settings.system_transcription.device,
+            system_transcription_device(settings.system_transcription.device),
             home,
         )),
+        // Auto stays on the CPU here: it picks the GPU for dictation alone.
         None => match settings.choices().stt_runs_on {
-            RunsOn::Local => Some(SttConfig::load(settings, home)).filter(crate::stt::streams),
+            RunsOn::Local => {
+                Some(SttConfig::load(settings, home, SttDevice::Cpu)).filter(crate::stt::streams)
+            }
             RunsOn::Server => None,
         },
     }
@@ -45,7 +48,7 @@ impl SystemTranscriptionConfig {
     /// changing dictation's model never turns system transcription off.
     pub fn load(settings: &CheckedSettings, home: &Path) -> Result<Self, ConfigError> {
         let transcription = chosen_system_transcription_engine(settings, home)
-            .unwrap_or_else(|| local(LocalStt::Parakeet, None, None, home));
+            .unwrap_or_else(|| local(LocalStt::Parakeet, None, SttDevice::Cpu, home));
         Ok(Self {
             engine: SystemTranscriptionEngine::new(transcription)?,
             transcripts_dir: settings
@@ -167,7 +170,8 @@ pub fn loaded_models(settings: &CheckedSettings, home: &Path) -> Vec<LoadedModel
             path,
         });
     };
-    let engine = SttConfig::load(settings, home);
+    // Only the model path is read, which no device changes.
+    let engine = SttConfig::load(settings, home, SttDevice::Cpu);
     let name = engine.backend_name();
     if let Some(path) = engine.model_path() {
         add(Section::Stt, Some(name), path);
@@ -214,7 +218,14 @@ fn tts_fallback(file_value: Option<TtsFallbackName>) -> TtsFallback {
 }
 
 impl DictationConfig {
-    pub fn load(settings: &CheckedSettings, home: &Path, pairing: Option<PairingId>) -> Self {
+    /// `auto` is the device `stt.device = "auto"` stands for, which depends on
+    /// how the caller runs the model.
+    pub fn load(
+        settings: &CheckedSettings,
+        home: &Path,
+        pairing: Option<PairingId>,
+        auto: SttDevice,
+    ) -> Self {
         let choices = settings.choices();
         Self {
             capture: match &choices.capture {
@@ -224,7 +235,7 @@ impl DictationConfig {
                     pace: replay_pace(settings.capture.pace),
                 },
             },
-            stt: SttBackend::load(settings, home, pairing),
+            stt: SttBackend::load(settings, home, pairing, auto),
             dictation_timeouts: choices.timeouts,
             cleanup_llm: choices.cleanup.clone(),
         }
@@ -239,17 +250,22 @@ fn replay_pace(pace: Option<PaceName>) -> ReplayPace {
 }
 
 impl SttBackend {
-    pub fn load(settings: &CheckedSettings, home: &Path, pairing: Option<PairingId>) -> Self {
+    pub fn load(
+        settings: &CheckedSettings,
+        home: &Path,
+        pairing: Option<PairingId>,
+        auto: SttDevice,
+    ) -> Self {
         match settings.choices().stt_runs_on {
             RunsOn::Server => Self::Server(pairing),
-            RunsOn::Local => Self::Local(SttConfig::load(settings, home)),
+            RunsOn::Local => Self::Local(SttConfig::load(settings, home, auto)),
         }
     }
 }
 
 impl SttConfig {
     /// The local engine, which the settings keep while the server recognizes.
-    pub fn load(settings: &CheckedSettings, home: &Path) -> Self {
+    pub fn load(settings: &CheckedSettings, home: &Path, auto: SttDevice) -> Self {
         let stt = &settings.stt;
         match &settings.choices().stt {
             SttChoice::ParakeetMlx { interpreter } => Self::ParakeetMlx {
@@ -262,7 +278,7 @@ impl SttConfig {
             SttChoice::Local(engine) => local(
                 *engine,
                 stt.model.as_deref().map(Path::new),
-                stt.device,
+                stt_device(stt.device, auto),
                 home,
             ),
         }
@@ -272,7 +288,8 @@ impl SttConfig {
 /// The defaults of an engine a caller names, not the file.
 pub(super) fn stt_defaults(backend: &str, home: &Path) -> Result<SttConfig, ConfigError> {
     match LocalStt::named(backend) {
-        Some(engine) => Ok(local(engine, None, None, home)),
+        // A retry loads the engine for one use, which the CPU loads fastest.
+        Some(engine) => Ok(local(engine, None, SttDevice::Cpu, home)),
         None if backend == backend::PARAKEET_MLX => Err(ConfigError::Invalid {
             key: Key::SttInterpreter,
             source: InvalidValue::Required {
@@ -289,12 +306,7 @@ pub(super) fn stt_defaults(backend: &str, home: &Path) -> Result<SttConfig, Conf
     }
 }
 
-fn local(
-    engine: LocalStt,
-    model: Option<&Path>,
-    device: Option<DeviceName>,
-    home: &Path,
-) -> SttConfig {
+fn local(engine: LocalStt, model: Option<&Path>, device: SttDevice, home: &Path) -> SttConfig {
     match engine {
         LocalStt::Whisper => SttConfig::Whisper {
             model: model_location(
@@ -308,7 +320,7 @@ fn local(
         },
         LocalStt::Parakeet => SttConfig::Parakeet {
             model_directory: model_location(model, model_folder::PARAKEET, home),
-            device: stt_device(device),
+            device,
         },
         LocalStt::Moonshine => SttConfig::Moonshine {
             model_directory: model_location(model, model_folder::MOONSHINE, home),
@@ -319,7 +331,15 @@ fn local(
     }
 }
 
-fn stt_device(device: Option<DeviceName>) -> SttDevice {
+fn stt_device(device: Option<SttDeviceName>, auto: SttDevice) -> SttDevice {
+    match device.unwrap_or_default() {
+        SttDeviceName::Auto => auto,
+        SttDeviceName::Cpu => SttDevice::Cpu,
+        SttDeviceName::Gpu => SttDevice::Gpu,
+    }
+}
+
+fn system_transcription_device(device: Option<DeviceName>) -> SttDevice {
     match device {
         None | Some(DeviceName::Cpu) => SttDevice::Cpu,
         Some(DeviceName::Gpu) => SttDevice::Gpu,
@@ -342,7 +362,7 @@ mod tests {
 
         let pairing = PairingId::new([7; 32]);
         assert_eq!(
-            SttBackend::load(&file, &test_home(), Some(pairing.clone())),
+            SttBackend::load(&file, &test_home(), Some(pairing.clone()), SttDevice::Cpu),
             SttBackend::Server(Some(pairing))
         );
         let models = loaded_models(&file, Path::new("/missing-home"));
@@ -372,14 +392,14 @@ mod tests {
              [provider]\nendpoint = \"http://127.0.0.1:8080/v1/chat/completions\"\n",
         );
 
-        let config = DictationConfig::load(&settings, &test_home(), None);
+        let config = DictationConfig::load(&settings, &test_home(), None, SttDevice::Cpu);
 
         assert_eq!(config.cleanup_llm, settings.choices().cleanup);
     }
 
     #[test]
     fn capture_defaults_to_the_microphone() {
-        let capture = DictationConfig::load(&file(""), &test_home(), None).capture;
+        let capture = DictationConfig::load(&file(""), &test_home(), None, SttDevice::Cpu).capture;
         assert_eq!(capture, CaptureConfig::Microphone);
     }
 
@@ -387,7 +407,7 @@ mod tests {
     fn capture_resolves_a_wav_file_backend() {
         let file = file("[capture]\nbackend = \"wav_file\"\npath = \"~/fixture.wav\"\n");
         assert_eq!(
-            DictationConfig::load(&file, &test_home(), None).capture,
+            DictationConfig::load(&file, &test_home(), None, SttDevice::Cpu).capture,
             CaptureConfig::WavFile {
                 path: PathBuf::from("/home/user/fixture.wav"),
                 pace: ReplayPace::Immediate,
@@ -401,7 +421,7 @@ mod tests {
             "[capture]\nbackend = \"wav_file\"\npath = \"/fixture.wav\"\npace = \"realtime\"\n",
         );
         assert!(matches!(
-            DictationConfig::load(&file, &test_home(), None).capture,
+            DictationConfig::load(&file, &test_home(), None, SttDevice::Cpu).capture,
             CaptureConfig::WavFile {
                 pace: ReplayPace::Realtime,
                 ..
@@ -456,11 +476,53 @@ mod tests {
     fn stt_resolves_a_parakeet_model_directory() {
         let file = file("[stt]\nbackend = \"parakeet\"\nmodel = \"~/models/tdt\"\n");
         assert_eq!(
-            SttBackend::load(&file, &test_home(), None),
+            SttBackend::load(&file, &test_home(), None, SttDevice::Cpu),
             SttBackend::Local(SttConfig::Parakeet {
                 model_directory: PathBuf::from("/home/user/models/tdt"),
                 device: SttDevice::Cpu,
             })
+        );
+    }
+
+    #[test]
+    fn an_auto_device_is_the_one_the_caller_names_and_an_explicit_one_wins() {
+        let device = |line: &str, auto| {
+            let file = file(&format!("[stt]\nbackend = \"parakeet\"\n{line}"));
+            match SttConfig::load(&file, &test_home(), auto) {
+                SttConfig::Parakeet { device, .. } => device,
+                other => panic!("parakeet stays the engine, got {other:?}"),
+            }
+        };
+
+        assert_eq!(device("", SttDevice::Gpu), SttDevice::Gpu);
+        assert_eq!(
+            device("device = \"auto\"\n", SttDevice::Gpu),
+            SttDevice::Gpu
+        );
+        assert_eq!(
+            device("device = \"auto\"\n", SttDevice::Cpu),
+            SttDevice::Cpu
+        );
+        assert_eq!(device("device = \"cpu\"\n", SttDevice::Gpu), SttDevice::Cpu);
+        assert_eq!(device("device = \"gpu\"\n", SttDevice::Cpu), SttDevice::Gpu);
+    }
+
+    #[test]
+    fn mac_audio_runs_an_auto_stt_table_on_the_cpu() {
+        let file = file("[stt]\nbackend = \"parakeet\"\ndevice = \"auto\"\n");
+
+        let system_transcription = SystemTranscriptionConfig::load(&file, &test_home())
+            .expect("parakeet streams, so system transcription reuses it");
+
+        assert_eq!(
+            system_transcription.engine,
+            SystemTranscriptionEngine::new(SttConfig::Parakeet {
+                model_directory: PathBuf::from(
+                    "/home/user/.aria/models/parakeet/parakeet-tdt-0.6b-v3"
+                ),
+                device: SttDevice::Cpu,
+            })
+            .unwrap()
         );
     }
 
@@ -471,7 +533,7 @@ mod tests {
              model = \"mlx-community/whisper\"\n",
         );
         assert_eq!(
-            SttBackend::load(&file, &test_home(), None),
+            SttBackend::load(&file, &test_home(), None, SttDevice::Cpu),
             SttBackend::Local(SttConfig::ParakeetMlx {
                 model: "mlx-community/whisper".to_owned(),
                 interpreter: PathBuf::from("/home/user/py"),
@@ -684,8 +746,8 @@ mod tests {
         let home_dir = home.to_path_buf();
 
         assert_eq!(
-            DictationConfig::load(&defaults, &home_dir, None),
-            DictationConfig::load(&empty, &home_dir, None)
+            DictationConfig::load(&defaults, &home_dir, None, SttDevice::Cpu),
+            DictationConfig::load(&empty, &home_dir, None, SttDevice::Cpu)
         );
         assert_eq!(
             TtsConfig::load(&defaults, &home_dir),

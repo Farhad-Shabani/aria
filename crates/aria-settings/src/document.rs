@@ -613,7 +613,7 @@ pub struct Stt {
     /// A path for every local engine but parakeet-mlx, whose model is a
     /// Hugging Face repo ID.
     pub model: Option<String>,
-    pub device: Option<DeviceName>,
+    pub device: Option<SttDeviceName>,
     pub interpreter: Option<PathBuf>,
     pub runs_on: Option<RunsOn>,
 }
@@ -971,6 +971,30 @@ impl RunsOn {
 pub enum DeviceName {
     Cpu,
     Gpu,
+}
+
+/// Where dictation's Parakeet runs. Auto leaves it to how Aria runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SttDeviceName {
+    #[default]
+    Auto,
+    Cpu,
+    Gpu,
+}
+
+impl SttDeviceName {
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 3] = [Self::Auto, Self::Cpu, Self::Gpu];
+
+    /// The value `stt.device` takes.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Cpu => "cpu",
+            Self::Gpu => "gpu",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2362,6 +2386,16 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn only_dictation_takes_an_auto_device() {
+        let dictation = "[stt]\nbackend = \"parakeet\"\ndevice = \"auto\"\n";
+        let loaded = Loaded::parse(dictation, Path::new(HOME)).expect("stt takes auto");
+        assert_eq!(loaded.settings.stt.device, Some(SttDeviceName::Auto));
+
+        let mac_audio = "[transcription]\nbackend = \"parakeet\"\ndevice = \"auto\"\n";
+        Loaded::parse(mac_audio, Path::new(HOME)).expect_err("transcription refuses auto");
+    }
+
+    #[test]
     fn the_server_keeps_the_local_engine_and_its_settings() {
         let loaded = load(
             "[stt]\nbackend = \"parakeet\"\nmodel = \"/models/parakeet\"\ndevice = \"gpu\"\nruns_on = \"server\"\n",
@@ -2370,7 +2404,7 @@ pub(super) mod tests {
         let choices = loaded.settings.choices();
         assert_eq!(choices.stt_runs_on, RunsOn::Server);
         assert_eq!(choices.stt, SttChoice::Local(LocalStt::Parakeet));
-        assert_eq!(loaded.settings.stt.device, Some(DeviceName::Gpu));
+        assert_eq!(loaded.settings.stt.device, Some(SttDeviceName::Gpu));
     }
 
     #[test]
