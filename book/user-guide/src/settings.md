@@ -28,7 +28,8 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
 - **Prompts** lists Markdown files that say what to make of what you say,
   each with its own shortcut. See [Prompts](./prompts.md).
 - **Privacy** controls history, retained audio, and memory.
-- **Phone** pairs Aria for iPhone.
+- **Phone** pairs Aria for iPhone and lets your iPhone press **Return** on
+  your Mac.
 - **About** shows the version and checks for updates.
 
 The language picker offers English, the default, and automatic detection.

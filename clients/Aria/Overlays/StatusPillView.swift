@@ -5,9 +5,52 @@ struct Pill: Equatable {
     let prompt: String?
     let voice: VoiceEmphasis?
     let glows: Bool
-    let isFromIPhone: Bool
+    let capturedOn: CapturedOn?
 
     var label: String? { state.label(prompt: prompt) }
+}
+
+/// Where a recording captures, when it's not on your Mac, as its CAPTURING
+/// event says.
+enum CapturedOn: Equatable {
+    /// The attached iPhone, recording for a press on your Mac.
+    case attachedPhone
+    /// A remote recording: the device records it itself.
+    case remote(RecordingDevice)
+
+    enum RecordingDevice: Equatable {
+        case phone
+        case watch
+    }
+
+    /// Nil for your Mac's own microphone, for audio recorded before, and
+    /// for a remote device this app doesn't know.
+    init?(_ event: Aria_Daemon_V1_DictationEvent) {
+        switch event.microphone {
+        case .phone: self = .attachedPhone
+        case .remote(let remote):
+            switch remote.device {
+            case .phone: self = .remote(.phone)
+            case .watch: self = .remote(.watch)
+            case .unspecified, .UNRECOGNIZED: return nil
+            }
+        case .device, nil: return nil
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .attachedPhone, .remote(.phone): "iphone"
+        case .remote(.watch): "applewatch"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .attachedPhone, .remote(.phone): "iPhone"
+        case .remote(.watch): "Apple Watch"
+        }
+    }
 }
 
 extension Pill {
@@ -20,15 +63,6 @@ extension Pill {
         case .ticket: return true
         case .recording: return run == chat
         case nil: return false
-        }
-    }
-
-    /// Whether a recording captures from the attached iPhone, by its
-    /// CAPTURING event.
-    static func capturesFromIPhone(_ event: Aria_Daemon_V1_DictationEvent) -> Bool {
-        switch event.microphone {
-        case .phone: true
-        case .device, nil: false
         }
     }
 }
@@ -66,7 +100,7 @@ struct StatusPillView: View {
         let state = pill.state
         let label = pill.label
         HStack(spacing: 7) {
-            Mark(state: state, level: level, voice: pill.voice, isFromIPhone: pill.isFromIPhone)
+            Mark(state: state, level: level, voice: pill.voice, capturedOn: pill.capturedOn)
             if label != nil || state.since != nil {
                 HStack(spacing: 4) {
                     if let label {
@@ -167,7 +201,7 @@ private struct Mark: View {
     let state: PillState
     let level: LiveLevel
     let voice: VoiceEmphasis?
-    let isFromIPhone: Bool
+    let capturedOn: CapturedOn?
 
     var body: some View {
         switch state {
@@ -178,9 +212,9 @@ private struct Mark: View {
                 if case .recording(_, let startApp?) = state, let app = startApp.app {
                     StartAppIcon(app: app)
                 }
-                if case .recording = state, isFromIPhone {
-                    Glyph(name: "iphone", tint: OverlayStyle.dimInk)
-                        .accessibilityLabel("iPhone")
+                if case .recording = state, let capturedOn {
+                    Glyph(name: capturedOn.symbol, tint: OverlayStyle.dimInk)
+                        .accessibilityLabel(capturedOn.accessibilityLabel)
                 }
                 Ribbon(state: state, level: level, voice: voice)
             }

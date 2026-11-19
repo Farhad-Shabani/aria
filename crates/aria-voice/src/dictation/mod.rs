@@ -28,17 +28,20 @@ pub use cursor::Cursor;
 pub use event::{
     CaptionSnapshot, DictationEvent, DictationEventEmitter, EVENT_THREAD, GhostSnapshot,
 };
-pub use event::{CapturedMicrophone, DictationStage, HeardSpeaker};
+pub use event::{
+    CapturedMicrophone, DictationStage, HeardSpeaker, RecordingDevice, RecordingOrigin,
+};
 pub use execution::{
-    ActiveDictation, DictationCoordinator, DictationError, DictationExecutor, DictationPolicy,
-    DictationPolicyError, EscapeRule, ExecutionControl, Transcribed,
+    ActiveDictation, Announcement, DeliveredRecording, DictationCoordinator, DictationError,
+    DictationExecutor, DictationPolicy, DictationPolicyError, EscapeRule, ExecutionControl,
+    Relayed, Transcribed,
 };
 use level::Meter;
 pub use level::MicLevel;
 pub use llm::{LlmCleanup, LlmCleanupError};
 pub use pipeline::DictationPipeline;
 pub use rewrites::{Cleanup, ConfiguredLayers, Rewrites};
-pub use transcripts::{Delivered, DeliveryOutcome, TranscriptSink, Utterance};
+pub use transcripts::{Delivered, DeliveryOutcome, ReturnOffer, TranscriptSink, Utterance};
 
 /// Names one recording for as long as the daemon that took it runs. What
 /// `Stop` names.

@@ -49,6 +49,7 @@ pub struct SettingsPatch {
     pub aria_key: Option<AriaKey>,
     pub ask_shortcut: Option<Option<Shortcut>>,
     pub prompt_list_shortcut: Option<Option<Shortcut>>,
+    pub phone_submits: Option<bool>,
     pub stt_language: Option<Language>,
     pub tts_rate: Option<SpeakingRate>,
 }
@@ -269,6 +270,7 @@ impl SettingsPatch {
             prompt_list_shortcut: self
                 .prompt_list_shortcut
                 .unwrap_or(current.prompt_list_shortcut),
+            phone_submits: self.phone_submits.unwrap_or(current.phone_submits),
             stt_language: self
                 .stt_language
                 .unwrap_or_else(|| current.stt_language.clone()),

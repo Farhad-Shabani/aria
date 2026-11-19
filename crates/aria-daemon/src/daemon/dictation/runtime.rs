@@ -11,6 +11,7 @@ use super::assembly::{
 use super::follower::EngineFollower;
 use crate::daemon::config::WakeConfig;
 use crate::daemon::inference::pairing_id;
+use crate::daemon::relay::Showing;
 use aria_kit::audio::{RecordingReader, WakeWordMonitor};
 use aria_kit::cancel::{CancelToken, Deadline};
 use aria_platform::delivery::DeliveryFactory;
@@ -21,9 +22,10 @@ use aria_settings::rpc::{Categorized, RpcErrorCode};
 use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
-    ActiveDictation, DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter,
-    DictationOutcome, DictationRequest, DictationSettings, DictationStage, EscapeRule, RecordingId,
-    StopMode, Transcribed, subscribers::DictationSubscribers,
+    ActiveDictation, Announcement, CapturedMicrophone, DeliveredRecording, DictationCoordinator,
+    DictationError, DictationEvent, DictationEventEmitter, DictationOutcome, DictationRequest,
+    DictationSettings, DictationStage, EscapeRule, RecordingId, StopMode, Transcribed,
+    subscribers::DictationSubscribers,
 };
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
@@ -63,6 +65,12 @@ pub(in crate::daemon) enum AutoStopRule {
     Setting,
     /// A hold: its release is the stop.
     Off,
+}
+
+/// What a relayed recording reads at admission, from one settings snapshot.
+pub(in crate::daemon) struct RelaySettings {
+    pub(in crate::daemon) dictation: DictationSettings,
+    pub(in crate::daemon) phone_submits: bool,
 }
 
 pub(in crate::daemon) struct DictationRuntime {
@@ -194,6 +202,11 @@ impl DictationRuntime {
     }
 
     #[cfg(test)]
+    pub(in crate::daemon) fn set_emitter(&mut self, emitter: EventEmitter<DictationEvent>) {
+        self.emitter = emitter;
+    }
+
+    #[cfg(test)]
     pub(in crate::daemon) fn execute_with(&mut self, executor: RuntimeExecutor) {
         let policy = aria_voice::dictation::DictationPolicy::new(MAX_DICTATION_TIMEOUT)
             .expect("the longest timeout is a valid policy");
@@ -320,35 +333,28 @@ impl DictationRuntime {
     pub(in crate::daemon) fn history_settings(
         &self,
     ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.settings_for(None, HistorySource::Local)
+        Ok(resolved(self.snapshot()?, None, HistorySource::Local))
     }
 
     /// A phone's dictation lands in whatever app is in front on this Mac.
-    pub(in crate::daemon) fn relay_settings(
-        &self,
-    ) -> Result<DictationSettings, DictationRuntimeError> {
-        self.settings_for(
-            aria_platform::delivery::frontmost_application(),
-            HistorySource::Relay,
-        )
+    pub(in crate::daemon) fn relay_settings(&self) -> Result<RelaySettings, DictationRuntimeError> {
+        let settings = self.snapshot()?;
+        Ok(RelaySettings {
+            phone_submits: settings.phone_submits,
+            dictation: resolved(
+                settings,
+                aria_platform::delivery::frontmost_application(),
+                HistorySource::Relay,
+            ),
+        })
     }
 
-    fn settings_for(
-        &self,
-        application: Option<aria_platform::delivery::Application>,
-        source: HistorySource,
-    ) -> Result<DictationSettings, DictationRuntimeError> {
+    fn snapshot(&self) -> Result<aria_settings::Settings, DictationRuntimeError> {
         let snapshot = self
             .settings
             .snapshot()
             .map_err(DictationRuntimeError::Settings)?;
-        let mut settings = DictationSettings::resolve(
-            snapshot.settings,
-            DictationRequest::new(StopMode::OnSilence),
-            application,
-        );
-        settings.source = source;
-        Ok(settings)
+        Ok(snapshot.settings)
     }
 
     /// Announces a failure the pipeline never saw: a relay job that panicked.
@@ -356,15 +362,41 @@ impl DictationRuntime {
         self.emitter.emit(DictationStage::Failed(code));
     }
 
+    /// Shows a remote recording to every subscriber as it starts, under a
+    /// fresh id from the counter presses use. Claims nothing. Only a daemon
+    /// that built its coordinator at startup serves a relay, so this never
+    /// waits on a model.
+    pub(in crate::daemon) fn announce_recording(
+        &self,
+        microphone: CapturedMicrophone,
+    ) -> Result<Announcement, DictationRuntimeError> {
+        let ready = self.loaded()?;
+        let mute_sound = self.snapshot()?.mute_sound;
+        Ok(ready
+            .coordinator
+            .announce_recording(microphone, mute_sound, &self.emitter))
+    }
+
+    /// Ends an announced recording nothing delivers. False when a newer
+    /// recording started since, so nothing was said.
+    pub(in crate::daemon) fn cancel_announced(&self, recording: RecordingId) -> bool {
+        // A coordinator that was never built announced nothing.
+        self.ready()
+            .is_some_and(|ready| ready.coordinator.cancel_announced(recording, &self.emitter))
+    }
+
     /// Delivers a recording captured elsewhere through the press pipeline.
     /// The same stages reach every subscriber, so the Mac's status pill
-    /// follows a relayed recording as it follows a press.
+    /// follows a relayed recording as it follows a press. An announcement
+    /// `showing` continues ends with the pipeline's own terminal stage, or,
+    /// returned before that, as its drop ends it.
     pub(in crate::daemon) fn dictate_recording(
         &self,
         recording: &mut RecordingReader,
+        showing: Showing,
         settings: DictationSettings,
         cancel: CancelToken,
-    ) -> Result<String, DictationRuntimeError> {
+    ) -> Result<DeliveredRecording, DictationRuntimeError> {
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled.into());
         }
@@ -372,12 +404,14 @@ impl DictationRuntime {
         let coordinator = match self.loaded() {
             Ok(ready) => &ready.coordinator,
             Err(error) => {
+                // The failure is the announcement's terminal stage.
+                drop(showing.into_relayed());
                 events.emit(DictationStage::Failed((&error).into()));
                 return Err(error.into());
             }
         };
         coordinator
-            .deliver_recording(recording, settings, cancel, &events)
+            .deliver_recording(recording, showing.into_relayed(), settings, cancel, &events)
             .map_err(DictationRuntimeError::Execution)
     }
 
@@ -557,6 +591,20 @@ impl DictationRuntime {
     }
 }
 
+fn resolved(
+    settings: aria_settings::Settings,
+    application: Option<aria_platform::delivery::Application>,
+    source: HistorySource,
+) -> DictationSettings {
+    let mut settings = DictationSettings::resolve(
+        settings,
+        DictationRequest::new(StopMode::OnSilence),
+        application,
+    );
+    settings.source = source;
+    settings
+}
+
 /// `DEFERRED_ENGINE` and `backend::SERVER` label a dictation, not an engine,
 /// so a retry of either runs on whatever is configured.
 fn names_an_engine(label: &str) -> bool {
@@ -714,6 +762,7 @@ mod event_tests {
         });
         emitter.emit(DictationStage::Recording {
             id: RecordingId(1),
+            origin: aria_voice::dictation::RecordingOrigin::Local,
             delivery: aria_settings::DeliveryMode::Complete,
             route: aria_voice::dictation::TranscriptRoute::Deliver,
         });
@@ -806,6 +855,7 @@ mod event_tests {
         };
         let recording = DictationStage::Recording {
             id: RecordingId(2),
+            origin: aria_voice::dictation::RecordingOrigin::Local,
             delivery: aria_settings::DeliveryMode::Complete,
             route: aria_voice::dictation::TranscriptRoute::Deliver,
         };
@@ -1039,7 +1089,7 @@ mod history_tests {
             _: DictationSettings,
             _: &Arc<aria_voice::dictation::ExecutionControl>,
             _: &DictationEventEmitter,
-        ) -> Result<String, DictationError> {
+        ) -> Result<DeliveredRecording, DictationError> {
             panic!("this test never delivers a relayed recording");
         }
     }

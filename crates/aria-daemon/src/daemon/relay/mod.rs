@@ -11,6 +11,7 @@
 //! a server; only [`crate::daemon::service::RelayRpc`] knows about tonic.
 
 mod advert;
+mod announcement;
 mod code;
 mod decode;
 mod pairing;
@@ -26,9 +27,11 @@ use tonic::Status;
 
 use crate::ipc::wire;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use aria_voice::dictation::{RecordingDevice, RecordingId};
 
 pub use advert::SERVICE_TYPE;
 pub(super) use advert::{Advert, instance_name};
+pub(super) use announcement::{Announcements, Showing};
 pub(crate) use code::Invite;
 pub(super) use code::{PairingCode, PairingCodes};
 pub(crate) use pairing::RELATIVE_PATH as PAIRING_RELATIVE_PATH;
@@ -37,7 +40,7 @@ pub(super) use pairing::{
     load_or_create as load_pairing, mint, presented, require_paired, to_hex,
 };
 pub(super) use settings::LanSettings;
-pub(crate) use stage::RelayStage;
+pub(crate) use stage::{Offer, RelayStage};
 
 /// The longest recording's PCM, so an oversized upload stops as it streams.
 const MAX_AUDIO_BYTES: usize = decode::MAX_PCM_BYTES;
@@ -45,10 +48,17 @@ const MAX_AUDIO_BYTES: usize = decode::MAX_PCM_BYTES;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Caps total upload time even when messages arrive within the idle timeout.
 const SESSION_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long the phone may take to ask for Return once the text landed.
+const SUBMIT_WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Opening {
     format: wire::AudioFormat,
+    submit: bool,
+    /// The announced recording the relay says it continues.
+    recording: Option<RecordingId>,
+    /// `None` from an older client.
+    device: Option<RecordingDevice>,
 }
 
 impl Opening {
@@ -57,7 +67,16 @@ impl Opening {
             wire::AudioFormat::Unspecified => return Err(RelayError::UnsupportedFormat),
             format => format,
         };
-        Ok(Self { format })
+        Ok(Self {
+            format,
+            submit: start.submit,
+            recording: start.recording_id.map(RecordingId),
+            device: crate::ipc::protocol::recording_device(start.device),
+        })
+    }
+
+    pub(super) fn submits(&self) -> bool {
+        self.submit
     }
 }
 
@@ -65,9 +84,31 @@ impl Opening {
 #[derive(Debug)]
 pub(super) enum Collected {
     /// Audio to decode and hear.
-    Audio(Vec<u8>),
+    Audio {
+        audio: Vec<u8>,
+        channel: ReplyChannel,
+    },
     /// Nothing arrived before the idle timeout, or the stream closed empty.
     Silent,
+}
+
+/// Whether the phone can still ask for Return once its audio is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReplyChannel {
+    /// It ended with a `RelayStop`, so a `RelaySubmit` can follow.
+    Open,
+    /// It half-closed, so it sends nothing more.
+    Closed,
+}
+
+/// What the phone said once the text landed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Reply {
+    Submit,
+    /// [`SUBMIT_WAIT`] passed without a word.
+    Lapsed,
+    /// The phone half-closed without asking.
+    Closed,
 }
 
 /// Reads the opening message and validates it. A stream that opens with
@@ -116,7 +157,7 @@ where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
 {
     let mut audio: Vec<u8> = Vec::new();
-    loop {
+    let channel = loop {
         // A gap this long ends the stream wherever it falls. A silent TCP
         // death — the phone out of range, no FIN — looks exactly like a
         // client thinking, and only the clock tells them apart.
@@ -134,9 +175,12 @@ where
                     }
                     audio.extend_from_slice(&chunk.chunk);
                 }
-                Some(wire::relay_request::Body::Stop(_stop)) => break,
+                Some(wire::relay_request::Body::Stop(_stop)) => break ReplyChannel::Open,
                 Some(wire::relay_request::Body::Start(_start)) => {
                     return Err(RelayError::RestartedMidStream);
+                }
+                Some(wire::relay_request::Body::Submit(_submit)) => {
+                    return Err(RelayError::SubmittedMidUpload);
                 }
                 // An unknown body is a newer client's field. Skipping it
                 // beats ending a recording over something additive.
@@ -144,15 +188,54 @@ where
             },
             Some(Err(status)) => return Err(RelayError::ClientStream(status)),
             // A half-close ends the recording, the same as a `RelayStop`.
-            None => break,
+            None => break ReplyChannel::Closed,
         }
-    }
+    };
 
     Ok(if audio.is_empty() {
         Collected::Silent
     } else {
-        Collected::Audio(audio)
+        Collected::Audio { audio, channel }
     })
+}
+
+/// Waits for the phone's word after the text landed, up to
+/// [`SUBMIT_WAIT`]. The daemon stopping ends the wait at once.
+pub(super) async fn next_reply<S>(
+    stream: &mut S,
+    shutdown: &CancellationToken,
+) -> Result<Reply, RelayError>
+where
+    S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
+{
+    tokio::select! {
+        biased;
+        () = shutdown.cancelled() => Err(RelayError::ShuttingDown),
+        reply = tokio::time::timeout(SUBMIT_WAIT, read_reply(stream)) => {
+            reply.unwrap_or(Ok(Reply::Lapsed))
+        }
+    }
+}
+
+async fn read_reply<S>(stream: &mut S) -> Result<Reply, RelayError>
+where
+    S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
+{
+    loop {
+        let Some(request) = stream.next().await else {
+            return Ok(Reply::Closed);
+        };
+        match request.map_err(RelayError::ClientStream)?.body {
+            Some(wire::relay_request::Body::Submit(_submit)) => return Ok(Reply::Submit),
+            Some(
+                wire::relay_request::Body::Start(_)
+                | wire::relay_request::Body::Audio(_)
+                | wire::relay_request::Body::Stop(_),
+            ) => return Err(RelayError::RecordingEnded),
+            // A newer client's field, skipped as during the upload.
+            None => {}
+        }
+    }
 }
 
 /// Turns collected bytes into the canonical PCM the engine reads.
@@ -173,6 +256,12 @@ pub(super) enum RelayError {
     #[error("a second RelayStart arrived mid-stream")]
     RestartedMidStream,
 
+    #[error("a RelaySubmit arrived before the recording ended")]
+    SubmittedMidUpload,
+
+    #[error("the recording already ended with RelayStop")]
+    RecordingEnded,
+
     #[error("the audio format is missing or unsupported; the relay takes PCM_S16LE")]
     UnsupportedFormat,
 
@@ -191,6 +280,9 @@ pub(super) enum RelayError {
     #[error("a recording is already running on this Mac")]
     Busy,
 
+    #[error("a remote recording must name its device")]
+    DeviceUnspecified,
+
     #[error(transparent)]
     Decode(#[from] decode::DecodeError),
 
@@ -204,7 +296,10 @@ impl From<&RelayError> for RpcErrorCode {
         match error {
             RelayError::NotStarted
             | RelayError::RestartedMidStream
+            | RelayError::SubmittedMidUpload
+            | RelayError::RecordingEnded
             | RelayError::UnsupportedFormat
+            | RelayError::DeviceUnspecified
             | RelayError::Decode(DecodeError::Empty | DecodeError::OddPcmLength { .. }) => {
                 Self::InvalidRequest
             }
@@ -300,6 +395,7 @@ mod tests {
         wire::RelayRequest {
             body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                 format: format as i32,
+                ..Default::default()
             })),
         }
     }
@@ -344,6 +440,47 @@ mod tests {
             .expect("the format defines its rate");
 
         assert_eq!(opening.format, wire::AudioFormat::PcmS16le);
+        assert!(!opening.submits(), "an absent submit inserts only");
+    }
+
+    #[tokio::test]
+    async fn an_opening_keeps_the_phones_ask_to_press_return() {
+        let mut stream = requests(vec![wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Start(wire::RelayStart {
+                format: wire::AudioFormat::PcmS16le as i32,
+                submit: true,
+                ..Default::default()
+            })),
+        }]);
+
+        let opening = open(&mut stream).await.expect("a valid opening");
+
+        assert!(opening.submits());
+    }
+
+    #[tokio::test]
+    async fn an_opening_keeps_the_recording_it_continues_and_its_device() {
+        let opening = |recording_id, device: wire::RecordingDevice| {
+            requests(vec![wire::RelayRequest {
+                body: Some(wire::relay_request::Body::Start(wire::RelayStart {
+                    format: wire::AudioFormat::PcmS16le as i32,
+                    recording_id,
+                    device: device as i32,
+                    ..Default::default()
+                })),
+            }])
+        };
+
+        let continued = open(&mut opening(Some(7), wire::RecordingDevice::Watch))
+            .await
+            .expect("a valid opening");
+        let older = open(&mut opening(None, wire::RecordingDevice::Unspecified))
+            .await
+            .expect("an older client's opening is valid");
+
+        assert_eq!(continued.recording, Some(RecordingId(7)));
+        assert_eq!(continued.device, Some(RecordingDevice::Watch));
+        assert_eq!((older.recording, older.device), (None, None));
     }
 
     #[tokio::test]
@@ -352,6 +489,7 @@ mod tests {
             let mut stream = requests(vec![wire::RelayRequest {
                 body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                     format,
+                    ..Default::default()
                 })),
             }]);
 
@@ -374,6 +512,12 @@ mod tests {
         assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::InvalidRequest);
     }
 
+    fn submit() -> wire::RelayRequest {
+        wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Submit(wire::RelaySubmit {})),
+        }
+    }
+
     #[tokio::test]
     async fn a_client_stop_ends_the_recording() {
         let mut stream = requests(vec![chunk(b"one"), chunk(b"two"), stop(), chunk(b"late")]);
@@ -382,7 +526,22 @@ mod tests {
             .await
             .expect("the stop ends it cleanly");
 
-        assert!(matches!(collected, Collected::Audio(audio) if audio == b"onetwo"));
+        assert!(matches!(
+            collected,
+            Collected::Audio { audio, channel: ReplyChannel::Open } if audio == b"onetwo"
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_stop_leaves_the_stream_open_for_a_submit() {
+        let mut stream = requests(vec![chunk(b"one"), stop(), submit()]);
+        collect(&mut stream, &CancellationToken::new())
+            .await
+            .expect("the stop ends the recording");
+
+        let reply = next_reply(&mut stream, &CancellationToken::new()).await;
+
+        assert_eq!(reply.expect("a submit is a reply"), Reply::Submit);
     }
 
     #[tokio::test]
@@ -393,7 +552,81 @@ mod tests {
             .await
             .expect("a half-close ends it");
 
-        assert!(matches!(collected, Collected::Audio(audio) if audio == b"one"));
+        assert!(matches!(
+            collected,
+            Collected::Audio { audio, channel: ReplyChannel::Closed } if audio == b"one"
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_closed_stream_asks_for_nothing() {
+        let mut stream = requests(vec![]);
+
+        let reply = next_reply(&mut stream, &CancellationToken::new()).await;
+
+        assert_eq!(reply.expect("a half-close is a reply"), Reply::Closed);
+    }
+
+    #[tokio::test]
+    async fn a_submit_during_the_upload_is_refused() {
+        let mut stream = requests(vec![chunk(b"one"), submit(), stop()]);
+
+        let error = collect(&mut stream, &CancellationToken::new())
+            .await
+            .expect_err("there is no text to press Return after");
+
+        assert!(matches!(error, RelayError::SubmittedMidUpload));
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::InvalidRequest);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_submit_wait_lapses_on_a_quiet_phone() {
+        let mut stream = Box::pin(tokio_stream::pending());
+        let started = tokio::time::Instant::now();
+
+        let reply = next_reply(&mut stream, &CancellationToken::new()).await;
+
+        assert_eq!(reply.expect("a lapse is a reply"), Reply::Lapsed);
+        assert_eq!(started.elapsed(), SUBMIT_WAIT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_daemon_stop_ends_the_submit_wait_at_once() {
+        let mut stream = Box::pin(tokio_stream::pending());
+        let shutdown = CancellationToken::new();
+        shutdown.cancel();
+        let started = tokio::time::Instant::now();
+
+        let error = next_reply(&mut stream, &shutdown)
+            .await
+            .expect_err("a stopping daemon presses nothing");
+
+        assert!(matches!(error, RelayError::ShuttingDown));
+        assert!(started.elapsed().is_zero());
+    }
+
+    #[tokio::test]
+    async fn a_recording_message_after_the_stop_is_refused() {
+        for late in [chunk(b"late"), stop(), start(wire::AudioFormat::PcmS16le)] {
+            let mut stream = requests(vec![late, submit()]);
+
+            let error = next_reply(&mut stream, &CancellationToken::new())
+                .await
+                .expect_err("the recording already ended");
+
+            assert!(matches!(error, RelayError::RecordingEnded));
+            assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::InvalidRequest);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unknown_body_after_the_stop_is_skipped() {
+        let newer_field = wire::RelayRequest { body: None };
+        let mut stream = requests(vec![newer_field, submit()]);
+
+        let reply = next_reply(&mut stream, &CancellationToken::new()).await;
+
+        assert_eq!(reply.expect("the unknown is skipped"), Reply::Submit);
     }
 
     #[tokio::test]
@@ -517,7 +750,7 @@ mod tests {
             .await
             .expect("the unknown is skipped");
 
-        assert!(matches!(collected, Collected::Audio(audio) if audio == b"one"));
+        assert!(matches!(collected, Collected::Audio { audio, .. } if audio == b"one"));
     }
 
     #[test]

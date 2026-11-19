@@ -156,7 +156,7 @@ struct SettingsView: View {
                 history.open(.item(.apps, id: $0))
             }
         case .privacy: PrivacySettings(settings: settings)
-        case .phone: PhoneSettings(pairing: phonePairing)
+        case .phone: PhoneSettings(pairing: phonePairing, settings: settings)
         case .about: AboutSettings(updates: updates)
         }
     }

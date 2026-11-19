@@ -1,5 +1,7 @@
 use std::fmt;
-use std::time::Instant;
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use cidre::core_audio::{self as ca, aggregate_device_keys as aggregate, hardware};
 use cidre::{cf, ns, os};
@@ -46,6 +48,82 @@ impl Drop for OutputMute {
             restore();
         }
     }
+}
+
+/// Where a mute lands once it's ready. A released slot stays empty, so a
+/// mute that lands after the recording ended restores at once.
+#[derive(Debug, Default)]
+pub(super) struct OutputSlot {
+    mute: Option<OutputMute>,
+    is_released: bool,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl OutputSlot {
+    /// Puts `mute` in the slot, as a mute that already landed.
+    pub(super) fn hold(slot: &Mutex<Self>, mute: OutputMute) {
+        lock(slot).mute = Some(mute);
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_muted(slot: &Mutex<Self>) -> bool {
+        lock(slot).mute.is_some()
+    }
+}
+
+impl OutputSlot {
+    /// Mutes other apps on a thread of its own, since CoreAudio can be slow,
+    /// and waits up to `wait` for it. Past that, the mute lands when ready.
+    pub(super) fn mute(
+        slot: &Arc<Mutex<Self>>,
+        acquire: fn() -> Option<OutputMute>,
+        wait: Option<Duration>,
+        recording: super::RecordingId,
+    ) {
+        let (muted, waiting) = mpsc::channel();
+        let landing = Arc::clone(slot);
+        let spawned = thread::Builder::new()
+            .name("aria-output-mute".into())
+            .spawn(move || {
+                let mute = acquire();
+                let mut slot = lock(&landing);
+                if !slot.is_released {
+                    slot.mute = mute;
+                }
+                drop(slot);
+                let _ = muted.send(());
+            });
+        match spawned {
+            Ok(_) => {
+                if let Some(wait) = wait
+                    && waiting.recv_timeout(wait).is_err()
+                {
+                    tracing::warn!(
+                        %recording,
+                        "muting other apps is slow; recording starts without waiting"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not mute other apps; recording continues");
+            }
+        }
+    }
+
+    /// Restores the sound, and keeps a mute that lands later out. Holds the
+    /// slot until the native restore finishes.
+    pub(super) fn release(slot: &Mutex<Self>) {
+        let mut slot = lock(slot);
+        slot.is_released = true;
+        drop(slot.mute.take());
+    }
+}
+
+fn lock(slot: &Mutex<OutputSlot>) -> MutexGuard<'_, OutputSlot> {
+    slot.lock().unwrap_or_else(|poisoned| {
+        tracing::error!("the output mute lock was poisoned; recovering");
+        poisoned.into_inner()
+    })
 }
 
 #[derive(Debug, thiserror::Error)]

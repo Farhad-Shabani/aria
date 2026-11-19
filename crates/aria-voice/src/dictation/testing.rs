@@ -1,9 +1,9 @@
 //! Spies and builders the dictation tests share.
 
 use super::{
-    Cursor, DeliveryMode, DictationError, DictationEventEmitter, DictationExecutor,
-    DictationResult, DictationSettings, EscapeRule, ExecutionControl, RecordingId, StopMode,
-    Transcribed, TranscriptSink, Utterance,
+    Cursor, DeliveredRecording, DeliveryMode, DictationError, DictationEventEmitter,
+    DictationExecutor, DictationResult, DictationSettings, EscapeRule, ExecutionControl,
+    RecordingId, ReturnOffer, StopMode, Transcribed, TranscriptSink, Utterance,
 };
 use crate::history::HistorySource;
 use crate::stt::{
@@ -326,6 +326,15 @@ pub fn settings(delivery_mode: DeliveryMode, output_mode: OutputMode) -> Dictati
     }
 }
 
+/// A Return offer into `application` that runs `press` in place of the
+/// cursor's checked one.
+pub fn return_offer(
+    application: Option<aria_platform::delivery::Application>,
+    press: impl FnOnce(&CancelToken) -> Result<(), DeliveryError> + Send + 'static,
+) -> ReturnOffer {
+    ReturnOffer::new(application, press)
+}
+
 /// How long a test waits for a scripted press to reach its next edge.
 pub const EDGE_WAIT: Duration = Duration::from_secs(5);
 /// What every scripted press hears.
@@ -337,9 +346,12 @@ pub enum Edge {
     Recording(RecordingId),
     Stopped,
     Cancelled,
+    /// A recording captured elsewhere reached delivery under this id.
+    Relayed(RecordingId),
 }
 
 /// Records until a stop or a cancel, reports each edge, and hears `HEARD`.
+/// A relayed recording reports its id and hears no speech.
 pub struct RecordsUntilStopped {
     edges: Mutex<mpsc::Sender<Edge>>,
 }
@@ -405,9 +417,10 @@ impl DictationExecutor for RecordsUntilStopped {
         &self,
         _recording: &mut RecordingReader,
         _settings: DictationSettings,
-        _control: &Arc<ExecutionControl>,
+        control: &Arc<ExecutionControl>,
         _events: &DictationEventEmitter,
-    ) -> Result<String, DictationError> {
+    ) -> Result<DeliveredRecording, DictationError> {
+        self.report(Edge::Relayed(control.recording_id()));
         Err(DictationError::NoSpeech)
     }
 }
@@ -458,7 +471,7 @@ impl DictationExecutor for PressSpy {
         _settings: DictationSettings,
         _control: &Arc<ExecutionControl>,
         _events: &DictationEventEmitter,
-    ) -> Result<String, DictationError> {
+    ) -> Result<DeliveredRecording, DictationError> {
         panic!("a press spy never delivers a relayed recording");
     }
 }

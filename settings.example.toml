@@ -146,6 +146,8 @@ threshold = 0.5
 enabled = false
 # The port it listens on, with mutual TLS. (restart)
 port = 9850
+# Lets a paired iPhone press Return after its text, only where the text went.
+submits = true
 
 [delivery]
 # The longest typing or pasting a result may take, for dictation, chats and the phone. (restart)

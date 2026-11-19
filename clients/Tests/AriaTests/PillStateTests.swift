@@ -168,16 +168,35 @@ final class PillStateTests: XCTestCase {
         XCTAssertNil(PillState(event))
     }
 
-    func testOnlyAnIPhoneMarksTheRecording() {
+    func testOnlyAnIPhoneOrAnAppleWatchMarksTheRecording() {
         var event = Aria_Daemon_V1_DictationEvent()
         event.stage = .capturing
+        func remote(_ device: Aria_Daemon_V1_RecordingDevice) -> CapturedOn? {
+            var microphone = Aria_Daemon_V1_RemoteRecording()
+            microphone.device = device
+            event.remote = microphone
+            return CapturedOn(event)
+        }
 
+        XCTAssertEqual(remote(.phone), .remote(.phone))
+        XCTAssertEqual(remote(.watch), .remote(.watch))
+        XCTAssertNil(remote(.unspecified))
+        XCTAssertNil(remote(.UNRECOGNIZED(9)))
         event.phone = Aria_Daemon_V1_AttachedPhone()
-        XCTAssertTrue(Pill.capturesFromIPhone(event))
+        XCTAssertEqual(CapturedOn(event), .attachedPhone)
         event.device = Aria_Daemon_V1_MicrophoneDevice()
-        XCTAssertFalse(Pill.capturesFromIPhone(event))
+        XCTAssertNil(CapturedOn(event))
         event.microphone = nil
-        XCTAssertFalse(Pill.capturesFromIPhone(event))
+        XCTAssertNil(CapturedOn(event))
+    }
+
+    func testAWatchShowsItsOwnGlyphAndAnIPhoneTheSameOneEitherWay() {
+        XCTAssertEqual(CapturedOn.attachedPhone.symbol, "iphone")
+        XCTAssertEqual(CapturedOn.remote(.phone).symbol, "iphone")
+        XCTAssertEqual(CapturedOn.remote(.watch).symbol, "applewatch")
+        XCTAssertEqual(CapturedOn.attachedPhone.accessibilityLabel, "iPhone")
+        XCTAssertEqual(CapturedOn.remote(.phone).accessibilityLabel, "iPhone")
+        XCTAssertEqual(CapturedOn.remote(.watch).accessibilityLabel, "Apple Watch")
     }
 
     func testCapturingDoesNotChangeThePill() {

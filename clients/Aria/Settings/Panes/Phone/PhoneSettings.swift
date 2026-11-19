@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PhoneSettings: View {
     @ObservedObject var pairing: PhonePairing
+    @ObservedObject var settings: DaemonSettings
     @State private var isConfirmingRevoke = false
 
     var body: some View {
@@ -40,6 +41,20 @@ struct PhoneSettings: View {
             if case .live(let invite, let expiresAt) = pairing.status {
                 Section {
                     live(invite, expiresAt: expiresAt)
+                }
+            }
+            if let snapshot = settings.snapshot {
+                let editor = SettingsEditor(snapshot: snapshot, settings: settings)
+                Section {
+                    Toggle(isOn: editor.binding(\.phoneSubmits, \.phoneSubmits)) {
+                        Text(SettingsRow.phoneReturn.title)
+                        Text("Your Mac presses Return only where your iPhone’s text went.")
+                    }
+                    // A disabled switch on macOS keeps its label bright, so
+                    // dim the words too, as System Settings does.
+                    .foregroundStyle(pairing.isOn ? .primary : .tertiary)
+                    .disabled(!pairing.isOn)
+                    .settingsRow(.phoneReturn)
                 }
             }
         }

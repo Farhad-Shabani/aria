@@ -172,6 +172,13 @@ message Settings {
   // key + Command unless changed.
   Shortcut prompt_list_shortcut = 13;
 
+  // Phone
+
+  // Lets a paired phone press Return after its relayed text, only where the
+  // text went: `RelayStart.submit`, `RelaySubmit`, and an app set to insert
+  // and press Return. On by default. Only the Mac changes it.
+  bool phone_submits = 27;
+
   // Speech to text
 
   // A language code such as "en" or "en-us", or "auto" to detect.
@@ -241,6 +248,10 @@ message SettingsPatch {
   optional AriaKey aria_key = 11;
   Shortcut ask_shortcut = 12;
   Shortcut prompt_list_shortcut = 13;
+
+  // Phone
+
+  optional bool phone_submits = 27;
 
   // Speech to text
 

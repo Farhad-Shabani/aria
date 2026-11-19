@@ -5,7 +5,7 @@
 
 use std::process::{Command, Stdio};
 
-use crate::dictation::DictationStage;
+use crate::dictation::{DictationStage, RecordingOrigin};
 use aria_platform::feedback::run_detached;
 use aria_platform::feedback::{self, SYSTEM_SOUNDS};
 
@@ -23,14 +23,22 @@ impl LinuxFeedback {
 
     pub(super) fn observe(&self, stage: &DictationStage) {
         match stage {
-            DictationStage::Recording { .. } => play("message-new-instant.oga"),
+            DictationStage::Recording {
+                origin: RecordingOrigin::Local,
+                ..
+            } => play("message-new-instant.oga"),
             DictationStage::Delivered { .. } => play("complete.oga"),
             DictationStage::Failed(code) => {
                 play("dialog-error.oga");
                 show(message(*code));
             }
+            // The device that records it tells the person it started.
+            DictationStage::Recording {
+                origin: RecordingOrigin::Remote,
+                ..
+            }
             // The start cue played at the press.
-            DictationStage::Capturing { .. }
+            | DictationStage::Capturing { .. }
             | DictationStage::Transcribing
             | DictationStage::Delivering
             | DictationStage::SegmentTranscribed { .. }

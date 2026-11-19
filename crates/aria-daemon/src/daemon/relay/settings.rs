@@ -142,6 +142,7 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
         aria_key,
         ask_shortcut,
         prompt_list_shortcut,
+        phone_submits,
         stt_language,
         tts_rate,
     } = patch;
@@ -179,6 +180,7 @@ pub(super) fn scoped(patch: wire::SettingsPatch) -> Result<wire::SettingsPatch, 
         (Key::ShortcutsAriaKey, aria_key.is_some()),
         (Key::ShortcutsAsk, ask_shortcut.is_some()),
         (Key::ShortcutsPromptList, prompt_list_shortcut.is_some()),
+        (Key::PhoneSubmits, phone_submits.is_some()),
         (Key::SttLanguage, stt_language.is_some()),
         (Key::TtsRate, tts_rate.is_some()),
     ];
@@ -370,6 +372,7 @@ mod tests {
                 }),
                 vocabulary_dir: Some("/Users/you/project".to_owned()),
                 microphone: "coreaudio:00-11-22-33-44-55:input".to_owned(),
+                phone_submits: true,
                 ..Default::default()
             }),
         };
@@ -383,6 +386,10 @@ mod tests {
         assert_eq!(
             settings.application_overrides,
             Some(wire::ApplicationOverrides::default())
+        );
+        assert!(
+            settings.phone_submits,
+            "the phone shows whether it may press Return"
         );
     }
 
@@ -490,6 +497,10 @@ mod tests {
             },
             wire::SettingsPatch {
                 vocabulary_dir: Some("/Users/someone/project".to_owned()),
+                ..Default::default()
+            },
+            wire::SettingsPatch {
+                phone_submits: Some(true),
                 ..Default::default()
             },
         ];

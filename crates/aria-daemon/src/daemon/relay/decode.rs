@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use aria_kit::audio::canonical_samples;
 
-const MAX_RECORDING_SECONDS: u64 = 600;
+pub(super) const MAX_RECORDING_SECONDS: u64 = 600;
 
 /// Clients stop recording at [`MAX_RECORDING_SECONDS`]. Recorder overshoot
 /// runs slightly past it, so a full-length recording still fits.

@@ -24,6 +24,7 @@ impl Settings {
             stt,
             assistant,
             shortcuts,
+            phone,
             prompts,
             application_overrides,
             ..
@@ -113,6 +114,7 @@ impl Settings {
                 defaults.prompt_list_shortcut,
                 Key::ShortcutsPromptList,
             )?,
+            phone_submits: phone.submits.unwrap_or(defaults.phone_submits),
             stt_language: match &stt.language {
                 Some(language) => language
                     .parse()
@@ -156,6 +158,7 @@ pub(super) fn patch(current: &Settings, next: &Settings) -> Result<Patch, Settin
         aria_key,
         ask_shortcut,
         prompt_list_shortcut,
+        phone_submits,
         stt_language,
         tts_rate,
     } = next;
@@ -262,6 +265,9 @@ pub(super) fn patch(current: &Settings, next: &Settings) -> Result<Patch, Settin
             Key::ShortcutsPromptList,
             &ShortcutEntry::from(*prompt_list_shortcut),
         )?;
+    }
+    if *phone_submits != current.phone_submits {
+        patch.set(Key::PhoneSubmits, *phone_submits);
     }
     if *stt_language != current.stt_language {
         patch.set(Key::SttLanguage, stt_language.as_str());
@@ -452,6 +458,7 @@ mod tests {
             aria_key: AriaKey::Fn,
             ask_shortcut: Some(Shortcut::Chord(chord)),
             prompt_list_shortcut: None,
+            phone_submits: false,
             vocabulary_enabled: true,
             vocabulary_dir: Some(crate::Directory::new("/src/writ".into()).expect("valid")),
             application_overrides: ApplicationOverrides::new([(

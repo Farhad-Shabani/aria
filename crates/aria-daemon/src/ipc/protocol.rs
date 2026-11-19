@@ -29,7 +29,8 @@ use aria_settings::{
 use aria_voice::dictation::{
     CaptionSnapshot, CapturedMicrophone, DeliveryOutcome, DictationEvent, DictationOutcome,
     DictationRequest, DictationResult, DictationRoute, DictationStage, EscapeRule, GhostSnapshot,
-    HeardSpeaker, MicLevel, RecordingId, StopMode, TranscriptRoute,
+    HeardSpeaker, MicLevel, RecordingDevice, RecordingId, RecordingOrigin, StopMode,
+    TranscriptRoute,
 };
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
@@ -424,14 +425,29 @@ impl From<wire::DictationResult> for DictationResult {
 
 impl From<RelayStage> for wire::RelayEvent {
     fn from(outcome: RelayStage) -> Self {
-        let (stage, text) = match outcome {
-            RelayStage::Transcribing => (wire::RelayStage::Transcribing, String::new()),
-            RelayStage::Completed(text) => (wire::RelayStage::Completed, text),
-            RelayStage::NoSpeech => (wire::RelayStage::NoSpeech, String::new()),
+        let (stage, text, submitted, return_offer) = match outcome {
+            RelayStage::Transcribing => {
+                (wire::RelayStage::Transcribing, String::new(), false, None)
+            }
+            RelayStage::Completed { text, return_offer } => (
+                wire::RelayStage::Completed,
+                text,
+                false,
+                return_offer.map(|offered| wire::ReturnOffer {
+                    application_name: offered.application_name,
+                }),
+            ),
+            RelayStage::CompletedAndSubmitted(text) => {
+                (wire::RelayStage::Completed, text, true, None)
+            }
+            RelayStage::NoSpeech => (wire::RelayStage::NoSpeech, String::new(), false, None),
+            RelayStage::OfferTaken => (wire::RelayStage::OfferTaken, String::new(), false, None),
         };
         Self {
             stage: stage as i32,
             text,
+            submitted,
+            return_offer,
         }
     }
 }
@@ -2618,6 +2634,7 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                         .prompt_list_shortcut
                         .ok_or(ProtocolError::MissingBody("prompt list hotkey"))?,
                 )?,
+                phone_submits: settings.phone_submits,
                 stt_language: settings.stt_language.parse()?,
                 tts_rate: SpeakingRate::new(settings.tts_rate as f32)
                     .map_err(ProtocolError::InvalidSpeakingRate)?,
@@ -2758,6 +2775,7 @@ impl From<SettingsPatch> for wire::SettingsPatch {
             aria_key: patch.aria_key.map(|key| wire::AriaKey::from(key) as i32),
             ask_shortcut: patch.ask_shortcut.map(wire::Shortcut::from),
             prompt_list_shortcut: patch.prompt_list_shortcut.map(wire::Shortcut::from),
+            phone_submits: patch.phone_submits,
             stt_language: patch
                 .stt_language
                 .map(|language| language.as_str().to_owned()),
@@ -2879,6 +2897,7 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
                 aria_key: wire::AriaKey::from(snapshot.settings.aria_key) as i32,
                 ask_shortcut: Some(snapshot.settings.ask_shortcut.into()),
                 prompt_list_shortcut: Some(snapshot.settings.prompt_list_shortcut.into()),
+                phone_submits: snapshot.settings.phone_submits,
                 stt_language: snapshot.settings.stt_language.as_str().to_owned(),
                 tts_rate: f64::from(snapshot.settings.tts_rate.get()),
             }),
@@ -2989,6 +3008,7 @@ impl TryFrom<wire::SettingsPatch> for SettingsPatch {
                 .prompt_list_shortcut
                 .map(Option::<Shortcut>::try_from)
                 .transpose()?,
+            phone_submits: patch.phone_submits,
             stt_language: patch.stt_language.as_deref().map(str::parse).transpose()?,
             tts_rate: patch
                 .tts_rate
@@ -3260,6 +3280,25 @@ fn delivery_outcome(code: i32) -> Option<DeliveryOutcome> {
     }
 }
 
+impl From<RecordingDevice> for wire::RecordingDevice {
+    fn from(device: RecordingDevice) -> Self {
+        match device {
+            RecordingDevice::Phone => Self::Phone,
+            RecordingDevice::Watch => Self::Watch,
+        }
+    }
+}
+
+/// The device a remote recording names, or `None` for one left unspecified
+/// or unknown to this daemon.
+pub(crate) fn recording_device(code: i32) -> Option<RecordingDevice> {
+    match wire::RecordingDevice::try_from(code) {
+        Ok(wire::RecordingDevice::Phone) => Some(RecordingDevice::Phone),
+        Ok(wire::RecordingDevice::Watch) => Some(RecordingDevice::Watch),
+        Ok(wire::RecordingDevice::Unspecified) | Err(..) => None,
+    }
+}
+
 impl From<DictationStage> for wire::DictationEvent {
     fn from(stage: DictationStage) -> Self {
         let mut text = String::new();
@@ -3274,6 +3313,9 @@ impl From<DictationStage> for wire::DictationEvent {
         let (code, error) = match stage {
             DictationStage::Recording {
                 id,
+                // Only this daemon's own cues read it. Clients learn a remote
+                // device from CAPTURING.
+                origin: _,
                 delivery,
                 route,
             } => {
@@ -3297,6 +3339,11 @@ impl From<DictationStage> for wire::DictationEvent {
                     // The daemon pushes in only the attached phone's audio.
                     CapturedMicrophone::Pushed => Some(Microphone::Phone(wire::AttachedPhone {})),
                     CapturedMicrophone::Prerecorded => None,
+                    CapturedMicrophone::Remote(device) => {
+                        Some(Microphone::Remote(wire::RemoteRecording {
+                            device: wire::RecordingDevice::from(device) as i32,
+                        }))
+                    }
                 };
                 (wire::DictationStage::Capturing, 0)
             }
@@ -3360,6 +3407,8 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
         match wire::DictationStage::try_from(event.stage) {
             Ok(wire::DictationStage::Recording) => Ok(Self::Recording {
                 id: RecordingId(event.recording_id),
+                // The wire doesn't carry it; a client plays no cues.
+                origin: RecordingOrigin::Local,
                 delivery: decode_enum::<wire::DeliveryMode>(event.delivery_mode, "delivery mode")?,
                 route: decode_enum::<wire::TranscriptRoute>(event.route, "transcript route")?,
             }),
@@ -3372,6 +3421,10 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
                             id: InputDeviceId::new(device.id.as_str()),
                         },
                         Some(Microphone::Phone(_)) => CapturedMicrophone::Pushed,
+                        // A device a newer daemon names reads as no microphone,
+                        // which a pill shows without a glyph.
+                        Some(Microphone::Remote(remote)) => recording_device(remote.device)
+                            .map_or(CapturedMicrophone::Prerecorded, CapturedMicrophone::Remote),
                         None => CapturedMicrophone::Prerecorded,
                     },
                 })
@@ -3654,6 +3707,21 @@ mod tests {
     use aria_voice::dictation::DictationError;
 
     use super::*;
+
+    #[test]
+    fn submitted_text_reads_as_completed_to_a_phone_that_ignores_the_return() {
+        let submitted =
+            wire::RelayEvent::from(RelayStage::CompletedAndSubmitted("ship it".to_owned()));
+        assert_eq!(submitted.stage(), wire::RelayStage::Completed);
+        assert_eq!(submitted.text, "ship it");
+        assert!(submitted.submitted);
+        let completed = wire::RelayEvent::from(RelayStage::Completed {
+            text: "ship it".to_owned(),
+            return_offer: None,
+        });
+        assert!(!completed.submitted);
+        assert_eq!(completed.return_offer, None);
+    }
 
     #[test]
     fn an_oversized_failure_message_is_bounded_and_keeps_its_verdict() {
@@ -4104,16 +4172,19 @@ mod tests {
         let stages = [
             DictationStage::Recording {
                 id: RecordingId(7),
+                origin: aria_voice::dictation::RecordingOrigin::Local,
                 delivery: DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::Deliver,
             },
             DictationStage::Recording {
                 id: RecordingId(8),
+                origin: aria_voice::dictation::RecordingOrigin::Local,
                 delivery: DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::TranscriptOnly,
             },
             DictationStage::Recording {
                 id: RecordingId(9),
+                origin: aria_voice::dictation::RecordingOrigin::Local,
                 delivery: DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::HistoryOnly,
             },
@@ -4130,6 +4201,14 @@ mod tests {
             DictationStage::Capturing {
                 id: RecordingId(7),
                 microphone: CapturedMicrophone::Prerecorded,
+            },
+            DictationStage::Capturing {
+                id: RecordingId(7),
+                microphone: CapturedMicrophone::Remote(RecordingDevice::Phone),
+            },
+            DictationStage::Capturing {
+                id: RecordingId(7),
+                microphone: CapturedMicrophone::Remote(RecordingDevice::Watch),
             },
             DictationStage::Transcribing,
             DictationStage::Delivering,
@@ -4210,6 +4289,28 @@ mod tests {
             phone.microphone,
             Some(Microphone::Phone(wire::AttachedPhone {}))
         );
+    }
+
+    #[test]
+    fn a_remote_device_this_daemon_does_not_know_reads_as_no_microphone() {
+        for device in [wire::RecordingDevice::Unspecified as i32, 99] {
+            let event = wire::DictationEvent {
+                stage: wire::DictationStage::Capturing as i32,
+                recording_id: 3,
+                microphone: Some(wire::dictation_event::Microphone::Remote(
+                    wire::RemoteRecording { device },
+                )),
+                ..Default::default()
+            };
+
+            assert_eq!(
+                DictationStage::try_from(&event).expect("an unknown device is not fatal"),
+                DictationStage::Capturing {
+                    id: RecordingId(3),
+                    microphone: CapturedMicrophone::Prerecorded,
+                }
+            );
+        }
     }
 
     #[test]
@@ -4675,6 +4776,32 @@ mod tests {
                 ..Default::default()
             };
             let decoded = wire::SettingsPatch::from(patch.clone());
+            assert_eq!(SettingsPatch::try_from(decoded).unwrap(), patch);
+        }
+    }
+
+    #[test]
+    fn phone_submits_survives_the_wire() {
+        for phone_submits in [false, true] {
+            let snapshot = SettingsSnapshot {
+                streaming_unavailable: StreamingSupport::default(),
+                revision: 4,
+                settings: Settings {
+                    phone_submits,
+                    ..Default::default()
+                },
+            };
+            let encoded = wire::SettingsSnapshot::from(&snapshot).encode_to_vec();
+            let decoded = wire::SettingsSnapshot::decode(encoded.as_slice()).unwrap();
+            assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
+        }
+        for phone_submits in [None, Some(false), Some(true)] {
+            let patch = SettingsPatch {
+                phone_submits,
+                ..Default::default()
+            };
+            let encoded = wire::SettingsPatch::from(patch.clone()).encode_to_vec();
+            let decoded = wire::SettingsPatch::decode(encoded.as_slice()).unwrap();
             assert_eq!(SettingsPatch::try_from(decoded).unwrap(), patch);
         }
     }

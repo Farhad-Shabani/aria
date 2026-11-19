@@ -173,6 +173,7 @@ mod tests {
         for _event in 0..=EVENT_BUFFER {
             subscriptions.broadcast(DictationStage::Recording {
                 id: RecordingId(1),
+                origin: aria_voice::dictation::RecordingOrigin::Local,
                 delivery: aria_settings::DeliveryMode::Complete,
                 route: aria_voice::dictation::TranscriptRoute::Deliver,
             });

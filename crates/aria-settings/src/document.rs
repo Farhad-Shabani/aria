@@ -596,6 +596,7 @@ pub struct Wake {
 pub struct Phone {
     pub enabled: Option<bool>,
     pub port: Option<u16>,
+    pub(crate) submits: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

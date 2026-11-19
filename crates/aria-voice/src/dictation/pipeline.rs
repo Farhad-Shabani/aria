@@ -32,9 +32,9 @@ use aria_settings::StreamingSupport;
 use aria_speaker::wespeaker::WeSpeaker;
 
 use super::{
-    CaptionSnapshot, Delivered, DeliveryMode, DictationError, DictationEventEmitter,
-    DictationResult, DictationSettings, DictationStage, ExecutionControl, GhostSnapshot,
-    HeardSpeaker, StopMode, Transcribed, TranscriptSink, Utterance,
+    CaptionSnapshot, Delivered, DeliveredRecording, DeliveryMode, DictationError,
+    DictationEventEmitter, DictationResult, DictationSettings, DictationStage, ExecutionControl,
+    GhostSnapshot, HeardSpeaker, ReturnOffer, StopMode, Transcribed, TranscriptSink, Utterance,
 };
 use super::{CapturedMicrophone, Cleanup, Meter, Rewrites, rewrites};
 
@@ -446,6 +446,8 @@ where
         let mut sinks = self.sinks();
         let result = self.execute_stages(settings, control, events, &mut *sinks, vocabulary);
         sinks.dictation_finished(result.as_ref().map(|_| ()));
+        // The person at the keyboard has their own Return key.
+        drop(sinks.take_return_offer());
         if captions {
             events.emit(CaptionSnapshot::empty(control.recording_id(), true));
         }
@@ -474,7 +476,7 @@ where
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
         vocabulary: Option<&Vocabulary>,
-    ) -> Result<String, DictationError> {
+    ) -> Result<DeliveredRecording, DictationError> {
         // The recording is already finished, so there is nothing to stream.
         settings.delivery_mode = DeliveryMode::Complete;
         let mut sinks = self.sinks();
@@ -487,13 +489,14 @@ where
             vocabulary,
         );
         sinks.dictation_finished(result.as_ref().map(|_| ()));
+        let return_offer = sinks.take_return_offer();
         if let Err(error) = &result {
             events.emit(DictationStage::ended_by(error.into()));
         }
         if control.return_dropped() && !control.is_cancelled() {
             events.emit(DictationStage::ReturnDropped);
         }
-        result
+        result.map(|text| DeliveredRecording { text, return_offer })
     }
 
     fn deliver_recording_stages(
@@ -1676,6 +1679,12 @@ where
         self.1.dictation_finished(result);
     }
 
+    fn take_return_offer(&mut self) -> Option<ReturnOffer> {
+        let first = self.0.take_return_offer();
+        let second = self.1.take_return_offer();
+        first.or(second)
+    }
+
     fn recording_finished(
         &mut self,
         recording: &mut RecordingReader,
@@ -2781,7 +2790,8 @@ mod tests {
                 &events,
                 None,
             )
-            .expect("the relayed recording completes");
+            .expect("the relayed recording completes")
+            .text;
 
         assert_eq!(relayed_text, pressed_text);
         // A press streams each segment to history while capture is live; a
@@ -2895,6 +2905,46 @@ mod tests {
     }
 
     #[test]
+    fn only_a_delivered_recording_hands_back_a_return_offer() {
+        let (directory, capture) = capture();
+        let log = CallLog::default();
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::complete_samples(Answering("hello")),
+            (log.history(), log.cursor()),
+        );
+        pipeline
+            .run_observed(
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                &DictationEventEmitter::unsubscribed(),
+            )
+            .expect("the press completes");
+        assert!(
+            pipeline.sinks().take_return_offer().is_none(),
+            "a press leaves Return to the keyboard"
+        );
+
+        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
+            .expect("the fixture reads");
+        let delivered = pipeline
+            .deliver_recording(
+                &mut recording,
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                &ExecutionControl::for_test(StopMode::Manual),
+                &DictationEventEmitter::unsubscribed(),
+                None,
+            )
+            .expect("the relayed recording is delivered");
+        delivered
+            .return_offer
+            .expect("typed text offers a Return")
+            .press(&CancelToken::new())
+            .expect("the field still holds the text");
+
+        assert_eq!(log.entries().last().map(String::as_str), Some("return"));
+    }
+
+    #[test]
     fn a_relayed_recording_is_delivered_complete_even_when_set_to_stream() {
         let (directory, capture) = capture();
         let log = CallLog::default();
@@ -2914,7 +2964,8 @@ mod tests {
                 &DictationEventEmitter::unsubscribed(),
                 None,
             )
-            .expect("the relayed recording is delivered");
+            .expect("the relayed recording is delivered")
+            .text;
 
         assert_eq!(text, "hello");
         assert!(log.entries().contains(&"deliver:hello".to_owned()));
@@ -6060,6 +6111,7 @@ mod tests {
             stages.first(),
             Some(&DictationStage::Recording {
                 id: RecordingId(0),
+                origin: crate::dictation::RecordingOrigin::Local,
                 delivery: DeliveryMode::Streaming,
                 route: crate::dictation::TranscriptRoute::Deliver
             })

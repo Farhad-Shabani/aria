@@ -690,6 +690,15 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
     set {microphone = .phone(newValue)}
   }
 
+  /// A remote recording: the phone or watch records it itself.
+  public var remote: Aria_Daemon_V1_RemoteRecording {
+    get {
+      if case .remote(let v)? = microphone {return v}
+      return Aria_Daemon_V1_RemoteRecording()
+    }
+    set {microphone = .remote(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   /// Set on DICTATION_STAGE_CAPTURING: what the recording captures from.
@@ -697,6 +706,8 @@ public nonisolated struct Aria_Daemon_V1_DictationEvent: Sendable {
   public nonisolated enum OneOf_Microphone: Equatable, Sendable {
     case device(Aria_Daemon_V1_MicrophoneDevice)
     case phone(Aria_Daemon_V1_AttachedPhone)
+    /// A remote recording: the phone or watch records it itself.
+    case remote(Aria_Daemon_V1_RemoteRecording)
 
   }
 
@@ -1279,7 +1290,7 @@ nonisolated extension Aria_Daemon_V1_StopDictationResponse: SwiftProtobuf.Messag
 
 nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DictationEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{3}speaker_name\0\u{1}heard\0\u{3}delivery_mode\0\u{1}route\0\u{1}device\0\u{1}phone\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}error_code\0\u{3}recording_id\0\u{1}outcome\0\u{3}word_count\0\u{3}speaker_name\0\u{1}heard\0\u{3}delivery_mode\0\u{1}route\0\u{1}device\0\u{1}phone\0\u{1}remote\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1321,6 +1332,19 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
         if let v = v {
           if hadOneofValue {try decoder.handleConflictingOneOf()}
           self.microphone = .phone(v)
+        }
+      }()
+      case 13: try {
+        var v: Aria_Daemon_V1_RemoteRecording?
+        var hadOneofValue = false
+        if let current = self.microphone {
+          hadOneofValue = true
+          if case .remote(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.microphone = .remote(v)
         }
       }()
       default: break
@@ -1371,6 +1395,10 @@ nonisolated extension Aria_Daemon_V1_DictationEvent: SwiftProtobuf.Message, Swif
     case .phone?: try {
       guard case .phone(let v)? = self.microphone else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+    }()
+    case .remote?: try {
+      guard case .remote(let v)? = self.microphone else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
     }()
     case nil: break
     }

@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::dictation::DictationStage;
+use crate::dictation::{DictationStage, RecordingOrigin};
 use aria_kit::audio::Clip;
 use aria_platform::feedback::{self, SYSTEM_SOUNDS};
 use aria_primitives::error_chain;
@@ -69,7 +69,10 @@ enum Cue {
 impl Cue {
     fn for_stage(stage: &DictationStage) -> Option<Self> {
         match stage {
-            DictationStage::Recording { .. } => Some(Self::Start),
+            DictationStage::Recording {
+                origin: RecordingOrigin::Local,
+                ..
+            } => Some(Self::Start),
             // A focus change or a switched-off app is an ending, not a failure.
             DictationStage::Delivered { .. }
             | DictationStage::Failed(
@@ -78,8 +81,13 @@ impl Cue {
                 | RpcErrorCode::ApplicationExcluded,
             ) => Some(Self::Stop),
             DictationStage::Failed(_) => Some(Self::Error),
+            // The device that records it tells the person it started.
+            DictationStage::Recording {
+                origin: RecordingOrigin::Remote,
+                ..
+            }
             // The start cue played at the press.
-            DictationStage::Capturing { .. }
+            | DictationStage::Capturing { .. }
             | DictationStage::Transcribing
             | DictationStage::Delivering
             | DictationStage::SegmentTranscribed { .. }
@@ -115,6 +123,7 @@ mod tests {
             (
                 DictationStage::Recording {
                     id: crate::dictation::RecordingId(1),
+                    origin: crate::dictation::RecordingOrigin::Local,
                     delivery: aria_settings::DeliveryMode::Complete,
                     route: crate::dictation::TranscriptRoute::Deliver,
                 },
@@ -149,6 +158,18 @@ mod tests {
         }
         assert_eq!(Cue::for_stage(&DictationStage::Cancelled), None);
         assert_eq!(Cue::for_stage(&DictationStage::Transcribing), None);
+    }
+
+    #[test]
+    fn a_remote_recording_starts_without_a_cue() {
+        let remote = DictationStage::Recording {
+            id: crate::dictation::RecordingId(1),
+            origin: RecordingOrigin::Remote,
+            delivery: aria_settings::DeliveryMode::Complete,
+            route: crate::dictation::TranscriptRoute::Deliver,
+        };
+
+        assert_eq!(Cue::for_stage(&remote), None);
     }
 
     #[test]
