@@ -1,7 +1,9 @@
 //! The numbers English number words spell.
 //!
 //! ```text
-//! number   := whole ["point" fraction [scale]]
+//! number   := whole ["point" fraction [scale]] | year
+//! year     := lead (under100 | ("o" | "oh") digit)
+//! clock    := hour [under100 | ("o" | "oh") digit]
 //! whole    := "zero" | group (scale [["and"] group])*  scales descending
 //! group    := under100 | under100 "hundred" [["and"] under100]
 //! under100 := digit | teen | tens [digit]               digit is 1 to 9
@@ -9,11 +11,13 @@
 //! ```
 //!
 //! A scale counts fewer than a thousand, and so does the group after the
-//! last scale. No multiple of ten comes before "hundred".
+//! last scale. No multiple of ten comes before "hundred". A year's lead
+//! runs from 13 to 20, and the number under 100 after it from 10. A
+//! clock's hour runs from 1 to 12, and its minutes from 10 to 59.
 
 use std::fmt;
 
-use super::super::number_words::{NumberWord, Scale, number_words_in};
+use super::super::number_words::{NumberWord, Scale, is_oh, number_words_in};
 
 const MILLION: u128 = 1_000_000;
 
@@ -26,20 +30,29 @@ pub(super) struct Number {
     fraction: Option<String>,
     /// A scale said last and kept as a word, as in `2.5 million`.
     scale: Option<Scale>,
+    spoken: Spoken,
+}
+
+/// How a number was spoken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Spoken {
+    /// As a count: "two thousand fifteen".
+    Count,
+    /// In two-digit halves, as a year is: "twenty fifteen".
+    Halves,
 }
 
 impl Number {
     /// Reads `words`, in lowercase, as one number. Every word must belong to it: number
-    /// words, "point", "and", and "o" for a zero after the point. Anything
+    /// words, "point", "and", and "o" for a zero. Anything
     /// English doesn't say as one number is `None`, as "one two three" is.
     pub(super) fn parse(words: &[&str]) -> Option<Self> {
         let tokens = Token::parse_all(words)?;
-        let mut parser = Parser {
-            tokens: &tokens,
-            at: 0,
-        };
-        let number = parser.number()?;
-        (parser.at == tokens.len()).then_some(number)
+        read_all(&tokens, Parser::number).or_else(|| read_all(&tokens, Parser::year))
+    }
+
+    pub(super) fn spoken(&self) -> Spoken {
+        self.spoken
     }
 
     /// The value, when digits alone write it.
@@ -74,7 +87,8 @@ enum Token {
     Word(NumberWord),
     Point,
     And,
-    /// "o" or "oh", a zero after the point.
+    /// "o" or "oh": a zero after the point, or opening the second half of
+    /// a year or a clock.
     Oh,
 }
 
@@ -82,12 +96,24 @@ enum Token {
 /// zero zero" is `100`, "fifty fifty" is `5050`.
 pub(super) fn digits(words: &[&str]) -> Option<String> {
     let tokens = Token::parse_all(words)?;
-    let mut parser = Parser {
-        tokens: &tokens,
-        at: 0,
-    };
-    let digits = parser.fraction()?;
-    (parser.at == tokens.len()).then_some(digits)
+    read_all(&tokens, Parser::fraction)
+}
+
+/// Reads `words`, in lowercase, as an hour of the clock and its minutes:
+/// "nine fifty five" is 9 and 55, "nine oh five" 9 and 5, "three" 3 alone.
+pub(super) fn clock(words: &[&str]) -> Option<(u128, Option<u128>)> {
+    let tokens = Token::parse_all(words)?;
+    read_all(&tokens, Parser::clock)
+}
+
+/// What `read` reads from `tokens`, when it takes every one.
+fn read_all<'t, T>(
+    tokens: &'t [Token],
+    read: impl FnOnce(&mut Parser<'t>) -> Option<T>,
+) -> Option<T> {
+    let mut parser = Parser { tokens, at: 0 };
+    let value = read(&mut parser)?;
+    (parser.at == tokens.len()).then_some(value)
 }
 
 impl Token {
@@ -106,7 +132,7 @@ impl Token {
         match word {
             "point" => Some(vec![Self::Point]),
             "and" => Some(vec![Self::And]),
-            "o" | "oh" => Some(vec![Self::Oh]),
+            word if is_oh(word) => Some(vec![Self::Oh]),
             word => number_words_in(word)
                 .map(|word| word.map(Self::Word))
                 .collect(),
@@ -159,12 +185,14 @@ impl Whole {
                     whole: count,
                     fraction: None,
                     scale: Some(scale),
+                    spoken: Spoken::Count,
                 }
             }
             _ => Number {
                 whole: self.value,
                 fraction: None,
                 scale: None,
+                spoken: Spoken::Count,
             },
         }
     }
@@ -195,6 +223,20 @@ impl Parser<'_> {
             whole: whole.value,
             fraction: Some(self.fraction()?),
             scale: self.scale(),
+            spoken: Spoken::Count,
+        })
+    }
+
+    /// A year said in halves: "nineteen ninety nine", "twenty oh five".
+    /// A lead under thirteen reads as an hour: "ten fifteen".
+    fn year(&mut self) -> Option<Number> {
+        let century = self.under_100().filter(|lead| (13..=20).contains(lead))?;
+        let within = self.two_digits(10..100)?;
+        Some(Number {
+            whole: century * 100 + within,
+            fraction: None,
+            scale: None,
+            spoken: Spoken::Halves,
         })
     }
 
@@ -228,6 +270,28 @@ impl Parser<'_> {
         }
         self.skip_and();
         Some(count * 100 + self.under_100().unwrap_or(0))
+    }
+
+    /// An hour from 1 to 12, then minutes or nothing.
+    fn clock(&mut self) -> Option<(u128, Option<u128>)> {
+        let hour = self.under_100().filter(|hour| (1..=12).contains(hour))?;
+        if self.peek().is_none() {
+            return Some((hour, None));
+        }
+        Some((hour, Some(self.two_digits(10..60)?)))
+    }
+
+    /// A number said as two digits: "oh" and a digit, or a number in
+    /// `range`, as the "fifty five" of "nine fifty five".
+    fn two_digits(&mut self, range: std::ops::Range<u128>) -> Option<u128> {
+        if !self.take(Token::Oh) {
+            return self.under_100().filter(|value| range.contains(value));
+        }
+        let Some(Token::Word(NumberWord::Digit(digit @ 1..))) = self.peek() else {
+            return None;
+        };
+        self.at += 1;
+        Some(digit)
     }
 
     /// Takes nothing when no number under a hundred is next.
@@ -341,16 +405,39 @@ mod tests {
         "one thousand six hundred nine point two five one billion",
         "1609.251 billion"
     )]
+    #[case::year_pair("nineteen ninety nine", "1999")]
+    #[case::year_with_oh("twenty oh five", "2005")]
+    #[case::lowest_year_lead("thirteen ten", "1310")]
     fn writes(#[case] said: &str, #[case] digits: &str) {
         assert_eq!(written(said).as_deref(), Some(digits));
+    }
+
+    #[rstest]
+    #[case::hour("three", Some((3, None)))]
+    #[case::hour_and_minutes("nine fifty five", Some((9, Some(55))))]
+    #[case::minutes_with_oh("nine oh five", Some((9, Some(5))))]
+    #[case::noon_hour("twelve thirty", Some((12, Some(30))))]
+    #[case::ten_minutes("ten ten", Some((10, Some(10))))]
+    #[case::hour_over_twelve("thirteen thirty", None)]
+    #[case::hour_zero("zero thirty", None)]
+    #[case::minutes_under_ten("nine five", None)]
+    #[case::minutes_over_fifty_nine("nine seventy", None)]
+    #[case::oh_before_zero("nine oh zero", None)]
+    #[case::extra_word("nine fifty five six", None)]
+    fn reads_a_clock(#[case] said: &str, #[case] expected: Option<(u128, Option<u128>)>) {
+        let words: Vec<&str> = said.split(' ').collect();
+        assert_eq!(clock(&words), expected);
     }
 
     #[rstest]
     #[case::digit_string("one two three")]
     #[case::two_digits("two one")]
     #[case::two_tens("fifty fifty")]
-    #[case::year_pair("nineteen ninety nine")]
-    #[case::tens_then_teen("twenty eleven")]
+    #[case::year_lead_under_thirteen("twelve thirty")]
+    #[case::year_lead_over_twenty("twenty one fifteen")]
+    #[case::year_ending_on_a_digit("nineteen five")]
+    #[case::year_ending_on_oh("twenty oh")]
+    #[case::year_with_oh_and_a_teen("twenty oh fifteen")]
     #[case::hundred_first("hundred fifty")]
     #[case::scale_first("thousand")]
     #[case::round_tens_of_hundreds("twenty hundred")]
