@@ -3,7 +3,7 @@
 //!
 //! One announcement shows at a time, and it claims nothing, so a press on the
 //! Mac still starts. A second replaces the first silently: its own
-//! `Recording` already took the pill. `EndRemoteRecording` or [`DEADLINE`]
+//! `Recording` already took the pill. `CancelRemoteRecording` or [`DEADLINE`]
 //! ends one with `Cancelled`, unless a newer recording started since, whose
 //! stages the pill shows instead. A relay naming its id continues it.
 //!
@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
 #[cfg(target_os = "macos")]
-use aria_voice::dictation::Announced;
+use aria_voice::dictation::Announcement;
 use aria_voice::dictation::{CapturedMicrophone, RecordingDevice, RecordingId, Relayed};
 
 use super::super::dictation::{DictationRuntime, DictationRuntimeError};
@@ -34,7 +34,7 @@ struct Shown {
     id: RecordingId,
     /// Holds other apps muted. `None` only once dropped.
     #[cfg(target_os = "macos")]
-    muted: Option<Announced>,
+    muted: Option<Announcement>,
     deadline: tokio::task::AbortHandle,
 }
 
@@ -99,9 +99,9 @@ impl Announcements {
         Ok(id)
     }
 
-    /// Ends the announcement on show, if `id` names it.
-    pub(in crate::daemon) fn end(&self, id: RecordingId) {
-        self.cancel(id, "ended");
+    /// Cancels the announcement on show, if `id` names it.
+    pub(in crate::daemon) fn cancel(&self, id: RecordingId) {
+        self.take_off_show(id, "cancelled");
     }
 
     /// How the relay `opening` shows: continuing the announcement on show
@@ -117,7 +117,7 @@ impl Announcements {
         })
     }
 
-    fn cancel(&self, id: RecordingId, reason: &'static str) {
+    fn take_off_show(&self, id: RecordingId, reason: &'static str) {
         let Some(shown) = self.take(id) else {
             return;
         };
@@ -142,7 +142,7 @@ impl Announcements {
 async fn lapse(announcements: Weak<Announcements>, id: RecordingId) {
     tokio::time::sleep(DEADLINE).await;
     if let Some(announcements) = announcements.upgrade() {
-        announcements.cancel(id, "lapsed");
+        announcements.take_off_show(id, "lapsed");
     }
 }
 
@@ -171,7 +171,7 @@ impl Showing {
 
 /// An announcement a relay took off show to continue. Dropped before
 /// [`Showing::into_relayed`] hands it on, as when the upload fails, it ends
-/// as `EndRemoteRecording` would.
+/// as `CancelRemoteRecording` would.
 pub(in crate::daemon) struct Continued {
     id: RecordingId,
     /// `None` once handed on.
@@ -279,7 +279,7 @@ mod tests {
         let id = RecordingId(1);
         let shown = Shown {
             id,
-            muted: Some(Announced::for_test(id, move || {
+            muted: Some(Announcement::for_test(id, move || {
                 sent.send(std::thread::current().id())
                     .expect("the test is listening");
             })),
@@ -327,7 +327,7 @@ mod tests {
         let id = harness.announcements.start(RecordingDevice::Phone).unwrap();
         harness.heard();
 
-        harness.announcements.end(id);
+        harness.announcements.cancel(id);
         tokio::time::sleep(Duration::from_secs(611)).await;
 
         assert_eq!(harness.heard(), [DictationStage::Cancelled]);
@@ -354,10 +354,10 @@ mod tests {
         let second = harness.announcements.start(RecordingDevice::Watch).unwrap();
         harness.heard();
 
-        harness.announcements.end(first);
+        harness.announcements.cancel(first);
         tokio::time::sleep(Duration::from_secs(511)).await;
         assert_eq!(harness.heard(), [], "the first one ended with no word");
-        harness.announcements.end(second);
+        harness.announcements.cancel(second);
 
         assert_eq!(harness.heard(), [DictationStage::Cancelled]);
     }
@@ -381,7 +381,7 @@ mod tests {
         let pressed = recording_started(&harness.edges);
         harness.heard();
 
-        harness.announcements.end(announced);
+        harness.announcements.cancel(announced);
         assert!(harness.dictation.stop_recording(pressed));
         pressing.join().unwrap().unwrap();
 
@@ -398,7 +398,7 @@ mod tests {
         harness.heard();
 
         harness.dictate(harness.relay(id));
-        harness.announcements.end(id);
+        harness.announcements.cancel(id);
         tokio::time::sleep(Duration::from_secs(611)).await;
 
         assert_eq!(harness.edges.try_recv(), Ok(Edge::Relayed(id)));
@@ -423,7 +423,7 @@ mod tests {
         let other = RecordingId(id.0 + 1);
         harness.heard();
 
-        harness.announcements.end(other);
+        harness.announcements.cancel(other);
         let relay = harness.relay(other);
         assert!(matches!(
             relay,
@@ -431,7 +431,7 @@ mod tests {
         ));
         assert_eq!(harness.heard(), []);
 
-        harness.announcements.end(id);
+        harness.announcements.cancel(id);
         assert_eq!(
             harness.heard(),
             [DictationStage::Cancelled],

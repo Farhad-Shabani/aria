@@ -32,7 +32,7 @@ pub use event::{
     CapturedMicrophone, DictationStage, HeardSpeaker, RecordingDevice, RecordingOrigin,
 };
 pub use execution::{
-    ActiveDictation, Announced, DeliveredRecording, DictationCoordinator, DictationError,
+    ActiveDictation, Announcement, DeliveredRecording, DictationCoordinator, DictationError,
     DictationExecutor, DictationPolicy, DictationPolicyError, EscapeRule, ExecutionControl,
     Relayed, Transcribed,
 };

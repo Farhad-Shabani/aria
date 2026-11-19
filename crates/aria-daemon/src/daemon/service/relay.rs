@@ -25,7 +25,7 @@ use super::super::relay::{
 
 const METHOD: &str = "RelayService/Relay";
 const START_REMOTE_RECORDING: &str = "RelayService/StartRemoteRecording";
-const END_REMOTE_RECORDING: &str = "RelayService/EndRemoteRecording";
+const CANCEL_REMOTE_RECORDING: &str = "RelayService/CancelRemoteRecording";
 
 /// Room for every event one session emits, so the worker never waits on a
 /// client that is slow to read.
@@ -143,14 +143,14 @@ impl wire::relay_service_server::RelayService for RelayRpc {
         }))
     }
 
-    async fn end_remote_recording(
+    async fn cancel_remote_recording(
         &self,
-        request: Request<wire::EndRemoteRecordingRequest>,
-    ) -> Result<Response<wire::EndRemoteRecordingResponse>, Status> {
+        request: Request<wire::CancelRemoteRecordingRequest>,
+    ) -> Result<Response<wire::CancelRemoteRecordingResponse>, Status> {
         self.announcements
-            .end(RecordingId(request.into_inner().recording_id));
-        super::served(END_REMOTE_RECORDING);
-        Ok(Response::new(wire::EndRemoteRecordingResponse {}))
+            .cancel(RecordingId(request.into_inner().recording_id));
+        super::served(CANCEL_REMOTE_RECORDING);
+        Ok(Response::new(wire::CancelRemoteRecordingResponse {}))
     }
 }
 
@@ -323,11 +323,9 @@ async fn complete<S>(
         AfterText::Offered(return_offer) if channel == ReplyChannel::Open => Some(return_offer),
         AfterText::Offered(_) | AfterText::Nothing => None,
     };
-    let offered = return_offer
-        .as_ref()
-        .map(|return_offer| relay::ReturnOffer {
-            application_name: return_offer.application().map(|app| app.name.clone()),
-        });
+    let offered = return_offer.as_ref().map(|return_offer| relay::Offer {
+        application_name: return_offer.application().map(|app| app.name.clone()),
+    });
     client
         .emit(Ok(RelayStage::Completed {
             text: heard.text,
@@ -388,7 +386,7 @@ where
     Some(match pressed {
         Ok(Ok(())) => {
             tracing::info!(method = METHOD, status = "submitted", "request served");
-            Ok(RelayStage::Submitted.into())
+            Ok(RelayStage::OfferTaken.into())
         }
         Ok(Err(error)) => Err(relay::redacted(super::failed(METHOD, &error))),
         Err(status) => Err(relay::redacted(status)),
@@ -601,7 +599,7 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(stage(&events[0]), (wire::RelayStage::Completed, false));
         assert_eq!(offered_in(&events[0]), Some(Some("Messages".to_owned())));
-        assert_eq!(stage(&events[1]), (wire::RelayStage::Submitted, false));
+        assert_eq!(stage(&events[1]), (wire::RelayStage::OfferTaken, false));
     }
 
     #[tokio::test(start_paused = true)]

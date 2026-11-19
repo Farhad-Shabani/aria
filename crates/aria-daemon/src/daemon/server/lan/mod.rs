@@ -325,10 +325,10 @@ mod tests {
             Err(Status::aborted("the stand-in relay was reached"))
         }
 
-        async fn end_remote_recording(
+        async fn cancel_remote_recording(
             &self,
-            _request: tonic::Request<wire::EndRemoteRecordingRequest>,
-        ) -> std::result::Result<tonic::Response<wire::EndRemoteRecordingResponse>, Status>
+            _request: tonic::Request<wire::CancelRemoteRecordingRequest>,
+        ) -> std::result::Result<tonic::Response<wire::CancelRemoteRecordingResponse>, Status>
         {
             Err(Status::aborted("the stand-in relay was reached"))
         }
@@ -625,7 +625,7 @@ mod tests {
         for path in [
             "/aria.daemon.v1.RelayService/Relay",
             "/aria.daemon.v1.RelayService/StartRemoteRecording",
-            "/aria.daemon.v1.RelayService/EndRemoteRecording",
+            "/aria.daemon.v1.RelayService/CancelRemoteRecording",
             "/aria.daemon.v1.SettingsService/Get",
             "/aria.daemon.v1.PhoneMicrophoneService/Attach",
             "/aria.daemon.v1.MicrophoneService/List",
@@ -656,7 +656,7 @@ mod tests {
             [
                 "/aria.daemon.v1.RelayService/Relay",
                 "/aria.daemon.v1.RelayService/StartRemoteRecording",
-                "/aria.daemon.v1.RelayService/EndRemoteRecording",
+                "/aria.daemon.v1.RelayService/CancelRemoteRecording",
                 "/aria.daemon.v1.SettingsService/Get",
                 "/aria.daemon.v1.PhoneMicrophoneService/Attach",
                 "/aria.daemon.v1.PairingService/Pair",

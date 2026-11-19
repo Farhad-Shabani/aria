@@ -797,20 +797,20 @@ impl Drop for ExecutionGuard<'_> {
 
 /// A recording another device makes, on show until it drops.
 #[derive(Debug)]
-pub struct Announced {
+pub struct Announcement {
     id: RecordingId,
     #[cfg(target_os = "macos")]
     output: Arc<std::sync::Mutex<OutputSlot>>,
 }
 
-impl Announced {
+impl Announcement {
     pub fn id(&self) -> RecordingId {
         self.id
     }
 }
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
-impl Announced {
+impl Announcement {
     /// One that muted other apps, whose sound comes back through `restore`.
     pub fn for_test(id: RecordingId, restore: impl FnOnce() + Send + 'static) -> Self {
         let announced = Self {
@@ -823,7 +823,7 @@ impl Announced {
 }
 
 #[cfg(target_os = "macos")]
-impl Drop for Announced {
+impl Drop for Announcement {
     fn drop(&mut self) {
         OutputSlot::release(&self.output);
     }
@@ -974,8 +974,8 @@ where
         microphone: CapturedMicrophone,
         _mute_sound: bool,
         events: &DictationEventEmitter,
-    ) -> Announced {
-        let announced = Announced {
+    ) -> Announcement {
+        let announced = Announcement {
             id: self.announce(TranscriptRoute::Deliver, microphone, events),
             #[cfg(target_os = "macos")]
             output: Arc::default(),

@@ -22,7 +22,7 @@ use aria_settings::rpc::{Categorized, RpcErrorCode};
 use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
 use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
-    ActiveDictation, Announced, CapturedMicrophone, DeliveredRecording, DictationCoordinator,
+    ActiveDictation, Announcement, CapturedMicrophone, DeliveredRecording, DictationCoordinator,
     DictationError, DictationEvent, DictationEventEmitter, DictationOutcome, DictationRequest,
     DictationSettings, DictationStage, EscapeRule, RecordingId, StopMode, Transcribed,
     subscribers::DictationSubscribers,
@@ -369,7 +369,7 @@ impl DictationRuntime {
     pub(in crate::daemon) fn announce_recording(
         &self,
         microphone: CapturedMicrophone,
-    ) -> Result<Announced, DictationRuntimeError> {
+    ) -> Result<Announcement, DictationRuntimeError> {
         let ready = self.loaded()?;
         let mute_sound = self.snapshot()?.mute_sound;
         Ok(ready

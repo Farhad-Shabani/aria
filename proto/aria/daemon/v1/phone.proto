@@ -40,7 +40,7 @@ service RelayService {
   // `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
   // One shows at a time: a second replaces the first, which ends without a
   // word. The recording's `Relay` continues it by `recording_id`.
-  // `EndRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
+  // `CancelRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
   // and so does a `Relay` that continues it but fails before transcribing.
   // Once a newer recording started, as a press on the Mac, it ends without a
   // word instead, so the newer one's stages keep the pill.
@@ -48,7 +48,7 @@ service RelayService {
   rpc StartRemoteRecording(StartRemoteRecordingRequest) returns (StartRemoteRecordingResponse);
   // Ends an announced recording that won't be relayed, as when the device
   // discards it. An id that isn't the one shown changes nothing.
-  rpc EndRemoteRecording(EndRemoteRecordingRequest) returns (EndRemoteRecordingResponse);
+  rpc CancelRemoteRecording(CancelRemoteRecordingRequest) returns (CancelRemoteRecordingResponse);
 }
 
 // Pins the certificate the phone presented on this connection, in exchange
@@ -107,12 +107,12 @@ message StartRemoteRecordingResponse {
   uint64 recording_id = 1;
 }
 
-message EndRemoteRecordingRequest {
+message CancelRemoteRecordingRequest {
   // As `StartRemoteRecordingResponse` gave it.
   uint64 recording_id = 1;
 }
 
-message EndRemoteRecordingResponse {}
+message CancelRemoteRecordingResponse {}
 
 message RelayRequest {
   oneof body {
@@ -191,8 +191,8 @@ enum RelayStage {
   RELAY_STAGE_COMPLETED = 2;
   // No audio arrived, or no eligible speech was recognized. Terminal.
   RELAY_STAGE_NO_SPEECH = 3;
-  // Return was pressed after the text. Terminal.
-  RELAY_STAGE_SUBMITTED = 4;
+  // The phone took the Return offer, and Return was pressed. Terminal.
+  RELAY_STAGE_OFFER_TAKEN = 4;
 }
 
 enum AudioFormat {

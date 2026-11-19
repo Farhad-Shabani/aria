@@ -42,8 +42,8 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
   /// No audio arrived, or no eligible speech was recognized. Terminal.
   case noSpeech // = 3
 
-  /// Return was pressed after the text. Terminal.
-  case submitted // = 4
+  /// The phone took the Return offer, and Return was pressed. Terminal.
+  case offerTaken // = 4
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -56,7 +56,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
     case 1: self = .transcribing
     case 2: self = .completed
     case 3: self = .noSpeech
-    case 4: self = .submitted
+    case 4: self = .offerTaken
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -67,7 +67,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
     case .transcribing: return 1
     case .completed: return 2
     case .noSpeech: return 3
-    case .submitted: return 4
+    case .offerTaken: return 4
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -78,7 +78,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
     .transcribing,
     .completed,
     .noSpeech,
-    .submitted,
+    .offerTaken,
   ]
 
 }
@@ -230,7 +230,7 @@ public nonisolated struct Aria_Daemon_V1_StartRemoteRecordingResponse: Sendable 
   public init() {}
 }
 
-public nonisolated struct Aria_Daemon_V1_EndRemoteRecordingRequest: Sendable {
+public nonisolated struct Aria_Daemon_V1_CancelRemoteRecordingRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -243,7 +243,7 @@ public nonisolated struct Aria_Daemon_V1_EndRemoteRecordingRequest: Sendable {
   public init() {}
 }
 
-public nonisolated struct Aria_Daemon_V1_EndRemoteRecordingResponse: Sendable {
+public nonisolated struct Aria_Daemon_V1_CancelRemoteRecordingResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -591,7 +591,7 @@ public nonisolated struct Aria_Daemon_V1_PhoneMicrophoneStop: Sendable {
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
 nonisolated extension Aria_Daemon_V1_RelayStage: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RELAY_STAGE_UNSPECIFIED\0\u{1}RELAY_STAGE_TRANSCRIBING\0\u{1}RELAY_STAGE_COMPLETED\0\u{1}RELAY_STAGE_NO_SPEECH\0\u{1}RELAY_STAGE_SUBMITTED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RELAY_STAGE_UNSPECIFIED\0\u{1}RELAY_STAGE_TRANSCRIBING\0\u{1}RELAY_STAGE_COMPLETED\0\u{1}RELAY_STAGE_NO_SPEECH\0\u{1}RELAY_STAGE_OFFER_TAKEN\0")
 }
 
 nonisolated extension Aria_Daemon_V1_AudioFormat: SwiftProtobuf._ProtoNameProviding {
@@ -818,8 +818,8 @@ nonisolated extension Aria_Daemon_V1_StartRemoteRecordingResponse: SwiftProtobuf
   }
 }
 
-nonisolated extension Aria_Daemon_V1_EndRemoteRecordingRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".EndRemoteRecordingRequest"
+nonisolated extension Aria_Daemon_V1_CancelRemoteRecordingRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CancelRemoteRecordingRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recording_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -841,15 +841,15 @@ nonisolated extension Aria_Daemon_V1_EndRemoteRecordingRequest: SwiftProtobuf.Me
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Daemon_V1_EndRemoteRecordingRequest, rhs: Aria_Daemon_V1_EndRemoteRecordingRequest) -> Bool {
+  public static func ==(lhs: Aria_Daemon_V1_CancelRemoteRecordingRequest, rhs: Aria_Daemon_V1_CancelRemoteRecordingRequest) -> Bool {
     if lhs.recordingID != rhs.recordingID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
 }
 
-nonisolated extension Aria_Daemon_V1_EndRemoteRecordingResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".EndRemoteRecordingResponse"
+nonisolated extension Aria_Daemon_V1_CancelRemoteRecordingResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CancelRemoteRecordingResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -861,7 +861,7 @@ nonisolated extension Aria_Daemon_V1_EndRemoteRecordingResponse: SwiftProtobuf.M
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Daemon_V1_EndRemoteRecordingResponse, rhs: Aria_Daemon_V1_EndRemoteRecordingResponse) -> Bool {
+  public static func ==(lhs: Aria_Daemon_V1_CancelRemoteRecordingResponse, rhs: Aria_Daemon_V1_CancelRemoteRecordingResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

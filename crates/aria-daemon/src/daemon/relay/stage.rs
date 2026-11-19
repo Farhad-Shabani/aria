@@ -7,17 +7,17 @@ pub(crate) enum RelayStage {
     /// phone's Return.
     Completed {
         text: String,
-        return_offer: Option<ReturnOffer>,
+        return_offer: Option<Offer>,
     },
     /// Return pressed after the text before the phone heard of it.
     CompletedAndSubmitted(String),
     NoSpeech,
     /// Return pressed after the text, as the phone asked once it landed.
-    Submitted,
+    OfferTaken,
 }
 
 /// A Return offer the phone may still ask for, as the phone learns of it.
-pub(crate) struct ReturnOffer {
+pub(crate) struct Offer {
     /// The app the text went to: personal context, so never logged.
     pub(crate) application_name: Option<String>,
 }

@@ -441,7 +441,7 @@ impl From<RelayStage> for wire::RelayEvent {
                 (wire::RelayStage::Completed, text, true, None)
             }
             RelayStage::NoSpeech => (wire::RelayStage::NoSpeech, String::new(), false, None),
-            RelayStage::Submitted => (wire::RelayStage::Submitted, String::new(), false, None),
+            RelayStage::OfferTaken => (wire::RelayStage::OfferTaken, String::new(), false, None),
         };
         Self {
             stage: stage as i32,
