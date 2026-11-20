@@ -97,7 +97,7 @@ enabled = false
 extract_model = "sonnet"
 # The most facts kept from one conversation.
 max_facts_per_session = 10
-# Holds the facts, and lexicon.txt, the terms that fix misheard words. (restart)
+# Holds the facts, and the pairs learned from chats that fix misheard words. (restart)
 dir = "~/.aria/memory"
 
 # A prompt says what to make of a recording. At most 16, each chord once.

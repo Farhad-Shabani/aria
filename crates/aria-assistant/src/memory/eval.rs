@@ -7,13 +7,14 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, ensure};
 use aria_kit::cancel::CancelToken;
+use aria_kit::transcription::layer::vocabulary::{PersonalRules, Vocabulary};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::consolidate::consolidate_backlog;
 use super::extract::{ClaudeExtractor, Extractor, build_system_prompt};
 use super::store::Fact;
-use super::{DB_FILE, LEXICON_FILE, Lexicon, Store, load_profile_block};
+use super::{DB_FILE, Store, learned_pairs, load_profile_block};
 use crate::chat::AssistantError;
 use aria_primitives::error_chain;
 
@@ -205,14 +206,17 @@ fn evaluate_lexicon(cases: &[LexiconCase]) -> Result<Value> {
     let mut harmed = 0;
     for case in cases {
         let dir = tempfile::tempdir()?;
-        std::fs::write(dir.path().join(LEXICON_FILE), case.terms.join("\n"))?;
         let store = Store::open(&dir.path().join(DB_FILE))?;
         for (misheard, correct) in &case.pairs {
             store.add_pair(misheard, correct, "eval", &case.id)?;
         }
-        let lexicon = Lexicon::new(dir.path());
         let started = Instant::now();
-        let output = lexicon
+        let rules = PersonalRules::from_stored(
+            case.terms.clone(),
+            learned_pairs(dir.path())?,
+            &CancelToken::never(),
+        )?;
+        let output = Vocabulary::compile(&[], rules)?
             .correct(&case.input)
             .unwrap_or_else(|| case.input.clone());
         let elapsed_us = started.elapsed().as_secs_f64() * 1_000_000.0;
@@ -304,7 +308,6 @@ fn evaluate_extraction(
     for case in cases {
         println!("memory eval: {}", case.id);
         let dir = tempfile::tempdir()?;
-        std::fs::write(dir.path().join(LEXICON_FILE), case.terms.join("\n"))?;
         let store = Store::open(&dir.path().join(DB_FILE))?;
         let extractor = MeasuredExtractor {
             inner: ClaudeExtractor::new(model.to_owned(), prompt.to_owned(), dir.path().to_owned()),
@@ -317,8 +320,14 @@ fn evaluate_extraction(
             for text in turns {
                 store.add_turn(&session, text)?;
             }
-            let report =
-                consolidate_backlog(&store, &extractor, &CancelToken::never(), dir.path(), 10)?;
+            let report = consolidate_backlog(
+                &store,
+                &extractor,
+                &CancelToken::never(),
+                dir.path(),
+                10,
+                &case.terms,
+            )?;
             if report.failed != 0 {
                 failed = true;
                 break;

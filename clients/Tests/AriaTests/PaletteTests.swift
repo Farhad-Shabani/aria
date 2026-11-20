@@ -660,7 +660,7 @@ final class PaletteTests: XCTestCase {
 
         model.query = "sett"
 
-        XCTAssertEqual(model.items.map(\.id), ["settings", "entry-1"])
+        XCTAssertEqual(model.items.map(\.id), ["settings", "dictionary", "entry-1"])
     }
 
     func testAnEmptyHistoryStillShowsTheCommands() {
@@ -675,7 +675,9 @@ final class PaletteTests: XCTestCase {
         XCTAssertEqual(model.selected?.spokenTitle, "Settings…")
 
         model.moveSelection(by: 1)
+        XCTAssertEqual(model.selected?.spokenTitle, "Add “sett” to Dictionary")
 
+        model.moveSelection(by: 1)
         XCTAssertEqual(model.selected?.spokenTitle, "Text 1")
     }
 
@@ -854,6 +856,160 @@ final class PaletteTests: XCTestCase {
         model.query = prompts[0].name
         XCTAssertEqual(model.commands.last?.action, .runOneOff(prompts[0].name))
         XCTAssertEqual(model.selected?.command?.action, .runPrompt(id: prompts[0].id))
+    }
+
+    func testTheAddRowComesBeforeHistoryAndTheSelectionRestsOnTheFirstMatch() {
+        var model = openModel(history: [Self.entry(1, at: 100)])
+        model.query = " Adzviser "
+        XCTAssertEqual(model.items.first?.command?.action, .addWord("Adzviser"))
+        XCTAssertEqual(model.selected?.entry?.id, 1)
+
+        model.replace(entries: [Self.entry(2, at: 200), Self.entry(1, at: 100)])
+        XCTAssertEqual(model.selected?.entry?.id, 2)
+
+        model.moveSelection(by: -1)
+        XCTAssertEqual(model.selected?.command?.action, .addWord("Adzviser"))
+    }
+
+    func testALoneDictionaryRowIsNeverSelectedUntilChosen() {
+        var model = openModel(history: [])
+        model.query = "Adzviser"
+        XCTAssertNil(model.selected)
+
+        model.read(dictionary: ["Adzviser"], since: model.dictionaryEdits)
+        XCTAssertNil(model.selected, "a read flips the row but leaves it unselected")
+
+        model.replace(entries: [Self.entry(1, at: 100)])
+        XCTAssertEqual(model.selected?.entry?.id, 1)
+
+        model.query = "Adzvise"
+        model.replace(entries: [])
+        XCTAssertNil(model.selected)
+        model.replace(entries: [Self.entry(2, at: 200)])
+        XCTAssertEqual(model.selected?.entry?.id, 2, "a search after a miss rests on its match")
+
+        model.replace(entries: [])
+        model.moveSelection(by: -1)
+        XCTAssertEqual(model.selected?.command?.action, .addWord("Adzvise"))
+    }
+
+    func testWithHistoryOffAListedWordIsNotRemovedOnReturn() {
+        var model = openModel()
+        model.read(dictionary: ["db2"], since: model.dictionaryEdits)
+        model.query = "db2"
+        XCTAssertNil(model.selected)
+    }
+
+    func testAWordListedTwiceIsOneRow() {
+        let model = dictionaryModel(["db2", "vex16", "db2"])
+        XCTAssertEqual(model.items.compactMap(\.command?.action), [.listedWord("db2"), .listedWord("vex16")])
+    }
+
+    func testAListedWordOffersRemoveAndAnUnreadListOffersAdd() {
+        var model = openModel()
+        model.query = "db2"
+        XCTAssertEqual(model.items.last?.command?.action, .addWord("db2"))
+
+        model.read(dictionary: ["db2"], since: model.dictionaryEdits)
+        XCTAssertEqual(model.items.last?.command?.action, .removeWord("db2"))
+    }
+
+    func testNothingTypedAPromptInputOrASectionOffersNoDictionaryRow() {
+        func offersDictionary(_ model: PaletteModel) -> Bool {
+            model.items.contains { $0.id == PaletteItem.command(.addWord("")).id }
+        }
+        var model = openModel(history: [Self.entry(1, at: 100)])
+        model.query = "  "
+        XCTAssertFalse(offersDictionary(model))
+
+        model.attach(Self.entry(1, at: 100))
+        model.query = "Adzviser"
+        XCTAssertFalse(offersDictionary(model))
+
+        model = openModel(history: [Self.entry(1, at: 100)])
+        model.show(section: .dictation)
+        model.query = "Adzviser"
+        XCTAssertFalse(offersDictionary(model))
+    }
+
+    func testAnEditFlipsTheRowAndANewSearchClearsItsNotice() {
+        var model = openModel()
+        model.query = "Adzviser"
+        model.record(.added("Adzviser"))
+        model.dictionaryNotice = .done(.added("Adzviser"))
+        XCTAssertEqual(model.items.last?.command?.action, .removeWord("Adzviser"))
+
+        model.record(.removed("Adzviser"))
+        XCTAssertEqual(model.items.last?.command?.action, .addWord("Adzviser"))
+
+        model.query = "db2"
+        XCTAssertNil(model.dictionaryNotice)
+    }
+
+    func testAReadSentBeforeAnEditLeavesTheEditInPlace() {
+        var model = openModel()
+        model.query = "Adzviser"
+        let sent = model.dictionaryEdits
+        model.record(.added("Adzviser"))
+        model.read(dictionary: [], since: sent)
+        XCTAssertEqual(model.items.last?.command?.action, .removeWord("Adzviser"))
+    }
+
+    private func dictionaryModel(_ words: [String]) -> PaletteModel {
+        var model = openModel(history: [Self.entry(1, at: 100)])
+        model.read(dictionary: words, since: model.dictionaryEdits)
+        model.listDictionary()
+        return model
+    }
+
+    func testTheDictionaryListsItsWordsInFileOrderAndSearchNarrowsThem() {
+        var model = dictionaryModel(["vex16", "Adzviser", "db2"])
+        XCTAssertEqual(
+            model.items.compactMap(\.command?.action),
+            [.listedWord("vex16"), .listedWord("Adzviser"), .listedWord("db2")])
+
+        model.query = "adz"
+        XCTAssertEqual(model.items.compactMap(\.command?.action), [.addWord("adz"), .listedWord("Adzviser")])
+        XCTAssertEqual(model.selected?.command?.action, .listedWord("Adzviser"))
+
+        model.query = "db2"
+        XCTAssertEqual(model.items.compactMap(\.command?.action), [.listedWord("db2")])
+    }
+
+    func testASelectedWordOffersRemoveOnCommandDeleteAndReturnDoesNothing() {
+        let model = dictionaryModel(["db2"])
+        let actions = PaletteActions(model: model, phonePairingStatus: .loading)
+        XCTAssertEqual(actions.all, [PaletteAction(kind: .removeWord("db2"), isInFooter: true)])
+        XCTAssertEqual(actions.all.first?.key, .delete)
+        XCTAssertNil(actions.returnTitle(typingInto: nil))
+    }
+
+    func testAReadOrAnAddWhileListingShowsInTheList() {
+        var model = openModel()
+        model.listDictionary()
+        model.read(dictionary: ["db2"], since: model.dictionaryEdits)
+        model.record(.added("Adzviser"))
+        XCTAssertEqual(model.items.compactMap(\.command?.action), [.listedWord("db2"), .listedWord("Adzviser")])
+    }
+
+    func testRemovingTheLastWordKeepsTheSelectionInRange() {
+        var model = dictionaryModel(["db2", "vex16"])
+        model.moveSelection(by: 1)
+        model.record(.removed("vex16"))
+        XCTAssertEqual(model.items.compactMap(\.command?.action), [.listedWord("db2")])
+        XCTAssertEqual(model.selected?.command?.action, .listedWord("db2"))
+    }
+
+    func testEscapeClearsTheSearchThenLeavesTheDictionaryOnItsCommand() {
+        var model = openModel()
+        model.read(dictionary: ["db2"], since: model.dictionaryEdits)
+        model.listDictionary()
+        model.query = "db"
+        XCTAssertFalse(model.escape())
+        XCTAssertEqual(model.query, "")
+        XCTAssertFalse(model.escape())
+        XCTAssertNil(model.listing)
+        XCTAssertEqual(model.selected?.command?.action, .listDictionary)
     }
 
     private static func replied(_ source: PromptSource) -> PaletteResult {

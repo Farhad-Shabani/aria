@@ -201,7 +201,7 @@ keys! {
     MemoryMaxFactsPerSession: "memory.max_facts_per_session", Live, Mac, [], Kind::Integer, Some("10"),
         "The most facts kept from one conversation.";
     MemoryDir: "memory.dir", Restart, Mac, [], Kind::Path, Some("\"~/.aria/memory\""),
-        "Holds the facts, and lexicon.txt, the terms that fix misheard words.";
+        "Holds the facts, and the pairs learned from chats that fix misheard words.";
     Prompts: "prompts", Live, Mac, [], Kind::Prompts, None,
         "What to make of a recording, keyed by id. At most 16, each chord once, listed in file order.";
     ApplicationOverrides: "application_overrides", Live, Mac, [], Kind::Overrides, None,

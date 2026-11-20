@@ -131,7 +131,8 @@ once it's 30 days old and Aria has checked it for facts. Facts and learned
 substitutions stay until you delete them.
 
 Turning **Memory** off keeps what's stored. To delete it, run
-`aria memory clear`. This keeps `lexicon.txt` and assistant conversations.
+`aria memory clear`. This keeps your dictionary, `~/.aria/vocabulary/dictionary.txt`,
+and assistant conversations.
 Deletion isn't secure erasure and can't remove backups.
 
 ## Updates

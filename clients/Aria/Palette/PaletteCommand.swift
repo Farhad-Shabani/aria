@@ -18,6 +18,11 @@ struct PaletteCommand: Equatable, Identifiable {
         case newPrompt
         /// Instructions typed or spoken for one run on the prompt input.
         case runOneOff(String)
+        case addWord(String)
+        case removeWord(String)
+        case listDictionary
+        /// A word your dictionary lists. ⌘⌫ removes it.
+        case listedWord(String)
     }
 
     let id: String
@@ -65,6 +70,25 @@ struct PaletteCommand: Equatable, Identifiable {
         PaletteCommand(
             id: "one-off", title: "Run “\(instructions)”", symbol: "sparkles", number: nil, chord: nil,
             action: .runOneOff(instructions))
+    }
+    /// Both share one id, so an edit that flips the row keeps it selected.
+    static func addWord(_ word: String) -> PaletteCommand {
+        PaletteCommand(
+            id: "dictionary", title: "Add “\(word)” to Dictionary", symbol: "text.badge.plus", number: nil,
+            chord: nil, action: .addWord(word))
+    }
+    static func removeWord(_ word: String) -> PaletteCommand {
+        PaletteCommand(
+            id: "dictionary", title: "Remove “\(word)” from Dictionary", symbol: "text.badge.minus", number: nil,
+            chord: nil, action: .removeWord(word))
+    }
+    static let dictionary = PaletteCommand(
+        id: "list-dictionary", title: "Dictionary…", symbol: "character.book.closed", number: nil, chord: nil,
+        keywords: ["words", "vocabulary"], action: .listDictionary)
+    static func word(_ word: String) -> PaletteCommand {
+        PaletteCommand(
+            id: "word-\(word)", title: word, symbol: "textformat", number: nil, chord: nil,
+            action: .listedWord(word))
     }
     static let settings = PaletteCommand(
         id: "settings", title: "Settings…", symbol: "gearshape", number: nil, chord: nil,

@@ -17,6 +17,19 @@ struct PaletteModel: Equatable {
         let opens: Bool
     }
 
+    /// What the footer says after a dictionary edit.
+    enum DictionaryNotice: Equatable {
+        case done(DictionaryEdit)
+        case failed(String)
+
+        var message: String {
+            switch self {
+            case .done(let edit): edit.message
+            case .failed(let message): message
+            }
+        }
+    }
+
     static let numberKeyCount = 9
 
     /// The ⌘K list belongs to the page, row and search it opened on.
@@ -28,8 +41,10 @@ struct PaletteModel: Equatable {
     var query = "" {
         didSet {
             guard query != oldValue else { return }
-            selectedIndex = 0
+            matchWords()
+            selectedIndex = restingIndex
             menuIndex = nil
+            dictionaryNotice = nil
             dropThread()
         }
     }
@@ -42,6 +57,16 @@ struct PaletteModel: Equatable {
     }
     /// While off, no saved entry or history command shows.
     var keepsHistory = false
+    /// `nil` until read, and then the dictionary row offers only Add.
+    private var dictionary: ListedWords?
+    var dictionaryWords: [String]? { dictionary?.words }
+    /// The listed words the search matches, kept so a read of `items` doesn't
+    /// search every word again.
+    private var matchingWords: [PaletteCommand] = []
+    /// Counts edits, so a read sent before one can't undo it.
+    private(set) var dictionaryEdits = 0
+    /// Shown until the search changes.
+    var dictionaryNotice: DictionaryNotice?
     var isConfirmingClear = false
     enum Renaming: Equatable {
         case entry(UInt64)
@@ -60,8 +85,14 @@ struct PaletteModel: Equatable {
     /// The entry a prompt runs on, shown as a chip in the search field. The
     /// list holds only prompts meanwhile.
     private(set) var input: HistoryItem?
-    /// While true, the list holds only the microphone choices.
-    private(set) var isListingMicrophones = false
+    enum Listing: Equatable {
+        case microphones
+        case dictionary
+    }
+
+    /// The one list the page holds in place of the commands and history.
+    private(set) var listing: Listing?
+    var isListingMicrophones: Bool { listing == .microphones }
     private(set) var selectedIndex = 0 {
         didSet { if selectedIndex != oldValue { editFailure = nil } }
     }
@@ -129,9 +160,50 @@ struct PaletteModel: Equatable {
         editFailure = nil
         renaming = nil
         input = nil
-        isListingMicrophones = false
+        listing = nil
+        dictionaryNotice = nil
         dropThread()
         leaveChat()
+    }
+
+    /// Ignores a read sent before the latest edit.
+    mutating func read(dictionary words: [String]?, since edits: Int) {
+        guard edits == dictionaryEdits else { return }
+        keepingSelection { model in
+            model.dictionary = words.map(ListedWords.init)
+            model.matchWords()
+        }
+    }
+
+    /// Keeps the words in step with an edit the daemon made, so the row flips.
+    mutating func record(_ edit: DictionaryEdit) {
+        keepingSelection { model in
+            var words = model.dictionary ?? ListedWords([])
+            switch edit {
+            case .added(let word), .alreadyListed(let word): words.insert(word)
+            case .removed(let word), .notListed(let word): words.remove(word)
+            }
+            model.dictionary = words
+            model.dictionaryEdits += 1
+            model.matchWords()
+        }
+    }
+
+    private mutating func matchWords() {
+        matchingWords = listing == .dictionary ? matching((dictionaryWords ?? []).map(PaletteCommand.word)) : []
+    }
+
+    /// A resting selection rests again after `change`. Any other stays on its
+    /// row, or where the row was, on the one after.
+    private mutating func keepingSelection(_ change: (inout Self) -> Void) {
+        let selectedID = selected?.id
+        let isResting = selectedIndex == restingIndex
+        change(&self)
+        if isResting {
+            selectedIndex = restingIndex
+        } else {
+            reselect(selectedID)
+        }
     }
 
     /// Follows settings while the palette is open. The selection stays on its row.
@@ -157,9 +229,17 @@ struct PaletteModel: Equatable {
 
     /// Lists the microphone choices, with the chosen one selected.
     mutating func listMicrophones() {
-        isListingMicrophones = true
+        listing = .microphones
         query = ""
         selectedIndex = microphones.firstIndex(where: \.isChosen) ?? 0
+    }
+
+    /// Lists your dictionary's words, the first selected.
+    mutating func listDictionary() {
+        listing = .dictionary
+        query = ""
+        matchWords()
+        selectedIndex = 0
     }
 
     private mutating func reselect(_ id: PaletteItem.ID?) {
@@ -229,7 +309,7 @@ struct PaletteModel: Equatable {
     mutating func attach(_ entry: HistoryItem) {
         guard canAttach else { return }
         input = entry
-        isListingMicrophones = false
+        listing = nil
         dropThread()
         page = .commands
         query = ""
@@ -255,7 +335,12 @@ struct PaletteModel: Equatable {
     }
 
     var commands: [PaletteCommand] {
-        if isListingMicrophones { return matching(microphones) }
+        switch listing {
+        case .microphones: return matching(microphones)
+        case .dictionary:
+            return dictionaryItems.compactMap(\.command) + matchingWords
+        case nil: break
+        }
         guard input == nil else {
             let instructions = query.trimmingCharacters(in: .whitespacesAndNewlines)
             return matching(prompts) + (instructions.isEmpty ? [] : [.oneOff(instructions)])
@@ -267,7 +352,7 @@ struct PaletteModel: Equatable {
     private var pageCommands: [PaletteCommand] {
         [isSystemTranscriptionRunning ? .liveTranscript : .newTranscription, .newDictation, .ask(assistantName)]
             + prompts
-            + (canAddPrompt ? [.newPrompt] : []) + [.chooseMicrophone, .pairPhone, .setUp, .settings]
+            + (canAddPrompt ? [.newPrompt] : []) + [.chooseMicrophone, .dictionary, .pairPhone, .setUp, .settings]
             + (setupSteps > 0 ? [.finishSetup] : [])
             + (keepsHistory ? HistorySection.allCases.map(PaletteCommand.history) + [.clearHistory] : [])
     }
@@ -283,13 +368,38 @@ struct PaletteModel: Equatable {
     /// With nothing typed, history entries take the commands' place: history
     /// loads page by page, so commands after it would never come into view.
     var items: [PaletteItem] {
-        guard input == nil, !isListingMicrophones else { return commands.map(PaletteItem.command) }
+        guard input == nil, listing == nil else { return commands.map(PaletteItem.command) }
         let entries = keepsHistory ? threaded(entries) : []
         guard section == nil else { return entries }
         guard !isShowingHistoryFirst else {
             return (isSystemTranscriptionRunning ? [.command(.liveTranscript)] : []) + entries
         }
-        return commands.map(PaletteItem.command) + entries
+        return commands.map(PaletteItem.command) + dictionaryItems + entries
+    }
+
+    /// In your dictionary's list, a listed word is already a row of its own.
+    private var dictionaryItems: [PaletteItem] {
+        let word = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !word.isEmpty else { return [] }
+        if dictionary?.contains(word) == true {
+            return listing == .dictionary ? [] : [.command(.removeWord(word))]
+        }
+        return [.command(.addWord(word))]
+    }
+
+    /// Where the selection starts: the first row, passing over the dictionary row, so
+    /// Return on a search opens its first match or nothing. Only in your dictionary's
+    /// list does Return add the word typed.
+    private var restingIndex: Int {
+        let items = items
+        let isDictionaryEdit = { (item: PaletteItem) in
+            switch item.command?.action {
+            case .addWord?, .removeWord?: true
+            default: false
+            }
+        }
+        if let index = items.firstIndex(where: { !isDictionaryEdit($0) }) { return index }
+        return listing == .dictionary ? 0 : items.count
     }
 
     private func threaded(_ entries: [HistoryItem]) -> [PaletteItem] {
@@ -377,11 +487,15 @@ struct PaletteModel: Equatable {
     /// selected once history loads. Any other selection follows its row.
     mutating func replace(entries: [HistoryItem]) {
         let selectedID = selected?.id
+        let isResting = selectedIndex == restingIndex
         self.entries = entries
         if let thread, !entries.contains(where: { $0.id == thread.entryID }) {
             dropThread()
         }
-        guard selectedIndex > 0 else { return }
+        if isResting {
+            selectedIndex = restingIndex
+            return
+        }
         let items = items
         if let index = items.firstIndex(where: { $0.id == selectedID }) {
             selectedIndex = index
@@ -449,7 +563,7 @@ struct PaletteModel: Equatable {
     /// A digit runs a prompt only on the commands page with nothing typed, so
     /// digits can still be searched for.
     func command(forNumber number: Int) -> PaletteCommand? {
-        guard page == .commands, !isListingMicrophones, input != nil || section == nil, query.isEmpty else {
+        guard page == .commands, listing == nil, input != nil || section == nil, query.isEmpty else {
             return nil
         }
         return prompts.first { $0.number == number }
@@ -465,13 +579,13 @@ struct PaletteModel: Equatable {
 
     /// A command's key runs it from the commands page, whatever is typed, while the page offers it.
     func command(pressing event: NSEvent) -> PaletteCommand? {
-        guard page == .commands, !isRenaming, input == nil, !isListingMicrophones else { return nil }
+        guard page == .commands, !isRenaming, input == nil, listing == nil else { return nil }
         return pageCommands.first { $0.key?.matches(event) == true }
     }
 
     /// The pills pick a section while history shows and no prompt input does.
     var showsSectionPills: Bool {
-        keepsHistory && input == nil && !isListingMicrophones
+        keepsHistory && input == nil && listing == nil
     }
 
     /// Moves to the next section pill, or the previous one, wrapping round
@@ -566,9 +680,14 @@ struct PaletteModel: Equatable {
             query = ""
             return false
         }
-        if isListingMicrophones {
-            isListingMicrophones = false
-            let row = PaletteItem.command(.chooseMicrophone).id
+        if let listing {
+            self.listing = nil
+            let command: PaletteCommand =
+                switch listing {
+                case .microphones: .chooseMicrophone
+                case .dictionary: .dictionary
+                }
+            let row = PaletteItem.command(command).id
             selectedIndex = items.firstIndex { $0.id == row } ?? 0
             return false
         }
@@ -600,5 +719,26 @@ struct PaletteModel: Equatable {
                 action: .runPrompt(id: prompt.id)
             )
         }
+    }
+}
+
+/// Your dictionary's words in file order, with a lookup a keystroke can afford.
+private struct ListedWords: Equatable {
+    private(set) var words: [String] = []
+    private var lookup: Set<String> = []
+
+    /// A word listed twice is one row, with one id.
+    init(_ words: [String]) {
+        for word in words { insert(word) }
+    }
+
+    func contains(_ word: String) -> Bool { lookup.contains(word) }
+
+    mutating func insert(_ word: String) {
+        if lookup.insert(word).inserted { words.append(word) }
+    }
+
+    mutating func remove(_ word: String) {
+        if lookup.remove(word) != nil { words.removeAll { $0 == word } }
     }
 }

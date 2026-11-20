@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 /// What the assistant remembers across sessions and how it learns it.
-/// `dir` also holds the lexicon, which works whether or not `enabled`.
+/// `dir` also holds the learned pairs, which apply whether or not `enabled`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryConfig {
     pub enabled: bool,

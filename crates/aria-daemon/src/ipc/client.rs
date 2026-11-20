@@ -614,6 +614,45 @@ impl DaemonClient {
         response.try_into().map_err(ClientError::from)
     }
 
+    pub(crate) fn add_word(
+        &self,
+        word: &str,
+    ) -> Result<aria_voice::vocabulary::dictionary::AddWordOutcome, ClientError> {
+        let mut vocabulary =
+            wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
+        let request = wire::AddWordRequest {
+            word: word.to_owned(),
+        };
+        let response = self.call(REQUEST_TIMEOUT, request, |request| {
+            vocabulary.add_word(request)
+        })?;
+        response.try_into().map_err(ClientError::from)
+    }
+
+    pub(crate) fn remove_word(
+        &self,
+        word: &str,
+    ) -> Result<aria_voice::vocabulary::dictionary::RemoveWordOutcome, ClientError> {
+        let mut vocabulary =
+            wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
+        let request = wire::RemoveWordRequest {
+            word: word.to_owned(),
+        };
+        let response = self.call(REQUEST_TIMEOUT, request, |request| {
+            vocabulary.remove_word(request)
+        })?;
+        response.try_into().map_err(ClientError::from)
+    }
+
+    pub(crate) fn list_words(&self) -> Result<Vec<String>, ClientError> {
+        let mut vocabulary =
+            wire::vocabulary_service_client::VocabularyServiceClient::new(self.channel.clone());
+        let response = self.call(REQUEST_TIMEOUT, wire::ListWordsRequest {}, |request| {
+            vocabulary.list_words(request)
+        })?;
+        Ok(response.words)
+    }
+
     pub(crate) fn vocabulary_forget(
         &self,
         directory: Option<&aria_settings::Directory>,

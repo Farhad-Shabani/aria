@@ -353,6 +353,24 @@ impl DaemonSession {
         self.client.vocabulary_refresh(directory)
     }
 
+    pub fn add_word(
+        &self,
+        word: &str,
+    ) -> Result<aria_voice::vocabulary::dictionary::AddWordOutcome, ClientError> {
+        self.client.add_word(word)
+    }
+
+    pub fn remove_word(
+        &self,
+        word: &str,
+    ) -> Result<aria_voice::vocabulary::dictionary::RemoveWordOutcome, ClientError> {
+        self.client.remove_word(word)
+    }
+
+    pub fn list_words(&self) -> Result<Vec<String>, ClientError> {
+        self.client.list_words()
+    }
+
     pub fn vocabulary_forget(
         &self,
         directory: Option<&aria_settings::Directory>,

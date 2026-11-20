@@ -69,4 +69,45 @@ impl wire::vocabulary_service_server::VocabularyService for VocabularyRpc {
         super::served(METHOD);
         Ok(Response::new(status.into()))
     }
+
+    async fn add_word(
+        &self,
+        request: Request<wire::AddWordRequest>,
+    ) -> Result<Response<wire::AddWordResponse>, Status> {
+        const METHOD: &str = "VocabularyService/AddWord";
+        let word = request.into_inner().word;
+        let runtime = Arc::clone(&self.runtime);
+        let added = super::blocking(METHOD, move || runtime.add_word(&word))
+            .await?
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new(added.into()))
+    }
+
+    async fn remove_word(
+        &self,
+        request: Request<wire::RemoveWordRequest>,
+    ) -> Result<Response<wire::RemoveWordResponse>, Status> {
+        const METHOD: &str = "VocabularyService/RemoveWord";
+        let word = request.into_inner().word;
+        let runtime = Arc::clone(&self.runtime);
+        let removed = super::blocking(METHOD, move || runtime.remove_word(&word))
+            .await?
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new(removed.into()))
+    }
+
+    async fn list_words(
+        &self,
+        _request: Request<wire::ListWordsRequest>,
+    ) -> Result<Response<wire::ListWordsResponse>, Status> {
+        const METHOD: &str = "VocabularyService/ListWords";
+        let runtime = Arc::clone(&self.runtime);
+        let words = super::blocking(METHOD, move || runtime.list_words())
+            .await?
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new(wire::ListWordsResponse { words }))
+    }
 }

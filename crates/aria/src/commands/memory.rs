@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use aria_assistant::memory::Store;
+use aria_voice::vocabulary::dictionary::Dictionary;
 use clap::Subcommand;
 use tracing_subscriber::EnvFilter;
 
@@ -24,12 +25,12 @@ pub(super) enum MemoryCommand {
     Review,
     /// Extract facts from every session with new turns, now
     Consolidate,
-    /// Show the word list and the substitutions learned from it
+    /// Show the substitutions learned for your dictionary's words
     Lexicon {
         /// Delete one learned substitution by id
         #[arg(long)]
         forget_pair: Option<i64>,
-        /// Print terms and pairs as one JSON object instead
+        /// Print the pairs as one JSON object instead
         #[arg(long, conflicts_with = "forget_pair")]
         json: bool,
     },
@@ -126,29 +127,21 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
             aria_assistant::memory::write_profile(&store, &dir)?;
         }
         MemoryCommand::Lexicon { forget_pair, json } => {
-            let (store, dir) = open_store()?;
+            let (store, _) = open_store()?;
             if let Some(id) = forget_pair {
                 anyhow::ensure!(store.forget_pair(id)?, "No pair with id {id}");
                 println!("Pair forgotten");
                 return Ok(());
             }
-            let path = dir.join(aria_assistant::memory::LEXICON_FILE);
-            let terms = aria_assistant::memory::load_terms(&path);
+            let pairs = store.list_pairs()?;
             if json {
-                println!("{}", lexicon_json(&terms, &store.list_pairs()?));
+                println!("{}", pairs_json(&pairs));
                 return Ok(());
             }
-            if terms.is_empty() {
-                println!("No lexicon terms ({} missing or empty)", path.display());
+            if pairs.is_empty() {
+                println!("No learned pairs");
             } else {
-                println!("Terms ({}):", path.display());
-                for term in terms {
-                    println!("  {term}");
-                }
-            }
-            let pairs = store.list_pairs()?;
-            if !pairs.is_empty() {
-                println!("Derived pairs:");
+                println!("Learned pairs:");
                 for pair in pairs {
                     println!(
                         "  {:>4}  {} → {}  [{}]",
@@ -162,10 +155,7 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn lexicon_json(
-    terms: &[String],
-    pairs: &[aria_assistant::memory::DerivedPair],
-) -> serde_json::Value {
+fn pairs_json(pairs: &[aria_assistant::memory::DerivedPair]) -> serde_json::Value {
     let pairs: Vec<_> = pairs
         .iter()
         .map(|pair| {
@@ -177,7 +167,7 @@ fn lexicon_json(
             })
         })
         .collect();
-    serde_json::json!({ "terms": terms, "pairs": pairs })
+    serde_json::json!({ "pairs": pairs })
 }
 
 fn consolidate() -> anyhow::Result<()> {
@@ -195,8 +185,11 @@ fn consolidate() -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
     let home = aria_settings::config::home_directory()?;
     let settings = aria_settings::load(&home)?;
+    let config = aria_daemon::config::load_memory(&settings.memory, &home);
+    let terms = Dictionary::from_home(&home).words()?.unwrap_or_default();
     let report = aria_assistant::memory::run_backlog(
-        aria_daemon::config::load_memory(&settings.memory, &home),
+        config,
+        &terms,
         &home,
         &aria_kit::cancel::CancelToken::never(),
     )?;

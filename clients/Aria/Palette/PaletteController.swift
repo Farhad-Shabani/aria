@@ -216,6 +216,16 @@ final class PaletteController: ObservableObject {
             model.show(.phonePairing)
         case .listMicrophones:
             model.listMicrophones()
+        case .addWord(let word):
+            editDictionary { try await VocabularyClient.add(word) }
+        case .removeWord(let word):
+            editDictionary { try await VocabularyClient.remove(word) }
+        case .listDictionary:
+            model.listDictionary()
+            readDictionary()
+        case .listedWord:
+            // ⌘⌫ removes it, so a click only selects it.
+            model.select(PaletteItem.command(command).id)
         case .useMicrophone(let id):
             guard let settings, let snapshot = settings.snapshot else { return }
             SettingsEditor(snapshot: snapshot, settings: settings).set(\.microphone, to: id)
@@ -411,6 +421,7 @@ final class PaletteController: ObservableObject {
 
     func perform(_ action: PaletteAction) {
         switch action.kind {
+        case .removeWord(let word): editDictionary { try await VocabularyClient.remove(word) }
         case .copyEntry(let entry): history.copy(entry.id)
         case .copyDetail:
             if let result = focusedResult { history.copy(text: result.text) } else { history.copy() }
@@ -715,7 +726,30 @@ final class PaletteController: ObservableObject {
         Task { await setup.refresh() }
         if model.keepsHistory { history.open() }
         nameAssistants()
+        readDictionary()
         panel.show(PaletteView(controller: self, systemTranscription: systemTranscription, history: history))
+    }
+
+    /// On every open, since an editor can change the file between opens.
+    /// A failure leaves the words unread, and the transport logs it.
+    private func readDictionary() {
+        let edits = model.dictionaryEdits
+        Task { model.read(dictionary: try? await VocabularyClient.words(), since: edits) }
+    }
+
+    private func editDictionary(_ change: @escaping @MainActor () async throws -> DictionaryEdit) {
+        let opening = openings
+        Task {
+            let notice: PaletteModel.DictionaryNotice
+            do {
+                let edit = try await change()
+                model.record(edit)
+                notice = .done(edit)
+            } catch {
+                notice = .failed(VocabularyClient.failureMessage(for: error))
+            }
+            if opening == openings { model.dictionaryNotice = notice }
+        }
     }
 
     /// Until the daemon gives the assistants' names, a chat names its folder.

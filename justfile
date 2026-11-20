@@ -247,6 +247,7 @@ _swift-stubs out: _swift-plugins
         proto/aria/daemon/v1/speaker.proto \
         proto/aria/daemon/v1/speech.proto \
         proto/aria/daemon/v1/transcription.proto \
+        proto/aria/daemon/v1/vocabulary.proto \
         proto/aria/setup/v1/setup.proto \
         proto/grpc/health/v1/health.proto
 

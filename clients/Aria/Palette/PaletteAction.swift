@@ -26,6 +26,7 @@ struct PaletteAction: Identifiable, Equatable {
         case renameChat(ChatKey)
         case copyPairingCode(PairingInvite, expiresAt: Date)
         case turnOnPhonePairing
+        case removeWord(String)
     }
 
     let kind: Kind
@@ -47,6 +48,7 @@ struct PaletteAction: Identifiable, Equatable {
         case .typeText: "type"
         case .deleteChat: "delete-chat"
         case .turnOnPhonePairing: "turn-on-phone-pairing"
+        case .removeWord: "remove-word"
         }
     }
 
@@ -66,6 +68,7 @@ struct PaletteAction: Identifiable, Equatable {
         case .deleteChat: "Delete Chat…"
         case .copyPairingCode: "Copy Code"
         case .turnOnPhonePairing: "Turn On"
+        case .removeWord: "Remove"
         }
     }
 
@@ -84,6 +87,7 @@ struct PaletteAction: Identifiable, Equatable {
         case .typeText: .typeText
         case .deleteChat: .delete
         case .turnOnPhonePairing: .turnOn
+        case .removeWord: .delete
         }
     }
 }

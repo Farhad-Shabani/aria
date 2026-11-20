@@ -31,8 +31,11 @@ struct PaletteActions {
                 return actions(for: chat, isReplying: replying != nil) + stop(replying)
             case .command(let command) where command.action == .showLiveTranscript: return [stop]
             case .command(let command):
-                guard case .runPrompt(let id) = command.action else { return [] }
-                return [PaletteAction(kind: .editPrompt(id: id), isInFooter: true)]
+                switch command.action {
+                case .runPrompt(let id): return [PaletteAction(kind: .editPrompt(id: id), isInFooter: true)]
+                case .listedWord(let word): return [PaletteAction(kind: .removeWord(word), isInFooter: true)]
+                default: return []
+                }
             case .result(let result):
                 return [PaletteAction(kind: .copyText(result.text)), PaletteAction(kind: .open(.result(result)))]
             case nil: return []
@@ -202,6 +205,10 @@ struct PaletteActions {
             case .clearHistory: "Clear…"
             case .showHistory, .showPhonePairing, .listMicrophones: "Show"
             case .useMicrophone: "Use"
+            case .addWord: "Add"
+            case .removeWord: "Remove"
+            case .listDictionary: "Show"
+            case .listedWord: nil
             }
         case .some(let item):
             if typesOnReturn(item), let app { "Type into \(app)" } else { "Open" }
