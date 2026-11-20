@@ -723,13 +723,13 @@ struct PaletteModel: Equatable {
 }
 
 /// Your dictionary's words in file order, with a lookup a keystroke can afford.
-private struct ListedWords {
+private struct ListedWords: Equatable {
     private(set) var words: [String] = []
     private var lookup: Set<String> = []
 
     /// A word listed twice is one row, with one id.
     init(_ words: [String]) {
-        words.forEach { insert($0) }
+        for word in words { insert(word) }
     }
 
     func contains(_ word: String) -> Bool { lookup.contains(word) }
