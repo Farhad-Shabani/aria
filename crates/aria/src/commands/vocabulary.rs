@@ -19,6 +19,8 @@ pub(super) enum VocabularyCommand {
     Add { word: String },
     /// Remove a word from your dictionary
     Remove { word: String },
+    /// List the words in your dictionary
+    List,
 }
 
 pub(super) fn run(command: VocabularyCommand) -> anyhow::Result<()> {
@@ -38,6 +40,16 @@ pub(super) fn run(command: VocabularyCommand) -> anyhow::Result<()> {
             match session.remove_word(&word)? {
                 RemoveWordOutcome::Removed => println!("Removed {}", word.trim()),
                 RemoveWordOutcome::NotListed => println!("{} isn't in the dictionary", word.trim()),
+            }
+            return Ok(());
+        }
+        VocabularyCommand::List => {
+            let words = session.list_words()?;
+            if words.is_empty() {
+                println!("Your dictionary is empty");
+            }
+            for word in words {
+                println!("{word}");
             }
             return Ok(());
         }

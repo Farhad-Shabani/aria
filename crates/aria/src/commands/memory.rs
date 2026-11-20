@@ -25,12 +25,12 @@ pub(super) enum MemoryCommand {
     Review,
     /// Extract facts from every session with new turns, now
     Consolidate,
-    /// Show the word list and the substitutions learned from it
+    /// Show the substitutions learned for your dictionary's words
     Lexicon {
         /// Delete one learned substitution by id
         #[arg(long)]
         forget_pair: Option<i64>,
-        /// Print terms and pairs as one JSON object instead
+        /// Print the pairs as one JSON object instead
         #[arg(long, conflicts_with = "forget_pair")]
         json: bool,
     },
@@ -133,25 +133,15 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
                 println!("Pair forgotten");
                 return Ok(());
             }
-            let home = aria_settings::config::home_directory()?;
-            let dictionary = Dictionary::from_home(&home);
-            let path = dictionary.path();
-            let terms = dictionary.words()?.unwrap_or_default();
+            let pairs = store.list_pairs()?;
             if json {
-                println!("{}", lexicon_json(&terms, &store.list_pairs()?));
+                println!("{}", pairs_json(&pairs));
                 return Ok(());
             }
-            if terms.is_empty() {
-                println!("No lexicon terms ({} missing or empty)", path.display());
+            if pairs.is_empty() {
+                println!("No learned pairs");
             } else {
-                println!("Terms ({}):", path.display());
-                for term in terms {
-                    println!("  {term}");
-                }
-            }
-            let pairs = store.list_pairs()?;
-            if !pairs.is_empty() {
-                println!("Derived pairs:");
+                println!("Learned pairs:");
                 for pair in pairs {
                     println!(
                         "  {:>4}  {} → {}  [{}]",
@@ -165,10 +155,7 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn lexicon_json(
-    terms: &[String],
-    pairs: &[aria_assistant::memory::DerivedPair],
-) -> serde_json::Value {
+fn pairs_json(pairs: &[aria_assistant::memory::DerivedPair]) -> serde_json::Value {
     let pairs: Vec<_> = pairs
         .iter()
         .map(|pair| {
@@ -180,7 +167,7 @@ fn lexicon_json(
             })
         })
         .collect();
-    serde_json::json!({ "terms": terms, "pairs": pairs })
+    serde_json::json!({ "pairs": pairs })
 }
 
 fn consolidate() -> anyhow::Result<()> {

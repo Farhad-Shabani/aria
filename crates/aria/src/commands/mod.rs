@@ -316,4 +316,15 @@ mod tests {
             assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
         }
     }
+
+    #[test]
+    fn the_dictionary_lists_under_vocabulary() {
+        let cli = Cli::try_parse_from(["aria", "vocabulary", "list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Vocabulary {
+                command: vocabulary::VocabularyCommand::List
+            }
+        ));
+    }
 }
