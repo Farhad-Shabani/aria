@@ -60,6 +60,16 @@ final class MarkMotionTests: XCTestCase {
         }
     }
 
+    func testListeningBarsClearTheRingByAPointInTheMenuBar() {
+        let ringInner = MarkTuning.outer - SmallMark.ringWidth
+        for bar in SmallMark.bars {
+            for corner in [CGPoint(x: bar.minX, y: bar.minY), CGPoint(x: bar.maxX, y: bar.maxY)] {
+                let reach = hypot(corner.x - MarkTuning.center, corner.y - MarkTuning.center)
+                XCTAssertLessThanOrEqual(reach, ringInner - SmallMark.point)
+            }
+        }
+    }
+
     func testRestingRibbonIsTheLogosWave() {
         let (upper, _) = RibbonMotion.currents(phase: 0, share: { _ in MarkMotion.restShare }, geometry: .mark)
         let baseline = MarkTuning.center + MarkTuning.shift - MarkTuning.spread / 2

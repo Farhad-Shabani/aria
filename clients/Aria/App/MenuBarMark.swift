@@ -46,11 +46,10 @@ enum MenuBarMark {
         case .ready, .switching, .stopped:
             ringAndRibbon(in: context)
         case .listening:
-            // Inverted, so it stands out at a glance.
-            fill(SmallMark.disc, in: context)
-            context.setBlendMode(.clear)
-            ribbon(in: context)
-            context.setBlendMode(.normal)
+            ring(in: context)
+            for bar in SmallMark.bars {
+                fill(Path(roundedRect: bar, cornerRadius: SmallMark.barCorner, style: .continuous), in: context)
+            }
         case .transcribingSystemAudio:
             fill(SmallMark.disc, in: context)
             context.setBlendMode(.clear)

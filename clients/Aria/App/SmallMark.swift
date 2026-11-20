@@ -22,6 +22,18 @@ enum SmallMark {
     /// The logo's resting ribbon. Fill it, then stroke it at `ribbonEdge`.
     static let ribbon = RibbonMotion.outline(phase: 0, share: { _ in MarkMotion.restShare }, geometry: .smallMark)
 
+    /// The logo's units in one menu bar point: the ring is 16 points across there.
+    static let point = 2 * MarkTuning.outer / 16
+
+    /// Listening's three level bars, 2 points wide, the middle one tallest.
+    /// Their heights land on whole points, so their ends stay sharp at 1×.
+    static let bars = [(-3.5, 4.0), (0, 6.0), (3.5, 4.0)].map { offset, height in
+        CGRect(
+            x: center.x + (offset - 1) * point, y: center.y - height / 2 * point,
+            width: 2 * point, height: height * point)
+    }
+    static let barCorner = 0.75 * point
+
     /// One of three dots across the opening, `index` −1, 0 or 1.
     static func dot(_ index: Int) -> Path {
         let dotRadius = 7.0
