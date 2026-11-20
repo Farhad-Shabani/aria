@@ -71,12 +71,6 @@ enum Target {
     Vacant,
 }
 
-impl Target {
-    fn after(read: Option<&Text>) -> Self {
-        read.map_or(Self::Vacant, |read| Self::AsRead(read.stamp))
-    }
-}
-
 struct Text {
     text: String,
     stamp: Stamp,
@@ -144,7 +138,8 @@ impl Dictionary {
         if text.len() as u64 > MAX_BYTES {
             return Err(DictionaryError::TooLarge);
         }
-        self.replace(&text, Target::after(read.as_ref()))?;
+        let target = read.map_or(Target::Vacant, |read| Target::AsRead(read.stamp));
+        self.replace(&text, target)?;
         Ok(AddWordOutcome::Added)
     }
 
