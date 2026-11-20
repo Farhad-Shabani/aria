@@ -53,9 +53,7 @@ struct PairingCode {
     func isDot(x: Int, y: Int) -> Bool {
         guard dark[y * size + x], !isInFinder(x: x, y: y) else { return false }
         let middle = Double(size) / 2
-        let dx = Double(x) + 0.5 - middle
-        let dy = Double(y) + 0.5 - middle
-        return (dx * dx + dy * dy).squareRoot() >= markWidth / 2 + Self.clearance
+        return hypot(Double(x) + 0.5 - middle, Double(y) + 0.5 - middle) >= markWidth / 2 + Self.clearance
     }
 
     private func isInFinder(x: Int, y: Int) -> Bool {

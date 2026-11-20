@@ -32,9 +32,7 @@ final class PairingCodeTests: XCTestCase {
         var cleared = 0
         for y in 0..<code.size {
             for x in 0..<code.size {
-                let dx = Double(x) + 0.5 - middle
-                let dy = Double(y) + 0.5 - middle
-                let nearestEdge = (dx * dx + dy * dy).squareRoot() - 0.5 * 2.squareRoot()
+                let nearestEdge = hypot(Double(x) + 0.5 - middle, Double(y) + 0.5 - middle) - 0.5 * 2.squareRoot()
                 if nearestEdge < code.markWidth / 2 {
                     cleared += 1
                     XCTAssertFalse(code.isDot(x: x, y: y), "(\(x), \(y))")
