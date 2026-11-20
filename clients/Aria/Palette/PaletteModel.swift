@@ -57,7 +57,7 @@ struct PaletteModel: Equatable {
     }
     /// While off, no saved entry or history command shows.
     var keepsHistory = false
-    /// `nil` until read, and then the dictionary row offers only Add.
+    /// `nil` until read, when every word typed counts as unlisted.
     private var dictionary: ListedWords?
     var dictionaryWords: [String]? { dictionary?.words }
     /// The listed words the search matches, kept so a read of `items` doesn't
@@ -338,7 +338,7 @@ struct PaletteModel: Equatable {
         switch listing {
         case .microphones: return matching(microphones)
         case .dictionary:
-            return dictionaryItems.compactMap(\.command) + matchingWords
+            return (unlistedWord.map { [.addWord($0)] } ?? []) + matchingWords
         case nil: break
         }
         guard input == nil else {
@@ -374,32 +374,19 @@ struct PaletteModel: Equatable {
         guard !isShowingHistoryFirst else {
             return (isSystemTranscriptionRunning ? [.command(.liveTranscript)] : []) + entries
         }
-        return commands.map(PaletteItem.command) + dictionaryItems + entries
+        return commands.map(PaletteItem.command) + entries
     }
 
-    /// In your dictionary's list, a listed word is already a row of its own.
-    private var dictionaryItems: [PaletteItem] {
+    var unlistedWord: String? {
         let word = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !word.isEmpty else { return [] }
-        if dictionary?.contains(word) == true {
-            return listing == .dictionary ? [] : [.command(.removeWord(word))]
-        }
-        return [.command(.addWord(word))]
+        guard section == nil, listing != .microphones, !word.isEmpty, dictionary?.contains(word) != true
+        else { return nil }
+        return word
     }
 
-    /// Where the selection starts: the first row, passing over the dictionary row, so
-    /// Return on a search opens its first match or nothing. Only in your dictionary's
-    /// list does Return add the word typed.
+    /// Your dictionary's list rests past its Add row, which ⌘D does from any row.
     private var restingIndex: Int {
-        let items = items
-        let isDictionaryEdit = { (item: PaletteItem) in
-            switch item.command?.action {
-            case .addWord?, .removeWord?: true
-            default: false
-            }
-        }
-        if let index = items.firstIndex(where: { !isDictionaryEdit($0) }) { return index }
-        return listing == .dictionary ? 0 : items.count
+        listing == .dictionary && unlistedWord != nil && items.count > 1 ? 1 : 0
     }
 
     private func threaded(_ entries: [HistoryItem]) -> [PaletteItem] {
