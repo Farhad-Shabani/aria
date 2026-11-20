@@ -11,8 +11,6 @@ use std::time::SystemTime;
 pub const FILE: &str = "dictionary.txt";
 /// Under the home directory, beside the project vocabulary's catalog.
 pub const DIRECTORY: &str = ".aria/vocabulary";
-/// Where earlier versions kept the words, in the memory directory.
-pub const LEGACY_FILE: &str = "lexicon.txt";
 
 const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_WORDS: usize = 100_000;
@@ -169,23 +167,6 @@ impl Dictionary {
         }
         self.replace(&kept, Target::AsRead(read.stamp))?;
         Ok(RemoveWordOutcome::Removed)
-    }
-
-    /// Copies the words at `legacy` here, once: only while this file doesn't
-    /// exist. The old file stays, so an older Aria still reads it.
-    pub fn adopt(&self, legacy: &Path) -> Result<bool, DictionaryError> {
-        let _write = self.write.lock().unwrap_or_else(PoisonError::into_inner);
-        if std::fs::symlink_metadata(&self.path).is_ok() {
-            return Ok(false);
-        }
-        let Some(read) = read(legacy)? else {
-            return Ok(false);
-        };
-        match self.replace(&read.text, Target::Vacant) {
-            Ok(()) => Ok(true),
-            Err(DictionaryError::Changed) => Ok(false),
-            Err(error) => Err(error),
-        }
     }
 
     /// The new text lands whole, under the file's name, or not at all.
@@ -388,19 +369,5 @@ mod tests {
         let missing = Dictionary::new(dir.path().join("none.txt"));
         assert_eq!(missing.remove("db2").unwrap(), RemoveWordOutcome::NotListed);
         assert!(!missing.path().exists());
-    }
-
-    #[test]
-    fn adopting_copies_the_old_list_only_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let legacy = dir.path().join(LEGACY_FILE);
-        std::fs::write(&legacy, "# old\ndb2\n").unwrap();
-        let dictionary = Dictionary::new(dir.path().join("vocabulary").join(FILE));
-        assert!(dictionary.adopt(&legacy).unwrap());
-        assert_eq!(dictionary.words().unwrap().unwrap(), ["db2"]);
-        dictionary.add("Adzviser").unwrap();
-        assert!(!dictionary.adopt(&legacy).unwrap());
-        assert_eq!(dictionary.words().unwrap().unwrap(), ["db2", "Adzviser"]);
-        assert_eq!(std::fs::read_to_string(&legacy).unwrap(), "# old\ndb2\n");
     }
 }

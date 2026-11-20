@@ -149,13 +149,6 @@ fn compose(
     let memory = memory_directory(&startup.memory, &context.home);
     let vocabulary_directory = context.home.join(dictionary::DIRECTORY);
     let dictionary = Arc::new(Dictionary::new(vocabulary_directory.join(dictionary::FILE)));
-    match dictionary.adopt(&memory.join(dictionary::LEGACY_FILE)) {
-        Ok(true) => tracing::info!("the dictionary took over the memory directory's word list"),
-        Ok(false) => {}
-        Err(error) => {
-            tracing::warn!(error = %error_chain(&error), "the old word list was not copied");
-        }
-    }
     let (vocabulary, mut vocabulary_worker) = super::vocabulary::Runtime::new(
         vocabulary_directory,
         super::vocabulary::PersonalSources::new(dictionary, memory),

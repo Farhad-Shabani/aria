@@ -1700,11 +1700,11 @@ mod tests {
     #[test]
     fn admitted_snapshots_survive_personal_deletion_and_refresh() {
         let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("lexicon.txt"), "db2\n").unwrap();
+        std::fs::write(root.path().join("dictionary.txt"), "db2\n").unwrap();
         let (runtime, mut worker) = Runtime::new(
             root.path().join("catalog"),
             PersonalSources::new(
-                Arc::new(Dictionary::new(root.path().join("lexicon.txt"))),
+                Arc::new(Dictionary::new(root.path().join("dictionary.txt"))),
                 root.path().to_owned(),
             ),
             true,
@@ -1714,7 +1714,7 @@ mod tests {
         worker.initialize_personal().unwrap();
         let admitted = runtime.snapshot(None);
         assert_eq!(admitted.matcher.correct("d b two").as_deref(), Some("db2"));
-        std::fs::remove_file(root.path().join("lexicon.txt")).unwrap();
+        std::fs::remove_file(root.path().join("dictionary.txt")).unwrap();
         assert!(matches!(worker.refresh_personal(), Err(Error::Busy)));
         let pinned = Arc::clone(&admitted.matcher);
         drop(admitted);
