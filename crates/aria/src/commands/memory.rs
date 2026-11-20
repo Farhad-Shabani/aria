@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use aria_assistant::memory::Store;
-use aria_voice::vocabulary::dictionary;
+use aria_voice::vocabulary::dictionary::Dictionary;
 use clap::Subcommand;
 use tracing_subscriber::EnvFilter;
 
@@ -127,14 +127,16 @@ pub(super) fn run(command: MemoryCommand) -> anyhow::Result<()> {
             aria_assistant::memory::write_profile(&store, &dir)?;
         }
         MemoryCommand::Lexicon { forget_pair, json } => {
-            let (store, dir) = open_store()?;
+            let (store, _) = open_store()?;
             if let Some(id) = forget_pair {
                 anyhow::ensure!(store.forget_pair(id)?, "No pair with id {id}");
                 println!("Pair forgotten");
                 return Ok(());
             }
-            let path = dir.join(dictionary::FILE);
-            let terms = dictionary::load_words(&path);
+            let home = aria_settings::config::home_directory()?;
+            let dictionary = Dictionary::from_home(&home);
+            let path = dictionary.path();
+            let terms = dictionary.words()?.unwrap_or_default();
             if json {
                 println!("{}", lexicon_json(&terms, &store.list_pairs()?));
                 return Ok(());
@@ -197,7 +199,7 @@ fn consolidate() -> anyhow::Result<()> {
     let home = aria_settings::config::home_directory()?;
     let settings = aria_settings::load(&home)?;
     let config = aria_daemon::config::load_memory(&settings.memory, &home);
-    let terms = dictionary::load_words(&config.dir.join(dictionary::FILE));
+    let terms = Dictionary::from_home(&home).words()?.unwrap_or_default();
     let report = aria_assistant::memory::run_backlog(
         config,
         &terms,

@@ -9,7 +9,7 @@ use aria_voice::vocabulary::{
     Activity, Completeness, Failure, List, MatchError, PersonalRules, Status, Term, Vocabulary,
     catalog::{self, Catalog},
     collection::{self, Collector},
-    dictionary::{Dictionary, DictionaryError},
+    dictionary::{AddWordOutcome, Dictionary, DictionaryError, RemoveWordOutcome, Stamp},
     discover, select,
 };
 use std::collections::{HashMap, VecDeque};
@@ -23,6 +23,9 @@ use tokio_util::sync::CancellationToken;
 const QUEUE_CAPACITY: usize = 32;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const WORKER_POLL: Duration = Duration::from_millis(20);
+/// How often an idle worker checks the dictionary for a save, as the
+/// settings file is checked.
+const DICTIONARY_POLL: Duration = Duration::from_secs(1);
 const LIVE_BYTES: usize = 128 * 1024 * 1024;
 // Cached sources, discovery output and compilation can coexist with admitted snapshots.
 const DISCOVERY_RESERVE: usize = 96 * 1024 * 1024;
@@ -45,6 +48,8 @@ pub(super) enum Error {
     Unsupported,
     #[error("select a vocabulary directory first")]
     NoDirectory,
+    #[error(transparent)]
+    InvalidWord(DictionaryError),
 }
 
 impl Error {
@@ -60,7 +65,18 @@ impl From<&Error> for RpcErrorCode {
             Error::Unavailable(_) => Self::Internal,
             Error::Unsupported => Self::Unsupported,
             Error::TooLarge => Self::PayloadTooLarge,
-            Error::NoDirectory => Self::InvalidRequest,
+            Error::NoDirectory | Error::InvalidWord(_) => Self::InvalidRequest,
+        }
+    }
+}
+
+impl From<DictionaryError> for Error {
+    fn from(error: DictionaryError) -> Self {
+        match error {
+            DictionaryError::InvalidWord => Self::InvalidWord(error),
+            DictionaryError::TooLarge => Self::TooLarge,
+            DictionaryError::Changed => Self::Busy,
+            DictionaryError::Io(_) | DictionaryError::InvalidFile => Self::unavailable(error),
         }
     }
 }
@@ -178,6 +194,7 @@ pub(super) struct Runtime {
     persistent: bool,
     /// Names the folder a request leaves unnamed, and whether vocabulary is on.
     settings: Arc<SettingsStore>,
+    dictionary: Arc<Dictionary>,
 }
 
 pub(super) struct Snapshot {
@@ -212,20 +229,32 @@ pub(super) struct Worker<C: Collector> {
     runtime: Arc<Runtime>,
     requests: mpsc::Receiver<Command>,
     directory: PathBuf,
-    sources: Option<PersonalSources>,
+    sources: PersonalSources,
     personal: PersonalRules,
+    /// The dictionary file `personal` was read from.
+    stamp: Option<Stamp>,
+    next_poll: Instant,
 }
 
 /// Where personal rules come from: your dictionary, and the pairs memory
 /// learned in its directory.
 pub(super) struct PersonalSources {
-    dictionary: Dictionary,
+    dictionary: Arc<Dictionary>,
     memory: PathBuf,
 }
 
 impl PersonalSources {
-    pub(super) fn new(dictionary: Dictionary, memory: PathBuf) -> Self {
+    pub(super) fn new(dictionary: Arc<Dictionary>, memory: PathBuf) -> Self {
         Self { dictionary, memory }
+    }
+
+    /// No dictionary file, so the personal rules stay empty.
+    #[cfg(test)]
+    pub(super) fn unlisted(directory: &Path) -> Self {
+        Self::new(
+            Arc::new(Dictionary::new(directory.join("dictionary.txt"))),
+            directory.to_owned(),
+        )
     }
 
     /// No dictionary file means no rules, whatever memory learned.
@@ -251,12 +280,13 @@ enum PersonalError {
 impl Runtime {
     pub(super) fn new<C: Collector>(
         directory: PathBuf,
-        sources: Option<PersonalSources>,
+        sources: PersonalSources,
         persistent: bool,
         settings: Arc<SettingsStore>,
         collector: C,
     ) -> (Arc<Self>, Worker<C>) {
         let (requests, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
+        let dictionary = Arc::clone(&sources.dictionary);
         let empty = Arc::new(Vocabulary::default());
         let runtime = Arc::new(Self {
             registry: Mutex::new(Registry {
@@ -275,6 +305,7 @@ impl Runtime {
             stopping: Arc::new(AtomicBool::new(false)),
             persistent,
             settings,
+            dictionary,
         });
         let worker = Worker {
             project: None,
@@ -285,6 +316,8 @@ impl Runtime {
             directory,
             sources,
             personal: PersonalRules::default(),
+            stamp: None,
+            next_poll: Instant::now(),
         };
         (runtime, worker)
     }
@@ -323,6 +356,30 @@ impl Runtime {
             matcher,
             active: Arc::clone(&self.active),
         }
+    }
+
+    /// Adds `word` to your dictionary, then queues the personal rules'
+    /// recompile.
+    pub(super) fn add_word(&self, word: &str) -> Result<AddWordOutcome, Error> {
+        let added = self.dictionary.add(word)?;
+        if added == AddWordOutcome::Added {
+            self.prepare(None);
+        }
+        Ok(added)
+    }
+
+    /// Removes `word` from your dictionary, then queues the personal rules'
+    /// recompile.
+    pub(super) fn remove_word(&self, word: &str) -> Result<RemoveWordOutcome, Error> {
+        let removed = self.dictionary.remove(word)?;
+        if removed == RemoveWordOutcome::Removed {
+            self.prepare(None);
+        }
+        Ok(removed)
+    }
+
+    pub(super) fn list_words(&self) -> Result<Vec<String>, Error> {
+        Ok(self.dictionary.words()?.unwrap_or_default())
     }
 
     pub(super) fn prepare(&self, directory: Option<Directory>) {
@@ -691,6 +748,7 @@ impl<C: Collector> Worker<C> {
             if self.runtime.active.load(Ordering::Acquire) != 0 {
                 continue;
             }
+            self.follow_dictionary();
             let retired = std::mem::take(&mut self.runtime.registry().retired);
             drop(retired);
             let Some(index) = deferred
@@ -923,19 +981,39 @@ impl<C: Collector> Worker<C> {
         Ok(catalog)
     }
 
+    /// Picks up a save to the dictionary, from an editor or anything else,
+    /// through a refresh, which waits for the presses in flight.
+    fn follow_dictionary(&mut self) {
+        if Instant::now() < self.next_poll {
+            return;
+        }
+        self.next_poll = Instant::now() + DICTIONARY_POLL;
+        if self.sources.dictionary.stamp() != self.stamp {
+            self.runtime.prepare(None);
+        }
+    }
+
+    /// A failed refresh keeps the stamp, so the poll waits for the next save
+    /// rather than failing every second. An interrupted one retries.
     fn refresh_personal(&mut self) -> Result<(), Error> {
+        let stamp = self.sources.dictionary.stamp();
+        let result = self.compile_personal();
+        if !matches!(result, Err(Error::Busy)) {
+            self.stamp = stamp;
+        }
+        result
+    }
+
+    fn compile_personal(&mut self) -> Result<(), Error> {
         let interrupt = Arc::clone(&self.runtime.interrupt);
         let cancel = CancelToken::from_fn(move || interrupt.load(Ordering::Acquire));
-        let rules = match &self.sources {
-            Some(sources) => sources.rules(&cancel).map_err(|_| {
-                if self.runtime.interrupt.load(Ordering::Acquire) {
-                    Error::Busy
-                } else {
-                    Error::Unavailable(None)
-                }
-            })?,
-            None => PersonalRules::default(),
-        };
+        let rules = self.sources.rules(&cancel).map_err(|error| {
+            if self.runtime.interrupt.load(Ordering::Acquire) {
+                Error::Busy
+            } else {
+                Error::unavailable(error)
+            }
+        })?;
         if rules == self.personal {
             return Ok(());
         }
@@ -1168,7 +1246,7 @@ mod tests {
     fn local_runtime(root: &Path) -> (Arc<Runtime>, Worker<LocalCollector<LocalExtractor>>) {
         Runtime::new(
             root.join("catalog"),
-            None,
+            PersonalSources::unlisted(root),
             true,
             settings(root),
             LocalCollector::new(LocalExtractor),
@@ -1268,7 +1346,7 @@ mod tests {
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
-            None,
+            PersonalSources::unlisted(temporary.path()),
             true,
             settings(temporary.path()),
             collector,
@@ -1307,7 +1385,13 @@ mod tests {
             previous_counts: Vec::new(),
             out_of_time: false,
         };
-        Runtime::new(base.join("catalog"), None, true, settings(base), collector)
+        Runtime::new(
+            base.join("catalog"),
+            PersonalSources::unlisted(base),
+            true,
+            settings(base),
+            collector,
+        )
     }
 
     fn refresh_once(
@@ -1456,7 +1540,7 @@ mod tests {
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
-            None,
+            PersonalSources::unlisted(temporary.path()),
             true,
             settings(temporary.path()),
             collector,
@@ -1504,7 +1588,7 @@ mod tests {
         let configured = project(root.path(), "configured");
         let (runtime, mut worker) = Runtime::new(
             root.path().join("catalog"),
-            None,
+            PersonalSources::unlisted(root.path()),
             true,
             settings_with(
                 root.path(),
@@ -1569,7 +1653,7 @@ mod tests {
         let selected = project(root.path(), "project");
         let (runtime, _worker) = Runtime::new(
             root.path().join("catalog"),
-            None,
+            PersonalSources::unlisted(root.path()),
             true,
             settings_with(root.path(), "enabled = false"),
             LocalCollector::new(LocalExtractor),
@@ -1619,10 +1703,10 @@ mod tests {
         std::fs::write(root.path().join("lexicon.txt"), "db2\n").unwrap();
         let (runtime, mut worker) = Runtime::new(
             root.path().join("catalog"),
-            Some(PersonalSources::new(
-                Dictionary::new(root.path().join("lexicon.txt")),
+            PersonalSources::new(
+                Arc::new(Dictionary::new(root.path().join("lexicon.txt"))),
                 root.path().to_owned(),
-            )),
+            ),
             true,
             settings(root.path()),
             LocalCollector::new(LocalExtractor),
@@ -1638,6 +1722,112 @@ mod tests {
         worker.refresh_personal().unwrap();
         assert_eq!(runtime.snapshot(None).matcher.correct("d b two"), None);
         assert_eq!(pinned.correct("d b two").as_deref(), Some("db2"));
+    }
+
+    #[test]
+    fn an_added_word_corrects_after_the_next_refresh() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, mut worker) = Runtime::new(
+            root.path().join("catalog"),
+            PersonalSources::new(
+                Arc::new(Dictionary::new(root.path().join("dictionary.txt"))),
+                root.path().to_owned(),
+            ),
+            true,
+            settings(root.path()),
+            LocalCollector::new(LocalExtractor),
+        );
+        assert_eq!(runtime.add_word("db2").unwrap(), AddWordOutcome::Added);
+        assert_eq!(
+            runtime.add_word("db2").unwrap(),
+            AddWordOutcome::AlreadyListed
+        );
+        assert_eq!(runtime.list_words().unwrap(), ["db2"]);
+        let invalid = runtime.add_word("# note").unwrap_err();
+        assert_eq!(RpcErrorCode::from(&invalid), RpcErrorCode::InvalidRequest);
+        worker.refresh_personal().unwrap();
+        assert_eq!(
+            runtime.snapshot(None).matcher.correct("d b two").as_deref(),
+            Some("db2")
+        );
+    }
+
+    #[test]
+    fn a_removed_word_stops_correcting() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("dictionary.txt"), "db2\n").unwrap();
+        let (runtime, mut worker) = Runtime::new(
+            root.path().join("catalog"),
+            PersonalSources::new(
+                Arc::new(Dictionary::new(root.path().join("dictionary.txt"))),
+                root.path().to_owned(),
+            ),
+            true,
+            settings(root.path()),
+            LocalCollector::new(LocalExtractor),
+        );
+        worker.initialize_personal().unwrap();
+        assert_eq!(
+            runtime.remove_word("db2").unwrap(),
+            RemoveWordOutcome::Removed
+        );
+        assert_eq!(
+            runtime.remove_word("db2").unwrap(),
+            RemoveWordOutcome::NotListed
+        );
+        assert!(runtime.list_words().unwrap().is_empty());
+        worker.refresh_personal().unwrap();
+        assert_eq!(runtime.snapshot(None).matcher.correct("d b two"), None);
+    }
+
+    #[tokio::test]
+    async fn a_saved_dictionary_applies_without_a_press() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("dictionary.txt");
+        std::fs::write(&path, "db2\n").unwrap();
+        let (runtime, mut worker) = Runtime::new(
+            root.path().join("catalog"),
+            PersonalSources::new(
+                Arc::new(Dictionary::new(path.clone())),
+                root.path().to_owned(),
+            ),
+            true,
+            settings(root.path()),
+            LocalCollector::new(LocalExtractor),
+        );
+        worker.initialize_personal().unwrap();
+        let revision = runtime.registry().personal_revision;
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(worker.run(shutdown.clone()));
+        // A press queues a refresh. One soon after queues none, and leaves the
+        // interrupt raised for whatever the worker runs next.
+        drop(runtime.snapshot(None));
+        while !runtime.registry().pending.is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        drop(runtime.snapshot(None));
+        std::fs::write(&path, "db2\nvex16\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let applied = loop {
+            if runtime.registry().personal_revision != revision {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        shutdown.cancel();
+        task.await.unwrap();
+        assert!(applied, "the save was never applied");
+        assert_eq!(
+            runtime
+                .snapshot(None)
+                .matcher
+                .correct("vex sixteen")
+                .as_deref(),
+            Some("vex16")
+        );
     }
 
     #[tokio::test]
@@ -1799,7 +1989,7 @@ mod tests {
         let (exited_tx, exited_rx) = mpsc::channel();
         let (runtime, worker) = Runtime::new(
             root.path().join("catalog"),
-            None,
+            PersonalSources::unlisted(root.path()),
             true,
             settings(root.path()),
             LocalCollector::new(BlockingExtractor {

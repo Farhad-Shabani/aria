@@ -8,6 +8,52 @@ service VocabularyService {
   rpc Refresh(VocabularyRequest) returns (VocabularyStatus);
   rpc GetStatus(VocabularyRequest) returns (VocabularyStatus);
   rpc Forget(VocabularyRequest) returns (VocabularyStatus);
+  // Adds a word to your dictionary. Dictation uses it once the daemon
+  // recompiles, which waits for any dictation in flight to end.
+  rpc AddWord(AddWordRequest) returns (AddWordResponse);
+  // Removes a word from your dictionary. Once the daemon recompiles, dictation
+  // stops typing it, including through pairs learned from chats.
+  rpc RemoveWord(RemoveWordRequest) returns (RemoveWordResponse);
+  rpc ListWords(ListWordsRequest) returns (ListWordsResponse);
+}
+
+message ListWordsRequest {}
+
+message ListWordsResponse {
+  // In file order. Empty when there is no dictionary file.
+  repeated string words = 1;
+}
+
+message AddWordRequest {
+  // One line, at most 256 bytes once trimmed, not starting with "#".
+  string word = 1;
+}
+
+message AddWordResponse {
+  AddWordOutcome outcome = 1;
+}
+
+enum AddWordOutcome {
+  ADD_WORD_OUTCOME_UNSPECIFIED = 0;
+  ADD_WORD_OUTCOME_ADDED = 1;
+  // The dictionary already listed the word, so nothing changed.
+  ADD_WORD_OUTCOME_ALREADY_LISTED = 2;
+}
+
+message RemoveWordRequest {
+  // One line, at most 256 bytes once trimmed, not starting with "#".
+  string word = 1;
+}
+
+message RemoveWordResponse {
+  RemoveWordOutcome outcome = 1;
+}
+
+enum RemoveWordOutcome {
+  REMOVE_WORD_OUTCOME_UNSPECIFIED = 0;
+  REMOVE_WORD_OUTCOME_REMOVED = 1;
+  // The dictionary didn't list the word, so nothing changed.
+  REMOVE_WORD_OUTCOME_NOT_LISTED = 2;
 }
 
 message VocabularyRequest {

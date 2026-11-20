@@ -29,11 +29,17 @@ impl PersonalRules {
         Self::from_pairs(terms, pairs)
     }
 
+    /// A learned pair applies only while `terms` lists the word it types,
+    /// so removing a term also stops the pairs learned for it.
     pub fn from_stored(
         terms: Vec<String>,
         learned: Vec<(String, String)>,
         cancel: &CancelToken,
     ) -> Result<Self, MatchError> {
+        let listed: HashSet<String> = terms.iter().map(|term| term.to_lowercase()).collect();
+        let learned = learned
+            .into_iter()
+            .filter(|(_, correct)| listed.contains(&correct.to_lowercase()));
         let forms = Self::forms(variant_pairs(&terms).chain(learned), Some(cancel))?;
         let rules = Self {
             known: known(&terms),
@@ -922,13 +928,27 @@ mod tests {
 
     #[test]
     fn stored_rules_apply_as_new_rules_do() {
-        let terms = vec!["db2".to_owned(), "vex16".to_owned()];
+        let terms = vec!["db9".to_owned(), "vex16".to_owned()];
         let learned = vec![("db two".to_owned(), "db9".to_owned())];
 
         let stored = PersonalRules::from_stored(terms, learned, &CancelToken::never()).unwrap();
 
         let (typed, _) = stored.apply("db two and Vexe16");
         assert_eq!(typed, "db9 and vex16");
+    }
+
+    #[test]
+    fn a_learned_pair_for_an_unlisted_word_never_applies() {
+        let learned = vec![
+            ("ads viser".to_owned(), "Adzviser".to_owned()),
+            ("db two".to_owned(), "DB9".to_owned()),
+        ];
+
+        let stored =
+            PersonalRules::from_stored(strings(&["db9"]), learned, &CancelToken::never()).unwrap();
+
+        let (typed, _) = stored.apply("ads viser and db two");
+        assert_eq!(typed, "ads viser and DB9");
     }
 
     #[test]
@@ -951,7 +971,11 @@ mod tests {
             .collect();
 
         assert!(matches!(
-            PersonalRules::from_stored(Vec::new(), oversized, &CancelToken::never()),
+            PersonalRules::from_stored(
+                strings(&[&"target".repeat(20)]),
+                oversized,
+                &CancelToken::never()
+            ),
             Err(MatchError::TooLarge)
         ));
     }

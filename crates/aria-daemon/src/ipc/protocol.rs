@@ -2415,6 +2415,60 @@ impl TryFrom<wire::VocabularyStatus> for aria_voice::vocabulary::Status {
     }
 }
 
+impl From<aria_voice::vocabulary::dictionary::AddWordOutcome> for wire::AddWordResponse {
+    fn from(added: aria_voice::vocabulary::dictionary::AddWordOutcome) -> Self {
+        use aria_voice::vocabulary::dictionary::AddWordOutcome;
+        let outcome = match added {
+            AddWordOutcome::Added => wire::AddWordOutcome::Added,
+            AddWordOutcome::AlreadyListed => wire::AddWordOutcome::AlreadyListed,
+        };
+        Self {
+            outcome: outcome.into(),
+        }
+    }
+}
+
+impl TryFrom<wire::AddWordResponse> for aria_voice::vocabulary::dictionary::AddWordOutcome {
+    type Error = ProtocolError;
+    fn try_from(response: wire::AddWordResponse) -> Result<Self, Self::Error> {
+        match wire::AddWordOutcome::try_from(response.outcome) {
+            Ok(wire::AddWordOutcome::Added) => Ok(Self::Added),
+            Ok(wire::AddWordOutcome::AlreadyListed) => Ok(Self::AlreadyListed),
+            Ok(wire::AddWordOutcome::Unspecified) | Err(_) => Err(ProtocolError::InvalidEnum {
+                field: "add word outcome",
+                value: response.outcome,
+            }),
+        }
+    }
+}
+
+impl From<aria_voice::vocabulary::dictionary::RemoveWordOutcome> for wire::RemoveWordResponse {
+    fn from(removed: aria_voice::vocabulary::dictionary::RemoveWordOutcome) -> Self {
+        use aria_voice::vocabulary::dictionary::RemoveWordOutcome;
+        let outcome = match removed {
+            RemoveWordOutcome::Removed => wire::RemoveWordOutcome::Removed,
+            RemoveWordOutcome::NotListed => wire::RemoveWordOutcome::NotListed,
+        };
+        Self {
+            outcome: outcome.into(),
+        }
+    }
+}
+
+impl TryFrom<wire::RemoveWordResponse> for aria_voice::vocabulary::dictionary::RemoveWordOutcome {
+    type Error = ProtocolError;
+    fn try_from(response: wire::RemoveWordResponse) -> Result<Self, Self::Error> {
+        match wire::RemoveWordOutcome::try_from(response.outcome) {
+            Ok(wire::RemoveWordOutcome::Removed) => Ok(Self::Removed),
+            Ok(wire::RemoveWordOutcome::NotListed) => Ok(Self::NotListed),
+            Ok(wire::RemoveWordOutcome::Unspecified) | Err(_) => Err(ProtocolError::InvalidEnum {
+                field: "remove word outcome",
+                value: response.outcome,
+            }),
+        }
+    }
+}
+
 impl From<DeliveryMode> for wire::DeliveryMode {
     fn from(mode: DeliveryMode) -> Self {
         match mode {
@@ -4952,6 +5006,36 @@ mod tests {
         assert!(matches!(
             Status::try_from(wire::VocabularyStatus { status: None }),
             Err(ProtocolError::MissingBody(_))
+        ));
+    }
+
+    #[test]
+    fn an_add_word_outcome_round_trips_and_rejects_unspecified() {
+        use aria_voice::vocabulary::dictionary::AddWordOutcome;
+        for added in [AddWordOutcome::Added, AddWordOutcome::AlreadyListed] {
+            assert_eq!(
+                AddWordOutcome::try_from(wire::AddWordResponse::from(added)).unwrap(),
+                added
+            );
+        }
+        assert!(matches!(
+            AddWordOutcome::try_from(wire::AddWordResponse { outcome: 0 }),
+            Err(ProtocolError::InvalidEnum { .. })
+        ));
+    }
+
+    #[test]
+    fn a_remove_word_outcome_round_trips_and_rejects_unspecified() {
+        use aria_voice::vocabulary::dictionary::RemoveWordOutcome;
+        for removed in [RemoveWordOutcome::Removed, RemoveWordOutcome::NotListed] {
+            assert_eq!(
+                RemoveWordOutcome::try_from(wire::RemoveWordResponse::from(removed)).unwrap(),
+                removed
+            );
+        }
+        assert!(matches!(
+            RemoveWordOutcome::try_from(wire::RemoveWordResponse { outcome: 0 }),
+            Err(ProtocolError::InvalidEnum { .. })
         ));
     }
 

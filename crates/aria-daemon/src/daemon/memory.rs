@@ -14,7 +14,6 @@ use super::tasks::Supervised;
 use aria_assistant::memory::run_backlog;
 use aria_primitives::error_chain;
 use aria_settings::SettingsCache;
-use aria_voice::vocabulary::dictionary;
 
 /// How long the chats have to go quiet before their turns are extracted.
 const QUIET: Duration = Duration::from_secs(120);
@@ -51,15 +50,25 @@ impl MemoryBacklog {
         let cancel = CancelToken::from_fn(move || shutdown.is_cancelled());
         let home = self.home.clone();
         let cache = std::sync::Arc::clone(&self.cache);
+        let vocabulary = std::sync::Arc::clone(&self.vocabulary);
         let backlog = move || {
             let settings = cache.effective();
             let config = load_memory(&settings.memory, &home);
-            let terms = dictionary::load_words(&config.dir.join(dictionary::FILE));
-            run_backlog(config, &terms, &home, &cancel)
+            // A run marks its chats done, so one without the words would
+            // never learn their pairs. The chats wait for a readable file.
+            let terms = match vocabulary.list_words() {
+                Ok(terms) => terms,
+                Err(error) => {
+                    tracing::warn!(error = %error_chain(&error), "the dictionary could not be read");
+                    return None;
+                }
+            };
+            Some(run_backlog(config, &terms, &home, &cancel))
         };
         match tokio::task::spawn_blocking(backlog).await {
-            Ok(Ok(_)) => self.vocabulary.prepare(None),
-            Ok(Err(error)) => {
+            Ok(None) => {}
+            Ok(Some(Ok(_))) => self.vocabulary.prepare(None),
+            Ok(Some(Err(error))) => {
                 tracing::warn!(error = %error_chain(&error), "the memory backlog did not run");
             }
             Err(error) => tracing::warn!(%error, "the memory backlog did not finish"),

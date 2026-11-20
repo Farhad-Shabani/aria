@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use aria_daemon::DaemonSession;
+use aria_voice::vocabulary::dictionary::{AddWordOutcome, RemoveWordOutcome};
 use aria_voice::vocabulary::{Activity, Completeness, Failure, Status};
 use clap::Subcommand;
 
@@ -14,12 +15,32 @@ pub(super) enum VocabularyCommand {
     Refresh { directory: Option<PathBuf> },
     /// Remove a directory's cached vocabulary
     Forget { directory: Option<PathBuf> },
+    /// Add a word to your dictionary
+    Add { word: String },
+    /// Remove a word from your dictionary
+    Remove { word: String },
 }
 
 pub(super) fn run(command: VocabularyCommand) -> anyhow::Result<()> {
     let paths = runtime_paths()?;
     let session = DaemonSession::connect_at(&paths)?;
     let status = match command {
+        VocabularyCommand::Add { word } => {
+            match session.add_word(&word)? {
+                AddWordOutcome::Added => println!("Added {}", word.trim()),
+                AddWordOutcome::AlreadyListed => {
+                    println!("{} is already in the dictionary", word.trim());
+                }
+            }
+            return Ok(());
+        }
+        VocabularyCommand::Remove { word } => {
+            match session.remove_word(&word)? {
+                RemoveWordOutcome::Removed => println!("Removed {}", word.trim()),
+                RemoveWordOutcome::NotListed => println!("{} isn't in the dictionary", word.trim()),
+            }
+            return Ok(());
+        }
         VocabularyCommand::Status { directory } => {
             session.vocabulary_status(directory.map(vocabulary_dir).transpose()?.as_ref())?
         }

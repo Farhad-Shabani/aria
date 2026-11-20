@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use aria_harness::{Sandbox, artifact, inputs};
+use aria_voice::vocabulary::dictionary::Dictionary;
 use serde_json::{Value, json};
 use tonic::transport::{Channel, Endpoint};
 
@@ -49,9 +50,13 @@ impl Preparation {
 
     pub(super) fn seed(&self, sandbox: &Sandbox) -> anyhow::Result<()> {
         if let Some(personal) = &self.personal {
-            let memory = sandbox.home_path().join(".aria/memory");
-            std::fs::create_dir_all(&memory)?;
-            std::fs::write(memory.join("lexicon.txt"), personal)?;
+            let dictionary = Dictionary::from_home(sandbox.home_path());
+            let directory = dictionary
+                .path()
+                .parent()
+                .context("no dictionary directory")?;
+            std::fs::create_dir_all(directory)?;
+            std::fs::write(dictionary.path(), personal)?;
         }
         Ok(())
     }
