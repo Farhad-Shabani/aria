@@ -59,6 +59,7 @@ final class PaletteController: ObservableObject {
     /// The chat a follow-up on a text is starting. Closing the palette cancels it.
     private var starting: Task<Void, Never>?
     private var namingAssistants: Task<Void, Never>?
+    @Published private var dictionaryEdit: Task<Void, Never>?
     /// Counts the times the palette opened, so work that outlives one opening
     /// leaves the next alone.
     private var openings = 0
@@ -218,8 +219,6 @@ final class PaletteController: ObservableObject {
             model.listMicrophones()
         case .addWord(let word):
             editDictionary { try await VocabularyClient.add(word) }
-        case .removeWord(let word):
-            editDictionary { try await VocabularyClient.remove(word) }
         case .listDictionary:
             model.listDictionary()
             readDictionary()
@@ -408,7 +407,7 @@ final class PaletteController: ObservableObject {
             hasTranscript: !systemTranscription.transcript.lines.isEmpty, detail: history.detail,
             chat: chats.shown, replying: selectedReplying, history: history.work, hasFrontApp: frontApp != nil,
             phonePairingStatus: phonePairing?.status ?? .loading,
-            canSwitchPhonePairing: phonePairing?.canSwitch ?? false)
+            canSwitchPhonePairing: phonePairing?.canSwitch ?? false, isEditingDictionary: dictionaryEdit != nil)
     }
 
     private var selectedReplying: Chat? {
@@ -421,6 +420,7 @@ final class PaletteController: ObservableObject {
 
     func perform(_ action: PaletteAction) {
         switch action.kind {
+        case .addWord(let word): editDictionary { try await VocabularyClient.add(word) }
         case .removeWord(let word): editDictionary { try await VocabularyClient.remove(word) }
         case .copyEntry(let entry): history.copy(entry.id)
         case .copyDetail:
@@ -526,7 +526,8 @@ final class PaletteController: ObservableObject {
             return true
         }
         guard let action = actions.first(where: { $0.key.matches(event) }) else { return false }
-        if action.isEnabled { perform(action) }
+        // Swallowed, not passed on: a held ⌘⌫ would remove the next listed word once an edit lands.
+        if action.isEnabled, !event.isARepeat { perform(action) }
         return true
     }
 
@@ -738,8 +739,10 @@ final class PaletteController: ObservableObject {
     }
 
     private func editDictionary(_ change: @escaping @MainActor () async throws -> DictionaryEdit) {
+        guard dictionaryEdit == nil else { return }
         let opening = openings
-        Task {
+        dictionaryEdit = Task {
+            defer { dictionaryEdit = nil }
             let notice: PaletteModel.DictionaryNotice
             do {
                 let edit = try await change()

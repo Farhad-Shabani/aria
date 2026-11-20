@@ -18,28 +18,18 @@ struct PaletteActions {
     var hasFrontApp = false
     var phonePairingStatus = PhonePairing.Status.loading
     var canSwitchPhonePairing = false
+    /// One edit at a time, so a held key doesn't send the same one again.
+    var isEditingDictionary = false
 
     var all: [PaletteAction] {
         guard !model.isRenaming else { return [] }
         switch model.page {
         case .commands:
             guard model.input == nil else { return [] }
-            switch model.selected {
-            case .entry(let entry):
-                return actions(for: entry, isOpen: false) + stop(replying)
-            case .chat(let chat):
-                return actions(for: chat, isReplying: replying != nil) + stop(replying)
-            case .command(let command) where command.action == .showLiveTranscript: return [stop]
-            case .command(let command):
-                switch command.action {
-                case .runPrompt(let id): return [PaletteAction(kind: .editPrompt(id: id), isInFooter: true)]
-                case .listedWord(let word): return [PaletteAction(kind: .removeWord(word), isInFooter: true)]
-                default: return []
-                }
-            case .result(let result):
-                return [PaletteAction(kind: .copyText(result.text)), PaletteAction(kind: .open(.result(result)))]
-            case nil: return []
+            let add = model.unlistedWord.map {
+                [PaletteAction(kind: .addWord($0), isInFooter: true, isEnabled: !isEditingDictionary)]
             }
+            return rowActions + (add ?? [])
         case .prompt:
             return []
         case .chat:
@@ -69,6 +59,26 @@ struct PaletteActions {
             case .failed?, .running?, nil:
                 return []
             }
+        }
+    }
+
+    private var rowActions: [PaletteAction] {
+        switch model.selected {
+        case .entry(let entry):
+            return actions(for: entry, isOpen: false) + stop(replying)
+        case .chat(let chat):
+            return actions(for: chat, isReplying: replying != nil) + stop(replying)
+        case .command(let command) where command.action == .showLiveTranscript: return [stop]
+        case .command(let command):
+            switch command.action {
+            case .runPrompt(let id): return [PaletteAction(kind: .editPrompt(id: id), isInFooter: true)]
+            case .listedWord(let word):
+                return [PaletteAction(kind: .removeWord(word), isInFooter: true, isEnabled: !isEditingDictionary)]
+            default: return []
+            }
+        case .result(let result):
+            return [PaletteAction(kind: .copyText(result.text)), PaletteAction(kind: .open(.result(result)))]
+        case nil: return []
         }
     }
 
@@ -206,7 +216,6 @@ struct PaletteActions {
             case .showHistory, .showPhonePairing, .listMicrophones: "Show"
             case .useMicrophone: "Use"
             case .addWord: "Add"
-            case .removeWord: "Remove"
             case .listDictionary: "Show"
             case .listedWord: nil
             }
