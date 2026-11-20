@@ -20,6 +20,12 @@ cannot remove backups or snapshots.
 On a Mac, **Mute while recording** asks macOS to silence other apps. Aria
 doesn't record, save, or send their sound.
 
+On a Mac, Aria plays the start sound each time a dictation starts, so you hear
+when your microphone begins recording. It plays whether the Aria key, the
+`aria` command, or another app you run started the dictation. While the Aria
+app is open, the status pill shows the recording too. Aria refuses apps that
+other users on your Mac run.
+
 ## Text cleanup with a local model
 
 When you [set a local model](./terminal-dictation.md#use-a-local-model),
