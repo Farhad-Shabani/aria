@@ -58,6 +58,9 @@ struct PaletteCommandsPage: View {
         .onChange(of: controller.model.promptFailure) { _, failure in
             if let failure { NSAccessibility.announce(failure.message) }
         }
+        .onChange(of: controller.model.dictionaryNotice) { _, notice in
+            if let notice { NSAccessibility.announce(notice.message) }
+        }
         .onChange(of: chats.lastOutcome) { _, outcome in
             if let outcome { NSAccessibility.announce(outcome.announcement) }
         }
@@ -83,6 +86,9 @@ struct PaletteCommandsPage: View {
                     .accessibilityLabel("Prompt input: \(input.name)")
             } else if controller.model.isListingMicrophones {
                 PaletteTag(title: SettingsRow.microphone.title, symbol: PaletteCommand.chooseMicrophone.symbol)
+                    .help("Esc shows everything again.")
+            } else if controller.model.listing == .dictionary {
+                PaletteTag(title: "Dictionary", symbol: PaletteCommand.dictionary.symbol)
                     .help("Esc shows everything again.")
             } else if let section = controller.model.section {
                 PaletteTag(title: section.historyTitle, symbol: nil)
@@ -146,6 +152,7 @@ struct PaletteCommandsPage: View {
 
     private var placeholder: String {
         if controller.model.isListingMicrophones { return "Search microphones" }
+        if controller.model.listing == .dictionary { return "Search your dictionary" }
         if controller.model.input != nil { return "Search prompts" }
         if controller.model.section != nil { return "Search" }
         return controller.model.keepsHistory ? "Search commands and history" : "Search commands"
@@ -188,6 +195,17 @@ struct PaletteCommandsPage: View {
         }
     }
 
+    @ViewBuilder
+    private var dictionaryNote: some View {
+        if let notice = controller.model.dictionaryNotice {
+            DictionaryNoticeText(notice: notice)
+        } else if let words = controller.model.dictionaryWords {
+            if words.isEmpty { Text("Type a word to add it.") }
+        } else {
+            NoticeText(notice: "Aria couldn’t read your dictionary.")
+        }
+    }
+
     /// What Settings says under its microphone picker.
     @ViewBuilder
     private var microphoneNote: some View {
@@ -211,6 +229,8 @@ struct PaletteCommandsPage: View {
     private var footerNote: some View {
         if controller.model.isListingMicrophones {
             microphoneNote
+        } else if controller.model.listing == .dictionary {
+            dictionaryNote
         } else if systemTranscription.isStarting {
             PaletteFooterProgress("Starting…")
         } else if systemTranscription.didFailToStart {
@@ -219,6 +239,8 @@ struct PaletteCommandsPage: View {
             NoticeText(notice: SystemTranscriptionStatus.stopFailure)
         } else if let failure = controller.model.promptFailure {
             NoticeText(notice: failure.message)
+        } else if let notice = controller.model.dictionaryNotice {
+            DictionaryNoticeText(notice: notice)
         } else if let failure = chats.lastStop?.failure {
             NoticeText(notice: failure)
         } else if !controller.model.keepsHistory {
@@ -253,6 +275,18 @@ private struct FinishSetupButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// A failure shows as one, and anything else as plain text.
+private struct DictionaryNoticeText: View {
+    let notice: PaletteModel.DictionaryNotice
+
+    var body: some View {
+        switch notice {
+        case .done(let edit): Text(edit.message)
+        case .failed(let message): NoticeText(notice: message)
+        }
     }
 }
 
