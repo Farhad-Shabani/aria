@@ -45,6 +45,7 @@ final class DictationEditsTests: XCTestCase {
         patch.historyEnabled = false
         patch.historyKeepAudio = true
         patch.muteSound = true
+        patch.holdMicrophone = false
         patch.returnSends = true
         patch.prompts.entries = [.stub(file: "/p.md")]
         var combined = Aria_Daemon_V1_SettingsPatch()

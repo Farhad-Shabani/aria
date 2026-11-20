@@ -160,6 +160,7 @@ impl LiveHarness {
             Key::ShortcutsAriaKey => format!("{:?}", *self.cache.aria_key().borrow()),
             // The capture takes it from the watch, between recordings.
             Key::DictationMicrophone => format!("{:?}", *self.cache.microphone().borrow()),
+            Key::DictationHoldMicrophone => format!("{:?}", *self.cache.hold_microphone().borrow()),
             Key::AssistantWorkdir | Key::AssistantProjectRoots | Key::AssistantTimeoutSecs => {
                 self.next_chat()
             }
@@ -281,6 +282,7 @@ fn change(key: Key) -> Patch {
         | Key::HistoryKeepAudio
         | Key::MemoryEnabled => set(key, true),
         Key::DictationReturnSends
+        | Key::DictationHoldMicrophone
         | Key::PhoneSubmits
         | Key::DictationCleanupFillers
         | Key::DictationCleanupBacktrack

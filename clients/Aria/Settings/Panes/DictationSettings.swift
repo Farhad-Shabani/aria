@@ -37,6 +37,13 @@ struct DictationSettings: View {
                     Text("Mutes other apps. Their sound comes back when recording stops.")
                 }
                 .settingsRow(.muteWhileRecording)
+                Toggle(isOn: editor.binding(\.holdMicrophone, \.holdMicrophone)) {
+                    Text(SettingsRow.keepMicrophoneOpen.title)
+                    Text(
+                        "Keeps words you say as you tap the Aria key. With Bluetooth headphones, recording starts right away."
+                    )
+                }
+                .settingsRow(.keepMicrophoneOpen)
                 Toggle(isOn: editor.binding(\.returnSends, \.returnSends)) {
                     Text(SettingsRow.returnSends.title)
                     Text("Pressing Return stops recording, then sends what you said.")

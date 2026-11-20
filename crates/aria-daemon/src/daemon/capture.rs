@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 
 use crate::daemon::config::WakeConfig;
 use aria_kit::audio::{
-    AudioCapture, CaptureError, InputDevice, InputDeviceId, Inputs, Microphone, MicrophoneError,
-    PreparedMicrophone, PushedCapture, RecordingMode, RecordingReader, StopSignal, WakeWordMonitor,
-    WavReplayCapture, is_available,
+    AudioCapture, CaptureError, IdleStream, InputDevice, InputDeviceId, Inputs, Microphone,
+    MicrophoneError, PreparedMicrophone, PushedCapture, RecordingMode, RecordingReader, StopSignal,
+    WakeWordMonitor, WavReplayCapture, is_available,
 };
 use aria_kit::voice_activity::SileroVad;
 use aria_primitives::error_chain;
@@ -26,8 +26,8 @@ use super::tasks::Supervised;
 use super::wake::WakeDetector;
 
 /// How long a press waits for the phone's first audio before it records on
-/// the Mac. The Mac's held stream keeps its last second, so falling back
-/// loses nothing.
+/// the Mac. While the Mac's stream is held, it keeps its last second, so
+/// falling back loses nothing.
 const PHONE_FIRST_AUDIO: Duration = Duration::from_millis(600);
 /// How often the wait for the phone's first audio checks for a stop.
 const STOP_POLL: Duration = Duration::from_millis(10);
@@ -41,6 +41,9 @@ pub(in crate::daemon) enum CaptureBackend {
         /// `dictation.microphone`, read once per press for both the phone
         /// and the Mac device.
         preference: watch::Receiver<aria_settings::Microphone>,
+        /// `dictation.hold_microphone`, which the follower applies between
+        /// recordings.
+        hold: watch::Receiver<bool>,
         /// `None` for a daemon that serves no phone.
         phone: Option<PhoneInput>,
     },
@@ -187,6 +190,21 @@ impl CaptureBackend {
             Self::WavReplay(_) => Ok(()),
         }
     }
+
+    fn hold(&self, hold: bool) -> Result<(), CaptureError> {
+        match self {
+            Self::Microphone { microphone, .. } => microphone.use_idle(idle(hold)),
+            Self::WavReplay(_) => Ok(()),
+        }
+    }
+}
+
+fn idle(hold: bool) -> IdleStream {
+    if hold {
+        IdleStream::Held
+    } else {
+        IdleStream::Released
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -204,25 +222,32 @@ pub(in crate::daemon) fn list_microphones() -> Result<Vec<InputDevice>, ListMicr
     aria_kit::audio::input_devices().map_err(ListMicrophonesError)
 }
 
-/// Hands each change of `dictation.microphone` to the capture, which applies
-/// it before the next recording.
+/// Hands each change of `dictation.microphone` and
+/// `dictation.hold_microphone` to the capture, which applies it before the
+/// next recording.
 pub(in crate::daemon) struct MicrophoneFollower {
     capture: Arc<CaptureBackend>,
-    /// A copy of the capture's own, which it never marks seen. A change since
-    /// the capture took its first device still applies.
+    // Clones of the capture's watches. The capture never marks its own seen,
+    // so a change made after it opened still reaches the follower.
     preference: watch::Receiver<aria_settings::Microphone>,
+    hold: watch::Receiver<bool>,
 }
 
 impl MicrophoneFollower {
     /// `None` for a capture with no device to choose.
     pub(in crate::daemon) fn new(capture: Arc<CaptureBackend>) -> Option<Self> {
-        let CaptureBackend::Microphone { preference, .. } = capture.as_ref() else {
+        let CaptureBackend::Microphone {
+            preference, hold, ..
+        } = capture.as_ref()
+        else {
             return None;
         };
         let preference = preference.clone();
+        let hold = hold.clone();
         Some(Self {
             capture,
             preference,
+            hold,
         })
     }
 }
@@ -259,6 +284,19 @@ impl Supervised for MicrophoneFollower {
                         }
                     }
                 }
+                changed = self.hold.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    let hold = *self.hold.borrow_and_update();
+                    // Only queues a command for the worker, so it doesn't block.
+                    if let Err(error) = self.capture.hold(hold) {
+                        tracing::error!(
+                            error = %error_chain(&error),
+                            "the capture stopped; holding the microphone didn't change"
+                        );
+                    }
+                }
             }
         }
     }
@@ -276,6 +314,7 @@ impl AudioCapture for CaptureBackend {
                 microphone,
                 preference,
                 phone,
+                ..
             } => {
                 let preference = preference.borrow().clone();
                 // The follower applies a change soon after it, but this press
@@ -304,6 +343,7 @@ pub(in crate::daemon) enum PreparedCapture {
         microphone: Box<PreparedMicrophone>,
         wake: Option<WakeDetector>,
         preference: watch::Receiver<aria_settings::Microphone>,
+        hold: watch::Receiver<bool>,
         phone: Option<PhoneInput>,
     },
 }
@@ -314,6 +354,7 @@ impl PreparedCapture {
         capture: CaptureConfig,
         wake: WakeConfig,
         preference: watch::Receiver<aria_settings::Microphone>,
+        hold: watch::Receiver<bool>,
         phones: Option<Arc<PhoneMicrophone>>,
         spool_dir: &Path,
         recording_timeout: Duration,
@@ -343,6 +384,7 @@ impl PreparedCapture {
                     .spool_dir(spool_dir)
                     .maximum_duration(recording_timeout)
                     .input(input(&preference.borrow()))
+                    .idle(idle(*hold.borrow()))
                     .load()
                     .map_err(DictationInitializationError::Capture)?;
                 tracing::info!(
@@ -357,6 +399,7 @@ impl PreparedCapture {
                     microphone: Box::new(microphone),
                     wake,
                     preference,
+                    hold,
                     phone,
                 })
             }
@@ -366,14 +409,15 @@ impl PreparedCapture {
     pub(in crate::daemon) fn open(
         self,
     ) -> Result<(CaptureBackend, Option<WakeWordMonitor>), CaptureError> {
-        let (microphone, wake, preference, phone) = match self {
+        let (microphone, wake, preference, hold, phone) = match self {
             Self::Replay(replay) => return Ok((CaptureBackend::WavReplay(replay), None)),
             Self::Microphone {
                 microphone,
                 wake,
                 preference,
+                hold,
                 phone,
-            } => (microphone, wake, preference, phone),
+            } => (microphone, wake, preference, hold, phone),
         };
         let (microphone, monitor) = match wake {
             None => ((*microphone).open()?, None),
@@ -386,6 +430,7 @@ impl PreparedCapture {
             CaptureBackend::Microphone {
                 microphone,
                 preference,
+                hold,
                 phone,
             },
             monitor,
@@ -592,6 +637,7 @@ mod tests {
             replay,
             wake,
             watch::channel(Preference::Automatic).1,
+            watch::channel(true).1,
             None,
             home.path(),
             Duration::from_secs(60),

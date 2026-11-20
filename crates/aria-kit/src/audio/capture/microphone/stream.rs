@@ -24,12 +24,13 @@ const MAX_INPUT_SAMPLE_RATE: u32 = 384_000;
 pub(super) const DRAIN_BUFFER_SAMPLES: usize = 1_024;
 const STREAM_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// A playing microphone stream and the state that decodes it.
+/// A microphone stream and the state that decodes it. It opens paused, so
+/// the device runs only between `play` and `pause`.
 pub(super) struct LiveStream {
     /// A macOS input stream stays on this device when the default moves.
     device: InputDeviceId,
-    /// Held only to keep the input stream playing.
-    _stream: cpal::Stream,
+    stream: cpal::Stream,
+    playing: bool,
     consumer: Consumer<i16>,
     status: Arc<CaptureStatus>,
     converter: SampleRateConverter,
@@ -61,13 +62,10 @@ impl LiveStream {
         let converter = SampleRateConverter::new(sample_rate)?;
         let (error_sender, errors) = sync_channel(1);
         let stream = build_stream(&device, config, producer, error_sender)?;
-
-        stream
-            .play()
-            .map_err(|source| MicrophoneError::StartStream(Box::new(source)))?;
         Ok(Self {
             device: id,
-            _stream: stream,
+            stream,
+            playing: false,
             consumer,
             status,
             converter,
@@ -77,6 +75,32 @@ impl LiveStream {
 
     pub(super) fn device(&self) -> &InputDeviceId {
         &self.device
+    }
+
+    pub(super) fn play(&mut self) -> Result<()> {
+        if self.playing {
+            return Ok(());
+        }
+        self.stream
+            .play()
+            .map_err(|source| MicrophoneError::StartStream(Box::new(source)))?;
+        self.playing = true;
+        Ok(())
+    }
+
+    /// Stops the device and drops the audio it buffered, so the next `play`
+    /// starts with nothing from before the pause.
+    pub(super) fn pause(&mut self) -> Result<()> {
+        if !self.playing {
+            return Ok(());
+        }
+        self.stream
+            .pause()
+            .map_err(|source| MicrophoneError::PauseStream(Box::new(source)))?;
+        self.playing = false;
+        let mut scratch = [0_i16; DRAIN_BUFFER_SAMPLES];
+        while !self.pop(&mut scratch)?.is_empty() {}
+        Ok(())
     }
 
     pub(super) fn pop<'samples>(

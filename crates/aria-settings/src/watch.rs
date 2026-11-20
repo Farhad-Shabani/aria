@@ -92,6 +92,7 @@ pub struct SettingsCache {
     state: Mutex<State>,
     aria_key: watch::Sender<AriaKey>,
     microphone: watch::Sender<Microphone>,
+    hold_microphone: watch::Sender<bool>,
     project_vocabulary: watch::Sender<Option<Directory>>,
     status: watch::Sender<SettingsStatus>,
 }
@@ -117,6 +118,7 @@ impl SettingsCache {
         let loaded = Loaded::parse(text.as_ref().map_or("", |text| &text.raw), &home)?;
         let (aria_key, _) = watch::channel(loaded.settings.aria_key());
         let (microphone, _) = watch::channel(loaded.settings.microphone());
+        let (hold_microphone, _) = watch::channel(loaded.settings.hold_microphone());
         let (project_vocabulary, _) = watch::channel(loaded.settings.project_vocabulary());
         let (status, _) = watch::channel(SettingsStatus {
             revision: loaded.revision.get(),
@@ -136,6 +138,7 @@ impl SettingsCache {
             }),
             aria_key,
             microphone,
+            hold_microphone,
             project_vocabulary,
             status,
         })
@@ -159,6 +162,12 @@ impl SettingsCache {
     /// The input device to record on. Fires only when it changes.
     pub fn microphone(&self) -> watch::Receiver<Microphone> {
         self.microphone.subscribe()
+    }
+
+    /// Whether the microphone stays open between dictations. Fires only
+    /// when it changes.
+    pub fn hold_microphone(&self) -> watch::Receiver<bool> {
+        self.hold_microphone.subscribe()
     }
 
     /// The project folder to read terms from, `None` while project
@@ -327,6 +336,7 @@ impl SettingsCache {
         state.effective = Arc::new(effective);
         send_if_changed(&self.aria_key, loaded.settings.aria_key());
         send_if_changed(&self.microphone, loaded.settings.microphone());
+        send_if_changed(&self.hold_microphone, loaded.settings.hold_microphone());
         send_if_changed(
             &self.project_vocabulary,
             loaded.settings.project_vocabulary(),
@@ -530,6 +540,16 @@ mod tests {
         reloaded(store.poll().expect("polls"));
         assert!(microphone.has_changed().expect("alive"));
         assert_eq!(microphone.borrow_and_update().as_str(), "coreaudio:usb");
+
+        let mut hold = store.hold_microphone();
+        assert!(*hold.borrow_and_update(), "held by default");
+        hand_edit(
+            &store,
+            "[shortcuts]\naria_key = \"fn\"\n[dictation]\nmicrophone = \"coreaudio:usb\"\nhold_microphone = false\n",
+        );
+        reloaded(store.poll().expect("polls"));
+        assert!(hold.has_changed().expect("alive"));
+        assert!(!*hold.borrow_and_update());
 
         let mut vocabulary = store.project_vocabulary();
         hand_edit(

@@ -85,6 +85,7 @@ extension Aria_Daemon_V1_SettingsPatch {
         if hasSilenceDurationMs { patch.silenceDurationMs = silenceDurationMs }
         if hasAutoStopMs { patch.autoStopMs = autoStopMs }
         if hasMicrophone { patch.microphone = microphone }
+        if hasHoldMicrophone { patch.holdMicrophone = holdMicrophone }
         if hasMuteSound { patch.muteSound = muteSound }
         if hasReturnSends { patch.returnSends = returnSends }
         if hasPhoneSubmits { patch.phoneSubmits = phoneSubmits }
@@ -125,6 +126,7 @@ extension Aria_Daemon_V1_SettingsPatch {
             }
         }
         if hasMicrophone { settings.microphone = microphone }
+        if hasHoldMicrophone { settings.holdMicrophone = holdMicrophone }
         if hasMuteSound { settings.muteSound = muteSound }
         if hasReturnSends { settings.returnSends = returnSends }
         if hasPhoneSubmits { settings.phoneSubmits = phoneSubmits }

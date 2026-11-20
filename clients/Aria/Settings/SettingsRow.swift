@@ -16,6 +16,7 @@ enum SettingsRow: CaseIterable, Identifiable {
     case cleanUpText
     case microphone
     case muteWhileRecording
+    case keepMicrophoneOpen
     case returnSends
     case autoStop
     case language
@@ -52,6 +53,7 @@ enum SettingsRow: CaseIterable, Identifiable {
         case .cleanUpText: "Clean up text"
         case .microphone: "Microphone"
         case .muteWhileRecording: "Mute while recording"
+        case .keepMicrophoneOpen: "Keep microphone open"
         case .returnSends: "Return sends"
         case .autoStop: "Auto-stop"
         case .language: "Language"
@@ -88,6 +90,7 @@ enum SettingsRow: CaseIterable, Identifiable {
         case .cleanUpText: ["Text", "filler words", "um", "spoken corrections"]
         case .microphone: ["Recording", "input", "AirPods", "headset"]
         case .muteWhileRecording: ["Recording", "sound", "volume"]
+        case .keepMicrophoneOpen: ["Recording", "indicator", "in use"]
         case .returnSends: ["Recording", "Enter", "send"]
         case .autoStop: ["Recording", "silence", "timeout"]
         case .language: ["locale"]
@@ -113,8 +116,8 @@ enum SettingsRow: CaseIterable, Identifiable {
         case .openAtLogin, .assistant, .showStatusPill, .showInlinePreview, .showCaptions, .speakingRate, .storage,
             .ariaSetup:
             .general
-        case .speechModel, .deliver, .output, .cleanUpText, .microphone, .muteWhileRecording, .returnSends,
-            .autoStop:
+        case .speechModel, .deliver, .output, .cleanUpText, .microphone, .muteWhileRecording,
+            .keepMicrophoneOpen, .returnSends, .autoStop:
             .dictation
         case .language, .onlyTypeMyVoice, .useProjectVocabulary, .vocabularyFolder, .serverRecognition: .recognition
         case .ariaKey, .openAria, .ask: .shortcuts

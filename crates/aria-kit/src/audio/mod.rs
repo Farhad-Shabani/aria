@@ -41,8 +41,8 @@ pub use capture::{
 };
 #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
 pub use capture::{
-    InputDevice, Microphone, MicrophoneBuilder, PreparedMicrophone, PushedCapture, WakeWordControl,
-    WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
+    IdleStream, InputDevice, Microphone, MicrophoneBuilder, PreparedMicrophone, PushedCapture,
+    WakeWordControl, WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
     check_fallback_input_device, input_devices, is_available, resolve_input,
 };
 #[cfg(not(target_family = "wasm"))]

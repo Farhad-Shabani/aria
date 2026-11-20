@@ -20,6 +20,11 @@ auto_stop_ms = 10000
 # phone. A device id, which the Mac app writes, records there while it's
 # connected and falls back to automatic while it isn't.
 microphone = "automatic"
+# Keeps the microphone open between dictations, so a word said as you tap the
+# Aria key keeps its start. macOS shows the microphone in use while it's held.
+# Off releases it, and recording starts a moment after you tap. Bluetooth
+# headphones take a little longer and might not play the start sound.
+hold_microphone = true
 # Mutes other apps while recording, so Aria's own sounds still play.
 # Their sound comes back when recording stops.
 mute_sound = true

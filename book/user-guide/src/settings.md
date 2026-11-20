@@ -14,6 +14,7 @@ Open **Settings…** from Aria's menu. The sidebar lists these pages:
   captions, and the speaking rate. Open **Assistant** here to choose the app
   and model for Chat and Prompts. **Aria Setup** reopens setup.
 - **Dictation** sets output, delivery, text cleanup, the microphone,
+  [**Keep microphone open**](#release-the-microphone-between-dictations),
   auto-stop, muting sound while recording, and **Return sends**, which lets
   [**Return** stop and send](./macos.md#stop-and-send-with-return).
   **Microphone** set to **Automatic** records with the system's default input.
@@ -125,6 +126,26 @@ To block a device, run `aria remote revoke FINGERPRINT` on the server.
 `aria remote pair` prints the fingerprint. In Settings, **Forget…** can copy
 the whole command. If revoking reports a
 storage error, fix it and revoke again before restarting the server.
+
+## Release the microphone between dictations
+
+Aria keeps the microphone open between dictations, so a word you say as you
+tap or hold the Aria key keeps its start. Aria holds only the last second in
+memory and adds it to the start of your next dictation. While the microphone is
+open, macOS shows it in use in the menu bar.
+
+To release the microphone between dictations, open **Settings → Dictation**
+and turn off **Keep microphone open**. The change applies after the dictation
+in progress, if any. From a terminal, run:
+
+```sh
+aria settings set dictation.hold_microphone off
+```
+
+macOS then shows the microphone in use only while you dictate. Recording starts
+a moment after you tap the Aria key, so start talking once you've tapped. With
+Bluetooth headphones, such as AirPods, recording takes a little longer to
+start, and you might not hear the start sound.
 
 ## Apply changes
 

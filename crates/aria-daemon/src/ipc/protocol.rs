@@ -2649,6 +2649,7 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                     .map(|milliseconds| AutoStop::new(Duration::from_millis(milliseconds)))
                     .transpose()?,
                 microphone: settings.microphone.parse()?,
+                hold_microphone: settings.hold_microphone,
                 mute_sound: settings.mute_sound,
                 return_sends: settings.return_sends,
                 cleanup_enabled: settings.cleanup_enabled,
@@ -2803,6 +2804,7 @@ impl From<SettingsPatch> for wire::SettingsPatch {
                 .microphone
                 .as_ref()
                 .map(|microphone| microphone.as_str().to_owned()),
+            hold_microphone: patch.hold_microphone,
             mute_sound: patch.mute_sound,
             return_sends: patch.return_sends,
             cleanup_enabled: patch.cleanup_enabled,
@@ -2925,6 +2927,7 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
                     .auto_stop
                     .map(|auto_stop| auto_stop.get().as_millis() as u64),
                 microphone: snapshot.settings.microphone.as_str().to_owned(),
+                hold_microphone: snapshot.settings.hold_microphone,
                 mute_sound: snapshot.settings.mute_sound,
                 return_sends: snapshot.settings.return_sends,
                 cleanup_enabled: snapshot.settings.cleanup_enabled,
@@ -3019,6 +3022,7 @@ impl TryFrom<wire::SettingsPatch> for SettingsPatch {
                 })
                 .transpose()?,
             microphone: patch.microphone.as_deref().map(str::parse).transpose()?,
+            hold_microphone: patch.hold_microphone,
             mute_sound: patch.mute_sound,
             return_sends: patch.return_sends,
             cleanup_enabled: patch.cleanup_enabled,
@@ -4803,6 +4807,30 @@ mod tests {
         for mute_sound in [None, Some(false), Some(true)] {
             let patch = SettingsPatch {
                 mute_sound,
+                ..Default::default()
+            };
+            let decoded = wire::SettingsPatch::from(patch.clone());
+            assert_eq!(SettingsPatch::try_from(decoded).unwrap(), patch);
+        }
+    }
+
+    #[test]
+    fn hold_microphone_survives_the_wire() {
+        for hold_microphone in [false, true] {
+            let snapshot = SettingsSnapshot {
+                streaming_unavailable: StreamingSupport::default(),
+                revision: 4,
+                settings: Settings {
+                    hold_microphone,
+                    ..Default::default()
+                },
+            };
+            let decoded = wire::SettingsSnapshot::from(&snapshot);
+            assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
+        }
+        for hold_microphone in [None, Some(false), Some(true)] {
+            let patch = SettingsPatch {
+                hold_microphone,
                 ..Default::default()
             };
             let decoded = wire::SettingsPatch::from(patch.clone());

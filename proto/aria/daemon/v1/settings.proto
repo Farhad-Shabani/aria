@@ -119,6 +119,10 @@ message Settings {
   // connected falls back as "automatic"; the value stays. Empty when a
   // phone reads it: a device id can name a person's headset.
   string microphone = 26;
+  // Keeps the microphone open between dictations, so a word said as
+  // recording starts keeps its start. Off, the microphone opens for each
+  // dictation while the wake word is off.
+  bool hold_microphone = 28;
   // Mutes the Mac's sound while recording.
   bool mute_sound = 2;
   // Return in the app being dictated into ends recording, then is pressed
@@ -206,6 +210,7 @@ message SettingsPatch {
   // "automatic", "system_default" or a `Microphone.id`; see
   // `Settings.microphone`.
   optional string microphone = 26;
+  optional bool hold_microphone = 28;
   optional bool mute_sound = 2;
   optional bool return_sends = 25;
   optional bool cleanup_enabled = 22;
