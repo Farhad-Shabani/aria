@@ -21,6 +21,7 @@ pub struct Settings {
     /// `None` leaves a manual recording running until it is stopped.
     pub auto_stop: Option<AutoStop>,
     pub microphone: Microphone,
+    pub hold_microphone: bool,
     pub mute_sound: bool,
     /// Return in the app a dictation types into ends it, then sends after
     /// the text.
@@ -125,6 +126,7 @@ impl Default for Settings {
             silence_duration: SilenceDuration::default(),
             auto_stop: Some(AutoStop::default()),
             microphone: Microphone::Automatic,
+            hold_microphone: true,
             mute_sound: true,
             return_sends: true,
             own_voice_only: false,

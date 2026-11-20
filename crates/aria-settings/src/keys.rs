@@ -152,6 +152,8 @@ keys! {
         "The longest a whole dictation may take, recording included.";
     DictationMicrophone: "dictation.microphone", Live, Mac, [], Kind::Text, Some("\"automatic\""),
         "The input device to record on: automatic for an attached iPhone, else the system default; system_default; or a device id from the Mac app. A missing device falls back to automatic.";
+    DictationHoldMicrophone: "dictation.hold_microphone", Live, Mac, [], Kind::Bool, Some("true"),
+        "Keeps the microphone open between dictations, so a word said as you press keeps its start. macOS shows the microphone in use while it's held.";
     DictationMuteSound: "dictation.mute_sound", Live, Mac, [], Kind::Bool, Some("true"),
         "Mutes other apps while recording.";
     DictationReturnSends: "dictation.return_sends", Live, Mac, [], Kind::Bool, Some("true"),

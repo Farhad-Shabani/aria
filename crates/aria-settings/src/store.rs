@@ -29,6 +29,7 @@ pub struct SettingsPatch {
     pub silence_duration: Option<SilenceDuration>,
     pub auto_stop: Option<Option<AutoStop>>,
     pub microphone: Option<Microphone>,
+    pub hold_microphone: Option<bool>,
     pub mute_sound: Option<bool>,
     pub return_sends: Option<bool>,
     pub own_voice_only: Option<bool>,
@@ -238,6 +239,7 @@ impl SettingsPatch {
             microphone: self
                 .microphone
                 .unwrap_or_else(|| current.microphone.clone()),
+            hold_microphone: self.hold_microphone.unwrap_or(current.hold_microphone),
             mute_sound: self.mute_sound.unwrap_or(current.mute_sound),
             return_sends: self.return_sends.unwrap_or(current.return_sends),
             own_voice_only: self.own_voice_only.unwrap_or(current.own_voice_only),

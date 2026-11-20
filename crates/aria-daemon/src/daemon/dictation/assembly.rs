@@ -608,6 +608,7 @@ pub(super) fn build_dictation(
         vocabulary,
         delivery: factory,
         preference,
+        hold_microphone,
         phones,
     } = setup;
     let delivery = factory
@@ -619,6 +620,7 @@ pub(super) fn build_dictation(
         capture,
         wake,
         preference,
+        hold_microphone,
         phones,
         spool_dir,
         timeouts.recording(),
@@ -921,6 +923,7 @@ pub(in crate::daemon::dictation) mod tests {
                     wake: WakeConfig::Disabled,
                     delivery: aria_platform::delivery::DeliveryFactory::detect(&root),
                     preference: tokio::sync::watch::channel(aria_settings::Microphone::Automatic).1,
+                    hold_microphone: tokio::sync::watch::channel(true).1,
                     phones: None,
                 },
                 &root,
@@ -1018,6 +1021,7 @@ pub(in crate::daemon::dictation) mod tests {
             vocabulary,
             delivery: aria_platform::delivery::DeliveryFactory::detect(home.path()),
             preference: tokio::sync::watch::channel(aria_settings::Microphone::Automatic).1,
+            hold_microphone: tokio::sync::watch::channel(true).1,
             phones: None,
         };
 

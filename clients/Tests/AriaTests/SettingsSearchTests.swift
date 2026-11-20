@@ -34,7 +34,8 @@ final class SettingsSearchTests: XCTestCase {
             SettingsSearch.results(for: "Recording"),
             [
                 SettingsSearch.Result(
-                    pane: .dictation, rows: [.microphone, .muteWhileRecording, .returnSends, .autoStop]),
+                    pane: .dictation,
+                    rows: [.microphone, .muteWhileRecording, .keepMicrophoneOpen, .returnSends, .autoStop]),
                 SettingsSearch.Result(pane: .privacy, rows: [.keepAudio]),
             ])
     }

@@ -470,6 +470,7 @@ fn eager_workers(
             vocabulary,
             delivery: context.delivery.clone(),
             preference: cache.microphone(),
+            hold_microphone: cache.hold_microphone(),
             phones: Some(Arc::clone(&phone_microphone)),
         },
         Arc::clone(&microphone),

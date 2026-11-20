@@ -4,10 +4,12 @@
 //! thread. The worker also owns the voice-activity model, keeping the
 //! capture path free of cross-thread locking.
 //!
-//! The stream stays open between recordings, buffering up to the last second
-//! while idle. A press usually starts with that audio in hand, so a word
-//! spoken on the press keeps its start. An open stream also keeps Bluetooth
-//! headsets in their mic-capable profile.
+//! The stream stays open between recordings. Held, it keeps playing and
+//! buffers up to the last second while idle. A press usually starts with that
+//! audio in hand, so a word spoken on the press keeps its start, and Bluetooth
+//! headsets stay in their mic-capable profile. Released, it pauses between
+//! recordings while no wake word listens, and each press waits for the device
+//! to start.
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -28,7 +30,7 @@ use super::devices::{self, Follow};
 use super::stream::{DRAIN_BUFFER_SAMPLES, LiveStream};
 use super::transfer::capture;
 use super::wake_word::{WakeMonitor, WakeWordEvent};
-use super::{MicrophoneError, Result};
+use super::{IdleStream, MicrophoneError, Result};
 use crate::audio::capture::modes::CaptureRecording;
 use crate::audio::{InputDeviceId, RecordingSource};
 
@@ -44,6 +46,7 @@ pub(super) enum Command {
     Record(RecordCommand),
     /// Records on this device while it's available, else the fallback.
     UseInput(Option<InputDeviceId>),
+    UseIdle(IdleStream),
     SuspendWakeWord,
     ResumeWakeWord,
 }
@@ -58,9 +61,10 @@ pub(super) fn spawn<V: VoiceActivityDetector + Send + 'static>(
     spool_dir: PathBuf,
     maximum_duration: Duration,
     input: Option<InputDeviceId>,
+    idle: IdleStream,
     vad: V,
 ) -> Result<Sender<Command>> {
-    spawn_worker(spool_dir, maximum_duration, input, vad, Disabled)
+    spawn_worker(spool_dir, maximum_duration, input, idle, vad, Disabled)
 }
 
 pub(super) fn spawn_with_wake_word<
@@ -70,6 +74,7 @@ pub(super) fn spawn_with_wake_word<
     spool_dir: PathBuf,
     maximum_duration: Duration,
     input: Option<InputDeviceId>,
+    idle: IdleStream,
     vad: V,
     detector: W,
 ) -> Result<(Sender<Command>, Receiver<WakeWordEvent>)> {
@@ -78,6 +83,7 @@ pub(super) fn spawn_with_wake_word<
         spool_dir,
         maximum_duration,
         input,
+        idle,
         vad,
         WakeMonitor::new(detector, events, V::FRAME_SAMPLES),
     )?;
@@ -88,6 +94,7 @@ fn spawn_worker<V, I>(
     spool_dir: PathBuf,
     maximum_duration: Duration,
     input: Option<InputDeviceId>,
+    idle: IdleStream,
     vad: V,
     monitor: I,
 ) -> Result<Sender<Command>>
@@ -101,6 +108,7 @@ where
         spool_dir,
         maximum_duration,
         input,
+        idle,
         vad,
         monitor,
         live: None,
@@ -124,6 +132,7 @@ struct Worker<V, I> {
     maximum_duration: Duration,
     /// The chosen device. `None` follows the fallback.
     input: Option<InputDeviceId>,
+    idle: IdleStream,
     vad: V,
     monitor: I,
     live: Option<LiveStream>,
@@ -140,6 +149,7 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
         if let Err(error) = ensure_live(&mut self.live, self.input.as_ref()) {
             tracing::warn!(%error, "microphone is unavailable at startup; retrying");
         }
+        self.settle_idle();
         self.serve_requests(requests);
     }
 
@@ -148,6 +158,10 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
             match requests.recv_timeout(IDLE_DRAIN_INTERVAL) {
                 Ok(Command::Record(request)) => self.handle(request),
                 Ok(Command::UseInput(input)) => self.use_input(input),
+                Ok(Command::UseIdle(idle)) => {
+                    self.idle = idle;
+                    self.settle_idle();
+                }
                 Ok(Command::SuspendWakeWord) => {
                     self.vad.reset();
                     self.monitor.suspend();
@@ -191,6 +205,7 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
         writer.close(result);
         self.vad.reset();
         self.monitor.recording_finished();
+        self.settle_idle();
     }
 
     fn record_once(
@@ -203,6 +218,7 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
         self.follow_input();
         let recording = CaptureRecording::new(spool, mode, &mut self.vad);
         let live = ensure_live(&mut self.live, self.input.as_ref())?;
+        live.play()?;
         writer.begin(RecordingSource::Device(live.device().clone()));
         capture(
             live,
@@ -242,13 +258,13 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
                 self.reset_stream();
             }
         }
+        // Pauses a released stream once a failed monitor no longer needs audio.
+        self.settle_idle();
     }
 
+    // Released streams reopen too, so the next press finds one ready.
     fn reopen_held(&mut self) {
-        if self.live.is_some()
-            || !self.monitor.requires_live_stream()
-            || Instant::now() < self.reopen_after
-        {
+        if self.live.is_some() || Instant::now() < self.reopen_after {
             return;
         }
         self.open_held();
@@ -258,6 +274,22 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
         if let Err(error) = ensure_live(&mut self.live, self.input.as_ref()) {
             tracing::warn!(%error, "held microphone stream is unavailable; retrying");
             self.reopen_after = Instant::now() + STREAM_REOPEN_INTERVAL;
+        }
+        self.settle_idle();
+    }
+
+    fn settle_idle(&mut self) {
+        let plays = plays_while_idle(self.idle, self.monitor.requires_live_stream());
+        if !plays {
+            // The stream stays paused until the next press, so this audio
+            // would be stale by then.
+            self.pre_press.clear();
+        }
+        let Some(live) = &mut self.live else { return };
+        let settled = if plays { live.play() } else { live.pause() };
+        if let Err(error) = settled {
+            tracing::warn!(%error, "dropping the idle microphone stream");
+            self.reset_stream();
         }
     }
 
@@ -301,7 +333,7 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
         self.input.as_ref().is_some_and(devices::is_available)
     }
 
-    /// Drops the held stream and the pre-press audio gathered from it, so
+    /// Drops the stream and the pre-press audio gathered from it, so
     /// pre-press audio cannot span a stream failure.
     fn reset_stream(&mut self) {
         self.forget_stream();
@@ -360,8 +392,12 @@ impl IdleMonitor for Disabled {
     fn recording_finished(&mut self) {}
 
     fn requires_live_stream(&self) -> bool {
-        true
+        false
     }
+}
+
+fn plays_while_idle(idle: IdleStream, monitor_hears: bool) -> bool {
+    idle == IdleStream::Held || monitor_hears
 }
 
 fn ensure_live<'slot>(
@@ -372,13 +408,13 @@ fn ensure_live<'slot>(
         Some(live) => Ok(live),
         slot @ None => {
             let live = slot.insert(LiveStream::open(input)?);
-            tracing::info!("microphone stream opened and held");
+            tracing::info!("microphone stream opened");
             Ok(live)
         }
     }
 }
 
-/// Whether an error indicts the held stream rather than one recording.
+/// Whether an error indicts the stream rather than one recording.
 fn invalidates_stream(error: &CaptureError) -> bool {
     matches!(
         error,
@@ -390,4 +426,57 @@ fn invalidates_stream(error: &CaptureError) -> bool {
                 | MicrophoneError::Resample(ResampleError::Process(_))
         )
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::testing::Loudness;
+
+    #[test]
+    fn releasing_the_stream_drops_the_audio_it_held() {
+        let now = Instant::now();
+        let mut worker = Worker {
+            spool_dir: PathBuf::new(),
+            maximum_duration: Duration::from_secs(1),
+            input: None,
+            idle: IdleStream::Held,
+            vad: Loudness,
+            monitor: Disabled,
+            live: None,
+            pre_press: VecDeque::from(vec![1_000_i16; 160]),
+            reopen_after: now,
+            check_chosen_after: now,
+        };
+
+        worker.settle_idle();
+        assert_eq!(worker.pre_press.len(), 160, "a held stream keeps it");
+
+        worker.idle = IdleStream::Released;
+        worker.settle_idle();
+        assert!(worker.pre_press.is_empty());
+    }
+
+    #[test]
+    fn the_stream_plays_while_idle_only_when_held_or_heard() {
+        let rows = [
+            ("held, nothing hears", IdleStream::Held, false, true),
+            ("held, the monitor hears", IdleStream::Held, true, true),
+            (
+                "released, nothing hears",
+                IdleStream::Released,
+                false,
+                false,
+            ),
+            (
+                "released, the monitor hears",
+                IdleStream::Released,
+                true,
+                true,
+            ),
+        ];
+        for (why, idle, monitor_hears, expected) in rows {
+            assert_eq!(plays_while_idle(idle, monitor_hears), expected, "{why}");
+        }
+    }
 }

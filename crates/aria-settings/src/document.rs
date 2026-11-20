@@ -419,6 +419,7 @@ pub struct Dictation {
     pub max_recording_secs: Option<f64>,
     pub timeout_secs: Option<f64>,
     pub(crate) microphone: Option<String>,
+    pub(crate) hold_microphone: Option<bool>,
     pub(crate) mute_sound: Option<bool>,
     pub(crate) return_sends: Option<bool>,
     pub(crate) own_voice_only: Option<bool>,
@@ -1443,6 +1444,10 @@ impl SettingsFile {
             .as_deref()
             .and_then(|value| value.parse().ok())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn hold_microphone(&self) -> bool {
+        self.dictation.hold_microphone.unwrap_or(true)
     }
 
     /// The folder project vocabulary reads, `None` while it is off.

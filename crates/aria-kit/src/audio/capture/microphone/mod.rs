@@ -27,13 +27,25 @@ pub use wake_word::{
     WakeWordControl, WakeWordEvent, WakeWordFailure, WakeWordMonitor, WakeWordSuspension,
 };
 
+/// What the microphone stream does between recordings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum IdleStream {
+    /// Keeps playing and buffers the second before a press, so a word spoken
+    /// on the press keeps its start. The device stays in use.
+    #[default]
+    Held,
+    /// Pauses between recordings while no wake word listens. Each recording
+    /// waits for the device to start.
+    Released,
+}
+
 const DEFAULT_MAXIMUM_DURATION: Duration = Duration::from_secs(60);
 
 type Result<T> = std::result::Result<T, CaptureError>;
 
 /// A microphone, ready to record. `open()` records on the system default,
-/// in a private per-user spool directory, for at most 60 seconds; the
-/// builder overrides each.
+/// in a private per-user spool directory, for at most 60 seconds, and holds
+/// the stream between recordings. The builder overrides each.
 pub struct Microphone {
     commands: Sender<worker::Command>,
 }
@@ -48,6 +60,7 @@ impl Microphone {
             spool_dir: None,
             maximum_duration: DEFAULT_MAXIMUM_DURATION,
             input: None,
+            idle: IdleStream::Held,
         }
     }
 
@@ -57,6 +70,14 @@ impl Microphone {
     pub fn use_input(&self, input: Option<InputDeviceId>) -> Result<()> {
         self.commands
             .send(worker::Command::UseInput(input))
+            .map_err(|_command| MicrophoneError::WorkerGone.into())
+    }
+
+    /// Sets what the stream does between recordings. A recording in progress
+    /// keeps going, and the change applies once it ends.
+    pub fn use_idle(&self, idle: IdleStream) -> Result<()> {
+        self.commands
+            .send(worker::Command::UseIdle(idle))
             .map_err(|_command| MicrophoneError::WorkerGone.into())
     }
 
@@ -75,6 +96,7 @@ pub struct MicrophoneBuilder {
     spool_dir: Option<PathBuf>,
     maximum_duration: Duration,
     input: Option<InputDeviceId>,
+    idle: IdleStream,
 }
 
 impl MicrophoneBuilder {
@@ -98,6 +120,11 @@ impl MicrophoneBuilder {
     /// [`Microphone::use_input`] takes it. The first stream opens on it.
     pub fn input(mut self, input: Option<InputDeviceId>) -> Self {
         self.input = input;
+        self
+    }
+
+    pub fn idle(mut self, idle: IdleStream) -> Self {
+        self.idle = idle;
         self
     }
 
@@ -135,6 +162,7 @@ impl MicrophoneBuilder {
             spool_dir,
             maximum_duration: self.maximum_duration,
             input: self.input,
+            idle: self.idle,
             vad: vad()?,
         })
     }
@@ -146,12 +174,19 @@ pub struct PreparedMicrophone<V = SileroVad> {
     spool_dir: PathBuf,
     maximum_duration: Duration,
     input: Option<InputDeviceId>,
+    idle: IdleStream,
     vad: V,
 }
 
 impl<V: VoiceActivityDetector + Send + 'static> PreparedMicrophone<V> {
     pub fn open(self) -> Result<Microphone> {
-        let commands = worker::spawn(self.spool_dir, self.maximum_duration, self.input, self.vad)?;
+        let commands = worker::spawn(
+            self.spool_dir,
+            self.maximum_duration,
+            self.input,
+            self.idle,
+            self.vad,
+        )?;
         Ok(Microphone { commands })
     }
 
@@ -163,6 +198,7 @@ impl<V: VoiceActivityDetector + Send + 'static> PreparedMicrophone<V> {
             self.spool_dir,
             self.maximum_duration,
             self.input,
+            self.idle,
             self.vad,
             detector,
         )?;
@@ -194,8 +230,8 @@ impl AudioCapture for Microphone {
             }))
             .map_err(|_command| MicrophoneError::WorkerGone)?;
         // Waits for the worker to call `begin`, so the return marks when
-        // capture started. With the stream already open that is one round
-        // trip; otherwise the stream opens first.
+        // capture started. With the stream already playing, that takes one
+        // round trip. Otherwise the device starts first, or the stream opens.
         recording.wait_for_capture()?;
         Ok(recording)
     }

@@ -58,6 +58,9 @@ impl Settings {
                 })?,
                 None => defaults.microphone,
             },
+            hold_microphone: dictation
+                .hold_microphone
+                .unwrap_or(defaults.hold_microphone),
             mute_sound: dictation.mute_sound.unwrap_or(defaults.mute_sound),
             return_sends: dictation.return_sends.unwrap_or(defaults.return_sends),
             own_voice_only: dictation.own_voice_only.unwrap_or(defaults.own_voice_only),
@@ -139,6 +142,7 @@ pub(super) fn patch(current: &Settings, next: &Settings) -> Result<Patch, Settin
         silence_duration,
         auto_stop,
         microphone,
+        hold_microphone,
         mute_sound,
         return_sends,
         own_voice_only,
@@ -187,6 +191,9 @@ pub(super) fn patch(current: &Settings, next: &Settings) -> Result<Patch, Settin
     }
     if *microphone != current.microphone {
         patch.set(Key::DictationMicrophone, microphone.as_str());
+    }
+    if *hold_microphone != current.hold_microphone {
+        patch.set(Key::DictationHoldMicrophone, *hold_microphone);
     }
     if *mute_sound != current.mute_sound {
         patch.set(Key::DictationMuteSound, *mute_sound);
@@ -454,6 +461,7 @@ mod tests {
             silence_duration: SilenceDuration::new(Duration::from_millis(2000)).expect("valid"),
             auto_stop: None,
             microphone: "coreaudio:BuiltInMicrophoneDevice".parse().expect("an id"),
+            hold_microphone: false,
             own_voice_only: true,
             aria_key: AriaKey::Fn,
             ask_shortcut: Some(Shortcut::Chord(chord)),

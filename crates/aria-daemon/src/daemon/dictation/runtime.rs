@@ -49,6 +49,9 @@ pub(in crate::daemon) struct DictationSetup {
     pub(in crate::daemon) delivery: DeliveryFactory,
     /// `dictation.microphone`, which the capture reads at each press.
     pub(in crate::daemon) preference: tokio::sync::watch::Receiver<aria_settings::Microphone>,
+    /// `dictation.hold_microphone`, which the capture follows between
+    /// recordings.
+    pub(in crate::daemon) hold_microphone: tokio::sync::watch::Receiver<bool>,
     /// `None` for a daemon that serves no phone.
     pub(in crate::daemon) phones: Option<Arc<crate::daemon::phone::PhoneMicrophone>>,
 }
@@ -171,6 +174,7 @@ impl DictationRuntime {
                             vocabulary: Arc::clone(&vocabulary),
                             delivery: delivery.clone(),
                             preference: cache.microphone(),
+                            hold_microphone: cache.hold_microphone(),
                             // A daemon that defers its build serves one press and no relay.
                             phones: None,
                         },
@@ -1418,6 +1422,7 @@ mod history_tests {
                     wake: WakeConfig::Disabled,
                     delivery: DeliveryFactory::detect(&home),
                     preference: tokio::sync::watch::channel(aria_settings::Microphone::Automatic).1,
+                    hold_microphone: tokio::sync::watch::channel(true).1,
                     phones: None,
                 },
                 &home,
