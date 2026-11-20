@@ -71,6 +71,12 @@ const UNHEARD_SPEECH_FRAMES: usize = 16;
 const NOISE_FRAME_DIVISOR: usize = 10;
 /// The margin over room noise a speech frame needs: 6 dB.
 const SPEECH_OVER_NOISE: f32 = 4.0;
+/// Frames in a row over a pause that break it from under the floor: about
+/// 96 ms, longer than a key click.
+const PAUSE_BREAK_FRAMES: usize = 3;
+/// No frame this quiet is speech, however quiet the pause it follows:
+/// -60 dBFS, under any distant voice and over a muted stream's dither.
+const QUIETEST_SPEECH: f32 = 1e-6;
 /// How far before the last delivered word's end a cap cut lands, so the
 /// next buffer hears that word whole rather than a fragment of it: 240 ms,
 /// past a timing's error and most of a short word.
@@ -108,9 +114,9 @@ pub struct AgreementState {
     buffer_start: u64,
     /// Stream position the last decode reached.
     decoded_end: u64,
-    /// While nothing since has risen over the floor, the buffer is still
-    /// that pause and its decode is ignored.
-    opened_in_pause: bool,
+    /// The loudest frame of the pause the buffer opened in. While nothing
+    /// since has broken that pause, its decode is ignored.
+    pause_level: Option<f32>,
     /// What this buffer's decodes have agreed on so far. Resets on a trim,
     /// so nothing has to align across two buffers.
     agreement: Agreement,
@@ -132,7 +138,7 @@ impl AgreementState {
             cadence,
             buffer_start: 0,
             decoded_end: 0,
-            opened_in_pause: false,
+            pause_level: None,
             agreement: Agreement::default(),
             transcript: Vec::new(),
             pending_segment: None,
@@ -342,7 +348,7 @@ impl AgreementState {
     /// and reads the cut from the one before them. Empty when none can go
     /// out.
     fn hear(&mut self, hypothesis: &Hypothesis, loudness: &Loudness, from: u64) -> Vec<Word> {
-        if self.opened_in_pause && loudness.silent() {
+        if self.pause_level.is_some_and(|level| loudness.within(level)) {
             tracing::debug!("buffer holds only the pause; decode ignored");
             return Vec::new();
         }
@@ -445,7 +451,7 @@ impl AgreementState {
             // holds back until it hears the end of it. Only a pause the
             // buffer ends in tells the two apart, so anything else waits.
             if let Some(pause) = loudness.pause_cut() {
-                return self.trim(self.buffer_start + pause as u64, None, true);
+                return self.trim(self.buffer_start + pause.at as u64, None, Some(pause.level));
             }
         }
         if available - self.buffer_start >= self.cadence.max_buffer_samples as u64 {
@@ -475,8 +481,13 @@ impl AgreementState {
             .min()
             .map_or(available, |through| through.min(available));
         // A pause nobody has broken since the last pause cut is still the
-        // same pause, cap or no cap.
-        self.trim(cut, tail, self.opened_in_pause && loudness.silent())
+        // same pause, cap or no cap. Its level follows the room, so noise
+        // that creeps up over many caps stays the pause.
+        let pause_level = self
+            .pause_level
+            .filter(|&level| loudness.within(level))
+            .map(|level| level.max(loudness.loudest));
+        self.trim(cut, tail, pause_level)
     }
 
     /// Where speech the model skipped begins, past what was delivered: the
@@ -498,10 +509,10 @@ impl AgreementState {
         &mut self,
         cut: u64,
         tail: Option<TranscriptSegment>,
-        in_pause: bool,
+        pause_level: Option<f32>,
     ) -> Option<TranscriptSegment> {
         self.buffer_start = cut;
-        self.opened_in_pause = in_pause;
+        self.pause_level = pause_level;
         self.lookback = Some(Lookback::default());
         self.agreement = self.agreement.next_buffer();
         tail
@@ -1083,6 +1094,15 @@ fn room_noise(squares: &[f32]) -> f32 {
     *noise
 }
 
+/// A pause a buffer ends in.
+struct Pause {
+    /// Where to cut, as a sample offset into the buffer.
+    at: usize,
+    /// The loudest frame's mean square past the cut, where the next buffer
+    /// opens. The last word's fade before it doesn't count.
+    level: f32,
+}
+
 /// A buffer's loudness, frame by frame, and the levels that split it into
 /// quiet and speech.
 struct Loudness {
@@ -1125,9 +1145,19 @@ impl Loudness {
         self.squares[frame] > self.speech
     }
 
-    /// Quiet is relative to the loudest frame; silent is absolute.
-    fn silent(&self) -> bool {
-        self.loudest <= SILENCE_FLOOR
+    /// Whether the buffer is still the pause whose loudest frame was
+    /// `level`. One frame over the floor breaks it. So does a run of frames
+    /// well over the pause, as a distant voice makes without reaching the
+    /// floor.
+    fn within(&self, level: f32) -> bool {
+        if self.loudest > SILENCE_FLOOR {
+            return false;
+        }
+        let ceiling = (level * SPEECH_OVER_NOISE).clamp(QUIETEST_SPEECH, SILENCE_FLOOR);
+        !self
+            .squares
+            .windows(PAUSE_BREAK_FRAMES)
+            .any(|run| run.iter().all(|&square| square > ceiling))
     }
 
     /// Where the buffer's tail opens onto a real pause, as a sample offset
@@ -1135,7 +1165,7 @@ impl Loudness {
     /// run followed by more speech is a dip inside a sentence, and cutting
     /// there would keep audio whose words were already delivered, which the
     /// next buffer would deliver again.
-    fn pause_cut(&self) -> Option<usize> {
+    fn pause_cut(&self) -> Option<Pause> {
         let quiet = (0..self.squares.len())
             .rev()
             .take_while(|&frame| !self.is_loud(frame))
@@ -1144,7 +1174,13 @@ impl Loudness {
             return None;
         }
         let start = self.squares.len() - quiet;
-        Some((start + quiet / 2) * TRIM_FRAME_SAMPLES)
+        Some(Pause {
+            at: (start + quiet / 2) * TRIM_FRAME_SAMPLES,
+            level: self.squares[start + quiet / 2..]
+                .iter()
+                .copied()
+                .fold(0.0_f32, f32::max),
+        })
     }
 
     /// Where speech no heard word accounts for begins, at or after `from`:
@@ -2201,7 +2237,7 @@ mod tests {
             state.decoded_end = 10 * STRIDE as u64;
             let confirmed = state.commit(TranscriptSegment::spanned(&["owner".into()], None));
             let tail = state.commit(TranscriptSegment::spanned(&["guest".into()], None));
-            let tail = state.trim(state.decoded_end, tail, false);
+            let tail = state.trim(state.decoded_end, tail, None);
             let first = state.one_at_a_time(confirmed, tail).unwrap();
             assert_eq!(first.span(), None);
             assert_eq!(
@@ -2537,15 +2573,15 @@ mod tests {
             assert_eq!(run.ended_before, [None, None]);
         }
 
-        #[test]
-        fn a_pause_that_outlives_the_cap_is_still_a_pause() {
-            // A pause cut, then nothing but silence past the cap: the cap
-            // cut must not make the next buffer hear the hallucination.
+        /// Loud speech, a pause, then `after`, with a decode that hears a
+        /// word only in the loud speech.
+        fn transcript_after_a_pause(pause: i16, after: Vec<Vec<i16>>, max_ms: usize) -> String {
             let mut batches = vec![loud_batch(); 3];
-            batches.extend(vec![faint_batch(); 40]);
+            batches.extend(vec![vec![pause; STRIDE]; 8]);
+            batches.extend(after);
             let (_directory, mut recording, pace) = paced(batches);
             let run = run(
-                AgreementState::new(cadence(2_000)),
+                AgreementState::new(cadence(max_ms)),
                 &mut recording,
                 Some(&pace),
                 |window| {
@@ -2554,8 +2590,37 @@ mod tests {
                 },
                 |_| {},
             );
+            run.transcript().to_owned()
+        }
 
-            assert_eq!(run.transcript(), "one");
+        /// What a 20 s cadence types of `batches`, with a decode that names
+        /// a window's word by its loudest sample.
+        fn transcript_by_peak(
+            batches: Vec<Vec<i16>>,
+            word: impl Fn(f32) -> &'static str,
+        ) -> String {
+            let (_directory, mut recording, pace) = paced(batches);
+            let run = run(
+                AgreementState::new(cadence(20_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let peak = window
+                        .iter()
+                        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+                    Hypothesis::new(word(peak))
+                },
+                |_| {},
+            );
+            run.transcript().to_owned()
+        }
+
+        #[test]
+        fn a_pause_that_outlives_the_cap_is_still_a_pause() {
+            // A pause cut, then nothing but silence past the cap: the cap
+            // cut must not make the next buffer hear the hallucination.
+            let after = vec![faint_batch(); 32];
+            assert_eq!(transcript_after_a_pause(225, after, 2_000), "one");
         }
 
         #[test]
@@ -2567,27 +2632,97 @@ mod tests {
             batches.extend(vec![faint_batch(); 8]);
             batches.extend(vec![vec![300_i16; STRIDE]; 3]);
             batches.extend(vec![faint_batch(); 8]);
-            let (_directory, mut recording, pace) = paced(batches);
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let peak = window
-                        .iter()
-                        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
-                    Hypothesis::new(if peak > 0.03 {
-                        "one"
-                    } else if peak > 0.008 {
-                        "two"
-                    } else {
-                        ""
-                    })
-                },
-                |_| {},
-            );
+            let transcript = transcript_by_peak(batches, |peak| {
+                if peak > 0.03 {
+                    "one"
+                } else if peak > 0.008 {
+                    "two"
+                } else {
+                    ""
+                }
+            });
 
-            assert_eq!(run.transcript(), "one two");
+            assert_eq!(transcript, "one two");
+        }
+
+        #[test]
+        fn quiet_speech_after_a_quieter_pause_is_heard() {
+            // A distant voice: both spans of speech stay under
+            // SILENCE_FLOOR, and the second rises well over the pause
+            // between them.
+            let mut batches = vec![vec![220_i16; STRIDE]; 3];
+            batches.extend(vec![vec![40_i16; STRIDE]; 8]);
+            batches.extend(vec![vec![150_i16; STRIDE]; 3]);
+            batches.extend(vec![vec![40_i16; STRIDE]; 8]);
+            let transcript = transcript_by_peak(batches, |peak| {
+                if peak > 0.0055 {
+                    "one"
+                } else if peak > 0.003 {
+                    "two"
+                } else {
+                    ""
+                }
+            });
+
+            assert_eq!(transcript, "one two");
+        }
+
+        #[test]
+        fn noise_a_little_over_the_pause_stays_the_pause() {
+            // Room noise that drifts under 6 dB over the pause it follows
+            // still holds no words, so its decode is ignored.
+            let after = vec![vec![70_i16; STRIDE]; 8];
+            assert_eq!(transcript_after_a_pause(40, after, 20_000), "one");
+        }
+
+        #[test]
+        fn faint_sound_after_a_near_silent_pause_stays_the_pause() {
+            // A pause one bit over silence: sound 20 dB over it is still
+            // under any voice.
+            let after = vec![vec![10_i16; STRIDE]; 8];
+            assert_eq!(transcript_after_a_pause(1, after, 20_000), "one");
+        }
+
+        #[test]
+        fn a_click_does_not_break_the_pause() {
+            let mut click = vec![40_i16; STRIDE];
+            click[..TRIM_FRAME_SAMPLES].fill(150);
+            let mut after = vec![click];
+            after.extend(vec![vec![40_i16; STRIDE]; 6]);
+            assert_eq!(transcript_after_a_pause(40, after, 20_000), "one");
+        }
+
+        #[test]
+        fn noise_creeping_up_over_many_caps_stays_the_pause() {
+            // Each second 1.5 to 2 dB louder, until the noise sits 6.5 dB
+            // over the pause it opened in.
+            let after = [45_i16, 55, 65, 85]
+                .into_iter()
+                .flat_map(|level| vec![vec![level; STRIDE]; 10])
+                .collect();
+            assert_eq!(transcript_after_a_pause(40, after, 2_000), "one");
+        }
+
+        #[test]
+        fn the_last_words_fade_does_not_raise_the_pause() {
+            // The fade is quiet beside the loud word, so it opens the pause,
+            // yet it sits over the floor.
+            let mut batches = vec![loud_batch(); 3];
+            batches.push(vec![1_000_i16; STRIDE]);
+            batches.extend(vec![vec![40_i16; STRIDE]; 8]);
+            batches.extend(vec![vec![150_i16; STRIDE]; 3]);
+            batches.extend(vec![vec![40_i16; STRIDE]; 8]);
+            let transcript = transcript_by_peak(batches, |peak| {
+                if peak > 0.1 {
+                    "one"
+                } else if peak > 0.003 && peak < 0.006 {
+                    "two"
+                } else {
+                    ""
+                }
+            });
+
+            assert_eq!(transcript, "one two");
         }
 
         #[test]
@@ -2772,7 +2907,7 @@ mod tests {
             let cut = Loudness::of(&buffer)
                 .pause_cut()
                 .expect("five hundred ms of silence is a pause");
-            assert_eq!(cut, (3 + 16 / 2) * TRIM_FRAME_SAMPLES);
+            assert_eq!(cut.at, (3 + 16 / 2) * TRIM_FRAME_SAMPLES);
 
             let mut short = Vec::new();
             short.extend_from_slice(&speech);
