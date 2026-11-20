@@ -57,10 +57,9 @@ struct PaletteModel: Equatable {
     }
     /// While off, no saved entry or history command shows.
     var keepsHistory = false
-    /// Your dictionary's words as last read, in file order. `nil` until read,
-    /// and then the dictionary row offers only Add.
-    private(set) var dictionaryWords: [String]?
-    private var listedWords: Set<String> = []
+    /// `nil` until read, and then the dictionary row offers only Add.
+    private var dictionary: ListedWords?
+    var dictionaryWords: [String]? { dictionary?.words }
     /// The listed words the search matches, kept so a read of `items` doesn't
     /// search every word again.
     private var matchingWords: [PaletteCommand] = []
@@ -171,10 +170,7 @@ struct PaletteModel: Equatable {
     mutating func read(dictionary words: [String]?, since edits: Int) {
         guard edits == dictionaryEdits else { return }
         keepingSelection { model in
-            var seen = Set<String>()
-            // A word listed twice is one row, with one id.
-            model.dictionaryWords = words?.filter { seen.insert($0).inserted }
-            model.listedWords = seen
+            model.dictionary = words.map(ListedWords.init)
             model.matchWords()
         }
     }
@@ -182,15 +178,12 @@ struct PaletteModel: Equatable {
     /// Keeps the words in step with an edit the daemon made, so the row flips.
     mutating func record(_ edit: DictionaryEdit) {
         keepingSelection { model in
-            var words = model.dictionaryWords ?? []
+            var words = model.dictionary ?? ListedWords([])
             switch edit {
-            case .added(let word), .alreadyListed(let word):
-                if !model.listedWords.contains(word) { words.append(word) }
-            case .removed(let word), .notListed(let word):
-                words.removeAll { $0 == word }
+            case .added(let word), .alreadyListed(let word): words.insert(word)
+            case .removed(let word), .notListed(let word): words.remove(word)
             }
-            model.dictionaryWords = words
-            model.listedWords = Set(words)
+            model.dictionary = words
             model.dictionaryEdits += 1
             model.matchWords()
         }
@@ -388,7 +381,7 @@ struct PaletteModel: Equatable {
     private var dictionaryItems: [PaletteItem] {
         let word = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !word.isEmpty else { return [] }
-        if listedWords.contains(word) {
+        if dictionary?.contains(word) == true {
             return listing == .dictionary ? [] : [.command(.removeWord(word))]
         }
         return [.command(.addWord(word))]
@@ -726,5 +719,26 @@ struct PaletteModel: Equatable {
                 action: .runPrompt(id: prompt.id)
             )
         }
+    }
+}
+
+/// Your dictionary's words in file order, with a lookup a keystroke can afford.
+private struct ListedWords {
+    private(set) var words: [String] = []
+    private var lookup: Set<String> = []
+
+    /// A word listed twice is one row, with one id.
+    init(_ words: [String]) {
+        words.forEach { insert($0) }
+    }
+
+    func contains(_ word: String) -> Bool { lookup.contains(word) }
+
+    mutating func insert(_ word: String) {
+        if lookup.insert(word).inserted { words.append(word) }
+    }
+
+    mutating func remove(_ word: String) {
+        if lookup.remove(word) != nil { words.removeAll { $0 == word } }
     }
 }
