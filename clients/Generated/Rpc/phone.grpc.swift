@@ -652,6 +652,7 @@ extension Aria_Daemon_V1_PairingService {
     /// > works once.
     /// >   UNAUTHENTICATED - the code is wrong, used, or expired
     /// >   PERMISSION_DENIED - the Mac already pairs as many phones as it allows
+    /// >   INVALID_REQUEST - `hardware_model` is malformed; the code stays unused
     public protocol ClientProtocol: Sendable {
         /// Call the "Pair" method.
         ///
@@ -687,6 +688,7 @@ extension Aria_Daemon_V1_PairingService {
     /// > works once.
     /// >   UNAUTHENTICATED - the code is wrong, used, or expired
     /// >   PERMISSION_DENIED - the Mac already pairs as many phones as it allows
+    /// >   INVALID_REQUEST - `hardware_model` is malformed; the code stays unused
     public struct Client<Transport>: ClientProtocol where Transport: GRPCCore.ClientTransport {
         private let client: GRPCCore.GRPCClient<Transport>
 
@@ -827,10 +829,38 @@ public enum Aria_Daemon_V1_PairingAdminService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "ListPhones" metadata.
+        public enum ListPhones: Sendable {
+            /// Request type for "ListPhones".
+            public typealias Input = Aria_Daemon_V1_ListPhonesRequest
+            /// Response type for "ListPhones".
+            public typealias Output = Aria_Daemon_V1_ListPhonesResponse
+            /// Descriptor for "ListPhones".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.PairingAdminService"),
+                method: "ListPhones",
+                type: .unary
+            )
+        }
+        /// Namespace for "RevokePhone" metadata.
+        public enum RevokePhone: Sendable {
+            /// Request type for "RevokePhone".
+            public typealias Input = Aria_Daemon_V1_RevokePhoneRequest
+            /// Response type for "RevokePhone".
+            public typealias Output = Aria_Daemon_V1_RevokePhoneResponse
+            /// Descriptor for "RevokePhone".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.PairingAdminService"),
+                method: "RevokePhone",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "aria.daemon.v1.PairingAdminService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             IssueInvite.descriptor,
-            RevokePhones.descriptor
+            RevokePhones.descriptor,
+            ListPhones.descriptor,
+            RevokePhone.descriptor
         ]
     }
 }
@@ -902,6 +932,57 @@ extension Aria_Daemon_V1_PairingAdminService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_RevokePhonesResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RevokePhonesResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "ListPhones" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > The phones this Mac pins, in the order they paired.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListPhonesRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListPhonesRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListPhonesResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func listPhones<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListPhonesRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListPhonesRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListPhonesResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListPhonesResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "RevokePhone" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Unpins one phone and closes its connections, and those of any phone
+        /// > still pairing. Other paired phones and the live code stay. A phone this
+        /// > Mac does not pin changes nothing.
+        /// >   INVALID_REQUEST - the fingerprint is not 32 bytes
+        /// >   DURABILITY_UNCONFIRMED - the phone is revoked, but the pairing file
+        /// >     may still pin it, so it can reconnect after a restart
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RevokePhoneRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RevokePhoneRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_RevokePhoneResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func revokePhone<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RevokePhoneRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RevokePhoneRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_RevokePhoneResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RevokePhoneResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -996,6 +1077,79 @@ extension Aria_Daemon_V1_PairingAdminService {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "ListPhones" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > The phones this Mac pins, in the order they paired.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListPhonesRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListPhonesRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListPhonesResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func listPhones<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListPhonesRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListPhonesRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListPhonesResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListPhonesResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_PairingAdminService.Method.ListPhones.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "RevokePhone" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Unpins one phone and closes its connections, and those of any phone
+        /// > still pairing. Other paired phones and the live code stay. A phone this
+        /// > Mac does not pin changes nothing.
+        /// >   INVALID_REQUEST - the fingerprint is not 32 bytes
+        /// >   DURABILITY_UNCONFIRMED - the phone is revoked, but the pairing file
+        /// >     may still pin it, so it can reconnect after a restart
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_RevokePhoneRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_RevokePhoneRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_RevokePhoneResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func revokePhone<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_RevokePhoneRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_RevokePhoneRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_RevokePhoneResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RevokePhoneResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_PairingAdminService.Method.RevokePhone.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -1058,6 +1212,69 @@ extension Aria_Daemon_V1_PairingAdminService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RevokePhonesRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_RevokePhonesResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListPhones" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > The phones this Mac pins, in the order they paired.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_ListPhonesRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listPhones<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListPhonesRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListPhonesResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.listPhones(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ListPhonesRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ListPhonesResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RevokePhone" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Unpins one phone and closes its connections, and those of any phone
+    /// > still pairing. Other paired phones and the live code stay. A phone this
+    /// > Mac does not pin changes nothing.
+    /// >   INVALID_REQUEST - the fingerprint is not 32 bytes
+    /// >   DURABILITY_UNCONFIRMED - the phone is revoked, but the pairing file
+    /// >     may still pin it, so it can reconnect after a restart
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_RevokePhoneRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func revokePhone<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_RevokePhoneRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RevokePhoneResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.revokePhone(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_RevokePhoneRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_RevokePhoneResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1130,6 +1347,77 @@ extension Aria_Daemon_V1_PairingAdminService.ClientProtocol {
             metadata: metadata
         )
         return try await self.revokePhones(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListPhones" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > The phones this Mac pins, in the order they paired.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listPhones<Result>(
+        _ message: Aria_Daemon_V1_ListPhonesRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListPhonesResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_ListPhonesRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.listPhones(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RevokePhone" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Unpins one phone and closes its connections, and those of any phone
+    /// > still pairing. Other paired phones and the live code stay. A phone this
+    /// > Mac does not pin changes nothing.
+    /// >   INVALID_REQUEST - the fingerprint is not 32 bytes
+    /// >   DURABILITY_UNCONFIRMED - the phone is revoked, but the pairing file
+    /// >     may still pin it, so it can reconnect after a restart
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func revokePhone<Result>(
+        _ message: Aria_Daemon_V1_RevokePhoneRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_RevokePhoneResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_RevokePhoneRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.revokePhone(
             request: request,
             options: options,
             onResponse: handleResponse

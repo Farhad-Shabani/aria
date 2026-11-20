@@ -75,7 +75,7 @@ impl Handshake {
                 Some(revocation) => Lease::UntilCancelled(revocation),
                 // A phone can pair on this connection and keep using it, so
                 // a revoke ends it too.
-                None => Lease::ForOrUntilCancelled(lease, phones.revocation()),
+                None => Lease::ForOrUntilCancelled(lease, phones.unpinned_connection()),
             },
         )
     }

@@ -1,7 +1,7 @@
 //! Translation between generated wire messages and domain types.
 
 use super::wire;
-use crate::daemon::relay::{Invite, RelayStage};
+use crate::daemon::relay::{Invite, PairedPhone, RelayStage};
 use crate::daemon::{CurrentMicrophone, PhoneCommand, PhoneRecordingId, PhoneRequest};
 use aria_assistant::chat::{
     AskCall, AssistantModel, AssistantStatus, ChatChoice, ChatReply, ChatStage, ChatStageKind,
@@ -463,6 +463,31 @@ impl TryFrom<Invite> for wire::IssueInviteResponse {
             expires_in: Some(wire_duration(invite.expires_in)),
             pairing_count: invite.pairing_count,
         })
+    }
+}
+
+impl From<PairedPhone> for wire::PairedPhone {
+    fn from(phone: PairedPhone) -> Self {
+        let (hardware_model, pair_time) = match phone.record {
+            Some(record) => (
+                record.hardware_model.map(String::from).unwrap_or_default(),
+                Some(record.paired_at.into()),
+            ),
+            None => (String::new(), None),
+        };
+        Self {
+            fingerprint: phone.fingerprint.to_vec(),
+            hardware_model,
+            pair_time,
+        }
+    }
+}
+
+impl From<Vec<PairedPhone>> for wire::ListPhonesResponse {
+    fn from(phones: Vec<PairedPhone>) -> Self {
+        Self {
+            phones: phones.into_iter().map(Into::into).collect(),
+        }
     }
 }
 

@@ -126,6 +126,11 @@ public nonisolated struct Aria_Daemon_V1_PairRequest: Sendable {
 
   public var code: String = String()
 
+  /// The phone's model identifier, as `uname` reports it, such as
+  /// `iPhone18,1`: up to 32 ASCII letters, digits, and commas. Empty when the
+  /// phone doesn't say.
+  public var hardwareModel: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -196,6 +201,79 @@ public nonisolated struct Aria_Daemon_V1_RevokePhonesRequest: Sendable {
 }
 
 public nonisolated struct Aria_Daemon_V1_RevokePhonesResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_ListPhonesRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_ListPhonesResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var phones: [Aria_Daemon_V1_PairedPhone] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_PairedPhone: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// SHA-256 of the phone's certificate DER bytes, as the Mac pins it.
+  public var fingerprint: Data = Data()
+
+  /// As `PairRequest.hardware_model` gave it. Empty when unknown.
+  public var hardwareModel: String = String()
+
+  /// Absent for a phone that paired before the Mac recorded it.
+  public var pairTime: SwiftProtobuf.Google_Protobuf_Timestamp {
+    get {_pairTime ?? SwiftProtobuf.Google_Protobuf_Timestamp()}
+    set {_pairTime = newValue}
+  }
+  /// Returns true if `pairTime` has been explicitly set.
+  public var hasPairTime: Bool {self._pairTime != nil}
+  /// Clears the value of `pairTime`. Subsequent reads from it will return its default value.
+  public mutating func clearPairTime() {self._pairTime = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _pairTime: SwiftProtobuf.Google_Protobuf_Timestamp? = nil
+}
+
+public nonisolated struct Aria_Daemon_V1_RevokePhoneRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// As `PairedPhone.fingerprint` gives it.
+  public var fingerprint: Data = Data()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_RevokePhoneResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -600,7 +678,7 @@ nonisolated extension Aria_Daemon_V1_AudioFormat: SwiftProtobuf._ProtoNameProvid
 
 nonisolated extension Aria_Daemon_V1_PairRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PairRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{3}hardware_model\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -609,6 +687,7 @@ nonisolated extension Aria_Daemon_V1_PairRequest: SwiftProtobuf.Message, SwiftPr
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.code) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.hardwareModel) }()
       default: break
       }
     }
@@ -618,11 +697,15 @@ nonisolated extension Aria_Daemon_V1_PairRequest: SwiftProtobuf.Message, SwiftPr
     if !self.code.isEmpty {
       try visitor.visitSingularStringField(value: self.code, fieldNumber: 1)
     }
+    if !self.hardwareModel.isEmpty {
+      try visitor.visitSingularStringField(value: self.hardwareModel, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_PairRequest, rhs: Aria_Daemon_V1_PairRequest) -> Bool {
     if lhs.code != rhs.code {return false}
+    if lhs.hardwareModel != rhs.hardwareModel {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -753,6 +836,148 @@ nonisolated extension Aria_Daemon_V1_RevokePhonesResponse: SwiftProtobuf.Message
   }
 
   public static func ==(lhs: Aria_Daemon_V1_RevokePhonesResponse, rhs: Aria_Daemon_V1_RevokePhonesResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_ListPhonesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListPhonesRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_ListPhonesRequest, rhs: Aria_Daemon_V1_ListPhonesRequest) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_ListPhonesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListPhonesResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}phones\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.phones) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.phones.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.phones, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_ListPhonesResponse, rhs: Aria_Daemon_V1_ListPhonesResponse) -> Bool {
+    if lhs.phones != rhs.phones {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_PairedPhone: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".PairedPhone"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}fingerprint\0\u{3}hardware_model\0\u{3}pair_time\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.fingerprint) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.hardwareModel) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._pairTime) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.fingerprint.isEmpty {
+      try visitor.visitSingularBytesField(value: self.fingerprint, fieldNumber: 1)
+    }
+    if !self.hardwareModel.isEmpty {
+      try visitor.visitSingularStringField(value: self.hardwareModel, fieldNumber: 2)
+    }
+    try { if let v = self._pairTime {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_PairedPhone, rhs: Aria_Daemon_V1_PairedPhone) -> Bool {
+    if lhs.fingerprint != rhs.fingerprint {return false}
+    if lhs.hardwareModel != rhs.hardwareModel {return false}
+    if lhs._pairTime != rhs._pairTime {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_RevokePhoneRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RevokePhoneRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}fingerprint\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.fingerprint) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.fingerprint.isEmpty {
+      try visitor.visitSingularBytesField(value: self.fingerprint, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RevokePhoneRequest, rhs: Aria_Daemon_V1_RevokePhoneRequest) -> Bool {
+    if lhs.fingerprint != rhs.fingerprint {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_RevokePhoneResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RevokePhoneResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RevokePhoneResponse, rhs: Aria_Daemon_V1_RevokePhoneResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
