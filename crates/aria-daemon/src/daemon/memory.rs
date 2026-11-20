@@ -11,12 +11,19 @@ use tokio_util::sync::CancellationToken;
 
 use super::config::load_memory;
 use super::tasks::Supervised;
-use aria_assistant::memory::run_backlog;
+use aria_assistant::memory::{StoreError, run_backlog};
 use aria_primitives::error_chain;
 use aria_settings::SettingsCache;
 
 /// How long the chats have to go quiet before their turns are extracted.
 const QUIET: Duration = Duration::from_secs(120);
+
+enum Skipped {
+    /// A run marks its chats done, so one without the words would never
+    /// learn their pairs. The chats wait for a readable file.
+    UnreadDictionary(super::vocabulary::Error),
+    Failed(StoreError),
+}
 
 /// One nudge per recorded turn; more than one waiting says nothing new.
 pub(super) fn wake_channel() -> (mpsc::Sender<()>, mpsc::Receiver<()>) {
@@ -54,21 +61,15 @@ impl MemoryBacklog {
         let backlog = move || {
             let settings = cache.effective();
             let config = load_memory(&settings.memory, &home);
-            // A run marks its chats done, so one without the words would
-            // never learn their pairs. The chats wait for a readable file.
-            let terms = match vocabulary.list_words() {
-                Ok(terms) => terms,
-                Err(error) => {
-                    tracing::warn!(error = %error_chain(&error), "the dictionary could not be read");
-                    return None;
-                }
-            };
-            Some(run_backlog(config, &terms, &home, &cancel))
+            let terms = vocabulary.list_words().map_err(Skipped::UnreadDictionary)?;
+            run_backlog(config, &terms, &home, &cancel).map_err(Skipped::Failed)
         };
         match tokio::task::spawn_blocking(backlog).await {
-            Ok(None) => {}
-            Ok(Some(Ok(_))) => self.vocabulary.prepare(None),
-            Ok(Some(Err(error))) => {
+            Ok(Ok(_)) => self.vocabulary.prepare(None),
+            Ok(Err(Skipped::UnreadDictionary(error))) => {
+                tracing::warn!(error = %error_chain(&error), "the dictionary could not be read");
+            }
+            Ok(Err(Skipped::Failed(error))) => {
                 tracing::warn!(error = %error_chain(&error), "the memory backlog did not run");
             }
             Err(error) => tracing::warn!(%error, "the memory backlog did not finish"),
