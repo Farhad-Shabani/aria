@@ -248,9 +248,9 @@ impl PersonalSources {
         Self { dictionary, memory }
     }
 
-    /// No dictionary file, so the personal rules stay empty.
+    /// Your dictionary and memory's pairs, both in `directory`.
     #[cfg(test)]
-    pub(super) fn unlisted(directory: &Path) -> Self {
+    pub(super) fn in_directory(directory: &Path) -> Self {
         Self::new(
             Arc::new(Dictionary::new(directory.join("dictionary.txt"))),
             directory.to_owned(),
@@ -1246,7 +1246,7 @@ mod tests {
     fn local_runtime(root: &Path) -> (Arc<Runtime>, Worker<LocalCollector<LocalExtractor>>) {
         Runtime::new(
             root.join("catalog"),
-            PersonalSources::unlisted(root),
+            PersonalSources::in_directory(root),
             true,
             settings(root),
             LocalCollector::new(LocalExtractor),
@@ -1346,7 +1346,7 @@ mod tests {
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
-            PersonalSources::unlisted(temporary.path()),
+            PersonalSources::in_directory(temporary.path()),
             true,
             settings(temporary.path()),
             collector,
@@ -1387,7 +1387,7 @@ mod tests {
         };
         Runtime::new(
             base.join("catalog"),
-            PersonalSources::unlisted(base),
+            PersonalSources::in_directory(base),
             true,
             settings(base),
             collector,
@@ -1540,7 +1540,7 @@ mod tests {
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
-            PersonalSources::unlisted(temporary.path()),
+            PersonalSources::in_directory(temporary.path()),
             true,
             settings(temporary.path()),
             collector,
@@ -1588,7 +1588,7 @@ mod tests {
         let configured = project(root.path(), "configured");
         let (runtime, mut worker) = Runtime::new(
             root.path().join("catalog"),
-            PersonalSources::unlisted(root.path()),
+            PersonalSources::in_directory(root.path()),
             true,
             settings_with(
                 root.path(),
@@ -1653,7 +1653,7 @@ mod tests {
         let selected = project(root.path(), "project");
         let (runtime, _worker) = Runtime::new(
             root.path().join("catalog"),
-            PersonalSources::unlisted(root.path()),
+            PersonalSources::in_directory(root.path()),
             true,
             settings_with(root.path(), "enabled = false"),
             LocalCollector::new(LocalExtractor),
@@ -1701,16 +1701,7 @@ mod tests {
     fn admitted_snapshots_survive_personal_deletion_and_refresh() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("dictionary.txt"), "db2\n").unwrap();
-        let (runtime, mut worker) = Runtime::new(
-            root.path().join("catalog"),
-            PersonalSources::new(
-                Arc::new(Dictionary::new(root.path().join("dictionary.txt"))),
-                root.path().to_owned(),
-            ),
-            true,
-            settings(root.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, mut worker) = local_runtime(root.path());
         worker.initialize_personal().unwrap();
         let admitted = runtime.snapshot(None);
         assert_eq!(admitted.matcher.correct("d b two").as_deref(), Some("db2"));
@@ -1727,16 +1718,7 @@ mod tests {
     #[test]
     fn an_added_word_corrects_after_the_next_refresh() {
         let root = tempfile::tempdir().unwrap();
-        let (runtime, mut worker) = Runtime::new(
-            root.path().join("catalog"),
-            PersonalSources::new(
-                Arc::new(Dictionary::new(root.path().join("dictionary.txt"))),
-                root.path().to_owned(),
-            ),
-            true,
-            settings(root.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, mut worker) = local_runtime(root.path());
         assert_eq!(runtime.add_word("db2").unwrap(), AddWordOutcome::Added);
         assert_eq!(
             runtime.add_word("db2").unwrap(),
@@ -1756,16 +1738,7 @@ mod tests {
     fn a_removed_word_stops_correcting() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("dictionary.txt"), "db2\n").unwrap();
-        let (runtime, mut worker) = Runtime::new(
-            root.path().join("catalog"),
-            PersonalSources::new(
-                Arc::new(Dictionary::new(root.path().join("dictionary.txt"))),
-                root.path().to_owned(),
-            ),
-            true,
-            settings(root.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, mut worker) = local_runtime(root.path());
         worker.initialize_personal().unwrap();
         assert_eq!(
             runtime.remove_word("db2").unwrap(),
@@ -1785,16 +1758,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("dictionary.txt");
         std::fs::write(&path, "db2\n").unwrap();
-        let (runtime, mut worker) = Runtime::new(
-            root.path().join("catalog"),
-            PersonalSources::new(
-                Arc::new(Dictionary::new(path.clone())),
-                root.path().to_owned(),
-            ),
-            true,
-            settings(root.path()),
-            LocalCollector::new(LocalExtractor),
-        );
+        let (runtime, mut worker) = local_runtime(root.path());
         worker.initialize_personal().unwrap();
         let revision = runtime.registry().personal_revision;
         let shutdown = CancellationToken::new();
@@ -1989,7 +1953,7 @@ mod tests {
         let (exited_tx, exited_rx) = mpsc::channel();
         let (runtime, worker) = Runtime::new(
             root.path().join("catalog"),
-            PersonalSources::unlisted(root.path()),
+            PersonalSources::in_directory(root.path()),
             true,
             settings(root.path()),
             LocalCollector::new(BlockingExtractor {

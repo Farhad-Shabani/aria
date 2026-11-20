@@ -901,9 +901,7 @@ final class PaletteTests: XCTestCase {
     }
 
     func testAWordListedTwiceIsOneRow() {
-        var model = openModel()
-        model.read(dictionary: ["db2", "vex16", "db2"], since: model.dictionaryEdits)
-        model.listDictionary()
+        let model = dictionaryModel(["db2", "vex16", "db2"])
         XCTAssertEqual(model.items.compactMap(\.command?.action), [.listedWord("db2"), .listedWord("vex16")])
     }
 

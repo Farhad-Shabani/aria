@@ -259,12 +259,17 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    fn written(text: &str) -> (tempfile::TempDir, PathBuf, Dictionary) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        std::fs::write(&path, text).unwrap();
+        let dictionary = Dictionary::new(path.clone());
+        (dir, path, dictionary)
+    }
+
     #[test]
     fn words_skip_comments_and_blanks_and_a_missing_file() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join(FILE);
-        std::fs::write(&path, "# mine\n\n  db2  \nvex16\n").expect("writes");
-        let dictionary = Dictionary::new(path);
+        let (dir, _, dictionary) = written("# mine\n\n  db2  \nvex16\n");
         assert_eq!(dictionary.words().unwrap().unwrap(), ["db2", "vex16"]);
         let missing = Dictionary::new(dir.path().join("none.txt"));
         assert!(missing.words().expect("reads").is_none());
@@ -272,9 +277,7 @@ mod tests {
 
     #[test]
     fn invalid_words_fail_loudly() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(FILE);
-        let dictionary = Dictionary::new(path.clone());
+        let (_dir, path, dictionary) = written("");
         std::fs::write(&path, [255]).unwrap();
         assert!(matches!(dictionary.words(), Err(DictionaryError::Io(_))));
         std::fs::write(&path, format!("db2\n{}\n", "a".repeat(257))).unwrap();
@@ -291,10 +294,7 @@ mod tests {
 
     #[test]
     fn an_add_appends_the_word_and_keeps_what_was_written() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(FILE);
-        std::fs::write(&path, "# mine\ndb2").unwrap();
-        let dictionary = Dictionary::new(path.clone());
+        let (_dir, path, dictionary) = written("# mine\ndb2");
         assert_eq!(
             dictionary.add("  Adzviser ").unwrap(),
             AddWordOutcome::Added
@@ -325,10 +325,7 @@ mod tests {
 
     #[test]
     fn a_bad_word_leaves_the_file_unchanged() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(FILE);
-        std::fs::write(&path, "db2\n").unwrap();
-        let dictionary = Dictionary::new(path.clone());
+        let (_dir, path, dictionary) = written("db2\n");
         for word in ["", "  ", "# note", "two\nlines", &"a".repeat(257)] {
             assert!(
                 matches!(dictionary.add(word), Err(DictionaryError::InvalidWord)),
@@ -340,10 +337,7 @@ mod tests {
 
     #[test]
     fn a_remove_drops_every_copy_and_keeps_the_rest() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(FILE);
-        std::fs::write(&path, "# mine\ndb2\n\n  Adzviser \nvex16\nAdzviser").unwrap();
-        let dictionary = Dictionary::new(path.clone());
+        let (dir, path, dictionary) = written("# mine\ndb2\n\n  Adzviser \nvex16\nAdzviser");
         assert_eq!(
             dictionary.remove(" Adzviser").unwrap(),
             RemoveWordOutcome::Removed

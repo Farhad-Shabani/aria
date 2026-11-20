@@ -1403,7 +1403,7 @@ mod history_tests {
                 SpeakerConfig::load(&aria_settings::SettingsFile::default().speaker, &home_dir);
             let (vocabulary, _worker) = VocabularyRuntime::new(
                 home.join("vocabulary"),
-                crate::daemon::vocabulary::PersonalSources::unlisted(&home.join("vocabulary")),
+                crate::daemon::vocabulary::PersonalSources::in_directory(&home.join("vocabulary")),
                 false,
                 Arc::clone(&fixture.runtime.settings),
                 aria_voice::vocabulary::discover::LocalCollector::new(
