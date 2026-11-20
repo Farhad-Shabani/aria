@@ -20,7 +20,9 @@ use aria_primitives::lazy::Lazy;
 use aria_settings::config::{ConfigError, backend};
 use aria_settings::event::EventEmitter;
 use aria_settings::rpc::{Categorized, RpcErrorCode};
-use aria_settings::{MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError};
+use aria_settings::{
+    CaptureChoice, MAX_DICTATION_TIMEOUT, SettingsCache, SettingsStore, StoreError,
+};
 use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
     ActiveDictation, Announcement, CapturedMicrophone, DeliveredRecording, DictationCoordinator,
@@ -148,7 +150,7 @@ impl DictationRuntime {
                     home: retry_home.clone(),
                 })
             }),
-            emitter: event_emitter(context, subscriptions),
+            emitter: event_emitter(context, &cache, subscriptions),
             history: Arc::clone(&history),
             microphone: Arc::clone(&microphone),
             settings,
@@ -266,7 +268,7 @@ impl DictationRuntime {
             context.sound_muting(),
         )?;
         let runtime = Self {
-            emitter: event_emitter(context, subscriptions),
+            emitter: event_emitter(context, &cache, subscriptions),
             settings,
             coordinator: CoordinatorState::Ready(ReadyDictation {
                 coordinator,
@@ -716,20 +718,29 @@ impl From<&DictationRuntimeError> for RpcErrorCode {
     }
 }
 
-/// Nobody watches an unattended run, so it subscribes no sound, banner, or
-/// status file. A connected client asked to be told, and still is.
+/// Connected clients get events whether or not local feedback plays.
 fn event_emitter(
     context: &Context<'_>,
+    cache: &SettingsCache,
     subscriptions: Arc<Subscriptions>,
 ) -> EventEmitter<DictationEvent> {
-    let local = context
-        .attended
+    // `capture.backend` is a restart key, so one read holds for this daemon.
+    let local = plays_local_feedback(context.attended, &cache.effective().choices().capture)
         .then(|| DictationSubscribers::new(context.paths.status_path()));
     forward_events(subscriptions, move |event| {
         if let (Some(local), DictationEvent::Stage(stage)) = (&local, &event) {
             local.observe(stage);
         }
     })
+}
+
+/// Nobody watches an unattended run, such as a test sandbox, so it plays no
+/// sound and writes no banner or status file. A run that records the
+/// microphone always does. Any caller running as the user can start a
+/// recording. The start cue is how the person learns of it, so the environment
+/// must not silence it.
+fn plays_local_feedback(attended: bool, capture: &CaptureChoice) -> bool {
+    attended || matches!(capture, CaptureChoice::Microphone)
 }
 
 fn forward_events(
@@ -758,6 +769,37 @@ mod event_tests {
     use aria_voice::dictation::testing::PressSpy;
 
     use super::*;
+
+    /// Local feedback announces itself by writing the idle status file.
+    fn subscribes_local_feedback(capture: &str) -> bool {
+        let directory = tempfile::TempDir::new().unwrap();
+        let paths =
+            aria_platform::runtime::RuntimePaths::in_directory(directory.path().join("runtime"))
+                .prepare()
+                .unwrap();
+        let context = Context::detect(&paths, DaemonLifetime::OnDemand).unwrap();
+        assert!(!context.attended, "a test run is unattended");
+        let path = directory.path().join("settings.toml");
+        std::fs::write(&path, capture).unwrap();
+        let cache = SettingsCache::open(path, directory.path().to_path_buf()).unwrap();
+        let _emitter = event_emitter(&context, &cache, Arc::new(Subscriptions::new()));
+        paths.status_path().exists()
+    }
+
+    #[test]
+    fn an_unattended_microphone_still_plays_its_cue() {
+        assert!(subscribes_local_feedback(""));
+    }
+
+    #[test]
+    fn an_unattended_replay_stays_quiet() {
+        let audio = tempfile::NamedTempFile::new().unwrap();
+        let settings = format!(
+            "[capture]\nbackend = \"wav_file\"\npath = \"{}\"\n",
+            audio.path().display()
+        );
+        assert!(!subscribes_local_feedback(&settings));
+    }
 
     #[tokio::test]
     async fn stage_events_reach_subscribers_while_local_feedback_is_blocked() {

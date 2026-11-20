@@ -116,15 +116,20 @@ struct DaemonProcess: DaemonControlling {
     }
 
     private static func daemonBinaryOverride(defaults: UserDefaults = .standard) -> URL? {
-        defaults.string(forKey: "ariaDaemonBinary").map {
-            URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
-        }
+        #if DEBUG
+            defaults.string(forKey: "ariaDaemonBinary").map {
+                URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
+            }
+        #else
+            // Any app running as the user can write this default. Honoring it
+            // would let that app run its own binary as Aria's child.
+            nil
+        #endif
     }
 
-    /// Where `aria daemon` lives. The `ariaDaemonBinary` default overrides
-    /// everything and is trusted verbatim, so a wrong override fails loudly
-    /// with that exact path instead of silently falling back. Otherwise the
-    /// app runs the `aria` inside its nested `Aria.app` helper.
+    /// Where `aria daemon` lives. In a debug build, the `ariaDaemonBinary`
+    /// default overrides everything with no fallback, so a wrong override
+    /// fails loudly with its exact path.
     static func daemonBinaryCandidates(
         bundledExecutable: URL? = Bundle.main.executableURL,
         defaults: UserDefaults = .standard
