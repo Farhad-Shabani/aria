@@ -7,5 +7,7 @@ repository's licenses:
 
 - assets/brand/
 - clients/Aria/Aria.icns
+- clients/Aria/Assets.xcassets/CardIcon.imageset/
 - clients/Aria/App/MenuBarMark.swift
+- clients/Aria/App/SmallMark.swift
 - clients/Shared/Brand/Mark.swift

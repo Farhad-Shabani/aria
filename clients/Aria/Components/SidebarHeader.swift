@@ -7,8 +7,6 @@ enum HeaderMetrics {
 
 private enum Layout {
     static let verticalPadding: CGFloat = 8
-    /// The app's card atop a sidebar, sized like the Apple Account card.
-    static let cardIconSide: CGFloat = 44
 }
 
 struct SidebarHeader<Content: View>: View {
@@ -16,7 +14,10 @@ struct SidebarHeader<Content: View>: View {
 
     var body: some View {
         HStack(spacing: HeaderMetrics.iconSpacing) {
-            AppIcon(side: Layout.cardIconSide)
+            // The app's card atop a sidebar, 44 pt like the Apple Account card. The app
+            // icon has no 44 pt size, and scaling another blurs the mark's hairlines.
+            Image(.cardIcon)
+                .accessibilityHidden(true)
             content
         }
         .padding(.vertical, Layout.verticalPadding)
