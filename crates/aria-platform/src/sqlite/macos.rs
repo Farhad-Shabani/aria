@@ -1,4 +1,4 @@
-//! SQLCipher keyed by a storage key the login Keychain keeps. The item's
+//! SQLCipher keyed by a storage key the default Keychain keeps. The item's
 //! access list trusts only the Aria binary that created it, so another app
 //! asking for it gets a macOS prompt.
 

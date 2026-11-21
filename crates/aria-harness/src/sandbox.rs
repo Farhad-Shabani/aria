@@ -47,7 +47,7 @@ pub enum SandboxError {
     #[error("failed to write the settings")]
     WriteConfig(#[source] std::io::Error),
 
-    #[error("failed to create the fake login Keychain")]
+    #[error("failed to create the fake Keychain")]
     CreateKeychain(#[source] std::io::Error),
 
     #[error("`security create-keychain` did not finish: {outcome}")]

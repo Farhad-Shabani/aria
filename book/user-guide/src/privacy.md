@@ -157,7 +157,7 @@ project vocabulary cache. Transcribing saved audio again makes a temporary
 unencrypted copy. Transcript files aren't encrypted. On Linux, Aria doesn't
 encrypt these files.
 
-The key is **Aria storage key** in your login Keychain.
+The key is **Aria storage key** in your default Keychain, usually **login**.
 Without it, Aria can't read or save that data. To start over, delete
 `history.db`, `memory.db`, and `catalog.db`.
 
