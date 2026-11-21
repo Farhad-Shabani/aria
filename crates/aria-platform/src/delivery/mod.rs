@@ -338,8 +338,12 @@ pub enum DeliveryError {
     Timeout(Duration),
 
     #[cfg(target_os = "macos")]
-    #[error("could not confirm inserted text in the focused field; Return was not sent")]
-    SubmissionUnconfirmed,
+    #[error("insert and press Return presses its own Return, once")]
+    SubmissionSpent,
+
+    #[cfg(target_os = "macos")]
+    #[error("the field the press started in couldn't be read, so Return was not sent")]
+    SubmissionUnverified,
 
     #[cfg(target_os = "macos")]
     #[error(

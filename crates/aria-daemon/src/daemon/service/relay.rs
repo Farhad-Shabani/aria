@@ -272,9 +272,8 @@ impl ReturnPolicy {
         }
     }
 
-    /// Submission's own check waits for the field to read back the text,
-    /// which a terminal that redraws never does. The Return offer's check
-    /// holds in both cases, so a press types plainly.
+    /// A press types as plain insertion and presses Return through the Return
+    /// offer, so the phone hears whether Return went.
     fn output_mode(self, chosen: OutputMode) -> OutputMode {
         match self {
             Self::Press => OutputMode::Insert,

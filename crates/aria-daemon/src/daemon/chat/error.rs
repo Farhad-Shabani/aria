@@ -145,7 +145,8 @@ impl From<&ChatError> for RpcErrorCode {
             ) => Self::DeliveryFailed,
             #[cfg(target_os = "macos")]
             ChatError::Delivery(
-                DeliveryError::SubmissionUnconfirmed
+                DeliveryError::SubmissionSpent
+                | DeliveryError::SubmissionUnverified
                 | DeliveryError::InsertionNotPermitted
                 | DeliveryError::SecureInput,
             ) => Self::DeliveryFailed,
