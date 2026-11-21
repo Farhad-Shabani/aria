@@ -37,8 +37,8 @@ pub(super) struct MemoryBacklog {
     home: PathBuf,
     cache: std::sync::Arc<SettingsCache>,
     key: std::sync::Arc<StorageKey>,
-    wake: mpsc::Receiver<()>,
     vocabulary: std::sync::Arc<super::vocabulary::Runtime>,
+    wake: mpsc::Receiver<()>,
 }
 
 impl MemoryBacklog {
@@ -46,15 +46,15 @@ impl MemoryBacklog {
         home: PathBuf,
         cache: std::sync::Arc<SettingsCache>,
         key: std::sync::Arc<StorageKey>,
-        wake: mpsc::Receiver<()>,
         vocabulary: std::sync::Arc<super::vocabulary::Runtime>,
+        wake: mpsc::Receiver<()>,
     ) -> Self {
         Self {
             home,
             cache,
             key,
-            wake,
             vocabulary,
+            wake,
         }
     }
 

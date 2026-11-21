@@ -382,9 +382,9 @@ mod tests {
                 )
                 .expect("the settings store should open"),
             ),
-            None,
             Arc::new(crate::daemon::history::HistoryStore::new()),
             Arc::new(crate::daemon::storage::StorageKey::for_tests()),
+            None,
         );
         let (chat, chat_actor) = chat_channel(Arc::new(chat));
         let mut dictation = DictationRuntime::detached(settings);

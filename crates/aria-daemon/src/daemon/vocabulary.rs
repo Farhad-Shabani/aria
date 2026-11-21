@@ -295,9 +295,9 @@ enum PersonalError {
 impl Runtime {
     pub(super) fn new<C: Collector>(
         directory: PathBuf,
+        persistent: bool,
         key: Arc<StorageKey>,
         sources: PersonalSources,
-        persistent: bool,
         settings: Arc<SettingsStore>,
         collector: C,
     ) -> (Arc<Self>, Worker<C>) {
@@ -1264,9 +1264,9 @@ mod tests {
     fn local_runtime(root: &Path) -> (Arc<Runtime>, Worker<LocalCollector<LocalExtractor>>) {
         Runtime::new(
             root.join("catalog"),
+            true,
             Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(root),
-            true,
             settings(root),
             LocalCollector::new(LocalExtractor),
         )
@@ -1365,9 +1365,9 @@ mod tests {
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
+            true,
             Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(temporary.path()),
-            true,
             settings(temporary.path()),
             collector,
         );
@@ -1407,9 +1407,9 @@ mod tests {
         };
         Runtime::new(
             base.join("catalog"),
+            true,
             Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(base),
-            true,
             settings(base),
             collector,
         )
@@ -1573,9 +1573,9 @@ mod tests {
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
+            true,
             Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(temporary.path()),
-            true,
             settings(temporary.path()),
             collector,
         );
@@ -1622,9 +1622,9 @@ mod tests {
         let configured = project(root.path(), "configured");
         let (runtime, mut worker) = Runtime::new(
             root.path().join("catalog"),
+            true,
             Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(root.path()),
-            true,
             settings_with(
                 root.path(),
                 &format!("enabled = true\ndir = {:?}", configured.as_path()),
@@ -1688,9 +1688,9 @@ mod tests {
         let selected = project(root.path(), "project");
         let (runtime, _worker) = Runtime::new(
             root.path().join("catalog"),
+            true,
             Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(root.path()),
-            true,
             settings_with(root.path(), "enabled = false"),
             LocalCollector::new(LocalExtractor),
         );
@@ -1994,9 +1994,9 @@ mod tests {
         let (exited_tx, exited_rx) = mpsc::channel();
         let (runtime, worker) = Runtime::new(
             root.path().join("catalog"),
+            true,
             Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(root.path()),
-            true,
             settings(root.path()),
             LocalCollector::new(BlockingExtractor {
                 entered: entered_tx,

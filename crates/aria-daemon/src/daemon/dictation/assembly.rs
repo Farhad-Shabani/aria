@@ -894,9 +894,9 @@ pub(in crate::daemon::dictation) mod tests {
             .unwrap();
             let vocabulary = VocabularyRuntime::new(
                 root.join("vocabulary"),
+                false,
                 Arc::new(crate::daemon::storage::StorageKey::for_tests()),
                 crate::daemon::vocabulary::PersonalSources::in_directory(&root.join("vocabulary")),
-                false,
                 settings_store(&root),
                 aria_voice::vocabulary::discover::LocalCollector::new(
                     aria_voice::vocabulary::extract::LocalExtractor,
@@ -1003,11 +1003,11 @@ pub(in crate::daemon::dictation) mod tests {
         };
         let (vocabulary, _worker) = VocabularyRuntime::new(
             home.path().join("vocabulary"),
+            false,
             Arc::new(crate::daemon::storage::StorageKey::for_tests()),
             crate::daemon::vocabulary::PersonalSources::in_directory(
                 &home.path().join("vocabulary"),
             ),
-            false,
             settings_store(home.path()),
             aria_voice::vocabulary::discover::LocalCollector::new(
                 aria_voice::vocabulary::extract::LocalExtractor,
@@ -1068,11 +1068,11 @@ pub(in crate::daemon::dictation) mod tests {
             SpeakerConfig::load(&aria_settings::SettingsFile::default().speaker, &home_dir);
         let (vocabulary, _worker) = VocabularyRuntime::new(
             home.path().join("vocabulary"),
+            false,
             Arc::new(crate::daemon::storage::StorageKey::for_tests()),
             crate::daemon::vocabulary::PersonalSources::in_directory(
                 &home.path().join("vocabulary"),
             ),
-            false,
             settings_store(home.path()),
             aria_voice::vocabulary::discover::LocalCollector::new(
                 aria_voice::vocabulary::extract::LocalExtractor,

@@ -157,9 +157,9 @@ fn compose(
     let dictionary = Arc::new(Dictionary::new(vocabulary_directory.join(dictionary::FILE)));
     let (vocabulary, mut vocabulary_worker) = super::vocabulary::Runtime::new(
         vocabulary_directory,
+        matches!(context.lifetime, DaemonLifetime::Persistent),
         Arc::clone(&key),
         super::vocabulary::PersonalSources::new(dictionary, memory, Arc::clone(&key)),
-        matches!(context.lifetime, DaemonLifetime::Persistent),
         Arc::clone(&settings),
         aria_voice::vocabulary::discover::LocalCollector::new(
             aria_voice::vocabulary::extract::LocalExtractor,
@@ -211,8 +211,8 @@ fn compose(
             context.home.clone(),
             Arc::clone(&cache),
             key,
-            memory_woken,
             Arc::clone(&vocabulary),
+            memory_woken,
         )
     });
     let dictation_runtime = Arc::clone(&dictation);
@@ -505,9 +505,9 @@ fn eager_workers(
             Arc::clone(subscriptions),
             Arc::clone(settings),
             Arc::clone(cache),
-            Some(memory_wake),
             Arc::clone(history_store),
             Arc::clone(key),
+            Some(memory_wake),
         )),
         speaker: Arc::new(SpeakerRuntime::new(
             Some(speakers),
@@ -568,9 +568,9 @@ fn deferred_workers(
             Arc::clone(subscriptions),
             Arc::clone(settings),
             Arc::clone(cache),
-            None,
             Arc::clone(history_store),
             Arc::clone(key),
+            None,
         )),
         // An on-demand daemon builds its microphone for the one press it
         // serves, so there is none to enroll through.

@@ -149,28 +149,28 @@ impl AskJob {
 }
 
 pub(in crate::daemon) struct ChatRuntime {
-    emitter: ChatEventEmitter,
     home: PathBuf,
     codex_home: PathBuf,
-    sessions: SessionStore,
-    /// The folder each named chat runs in, kept from its first ask.
-    folders: ChatFolders,
-    held: HeldQuotes,
-    #[cfg(test)]
-    pub(in crate::daemon) assistant_overrides: Option<tests::AssistantOverrides>,
     /// Read per chat, so a reply never types into an app with Aria off.
     settings: Arc<SettingsStore>,
     /// Read per chat, so an edit applies to the next chat.
     cache: Arc<SettingsCache>,
-    /// Nudges the memory backlog after a turn worth remembering. `None`
-    /// in a daemon that runs no backlog.
-    memory_wake: Option<mpsc::Sender<()>>,
-    delivery: DeliveryFactory,
-    typing: TypingTurns,
     /// Where chats and prompt results are saved, while history is on.
     history: Arc<HistoryStore>,
     /// Without it, no turn is remembered.
     key: Arc<StorageKey>,
+    delivery: DeliveryFactory,
+    emitter: ChatEventEmitter,
+    /// Nudges the memory backlog after a turn worth remembering. `None`
+    /// in a daemon that runs no backlog.
+    memory_wake: Option<mpsc::Sender<()>>,
+    sessions: SessionStore,
+    /// The folder each named chat runs in, kept from its first ask.
+    folders: ChatFolders,
+    held: HeldQuotes,
+    typing: TypingTurns,
+    #[cfg(test)]
+    pub(in crate::daemon) assistant_overrides: Option<tests::AssistantOverrides>,
 }
 
 impl ChatRuntime {
@@ -180,24 +180,24 @@ impl ChatRuntime {
         subscriptions: Arc<Subscriptions>,
         settings: Arc<SettingsStore>,
         cache: Arc<SettingsCache>,
-        memory_wake: Option<mpsc::Sender<()>>,
         history: Arc<HistoryStore>,
         key: Arc<StorageKey>,
+        memory_wake: Option<mpsc::Sender<()>>,
     ) -> Self {
         Self {
-            emitter: event_emitter(context, subscriptions),
             home: context.home.clone(),
             codex_home: context.codex_home.clone(),
+            settings,
+            cache,
+            history,
+            key,
+            delivery: context.delivery.clone(),
+            emitter: event_emitter(context, subscriptions),
+            memory_wake,
             sessions: SessionStore::open(context.settings_path.with_file_name(SESSION_FILE)),
             folders: ChatFolders::open(context.settings_path.with_file_name(CHAT_FOLDERS_FILE)),
             held: HeldQuotes::default(),
-            settings,
-            cache,
-            memory_wake,
-            delivery: context.delivery.clone(),
             typing: TypingTurns::default(),
-            history,
-            key,
             #[cfg(test)]
             assistant_overrides: None,
         }
@@ -1403,12 +1403,23 @@ pub(super) mod tests {
         let runtime = ChatRuntime {
             home: directory.to_path_buf(),
             codex_home: directory.join(".codex"),
-            sessions: SessionStore::open(directory.join(SESSION_FILE)),
-            folders: ChatFolders::open(directory.join(CHAT_FOLDERS_FILE)),
-            held: HeldQuotes::default(),
+            settings: Arc::new(SettingsStore::new(Arc::clone(&cache))),
+            cache,
+            history: Arc::new(HistoryStore::open(
+                &directory.join(".aria/history"),
+                directory,
+                Arc::new(StorageKey::for_tests()),
+            )),
+            key: Arc::new(StorageKey::for_tests()),
+            delivery: DeliveryFactory::detect(directory),
             emitter: ChatEventEmitter::subscribed_by("aria-test-chat-events", move |stage| {
                 let _ = events.send(stage);
             }),
+            memory_wake: Some(wake),
+            sessions: SessionStore::open(directory.join(SESSION_FILE)),
+            folders: ChatFolders::open(directory.join(CHAT_FOLDERS_FILE)),
+            held: HeldQuotes::default(),
+            typing: TypingTurns::default(),
             assistant_overrides: Some(AssistantOverrides {
                 execute: Box::new(move |runtime, ticket, job, cancel| {
                     let assistant_id = job.assistant_id();
@@ -1422,17 +1433,6 @@ pub(super) mod tests {
                 }),
                 deliver: None,
             }),
-            settings: Arc::new(SettingsStore::new(Arc::clone(&cache))),
-            cache,
-            memory_wake: Some(wake),
-            delivery: DeliveryFactory::detect(directory),
-            typing: TypingTurns::default(),
-            history: Arc::new(HistoryStore::open(
-                &directory.join(".aria/history"),
-                directory,
-                Arc::new(StorageKey::for_tests()),
-            )),
-            key: Arc::new(StorageKey::for_tests()),
         };
         (runtime, received, woken)
     }
