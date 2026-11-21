@@ -178,9 +178,9 @@ final class VoiceProfilesTests: XCTestCase {
 
         voices.start()
         voices.speakerEvent(Self.event(.recording, index: 2))
-        XCTAssertEqual(voices.enrollment?.phase, .recording(taken: 1, listening: true))
+        XCTAssertEqual(voices.enrollment?.phase, .recording(VoiceSampling(taken: 1, isListening: true)))
         voices.speakerEvent(Self.event(.sampleTaken, index: 2))
-        XCTAssertEqual(voices.enrollment?.phase, .recording(taken: 2, listening: false))
+        XCTAssertEqual(voices.enrollment?.phase, .recording(VoiceSampling(taken: 2, isListening: false)))
     }
 
     func testAFailedRecordingReturnsToTheNameWithTheReason() async {

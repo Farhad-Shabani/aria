@@ -14,7 +14,7 @@ final class VoiceProfiles: ObservableObject {
     struct Enrollment {
         enum Phase: Equatable {
             case naming
-            case recording(taken: Int, listening: Bool)
+            case recording(VoiceSampling)
         }
 
         /// Only for wording: the daemon makes a new voice the owner while
@@ -93,7 +93,7 @@ final class VoiceProfiles: ObservableObject {
         guard var enrollment, enrollment.phase == .naming else { return }
         let name = name.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
-        enrollment.phase = .recording(taken: 0, listening: false)
+        enrollment.phase = .recording(VoiceSampling())
         enrollment.failure = nil
         self.enrollment = enrollment
         recording = Task {
@@ -120,12 +120,9 @@ final class VoiceProfiles: ObservableObject {
     }
 
     func speakerEvent(_ event: Aria_Daemon_V1_SpeakerEvent) {
-        guard case .recording = enrollment?.phase else { return }
-        switch event.stage {
-        case .recording: enrollment?.phase = .recording(taken: Int(event.index) - 1, listening: true)
-        case .sampleTaken: enrollment?.phase = .recording(taken: Int(event.index), listening: false)
-        case .unspecified, .enrolled, .cancelled, .failed, .UNRECOGNIZED: break
-        }
+        guard case .recording(var sampling) = enrollment?.phase else { return }
+        sampling.hear(event)
+        enrollment?.phase = .recording(sampling)
     }
 
     func remove(_ name: String) async {
