@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::private_fs::PrivateDirectoryError;
-use aria_platform::sqlite::{self, Database, DriftedMode, Ownership, Policy};
+use aria_platform::sqlite::{self, AtRest, Database, DriftedMode, Ownership, Policy};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
 const SCHEMA_VERSION: i64 = 1;
@@ -15,10 +15,12 @@ const SCHEMA_VERSION: i64 = 1;
 // The daemon and the `aria memory` commands share the file, so a blocked
 // writer waits a while before it fails. The file may have been created under
 // the umask.
-const DATABASE_POLICY: Policy = Policy {
+pub(super) const DATABASE_POLICY: Policy = Policy {
     max_bytes: 64 * 1024 * 1024,
     busy_timeout: Duration::from_secs(5),
-    ownership: Ownership::Shared,
+    ownership: Ownership::Shared {
+        lock: "memory.lock",
+    },
     drifted_mode: DriftedMode::Repair,
 };
 
@@ -108,8 +110,8 @@ pub struct Store {
 impl Store {
     /// Opens or creates the database, readable by its owner alone: it
     /// holds what the user said.
-    pub fn open(path: &Path) -> Result<Self, StoreError> {
-        let connection = Database::open(path, &DATABASE_POLICY, &CancelToken::never())
+    pub fn open(path: &Path, at_rest: &AtRest) -> Result<Self, StoreError> {
+        let connection = Database::open(path, &DATABASE_POLICY, at_rest, &CancelToken::never())
             .map_err(StoreError::Open)?;
         connection.pragma_update(None, "secure_delete", true)?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -522,7 +524,7 @@ mod tests {
         for file in [&path, &journal] {
             std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o644)).expect("chmod");
         }
-        drop(Store::open(&path).expect("opens"));
+        drop(Store::open(&path, &AtRest::for_tests()).expect("opens"));
         let mode = |file: &std::path::Path| {
             std::fs::metadata(file).expect("stat").permissions().mode() & 0o777
         };
@@ -558,8 +560,12 @@ mod tests {
     fn facts_persist_across_reopen() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("memory.db");
-        let id = add(&Store::open(&path).expect("opens"), "a", STATUS_ACTIVE);
-        let reopened = Store::open(&path).expect("opens");
+        let id = add(
+            &Store::open(&path, &AtRest::for_tests()).expect("opens"),
+            "a",
+            STATUS_ACTIVE,
+        );
+        let reopened = Store::open(&path, &AtRest::for_tests()).expect("opens");
         assert!(reopened.get(id).expect("reads").is_some());
         assert_eq!(version(&reopened), SCHEMA_VERSION);
     }
@@ -575,7 +581,7 @@ mod tests {
                      INSERT INTO turns VALUES (1, 's');",
                 )
                 .expect("writes another layout");
-            let store = Store::open(&path).expect("opens");
+            let store = Store::open(&path, &AtRest::for_tests()).expect("opens");
             assert_eq!(version(&store), SCHEMA_VERSION);
             assert!(store.sessions().expect("reads").is_empty());
         }

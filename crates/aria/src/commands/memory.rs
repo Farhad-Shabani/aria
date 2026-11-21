@@ -40,7 +40,8 @@ fn open_store() -> anyhow::Result<(Store, PathBuf)> {
     let home = aria_settings::config::home_directory()?;
     let settings = aria_settings::load(&home)?;
     let dir = aria_settings::config::memory_directory(&settings.memory, &home);
-    let store = aria_assistant::memory::open(&dir)?;
+    let at_rest = aria_daemon::load_storage_key(&home, &dir)?;
+    let store = aria_assistant::memory::open(&dir, &at_rest)?;
     Ok((store, dir))
 }
 
@@ -187,10 +188,12 @@ fn consolidate() -> anyhow::Result<()> {
     let settings = aria_settings::load(&home)?;
     let config = aria_daemon::config::load_memory(&settings.memory, &home);
     let terms = Dictionary::from_home(&home).words()?.unwrap_or_default();
+    let at_rest = aria_daemon::load_storage_key(&home, &config.dir)?;
     let report = aria_assistant::memory::run_backlog(
         config,
         &terms,
         &home,
+        &at_rest,
         &aria_kit::cancel::CancelToken::never(),
     )?;
     let results = report.results;

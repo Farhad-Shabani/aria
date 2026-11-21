@@ -9,8 +9,6 @@ use std::sync::{Mutex, PoisonError};
 use std::time::SystemTime;
 
 pub const FILE: &str = "dictionary.txt";
-/// Under the home directory, beside the project vocabulary's catalog.
-pub const DIRECTORY: &str = ".aria/vocabulary";
 
 const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_WORDS: usize = 100_000;
@@ -91,7 +89,7 @@ impl Dictionary {
     }
 
     pub fn from_home(home: &Path) -> Self {
-        Self::new(home.join(DIRECTORY).join(FILE))
+        Self::new(home.join(super::DIRECTORY).join(FILE))
     }
 
     pub fn path(&self) -> &Path {

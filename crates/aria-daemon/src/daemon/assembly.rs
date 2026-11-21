@@ -39,6 +39,7 @@ use super::speaker;
 use super::speaker::SpeakerRuntime;
 use super::speech;
 use super::speech::SpeechRuntime;
+use super::storage::StorageKey;
 use super::subscriptions::Subscriptions;
 use super::system_transcription::SystemTranscriptionState;
 use super::tasks::RuntimeTasks;
@@ -142,17 +143,23 @@ fn compose(
     let startup = cache.effective();
     let settings = Arc::new(SettingsStore::new(Arc::clone(&cache)));
     let subscriptions = Arc::new(Subscriptions::new());
-    let history_store = Arc::new(HistoryStore::open(&context.home.join(".aria/history")));
+    let memory = memory_directory(&startup.memory, &context.home);
+    let key = Arc::new(StorageKey::new(context.home.clone(), memory.clone()));
+    let history_store = Arc::new(HistoryStore::open(
+        &context.home.join(aria_voice::history::DIRECTORY),
+        context.paths.spool_dir(),
+        Arc::clone(&key),
+    ));
     let microphone = Gate::new();
     let relay_microphone = Arc::clone(&microphone);
     let tasks = RuntimeTasks::new();
-    let memory = memory_directory(&startup.memory, &context.home);
-    let vocabulary_directory = context.home.join(dictionary::DIRECTORY);
+    let vocabulary_directory = context.home.join(aria_voice::vocabulary::DIRECTORY);
     let dictionary = Arc::new(Dictionary::new(vocabulary_directory.join(dictionary::FILE)));
     let (vocabulary, mut vocabulary_worker) = super::vocabulary::Runtime::new(
         vocabulary_directory,
-        super::vocabulary::PersonalSources::new(dictionary, memory),
         matches!(context.lifetime, DaemonLifetime::Persistent),
+        Arc::clone(&key),
+        super::vocabulary::PersonalSources::new(dictionary, memory, Arc::clone(&key)),
         Arc::clone(&settings),
         aria_voice::vocabulary::discover::LocalCollector::new(
             aria_voice::vocabulary::extract::LocalExtractor,
@@ -175,6 +182,7 @@ fn compose(
             cache: &cache,
             startup: &startup,
             history_store: &history_store,
+            key: &key,
         },
         wake_word,
         microphone,
@@ -202,8 +210,9 @@ fn compose(
         MemoryBacklog::new(
             context.home.clone(),
             Arc::clone(&cache),
-            memory_woken,
+            key,
             Arc::clone(&vocabulary),
+            memory_woken,
         )
     });
     let dictation_runtime = Arc::clone(&dictation);
@@ -333,6 +342,7 @@ struct Dependencies<'a> {
     /// The settings as the daemon started with them.
     startup: &'a CheckedSettings,
     history_store: &'a Arc<HistoryStore>,
+    key: &'a Arc<StorageKey>,
 }
 
 /// Everything the daemon runs for as long as it lives: a runtime behind each
@@ -432,6 +442,7 @@ fn eager_workers(
         cache,
         startup,
         history_store,
+        key,
     } = *dependencies;
     let DaemonConfig {
         dictation: dictation_config,
@@ -494,8 +505,9 @@ fn eager_workers(
             Arc::clone(subscriptions),
             Arc::clone(settings),
             Arc::clone(cache),
-            Some(memory_wake),
             Arc::clone(history_store),
+            Arc::clone(key),
+            Some(memory_wake),
         )),
         speaker: Arc::new(SpeakerRuntime::new(
             Some(speakers),
@@ -526,6 +538,7 @@ fn deferred_workers(
         cache,
         startup,
         history_store,
+        key,
     } = *dependencies;
     // Reading and forgetting profiles is filesystem work, so a daemon with no
     // microphone of its own still answers those.
@@ -555,8 +568,9 @@ fn deferred_workers(
             Arc::clone(subscriptions),
             Arc::clone(settings),
             Arc::clone(cache),
-            None,
             Arc::clone(history_store),
+            Arc::clone(key),
+            None,
         )),
         // An on-demand daemon builds its microphone for the one press it
         // serves, so there is none to enroll through.

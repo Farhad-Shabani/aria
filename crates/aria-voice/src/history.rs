@@ -1,6 +1,6 @@
 mod store;
 
-pub use store::{MAX_ENTRY_BYTES, NewAsk, RetryLease, Store};
+pub use store::{DB_FILE, DIRECTORY, MAX_ENTRY_BYTES, NewAsk, RetryLease, Store};
 
 use aria_primitives::Cause;
 use std::path::PathBuf;
@@ -368,6 +368,7 @@ impl From<aria_platform::sqlite::Error> for HistoryError {
             | Error::File(_)
             | Error::Linked
             | Error::Replaced
+            | Error::Locked
             | Error::Cancelled
             | Error::Io { .. }) => Self::storage(error),
         }

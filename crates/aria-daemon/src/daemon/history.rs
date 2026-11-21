@@ -1,9 +1,10 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aria_kit::audio::RecordingReader;
 use aria_platform::delivery::Caret;
+use aria_platform::sqlite::AtRestError;
 use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{ChatKey, ChatName, Quote};
@@ -16,46 +17,89 @@ use aria_voice::history::{
     MAX_ENTRY_BYTES, NewAsk, PromptResult, Store, Title,
 };
 
+use super::storage::StorageKey;
+
 pub(super) struct HistoryStore {
-    storage: Option<Arc<Store>>,
+    directory: PathBuf,
+    /// Where a retry's audio is decrypted to.
+    spool_dir: PathBuf,
+    key: Arc<StorageKey>,
+    storage: Mutex<Option<Arc<Store>>>,
+    /// Held across an open, so two callers never race for `history.lock`.
+    opening: Mutex<()>,
     warning: Mutex<Option<String>>,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum OpenError {
+    #[error(transparent)]
+    Key(#[from] AtRestError),
+    #[error(transparent)]
+    History(#[from] HistoryError),
+}
+
 impl HistoryStore {
-    pub(super) fn open(directory: &Path) -> Self {
-        let opened = directory
-            .parent()
-            .ok_or(HistoryError::Unavailable)
-            .and_then(|parent| {
-                aria_primitives::private_fs::prepare_directory(parent)
-                    .map_err(HistoryError::storage)?;
-                Store::open(directory)
-            });
-        match opened {
-            Ok(storage) => Self {
-                storage: Some(storage),
-                warning: Mutex::new(None),
-            },
+    /// Opens the store now if it can, so maintenance runs at startup.
+    /// Until it opens, every use tries again.
+    pub(super) fn open(directory: &Path, spool_dir: &Path, key: Arc<StorageKey>) -> Self {
+        let history = Self {
+            directory: directory.to_path_buf(),
+            spool_dir: spool_dir.to_path_buf(),
+            key,
+            storage: Mutex::new(None),
+            opening: Mutex::new(()),
+            warning: Mutex::new(None),
+        };
+        // A failure is logged and kept as a warning; later uses try again.
+        let _ = history.storage();
+        history
+    }
+
+    /// History that never opens: a directory with no parent can't be made
+    /// private.
+    #[cfg(test)]
+    pub(super) fn new() -> Self {
+        Self::open(
+            Path::new(""),
+            Path::new(""),
+            Arc::new(StorageKey::for_tests()),
+        )
+    }
+
+    pub(super) fn storage(&self) -> Result<Arc<Store>, HistoryError> {
+        if let Some(store) = self.opened() {
+            return Ok(store);
+        }
+        let _opening = self.opening.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(store) = self.opened() {
+            return Ok(store);
+        }
+        match self.open_store() {
+            Ok(store) => {
+                *self.storage.lock().unwrap_or_else(PoisonError::into_inner) =
+                    Some(Arc::clone(&store));
+                Ok(store)
+            }
             Err(error) => {
                 tracing::warn!(error = %error_chain(&error), "dictation history could not be opened");
-                Self {
-                    storage: None,
-                    warning: Mutex::new(Some(error.to_string())),
-                }
+                self.warn(error.to_string());
+                Err(HistoryError::Unavailable)
             }
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn new() -> Self {
-        Self {
-            storage: None,
-            warning: Mutex::new(None),
-        }
+    fn opened(&self) -> Option<Arc<Store>> {
+        self.storage
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
-    pub(super) fn storage(&self) -> Result<Arc<Store>, HistoryError> {
-        self.storage.clone().ok_or(HistoryError::Unavailable)
+    fn open_store(&self) -> Result<Arc<Store>, OpenError> {
+        let parent = self.directory.parent().ok_or(HistoryError::Unavailable)?;
+        let at_rest = self.key.load()?;
+        aria_primitives::private_fs::prepare_directory(parent).map_err(HistoryError::storage)?;
+        Ok(Store::open(&self.directory, &self.spool_dir, &at_rest)?)
     }
 
     pub(super) fn recall(
@@ -381,7 +425,11 @@ mod tests {
     use aria_voice::stt::TranscriptionError;
 
     fn store(directory: &Path) -> Arc<HistoryStore> {
-        Arc::new(HistoryStore::open(&directory.join(".aria/history")))
+        Arc::new(HistoryStore::open(
+            &directory.join(".aria/history"),
+            directory,
+            Arc::new(StorageKey::for_tests()),
+        ))
     }
 
     fn sink(
@@ -414,6 +462,23 @@ mod tests {
             })
             .unwrap()
             .entries
+    }
+
+    #[test]
+    fn history_that_failed_to_open_opens_on_a_later_use() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocker = directory.path().join("blocked");
+        std::fs::write(&blocker, b"").unwrap();
+        let history = HistoryStore::open(
+            &blocker.join("history"),
+            directory.path(),
+            Arc::new(StorageKey::for_tests()),
+        );
+        assert!(matches!(history.storage(), Err(HistoryError::Unavailable)));
+
+        std::fs::remove_file(&blocker).unwrap();
+
+        assert!(history.storage().is_ok());
     }
 
     #[test]
@@ -584,12 +649,12 @@ mod tests {
             sink.dictation_finished(Ok(()));
         }
         assert!(entries(&saved).is_empty());
-        assert_eq!(
-            std::fs::read_dir(directory.path().join(".aria/history/audio"))
-                .unwrap()
-                .count(),
-            0
-        );
+        let mut kept: Vec<_> = std::fs::read_dir(directory.path().join(".aria/history"))
+            .unwrap()
+            .map(|item| item.unwrap().file_name())
+            .collect();
+        kept.sort();
+        assert_eq!(kept, ["history.db", "history.lock"]);
     }
 
     #[test]

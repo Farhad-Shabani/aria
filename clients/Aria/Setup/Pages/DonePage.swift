@@ -24,8 +24,8 @@ struct DonePage: View {
                         LabeledContent(state.title(ofModel: model.modelID), value: Self.outcome(model.outcome))
                     }
                     LabeledContent("Background service", value: "On")
-                    if let heard = state.heard {
-                        LabeledContent("Heard", value: heard)
+                    if !state.typed.isEmpty {
+                        LabeledContent("Heard", value: state.typed)
                     }
                 } footer: {
                     NoticeText(notice: state.notice)

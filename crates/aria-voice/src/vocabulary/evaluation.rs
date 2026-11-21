@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use aria_kit::cancel::{CancelToken, Deadline};
+use aria_platform::sqlite::AtRest;
 use serde_json::{Value, json};
 
 use super::catalog::Catalog;
@@ -87,7 +88,7 @@ fn measure(
     let cancel = CancelToken::never();
     let key =
         cache_key(LocalExtractor.cache_key()).ok_or_else(|| failure("identity", "invalid_key"))?;
-    let mut catalog = Catalog::open(directory, cancel.clone())
+    let mut catalog = Catalog::open(directory, &AtRest::for_tests(), cancel.clone())
         .map_err(|error| failure("catalog_open", catalog_category(&error)))?;
     let mut samples = Vec::new();
     let mut counts = Value::Null;
@@ -262,7 +263,12 @@ fn folder_scope_and_conflicts_survive_catalog_reuse() {
         assert_ne!(corrected(&matcher, input), *target);
     }
     let key = cache_key(LocalExtractor.cache_key()).unwrap();
-    let mut catalog = Catalog::open(&temporary.path().join("catalog"), cancel.clone()).unwrap();
+    let mut catalog = Catalog::open(
+        &temporary.path().join("catalog"),
+        &AtRest::for_tests(),
+        cancel.clone(),
+    )
+    .unwrap();
     catalog
         .refresh_cancellable(&discovery, &key, &cancel)
         .unwrap();

@@ -14,6 +14,10 @@ pub use aria_kit::transcription::layer::vocabulary::{MatchError, PersonalRules, 
 use std::ops::Range;
 use std::path::PathBuf;
 
+/// Under the home directory: the dictionary and the project vocabulary's
+/// catalog.
+pub const DIRECTORY: &str = ".aria/vocabulary";
+
 pub(crate) const MAX_TERMS: usize = 100_000;
 pub(crate) const MAX_CANDIDATES: usize = 128;
 pub(crate) const SELECTED_TERMS: usize = 2048;

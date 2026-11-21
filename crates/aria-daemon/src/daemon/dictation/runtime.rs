@@ -1195,7 +1195,11 @@ mod history_tests {
 
         fn build(cancel: Option<CancelToken>, silent: bool) -> Self {
             let directory = tempfile::tempdir().unwrap();
-            let history = Arc::new(HistoryStore::open(&directory.path().join("history")));
+            let history = Arc::new(HistoryStore::open(
+                &directory.path().join("history"),
+                directory.path(),
+                Arc::new(crate::daemon::storage::StorageKey::for_tests()),
+            ));
             let audio = aria_kit::audio::canonical_fixture(directory.path());
             std::fs::set_permissions(&audio, std::fs::Permissions::from_mode(0o600)).unwrap();
             let original = history
@@ -1449,8 +1453,9 @@ mod history_tests {
                 SpeakerConfig::load(&aria_settings::SettingsFile::default().speaker, &home_dir);
             let (vocabulary, _worker) = VocabularyRuntime::new(
                 home.join("vocabulary"),
-                crate::daemon::vocabulary::PersonalSources::in_directory(&home.join("vocabulary")),
                 false,
+                Arc::new(crate::daemon::storage::StorageKey::for_tests()),
+                crate::daemon::vocabulary::PersonalSources::in_directory(&home.join("vocabulary")),
                 Arc::clone(&fixture.runtime.settings),
                 aria_voice::vocabulary::discover::LocalCollector::new(
                     aria_voice::vocabulary::extract::LocalExtractor,

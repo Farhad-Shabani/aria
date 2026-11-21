@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::private_fs;
-use aria_platform::sqlite::{self, Database, DriftedMode, Ownership, Policy};
+use aria_platform::sqlite::{self, AtRest, Database, DriftedMode, Ownership, Policy};
 use rusqlite::{OptionalExtension, params};
 
 use super::{
@@ -14,12 +14,15 @@ use super::{
     source_bytes,
 };
 
+pub const DB_FILE: &str = "catalog.db";
 const SCHEMA_VERSION: u32 = 2;
 const MAX_DATABASE_BYTES: u64 = 512 * 1024 * 1024;
 const DATABASE_POLICY: Policy = Policy {
     max_bytes: MAX_DATABASE_BYTES,
     busy_timeout: Duration::from_millis(250),
-    ownership: Ownership::Shared,
+    ownership: Ownership::Shared {
+        lock: "catalog.lock",
+    },
     drifted_mode: DriftedMode::Refuse,
 };
 
@@ -51,6 +54,8 @@ pub enum Error {
     InvalidData,
     #[error("vocabulary catalog file changed while opening")]
     Replaced,
+    #[error("vocabulary catalog does not open with the storage key")]
+    Locked,
     #[error("vocabulary catalog refresh was cancelled")]
     Cancelled,
 }
@@ -87,14 +92,19 @@ impl From<sqlite::Error> for Error {
                 Self::InvalidData
             }
             sqlite::Error::Busy => Self::Io(io::ErrorKind::WouldBlock.into()),
+            sqlite::Error::Locked => Self::Locked,
         }
     }
 }
 
 impl Catalog {
-    pub fn open(directory: &Path, cancelled: CancelToken) -> Result<Self, Error> {
-        let mut connection =
-            Database::open(&directory.join("catalog.db"), &DATABASE_POLICY, &cancelled)?;
+    pub fn open(directory: &Path, at_rest: &AtRest, cancelled: CancelToken) -> Result<Self, Error> {
+        let mut connection = Database::open(
+            &directory.join(DB_FILE),
+            &DATABASE_POLICY,
+            at_rest,
+            &cancelled,
+        )?;
         let progress = cancelled.clone();
         connection.progress_handler(1_000, Some(move || progress.is_cancelled()))?;
         let schema: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -327,8 +337,8 @@ impl Catalog {
                 transaction.pragma_query_value(None, "page_count", |row| row.get(0))?;
             let free: u32 =
                 transaction.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
-            let size: u32 = transaction.pragma_query_value(None, "page_size", |row| row.get(0))?;
-            if u64::from(pages.checked_sub(free).ok_or(Error::InvalidData)?) * u64::from(size)
+            let size = sqlite::page_size(&transaction)?;
+            if u64::from(pages.checked_sub(free).ok_or(Error::InvalidData)?) * size
                 + 2 * retained as u64
                 <= MAX_DATABASE_BYTES
             {
@@ -532,9 +542,25 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
+    /// A connection past the catalog, to read what an open left behind.
+    fn keyed(path: &Path) -> Database {
+        Database::open(
+            path,
+            &DATABASE_POLICY,
+            &AtRest::for_tests(),
+            &CancelToken::never(),
+        )
+        .unwrap()
+    }
+
     fn open_catalog() -> (tempfile::TempDir, Catalog) {
         let temp = tempfile::tempdir().unwrap();
-        let catalog = Catalog::open(&temp.path().join("catalog"), CancelToken::never()).unwrap();
+        let catalog = Catalog::open(
+            &temp.path().join("catalog"),
+            &AtRest::for_tests(),
+            CancelToken::never(),
+        )
+        .unwrap();
         (temp, catalog)
     }
 
@@ -592,7 +618,8 @@ mod tests {
     fn identity_complete_evidence_and_empty_generation_survive_restart() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().join("catalog");
-        let mut catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let mut catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         let mut input = discovery(
             &temp
                 .path()
@@ -622,7 +649,8 @@ mod tests {
         );
         assert!(catalog.load(&input.root, "pipeline-b").unwrap().is_none());
         drop(catalog);
-        let mut catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let mut catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         let loaded = catalog.load(&input.root, "pipeline-a").unwrap().unwrap();
         assert_eq!(loaded.revision, 1);
         assert_eq!(loaded.sources, input.sources);
@@ -785,7 +813,8 @@ mod tests {
             )
             .unwrap();
         drop(connection);
-        let catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         assert!(catalog.load(Path::new("/old"), "a").unwrap().is_none());
         assert_eq!(
             catalog
@@ -802,17 +831,18 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().join("catalog");
         let path = directory.join("catalog.db");
-        let catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         catalog
             .connection
             .pragma_update(None, "user_version", 99)
             .unwrap();
         drop(catalog);
         assert!(matches!(
-            Catalog::open(&directory, CancelToken::never()),
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()),
             Err(Error::UnsupportedSchema(99))
         ));
-        let connection = Connection::open(&path).unwrap();
+        let connection = keyed(&path);
         assert_eq!(
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
@@ -845,10 +875,10 @@ mod tests {
         let journal = directory.join("catalog.db-journal");
         let cancel = CancelToken::from_fn(move || journal.exists());
         assert!(matches!(
-            Catalog::open(&directory, cancel),
+            Catalog::open(&directory, &AtRest::for_tests(), cancel),
             Err(Error::Cancelled)
         ));
-        let connection = Connection::open(&path).unwrap();
+        let connection = keyed(&path);
         assert_eq!(
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
@@ -876,18 +906,19 @@ mod tests {
             1
         );
         drop(connection);
-        assert!(Catalog::open(&directory, CancelToken::never()).is_ok());
+        assert!(Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).is_ok());
     }
 
     #[test]
     fn failed_migration_rolls_back_derived_table_invalidation() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().join("catalog");
-        let catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         catalog.connection.execute_batch("PRAGMA user_version=1; INSERT INTO projects(root,revision,pipeline_key,accessed,entries,hidden,symlinks,unsupported,oversized,bytes) VALUES(x'2f6f6c64',1,'a',0,0,0,0,0,0,0);").unwrap();
         drop(catalog);
-        assert!(Catalog::open(&directory, CancelToken::never()).is_err());
-        let connection = Connection::open(directory.join("catalog.db")).unwrap();
+        assert!(Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).is_err());
+        let connection = keyed(&directory.join("catalog.db"));
         assert_eq!(
             connection
                 .query_row("SELECT count(*) FROM projects", [], |row| row
@@ -929,7 +960,8 @@ mod tests {
     fn forgotten_deleted_alias_removes_all_overlaps_after_restart() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().join("catalog");
-        let mut catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let mut catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         let parent = temp.path().join("parent");
         let child = parent.join("child");
         let grandchild = child.join("grandchild");
@@ -945,7 +977,8 @@ mod tests {
         catalog.remember_alias(&alias, &child).unwrap();
         fs::remove_file(&alias).unwrap();
         drop(catalog);
-        let mut catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let mut catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         let cancel = CancelToken::new();
         cancel.cancel();
         assert!(matches!(
@@ -960,7 +993,8 @@ mod tests {
             vec![parent.clone(), child.clone(), grandchild.clone()]
         );
         drop(catalog);
-        let catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         for root in [&parent, &child, &grandchild] {
             assert!(catalog.load(root, "a").unwrap().is_none());
         }
@@ -979,7 +1013,8 @@ mod tests {
         let old_root = old_root.canonicalize().unwrap();
         let new_root = new_root.canonicalize().unwrap();
         symlink(&old_root, &alias).unwrap();
-        let mut catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let mut catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         for root in [&old_root, &new_root] {
             catalog
                 .refresh_cancellable(&discovery(root), "a", &CancelToken::never())
@@ -989,7 +1024,8 @@ mod tests {
         drop(catalog);
         fs::remove_file(&alias).unwrap();
         symlink(&new_root, &alias).unwrap();
-        let mut catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let mut catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         let resolved = alias.canonicalize().unwrap();
         assert_eq!(
             catalog
@@ -998,7 +1034,8 @@ mod tests {
             vec![old_root.clone(), new_root.clone()]
         );
         drop(catalog);
-        let catalog = Catalog::open(&directory, CancelToken::never()).unwrap();
+        let catalog =
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap();
         assert!(catalog.load(&old_root, "a").unwrap().is_none());
         assert!(catalog.load(&new_root, "a").unwrap().is_none());
     }
@@ -1007,21 +1044,21 @@ mod tests {
     fn private_storage_rejects_database_and_sidecar_links_and_public_files() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().join("catalog");
-        drop(Catalog::open(&directory, CancelToken::never()).unwrap());
+        drop(Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).unwrap());
         assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o777, 0o700);
         let path = directory.join("catalog.db");
         assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
         symlink(&path, directory.join("catalog.db-wal")).unwrap();
-        assert!(Catalog::open(&directory, CancelToken::never()).is_err());
+        assert!(Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).is_err());
         fs::remove_file(directory.join("catalog.db-wal")).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
         assert!(matches!(
-            Catalog::open(&directory, CancelToken::never()),
+            Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()),
             Err(Error::File(_))
         ));
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         fs::rename(&path, directory.join("original.db")).unwrap();
         symlink(directory.join("original.db"), &path).unwrap();
-        assert!(Catalog::open(&directory, CancelToken::never()).is_err());
+        assert!(Catalog::open(&directory, &AtRest::for_tests(), CancelToken::never()).is_err());
     }
 }

@@ -69,7 +69,7 @@ struct SetupView: View {
         case .applying: InstallingPage(state: state)
         case .grant: GrantPage(ariaKey: state.ariaKeyState)
         case .voice: VoicePage(state: state)
-        case .tryOut: TryOutPage(state: state)
+        case .tryOut: TryOutPage(state: state, ariaKey: ariaKey)
         case .done: DonePage(state: state, ariaKey: ariaKey, askCombo: askCombo)
         case .failed(let message): FailedPage(message: message)
         }
@@ -127,10 +127,7 @@ struct SetupView: View {
                 .primaryAction()
                 .disabled(state.isBusy || state.voiceName.trimmingCharacters(in: .whitespaces).isEmpty)
         case .tryOut:
-            Button(state.heard == nil ? "Skip" : "Finish") { state.next() }.disabled(state.isBusy)
-            Button("Record") { state.tryPress() }
-                .primaryAction()
-                .disabled(state.isBusy)
+            Button(state.typed.isEmpty ? "Skip" : "Finish") { state.next() }.disabled(state.isBusy)
         case .done:
             Button("Close") { dismiss() }
                 .primaryAction()

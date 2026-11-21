@@ -27,6 +27,7 @@ thiserror       = { workspace = true }
 tracing         = { workspace = true }
 
 [dev-dependencies]
+aria-platform = { workspace = true, features = [ "sqlite", "test-support" ] }
 anyhow        = { workspace = true }
 aria-harness  = { workspace = true }
 aria-settings = { workspace = true, features = [ "test-support" ] }

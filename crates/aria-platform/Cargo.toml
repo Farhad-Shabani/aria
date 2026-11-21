@@ -12,7 +12,7 @@ publish              = false
 workspace = true
 
 [features]
-sqlite       = [ "dep:rusqlite" ]
+sqlite       = [ "dep:rusqlite", "dep:security-framework", "dep:security-framework-sys" ]
 test-support = [  ]
 
 [dependencies]
@@ -43,12 +43,17 @@ tokio-util   = { version = "0.7", features = [ "rt" ] }
 x11rb        = { version = "0.13", features = [ "xtest" ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-cidre                 = { workspace = true, features = [ "ax", "dispatch", "macos_14_2" ] }
-objc2                 = { workspace = true }
-objc2-app-kit         = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }
-objc2-core-graphics   = { version = "0.3.2", default-features = false, features = [ "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation" ] }
-objc2-foundation      = { workspace = true, features = [ "NSArray", "NSDictionary", "NSString", "NSUserDefaults", "NSValue", "std" ] }
+# SQLCipher in place of plain SQLite. Leave every `OPENSSL_*` variable unset,
+# so it builds on CommonCrypto rather than an OpenSSL it finds.
+rusqlite               = { workspace = true, optional = true, features = [ "bundled-sqlcipher" ] }
+security-framework     = { workspace = true, optional = true }
+security-framework-sys = { workspace = true, optional = true }
+cidre                  = { workspace = true, features = [ "ax", "dispatch", "macos_14_2" ] }
+objc2                  = { workspace = true }
+objc2-app-kit          = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
+objc2-core-foundation  = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }
+objc2-core-graphics    = { version = "0.3.2", default-features = false, features = [ "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation" ] }
+objc2-foundation       = { workspace = true, features = [ "NSArray", "NSDictionary", "NSString", "NSUserDefaults", "NSValue", "std" ] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

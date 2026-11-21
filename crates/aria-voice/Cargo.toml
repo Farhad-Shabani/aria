@@ -25,7 +25,7 @@ aria-speaker          = { workspace = true }
 aria-stt              = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "whisper", "whisper-candle" ] }
 aria-tts              = { workspace = true, features = [ "kokoro", "qwen", "system" ] }
 ignore                = "0.4"
-rusqlite              = { workspace = true }
+rusqlite              = { workspace = true, features = [ "blob" ] }
 rustix                = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
 serde                 = { workspace = true }
 serde_json            = { workspace = true }
@@ -47,6 +47,7 @@ cidre    = { workspace = true, features = [ "ax", "core_audio", "dispatch", "mac
 rtrb     = "0.4"
 
 [dev-dependencies]
+aria-platform      = { workspace = true, features = [ "sqlite", "test-support" ] }
 tracing-subscriber = { workspace = true }
 aria-harness       = { workspace = true }
 aria-kit           = { workspace = true, features = [ "test-support" ] }

@@ -1,15 +1,32 @@
 import SwiftUI
 
 struct TryOutPage: View {
-    private static let transcriptHeight: CGFloat = 72
-
     @ObservedObject var state: SetupState
+    let ariaKey: AriaKey
+    @FocusState private var isFieldFocused: Bool
 
     var body: some View {
         Form {
             Section {
-                transcript
-                    .frame(maxWidth: .infinity, minHeight: Self.transcriptHeight, alignment: .topLeading)
+                VStack(spacing: 8) {
+                    AriaKeySpot(key: ariaKey)
+                    Text(ariaKey.title)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+                .padding(.vertical, 8)
+                if state.isHotkeyReady {
+                    TextField(
+                        "Dictation", text: $state.typed, prompt: Text("What you say shows up here."), axis: .vertical
+                    )
+                    .labelsHidden()
+                    .lineLimit(3...)
+                    .focused($isFieldFocused)
+                } else {
+                    Text("The Aria key needs permission. Allow it in Settings later.")
+                        .foregroundStyle(.secondary)
+                }
             } footer: {
                 if let enrolled = state.enrolled {
                     Text(enrolled)
@@ -17,22 +34,7 @@ struct TryOutPage: View {
                 NoticeText(notice: state.notice)
             }
         }
-    }
-
-    @ViewBuilder private var transcript: some View {
-        if let heard = state.heard {
-            Text(heard)
-                .font(.title3)
-                .textSelection(.enabled)
-        } else if state.isBusy {
-            Label {
-                Text("Listening…")
-            } icon: {
-                ProgressView().controlSize(.small)
-            }
-            .foregroundStyle(.secondary)
-        } else {
-            Text("What you say shows up here.").foregroundStyle(.tertiary)
-        }
+        // The daemon types where focus is, so the field must hold it.
+        .onAppear { isFieldFocused = true }
     }
 }

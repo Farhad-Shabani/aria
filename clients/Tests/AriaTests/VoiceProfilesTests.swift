@@ -185,7 +185,7 @@ final class VoiceProfilesTests: XCTestCase {
 
     func testAFailedRecordingReturnsToTheNameWithTheReason() async {
         let harness = Harness()
-        harness.enrollError = TryOutFailure.stopped
+        harness.enrollError = SpeakerFailure(errorDescription: "The recording stopped. Try again.")
         let voices = VoiceProfiles(effects: harness.effects)
         voices.beginAdding()
         voices.name = " alex "
@@ -193,7 +193,7 @@ final class VoiceProfilesTests: XCTestCase {
         await waitUntil { voices.enrollment?.phase == .naming }
 
         XCTAssertEqual(harness.enrolled.map(\.name), ["alex"])
-        XCTAssertEqual(voices.enrollment?.failure, TryOutFailure.stopped.localizedDescription)
+        XCTAssertEqual(voices.enrollment?.failure, "The recording stopped. Try again.")
     }
 
     func testEverySampleHasASentenceToRead() {
