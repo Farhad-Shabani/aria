@@ -312,8 +312,9 @@ enum ReturnState {
     Taken,
     /// Typing ended and the taken Return reached the app.
     Pressed,
-    /// Typing ended without pressing the taken Return, so the person
-    /// hears of it.
+    /// Typing ended and a Return owed after the text went unpressed. That is
+    /// the person's taken Return, or the one insert and press Return sends.
+    /// The person hears of it.
     Dropped,
 }
 
@@ -587,10 +588,29 @@ impl ExecutionControl {
         armed.then(|| self.target_process.load(Ordering::Relaxed))
     }
 
-    /// The person's Return was taken and never pressed. Final once the
-    /// sinks heard the dictation finish.
+    /// A Return owed after the text went unpressed. Final once the sinks
+    /// heard the dictation finish.
     pub(crate) fn return_dropped(&self) -> bool {
         self.return_state.load(Ordering::Acquire) == ReturnState::Dropped as u8
+    }
+
+    /// Only after typing ends. A drop while typing still holds Return would
+    /// let the person's Return reach the app and cut the text short.
+    pub(crate) fn drop_submitted_return(&self) {
+        let before = self
+            .return_state
+            .compare_exchange(
+                ReturnState::Unarmed as u8,
+                ReturnState::Dropped as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .unwrap_or_else(|state| state);
+        // Dropped already when the person's taken Return went unpressed.
+        debug_assert!(
+            before == ReturnState::Unarmed as u8 || before == ReturnState::Dropped as u8,
+            "a Return was dropped while typing still held it"
+        );
     }
 
     /// Takes a Return pressed where the text goes: it ends recording,
@@ -1866,6 +1886,25 @@ mod tests {
 
         assert!(control.return_dropped());
         assert!(!control.take_return(), "typing ended");
+    }
+
+    #[test]
+    fn a_refused_submission_drops_its_return_once_typing_ended() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        drop(control.arm_return(1));
+
+        control.drop_submitted_return();
+
+        assert!(control.return_dropped());
+    }
+
+    #[test]
+    #[should_panic(expected = "a Return was dropped while typing still held it")]
+    fn a_submitted_return_is_never_dropped_while_typing_holds_return() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let _armed = control.arm_return(1);
+
+        control.drop_submitted_return();
     }
     #[test]
     fn a_dictation_types_into_its_app_until_typing_ends() {

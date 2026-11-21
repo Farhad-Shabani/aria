@@ -137,8 +137,9 @@ public nonisolated enum Aria_Daemon_V1_DictationStage: SwiftProtobuf.Enum, Swift
   /// ends first.
   case segmentQueued // = 10
 
-  /// The person's Return was held back to press after the text, and never
-  /// pressed: Aria could not confirm the field. Comes after the terminal stage.
+  /// A Return owed after the text was never pressed. It was the person's, held
+  /// back to press after the text, or the one insert and press Return sends.
+  /// Comes after the terminal stage.
   case returnDropped // = 11
 
   /// The microphone is live. Follows RECORDING once capture starts. A capture

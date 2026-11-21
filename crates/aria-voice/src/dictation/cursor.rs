@@ -361,9 +361,19 @@ where
         if target.delivered.map(|delivered| delivered.outcome) != Some(DeliveryOutcome::Inserted) {
             return Ok(());
         }
-        let finished = self
+        let finished = match self
             .delivery
-            .finish(&target.prepared, should_cancel(&target.control))?;
+            .finish(&target.prepared, should_cancel(&target.control))
+        {
+            Ok(finished) => finished,
+            Err(DeliveryError::Cancelled) => return Err(DeliveryError::Cancelled),
+            // The text typed whole, so only the Return is lost.
+            Err(error) => {
+                tracing::warn!(%error, "submission typed the text but pressed no Return");
+                target.control.drop_submitted_return();
+                return Ok(());
+            }
+        };
         let Some(taken) = taken else {
             target.offers_return = finished == Finished::Typed;
             return Ok(());
@@ -967,7 +977,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_submission_is_not_retried_or_retyped() {
+    fn a_refused_submission_keeps_the_text_and_drops_the_return() {
         let (log, mut cursor) = cursor();
         let control = ExecutionControl::for_test(StopMode::Manual);
         cursor
@@ -978,12 +988,19 @@ mod tests {
             .unwrap();
         cursor.segment(Utterance::anonymous("hello")).unwrap();
         Arc::get_mut(&mut cursor.delivery).unwrap().fail = true;
-        assert!(cursor.completed(Utterance::anonymous("hello")).is_err());
+
         cursor.completed(Utterance::anonymous("hello")).unwrap();
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+
         assert_eq!(
             log.entries(),
             ["prepare:InsertAndSubmit", "deliver:hello", "submit"]
         );
+        assert_eq!(
+            cursor.delivered().map(|delivered| delivered.outcome),
+            Some(DeliveryOutcome::Inserted)
+        );
+        assert!(control.return_dropped());
     }
 
     #[test]
