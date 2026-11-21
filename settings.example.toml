@@ -155,7 +155,7 @@ port = 9850
 submits = true
 
 [delivery]
-# The longest typing or pasting a result may take, for dictation, chats and the phone. (restart)
+# The longest typing or pasting a result may take on Linux, for dictation, chats and the phone. (restart)
 timeout_secs = 5.0
 
 # ---- Shared engines

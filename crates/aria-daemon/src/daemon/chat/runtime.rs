@@ -1149,9 +1149,10 @@ impl Delivery {
 /// never interleave in one app. Only the typing holds a turn, never the
 /// assistant's run before it.
 ///
-/// The turn is a lock held across blocking work, because waiting is the point. Each delivery's own
-/// timeout bounds how long a turn lasts. A separate typing thread can't do the typing, since a
-/// prepared macOS target holds Accessibility handles that stay on the thread that made them.
+/// The turn is a lock held across blocking work, because waiting is the point. Each delivery
+/// limits how long a turn lasts: Linux with its timeout, macOS with compiled budgets on its field
+/// checks. A separate typing thread can't do the typing, since a prepared macOS target holds
+/// Accessibility handles that stay on the thread that made them.
 #[derive(Default)]
 struct TypingTurns(Mutex<()>);
 
