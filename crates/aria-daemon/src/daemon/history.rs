@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aria_kit::audio::RecordingReader;
 use aria_platform::delivery::Caret;
+use aria_platform::sqlite::AtRest;
 use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{ChatKey, ChatName, Quote};
@@ -22,14 +23,16 @@ pub(super) struct HistoryStore {
 }
 
 impl HistoryStore {
-    pub(super) fn open(directory: &Path) -> Self {
+    /// History is unavailable without `at_rest`: the Keychain refused it.
+    pub(super) fn open(directory: &Path, at_rest: Option<&AtRest>) -> Self {
         let opened = directory
             .parent()
+            .zip(at_rest)
             .ok_or(HistoryError::Unavailable)
-            .and_then(|parent| {
+            .and_then(|(parent, at_rest)| {
                 aria_primitives::private_fs::prepare_directory(parent)
                     .map_err(HistoryError::storage)?;
-                Store::open(directory)
+                Store::open(directory, at_rest)
             });
         match opened {
             Ok(storage) => Self {
@@ -381,7 +384,10 @@ mod tests {
     use aria_voice::stt::TranscriptionError;
 
     fn store(directory: &Path) -> Arc<HistoryStore> {
-        Arc::new(HistoryStore::open(&directory.join(".aria/history")))
+        Arc::new(HistoryStore::open(
+            &directory.join(".aria/history"),
+            Some(&aria_platform::sqlite::AtRest::for_tests()),
+        ))
     }
 
     fn sink(

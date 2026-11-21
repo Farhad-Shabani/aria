@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use super::config::load_memory;
 use super::tasks::Supervised;
 use aria_assistant::memory::{StoreError, run_backlog};
+use aria_platform::sqlite::AtRest;
 use aria_primitives::error_chain;
 use aria_settings::SettingsCache;
 
@@ -33,6 +34,7 @@ pub(super) fn wake_channel() -> (mpsc::Sender<()>, mpsc::Receiver<()>) {
 pub(super) struct MemoryBacklog {
     home: PathBuf,
     cache: std::sync::Arc<SettingsCache>,
+    at_rest: std::sync::Arc<AtRest>,
     wake: mpsc::Receiver<()>,
     vocabulary: std::sync::Arc<super::vocabulary::Runtime>,
 }
@@ -41,12 +43,14 @@ impl MemoryBacklog {
     pub(super) fn new(
         home: PathBuf,
         cache: std::sync::Arc<SettingsCache>,
+        at_rest: std::sync::Arc<AtRest>,
         wake: mpsc::Receiver<()>,
         vocabulary: std::sync::Arc<super::vocabulary::Runtime>,
     ) -> Self {
         Self {
             home,
             cache,
+            at_rest,
             wake,
             vocabulary,
         }
@@ -58,11 +62,12 @@ impl MemoryBacklog {
         let home = self.home.clone();
         let cache = std::sync::Arc::clone(&self.cache);
         let vocabulary = std::sync::Arc::clone(&self.vocabulary);
+        let at_rest = std::sync::Arc::clone(&self.at_rest);
         let backlog = move || {
             let settings = cache.effective();
             let config = load_memory(&settings.memory, &home);
             let terms = vocabulary.list_words().map_err(Skipped::UnreadDictionary)?;
-            run_backlog(config, &terms, &home, &cancel).map_err(Skipped::Failed)
+            run_backlog(config, &terms, &home, &at_rest, &cancel).map_err(Skipped::Failed)
         };
         match tokio::task::spawn_blocking(backlog).await {
             Ok(Ok(_)) => self.vocabulary.prepare(None),

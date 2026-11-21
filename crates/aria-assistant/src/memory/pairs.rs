@@ -1,5 +1,7 @@
 use super::DB_FILE;
-use rusqlite::{Connection, OpenFlags};
+use super::store::DATABASE_POLICY;
+use aria_kit::cancel::CancelToken;
+use aria_platform::sqlite::{self, AtRest, Database};
 use std::path::Path;
 
 const MAX_PAIRS: usize = 100_000;
@@ -11,6 +13,8 @@ pub enum PairsError {
     Io(#[from] std::io::Error),
     #[error("personal correction pairs could not be read")]
     Database(#[from] rusqlite::Error),
+    #[error("the memory database could not be opened")]
+    Open(#[source] sqlite::Error),
     #[error("personal correction pairs exceed their input limit")]
     TooLarge,
 }
@@ -18,17 +22,20 @@ pub enum PairsError {
 /// The pairs memory learned, as `(misheard, correct)`, oldest first. A
 /// memory directory without a database has none, and reading never
 /// creates one.
-pub fn learned_pairs(dir: &Path) -> Result<Vec<(String, String)>, PairsError> {
+pub fn learned_pairs(
+    dir: &Path,
+    at_rest: &AtRest,
+    cancel: &CancelToken,
+) -> Result<Vec<(String, String)>, PairsError> {
     let path = dir.join(DB_FILE);
     match std::fs::metadata(&path) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
     }
-    let conn = Connection::open_with_flags(
-        &path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
+    let conn =
+        Database::open(&path, &DATABASE_POLICY, at_rest, cancel).map_err(PairsError::Open)?;
+    // A refresh would rather skip learned pairs than wait out a writer.
     conn.busy_timeout(std::time::Duration::from_millis(50))?;
     let mut statement = conn.prepare(
         "SELECT substr(misheard, 1, 257), substr(correct, 1, 257)
@@ -58,18 +65,22 @@ mod tests {
     use super::*;
     use crate::memory::store::Store;
 
+    fn read(dir: &Path) -> Vec<(String, String)> {
+        learned_pairs(dir, &AtRest::for_tests(), &CancelToken::never()).expect("reads")
+    }
+
     #[test]
     fn learned_pairs_follow_the_database_without_creating_it() {
         let dir = tempfile::tempdir().expect("temp dir");
-        assert!(learned_pairs(dir.path()).expect("reads").is_empty());
+        assert!(read(dir.path()).is_empty());
         assert!(!dir.path().join(DB_FILE).exists());
 
-        let store = Store::open(&dir.path().join(DB_FILE)).expect("opens");
+        let store = Store::open(&dir.path().join(DB_FILE), &AtRest::for_tests()).expect("opens");
         store
             .add_pair("d b two", "db2-replica", "llm", "s")
             .expect("adds");
         assert_eq!(
-            learned_pairs(dir.path()).expect("reads"),
+            read(dir.path()),
             [("d b two".to_owned(), "db2-replica".to_owned())]
         );
     }
@@ -77,14 +88,11 @@ mod tests {
     #[test]
     fn a_read_observes_wal_writes() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join(DB_FILE)).unwrap();
-        let writer = Connection::open(dir.path().join(DB_FILE)).unwrap();
+        let store = Store::open(&dir.path().join(DB_FILE), &AtRest::for_tests()).unwrap();
+        let writer = crate::memory::testing::connection(&dir.path().join(DB_FILE));
         writer.pragma_update(None, "journal_mode", "WAL").unwrap();
-        assert!(learned_pairs(dir.path()).unwrap().is_empty());
+        assert!(read(dir.path()).is_empty());
         store.add_pair("d b two", "db9", "llm", "s").unwrap();
-        assert_eq!(
-            learned_pairs(dir.path()).unwrap(),
-            [("d b two".to_owned(), "db9".to_owned())]
-        );
+        assert_eq!(read(dir.path()), [("d b two".to_owned(), "db9".to_owned())]);
     }
 }

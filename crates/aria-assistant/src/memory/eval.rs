@@ -14,6 +14,8 @@ use serde_json::{Value, json};
 use super::consolidate::consolidate_backlog;
 use super::extract::{ClaudeExtractor, Extractor, build_system_prompt};
 use super::store::Fact;
+use aria_platform::sqlite::AtRest;
+
 use super::{DB_FILE, Store, learned_pairs, load_profile_block};
 use crate::chat::AssistantError;
 use aria_primitives::error_chain;
@@ -206,14 +208,14 @@ fn evaluate_lexicon(cases: &[LexiconCase]) -> Result<Value> {
     let mut harmed = 0;
     for case in cases {
         let dir = tempfile::tempdir()?;
-        let store = Store::open(&dir.path().join(DB_FILE))?;
+        let store = Store::open(&dir.path().join(DB_FILE), &AtRest::for_tests())?;
         for (misheard, correct) in &case.pairs {
             store.add_pair(misheard, correct, "eval", &case.id)?;
         }
         let started = Instant::now();
         let rules = PersonalRules::from_stored(
             case.terms.clone(),
-            learned_pairs(dir.path())?,
+            learned_pairs(dir.path(), &AtRest::for_tests(), &CancelToken::never())?,
             &CancelToken::never(),
         )?;
         let output = Vocabulary::compile(&[], rules)?
@@ -308,7 +310,7 @@ fn evaluate_extraction(
     for case in cases {
         println!("memory eval: {}", case.id);
         let dir = tempfile::tempdir()?;
-        let store = Store::open(&dir.path().join(DB_FILE))?;
+        let store = Store::open(&dir.path().join(DB_FILE), &AtRest::for_tests())?;
         let extractor = MeasuredExtractor {
             inner: ClaudeExtractor::new(model.to_owned(), prompt.to_owned(), dir.path().to_owned()),
             calls: RefCell::new(Vec::new()),

@@ -17,6 +17,19 @@ use aria_primitives::private_fs::{
 use rusqlite::{Connection, OpenFlags};
 use rustix::fs::{AtFlags, FileType, Mode, OFlags, Stat};
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "linux")]
+pub use linux::{AtRest, AtRestError};
+#[cfg(target_os = "macos")]
+pub use macos::{AtRest, AtRestError};
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("no at-rest protection exists for this target");
+
 const SIDECAR_SUFFIXES: [&str; 3] = ["-journal", "-wal", "-shm"];
 // A rollback journal holds original pages plus headers, so it can briefly
 // outgrow the database it protects.
@@ -29,13 +42,13 @@ pub struct Policy {
     pub drifted_mode: DriftedMode,
 }
 
+/// `lock` names a file beside the database that every holder keeps locked.
 pub enum Ownership {
-    Shared,
-    /// One process at a time. `lock` names a file beside the database that
-    /// the holder keeps locked.
-    Exclusive {
-        lock: &'static str,
-    },
+    /// Any number of connections at once. Each holds `lock` shared, and
+    /// encrypting a plaintext database takes it exclusively.
+    Shared { lock: &'static str },
+    /// One process at a time.
+    Exclusive { lock: &'static str },
 }
 
 /// What to do with an existing database whose mode is not 0600.
@@ -48,7 +61,7 @@ pub enum DriftedMode {
 pub struct Database {
     connection: Connection,
     _directory: File,
-    _ownership: Option<File>,
+    _ownership: File,
 }
 
 impl Deref for Database {
@@ -83,6 +96,8 @@ pub enum Error {
     Replaced,
     #[error("another process owns the database")]
     Busy,
+    #[error("the storage key does not open the database")]
+    Locked,
     #[error("opening the database was cancelled")]
     Cancelled,
     #[error("failed to {action}")]
@@ -96,9 +111,15 @@ pub enum Error {
 }
 
 impl Database {
-    /// Sets the busy timeout, `max_page_count` from the cap, and `trusted_schema`
-    /// off. The caller owns the schema, its version, and every other pragma.
-    pub fn open(path: &Path, policy: &Policy, cancel: &CancelToken) -> Result<Self, Error> {
+    /// Keys the connection, then sets the busy timeout, `max_page_count` from
+    /// the cap, and `trusted_schema` off. A plaintext database is encrypted
+    /// first. The caller owns the schema, its version, and every other pragma.
+    pub fn open(
+        path: &Path,
+        policy: &Policy,
+        at_rest: &AtRest,
+        cancel: &CancelToken,
+    ) -> Result<Self, Error> {
         let (Some(directory), Some(name)) = (path.parent(), path.file_name()) else {
             return Err(Error::Path);
         };
@@ -109,20 +130,26 @@ impl Database {
             .map_err(io("resolve the database directory"))?;
         let directory_handle = open_directory(&directory)?;
         let ownership = match policy.ownership {
-            Ownership::Shared => None,
-            Ownership::Exclusive { lock } => Some(take_lock(&directory_handle, lock)?),
+            Ownership::Shared { lock } => share_lock(&directory_handle, lock)?,
+            Ownership::Exclusive { lock } => take_lock(&directory_handle, lock)?,
         };
         check_cancelled(cancel)?;
 
         create_if_missing(&directory_handle, name)?;
-        let before = inspect(&directory_handle, name)?.ok_or(Error::Replaced)?;
-        check_private(
-            &directory_handle,
-            name,
-            &before,
-            policy.max_bytes,
-            &policy.drifted_mode,
-        )?;
+        let mut before = check_database(&directory_handle, name, policy)?;
+        if at_rest.is_plaintext(&directory.join(name), before.st_size)? {
+            if let Ownership::Shared { .. } = policy.ownership {
+                exclusive(&ownership)?;
+            }
+            check_cancelled(cancel)?;
+            at_rest.seal(&directory_handle, &directory, name)?;
+            if let Ownership::Shared { .. } = policy.ownership {
+                ownership
+                    .lock_shared()
+                    .map_err(io("share the database lock"))?;
+            }
+            before = check_database(&directory_handle, name, policy)?;
+        }
         for suffix in SIDECAR_SUFFIXES {
             check_cancelled(cancel)?;
             let mut sidecar = name.to_owned();
@@ -153,10 +180,10 @@ impl Database {
             return Err(Error::Replaced);
         }
         connection.busy_timeout(policy.busy_timeout)?;
+        at_rest.unlock(&connection)?;
         connection.pragma_update(None, "trusted_schema", false)?;
-        let page_size: u32 = connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
-        let max_pages =
-            i64::try_from(policy.max_bytes / u64::from(page_size)).map_err(|_| Error::TooLarge)?;
+        let max_pages = i64::try_from(policy.max_bytes / page_size(&connection)?)
+            .map_err(|_| Error::TooLarge)?;
         connection.pragma_update(None, "max_page_count", max_pages)?;
         check_cancelled(cancel)?;
         Ok(Self {
@@ -165,6 +192,19 @@ impl Database {
             _ownership: ownership,
         })
     }
+}
+
+/// A keyed SQLCipher connection reports its page size as text.
+pub fn page_size(connection: &Connection) -> rusqlite::Result<u64> {
+    let value: rusqlite::types::Value =
+        connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
+    let size = match value {
+        rusqlite::types::Value::Integer(size) => u64::try_from(size).ok(),
+        rusqlite::types::Value::Text(size) => size.parse().ok(),
+        _ => None,
+    };
+    size.filter(|size| *size > 0)
+        .ok_or(rusqlite::Error::IntegralValueOutOfRange(0, 0))
 }
 
 /// Opens a directory private to the current user, walking down from `/` one
@@ -209,6 +249,31 @@ pub fn open_directory(path: &Path) -> Result<File, Error> {
 }
 
 fn take_lock(directory: &File, name: &str) -> Result<File, Error> {
+    let lock = open_lock(directory, name)?;
+    lock.try_lock().map_err(lock_error)?;
+    Ok(lock)
+}
+
+/// Blocks only while another connection encrypts the database.
+fn share_lock(directory: &File, name: &str) -> Result<File, Error> {
+    let lock = open_lock(directory, name)?;
+    lock.lock_shared().map_err(io("share the database lock"))?;
+    Ok(lock)
+}
+
+/// Turns a shared lock exclusive, or fails while another connection holds it.
+fn exclusive(lock: &File) -> Result<(), Error> {
+    lock.try_lock().map_err(lock_error)
+}
+
+fn lock_error(error: TryLockError) -> Error {
+    match error {
+        TryLockError::WouldBlock => Error::Busy,
+        TryLockError::Error(source) => io("lock the database")(source),
+    }
+}
+
+fn open_lock(directory: &File, name: &str) -> Result<File, Error> {
     let lock = File::from(
         rustix::fs::openat(
             directory,
@@ -221,11 +286,19 @@ fn take_lock(directory: &File, name: &str) -> Result<File, Error> {
     if private_fs::verify_file(&lock)?.nlink() != 1 {
         return Err(Error::Linked);
     }
-    lock.try_lock().map_err(|error| match error {
-        TryLockError::WouldBlock => Error::Busy,
-        TryLockError::Error(source) => io("lock the database")(source),
-    })?;
     Ok(lock)
+}
+
+fn check_database(directory: &File, name: &OsStr, policy: &Policy) -> Result<Stat, Error> {
+    let stat = inspect(directory, name)?.ok_or(Error::Replaced)?;
+    check_private(
+        directory,
+        name,
+        &stat,
+        policy.max_bytes,
+        &policy.drifted_mode,
+    )?;
+    Ok(stat)
 }
 
 /// Uses `O_EXCL`, so the descriptor closed here never belongs to a file
@@ -239,6 +312,13 @@ fn create_if_missing(directory: &File, name: &OsStr) -> Result<(), Error> {
     ) {
         Ok(_) | Err(rustix::io::Errno::EXIST) => Ok(()),
         Err(error) => Err(io("create the database")(error)),
+    }
+}
+
+fn remove_if_present(directory: &File, name: &OsStr) -> Result<(), Error> {
+    match rustix::fs::unlinkat(directory, name, AtFlags::empty()) {
+        Ok(()) | Err(rustix::io::Errno::NOENT) => Ok(()),
+        Err(error) => Err(io("remove a database file")(error)),
     }
 }
 
@@ -327,15 +407,18 @@ mod tests {
     const POLICY: Policy = Policy {
         max_bytes: 1024 * 1024,
         busy_timeout: Duration::from_millis(50),
-        ownership: Ownership::Shared,
+        ownership: Ownership::Shared { lock: "data.lock" },
         drifted_mode: DriftedMode::Refuse,
     };
+
+    fn open(path: &Path, policy: &Policy, cancel: &CancelToken) -> Result<Database, Error> {
+        Database::open(path, policy, &AtRest::for_tests(), cancel)
+    }
 
     #[test]
     fn a_database_opens_with_its_schema_untrusted() {
         let temp = tempfile::tempdir().unwrap();
-        let opened =
-            Database::open(&temp.path().join("data.db"), &POLICY, &CancelToken::never()).unwrap();
+        let opened = open(&temp.path().join("data.db"), &POLICY, &CancelToken::never()).unwrap();
         let trusted: bool = opened
             .pragma_query_value(None, "trusted_schema", |row| row.get(0))
             .unwrap();
@@ -349,11 +432,8 @@ mod tests {
             max_bytes: 32 * 1024 * 1024,
             ..POLICY
         };
-        let opened =
-            Database::open(&temp.path().join("data.db"), &policy, &CancelToken::never()).unwrap();
-        let page_size: i64 = opened
-            .pragma_query_value(None, "page_size", |row| row.get(0))
-            .unwrap();
+        let opened = open(&temp.path().join("data.db"), &policy, &CancelToken::never()).unwrap();
+        let page_size = i64::try_from(page_size(&opened).unwrap()).unwrap();
         let max_pages: i64 = opened
             .pragma_query_value(None, "max_page_count", |row| row.get(0))
             .unwrap();
@@ -367,8 +447,7 @@ mod tests {
             max_bytes: 32 * 1024 * 1024,
             ..POLICY
         };
-        let opened =
-            Database::open(&temp.path().join("data.db"), &policy, &CancelToken::never()).unwrap();
+        let opened = open(&temp.path().join("data.db"), &policy, &CancelToken::never()).unwrap();
         opened.execute_batch("CREATE TABLE entries(text)").unwrap();
         let transaction = opened.unchecked_transaction().unwrap();
         transaction
@@ -384,11 +463,11 @@ mod tests {
     fn a_database_with_a_second_link_is_refused() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("data.db");
-        drop(Database::open(&path, &POLICY, &CancelToken::never()).unwrap());
+        drop(open(&path, &POLICY, &CancelToken::never()).unwrap());
         fs::hard_link(&path, temp.path().join("second")).unwrap();
 
         assert!(matches!(
-            Database::open(&path, &POLICY, &CancelToken::never()),
+            open(&path, &POLICY, &CancelToken::never()),
             Err(Error::Linked)
         ));
     }
@@ -397,7 +476,7 @@ mod tests {
     fn a_database_over_its_size_limit_is_refused() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("data.db");
-        drop(Database::open(&path, &POLICY, &CancelToken::never()).unwrap());
+        drop(open(&path, &POLICY, &CancelToken::never()).unwrap());
         File::options()
             .write(true)
             .open(&path)
@@ -405,7 +484,7 @@ mod tests {
             .set_len(POLICY.max_bytes + 1)
             .unwrap();
         assert!(matches!(
-            Database::open(&path, &POLICY, &CancelToken::never()),
+            open(&path, &POLICY, &CancelToken::never()),
             Err(Error::TooLarge)
         ));
     }
@@ -417,7 +496,7 @@ mod tests {
         private_fs::prepare_directory(&real).unwrap();
         symlink(&real, temp.path().join("store")).unwrap();
         assert!(
-            Database::open(
+            open(
                 &temp.path().join("store/data.db"),
                 &POLICY,
                 &CancelToken::never()
@@ -442,7 +521,7 @@ mod tests {
         let cancel = CancelToken::new();
         cancel.cancel();
         assert!(matches!(
-            Database::open(&path, &POLICY, &cancel),
+            open(&path, &POLICY, &cancel),
             Err(Error::Cancelled)
         ));
         assert!(!path.parent().unwrap().exists());
@@ -452,7 +531,7 @@ mod tests {
     fn an_open_database_has_no_descriptor_but_sqlites() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("data.db");
-        let opened = Database::open(&path, &POLICY, &CancelToken::never()).unwrap();
+        let opened = open(&path, &POLICY, &CancelToken::never()).unwrap();
         opened.execute_batch("CREATE TABLE t(x)").unwrap();
         let database = fs::metadata(&path).unwrap();
         let descriptors = fs::read_dir("/dev/fd")

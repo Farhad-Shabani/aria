@@ -368,6 +368,7 @@ impl From<aria_platform::sqlite::Error> for HistoryError {
             | Error::File(_)
             | Error::Linked
             | Error::Replaced
+            | Error::Locked
             | Error::Cancelled
             | Error::Io { .. }) => Self::storage(error),
         }

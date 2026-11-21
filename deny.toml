@@ -28,6 +28,8 @@ allow = [
   "Unlicense",
   "WTFPL",
   "Zlib",
+  # SQLite's public-domain dedication, inside SQLCipher.
+  "blessing",
 ]
 
 [bans]

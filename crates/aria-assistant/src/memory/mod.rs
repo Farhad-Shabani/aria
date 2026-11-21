@@ -21,6 +21,8 @@ mod testing;
 
 use std::path::Path;
 
+use aria_platform::sqlite::AtRest;
+
 pub use consolidate::ConsolidationReport;
 pub use consolidate::run_backlog;
 pub use extract::ConsolidationResult;
@@ -35,6 +37,6 @@ pub const EVAL_CASES: &str = include_str!("eval_cases.json");
 pub(crate) const PROFILE_FILE: &str = "profile.md";
 
 /// The store in the memory directory.
-pub fn open(dir: &Path) -> Result<Store, StoreError> {
-    Store::open(&dir.join(DB_FILE))
+pub fn open(dir: &Path, at_rest: &AtRest) -> Result<Store, StoreError> {
+    Store::open(&dir.join(DB_FILE), at_rest)
 }

@@ -1,6 +1,7 @@
 use super::tasks::Supervised;
 use aria_assistant::memory::{PairsError, learned_pairs};
 use aria_kit::cancel::{CancelToken, Deadline};
+use aria_platform::sqlite::AtRest;
 use aria_primitives::Cause;
 use aria_primitives::error_chain;
 use aria_settings::rpc::RpcErrorCode;
@@ -229,6 +230,8 @@ pub(super) struct Worker<C: Collector> {
     runtime: Arc<Runtime>,
     requests: mpsc::Receiver<Command>,
     directory: PathBuf,
+    /// `None` when the Keychain refused it, so no catalog opens.
+    at_rest: Option<Arc<AtRest>>,
     sources: PersonalSources,
     personal: PersonalRules,
     /// The dictionary file `personal` was read from.
@@ -241,11 +244,21 @@ pub(super) struct Worker<C: Collector> {
 pub(super) struct PersonalSources {
     dictionary: Arc<Dictionary>,
     memory: PathBuf,
+    /// `None` when the Keychain refused it, so memory teaches no pairs.
+    at_rest: Option<Arc<AtRest>>,
 }
 
 impl PersonalSources {
-    pub(super) fn new(dictionary: Arc<Dictionary>, memory: PathBuf) -> Self {
-        Self { dictionary, memory }
+    pub(super) fn new(
+        dictionary: Arc<Dictionary>,
+        memory: PathBuf,
+        at_rest: Option<Arc<AtRest>>,
+    ) -> Self {
+        Self {
+            dictionary,
+            memory,
+            at_rest,
+        }
     }
 
     /// Your dictionary and memory's pairs, both in `directory`.
@@ -254,6 +267,7 @@ impl PersonalSources {
         Self::new(
             Arc::new(Dictionary::new(directory.join("dictionary.txt"))),
             directory.to_owned(),
+            Some(Arc::new(AtRest::for_tests())),
         )
     }
 
@@ -262,7 +276,10 @@ impl PersonalSources {
         let Some(words) = self.dictionary.words()? else {
             return Ok(PersonalRules::default());
         };
-        let learned = learned_pairs(&self.memory)?;
+        let learned = match &self.at_rest {
+            Some(at_rest) => learned_pairs(&self.memory, at_rest, cancel)?,
+            None => Vec::new(),
+        };
         Ok(PersonalRules::from_stored(words, learned, cancel)?)
     }
 }
@@ -280,6 +297,7 @@ enum PersonalError {
 impl Runtime {
     pub(super) fn new<C: Collector>(
         directory: PathBuf,
+        at_rest: Option<Arc<AtRest>>,
         sources: PersonalSources,
         persistent: bool,
         settings: Arc<SettingsStore>,
@@ -314,6 +332,7 @@ impl Runtime {
             runtime: Arc::clone(&runtime),
             requests: receiver,
             directory,
+            at_rest,
             sources,
             personal: PersonalRules::default(),
             stamp: None,
@@ -970,7 +989,8 @@ impl<C: Collector> Worker<C> {
         token: &CancelToken,
     ) -> Result<&'a mut Catalog, Error> {
         if catalog.is_none() {
-            let opened = Catalog::open(&self.directory, token.clone())?;
+            let at_rest = self.at_rest.as_deref().ok_or(Error::Unavailable(None))?;
+            let opened = Catalog::open(&self.directory, at_rest, token.clone())?;
             if let Some(key) = &self.cache_key {
                 opened.remove_other_pipelines(key)?;
             }
@@ -1246,6 +1266,7 @@ mod tests {
     fn local_runtime(root: &Path) -> (Arc<Runtime>, Worker<LocalCollector<LocalExtractor>>) {
         Runtime::new(
             root.join("catalog"),
+            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
             PersonalSources::in_directory(root),
             true,
             settings(root),
@@ -1346,6 +1367,7 @@ mod tests {
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
+            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
             PersonalSources::in_directory(temporary.path()),
             true,
             settings(temporary.path()),
@@ -1387,6 +1409,7 @@ mod tests {
         };
         Runtime::new(
             base.join("catalog"),
+            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
             PersonalSources::in_directory(base),
             true,
             settings(base),
@@ -1427,8 +1450,12 @@ mod tests {
         assert!(is_ready(&status));
         assert_eq!(list(&status).completeness, Some(Completeness::OutOfTime));
         assert_eq!(list(&status).catalog_revision, None);
-        let catalog =
-            Catalog::open(&temporary.path().join("catalog"), CancelToken::never()).unwrap();
+        let catalog = Catalog::open(
+            &temporary.path().join("catalog"),
+            &aria_platform::sqlite::AtRest::for_tests(),
+            CancelToken::never(),
+        )
+        .unwrap();
         let root = selected.as_path().canonicalize().unwrap();
         assert_eq!(
             Some(
@@ -1447,8 +1474,12 @@ mod tests {
         let temporary = tempfile::tempdir().unwrap();
         let selected = project(temporary.path(), "project");
         let older = temporary.path().join("older-project");
-        let mut catalog =
-            Catalog::open(&temporary.path().join("catalog"), CancelToken::never()).unwrap();
+        let mut catalog = Catalog::open(
+            &temporary.path().join("catalog"),
+            &aria_platform::sqlite::AtRest::for_tests(),
+            CancelToken::never(),
+        )
+        .unwrap();
         let stored = Discovery {
             selected: older.clone(),
             root: older.clone(),
@@ -1463,8 +1494,12 @@ mod tests {
 
         refresh_once(&runtime, &mut worker, &selected).unwrap();
 
-        let catalog =
-            Catalog::open(&temporary.path().join("catalog"), CancelToken::never()).unwrap();
+        let catalog = Catalog::open(
+            &temporary.path().join("catalog"),
+            &aria_platform::sqlite::AtRest::for_tests(),
+            CancelToken::never(),
+        )
+        .unwrap();
         assert!(catalog.load(&older, "scan3:older").unwrap().is_none());
     }
 
@@ -1540,6 +1575,7 @@ mod tests {
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
+            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
             PersonalSources::in_directory(temporary.path()),
             true,
             settings(temporary.path()),
@@ -1588,6 +1624,7 @@ mod tests {
         let configured = project(root.path(), "configured");
         let (runtime, mut worker) = Runtime::new(
             root.path().join("catalog"),
+            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
             PersonalSources::in_directory(root.path()),
             true,
             settings_with(
@@ -1653,6 +1690,7 @@ mod tests {
         let selected = project(root.path(), "project");
         let (runtime, _worker) = Runtime::new(
             root.path().join("catalog"),
+            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
             PersonalSources::in_directory(root.path()),
             true,
             settings_with(root.path(), "enabled = false"),
@@ -1904,7 +1942,12 @@ mod tests {
             .unwrap();
         shutdown.cancel();
         task.await.unwrap();
-        let catalog = Catalog::open(&catalog_dir, CancelToken::never()).unwrap();
+        let catalog = Catalog::open(
+            &catalog_dir,
+            &aria_platform::sqlite::AtRest::for_tests(),
+            CancelToken::never(),
+        )
+        .unwrap();
         let key = cache_key(LocalExtractor.cache_key()).unwrap();
         assert!(
             catalog
@@ -1953,6 +1996,7 @@ mod tests {
         let (exited_tx, exited_rx) = mpsc::channel();
         let (runtime, worker) = Runtime::new(
             root.path().join("catalog"),
+            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
             PersonalSources::in_directory(root.path()),
             true,
             settings(root.path()),
@@ -2010,7 +2054,12 @@ mod tests {
         .unwrap();
         let key = cache_key(LocalExtractor.cache_key()).unwrap();
         let catalog_dir = temporary.path().join("catalog");
-        let mut catalog = Catalog::open(&catalog_dir, CancelToken::never()).unwrap();
+        let mut catalog = Catalog::open(
+            &catalog_dir,
+            &aria_platform::sqlite::AtRest::for_tests(),
+            CancelToken::never(),
+        )
+        .unwrap();
         catalog
             .refresh_cancellable(&discovery, &key, &CancelToken::never())
             .unwrap();

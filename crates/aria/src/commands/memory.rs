@@ -40,7 +40,8 @@ fn open_store() -> anyhow::Result<(Store, PathBuf)> {
     let home = aria_settings::config::home_directory()?;
     let settings = aria_settings::load(&home)?;
     let dir = aria_settings::config::memory_directory(&settings.memory, &home);
-    let store = aria_assistant::memory::open(&dir)?;
+    let at_rest = aria_platform::sqlite::AtRest::load(&home)?;
+    let store = aria_assistant::memory::open(&dir, &at_rest)?;
     Ok((store, dir))
 }
 
@@ -191,6 +192,7 @@ fn consolidate() -> anyhow::Result<()> {
         config,
         &terms,
         &home,
+        &aria_platform::sqlite::AtRest::load(&home)?,
         &aria_kit::cancel::CancelToken::never(),
     )?;
     let results = report.results;

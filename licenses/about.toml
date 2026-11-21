@@ -8,6 +8,8 @@ accepted = [
   "Unlicense",
   "WTFPL",
   "Zlib",
+  # SQLite's public-domain dedication, inside SQLCipher.
+  "blessing",
 ]
 targets = [ "aarch64-apple-darwin", "x86_64-unknown-linux-gnu" ]
 ignore-build-dependencies = true

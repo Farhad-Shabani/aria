@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use aria_kit::cancel::CancelToken;
+use aria_platform::sqlite::AtRest;
 
 use super::DB_FILE;
 use super::extract::{
@@ -99,12 +100,13 @@ pub fn run_backlog(
     config: MemoryConfig,
     terms: &[String],
     home: &Path,
+    at_rest: &AtRest,
     cancel: &CancelToken,
 ) -> Result<ConsolidationReport, StoreError> {
     if !config.enabled {
         return Ok(ConsolidationReport::default());
     }
-    let store = Store::open(&config.dir.join(DB_FILE))?;
+    let store = Store::open(&config.dir.join(DB_FILE), at_rest)?;
     let extractor = ClaudeExtractor::new(
         config.extract_model,
         build_system_prompt(home),
@@ -140,8 +142,6 @@ pub fn run_backlog(
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
-
-    use rusqlite::Connection;
 
     use super::*;
     use crate::memory::PROFILE_FILE;
@@ -216,7 +216,7 @@ mod tests {
 
     impl Extractor for ClearsMidway {
         fn extract(&self, _message: &str, _cancel: &CancelToken) -> Result<String, AssistantError> {
-            Store::open(&self.path)
+            Store::open(&self.path, &AtRest::for_tests())
                 .expect("opens")
                 .clear()
                 .expect("clears");
@@ -285,8 +285,7 @@ mod tests {
     fn an_unreadable_turn_releases_its_claim() {
         let (dir, store) = store();
         speak(&store, "a", "hi");
-        Connection::open(dir.path().join(DB_FILE))
-            .expect("opens")
+        crate::memory::testing::connection(&dir.path().join(DB_FILE))
             .execute("UPDATE turns SET text = X'00'", [])
             .expect("makes the turn unreadable");
         let extractor = Scripted::new(Vec::new());
@@ -376,6 +375,7 @@ mod tests {
                 },
                 &[],
                 home.path(),
+                &AtRest::for_tests(),
                 &CancelToken::never()
             )
             .expect("runs")

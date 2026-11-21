@@ -3,6 +3,7 @@
 use crate::daemon::config::{DaemonConfig, HotkeyConfig, RelayConfig, WakeWordOverride};
 use aria_kit::audio::{WakeWordMonitor, remove_all_spools};
 use aria_platform::runtime::PreparedRuntimePaths;
+use aria_platform::sqlite::{AtRest, AtRestError};
 use aria_primitives::error_chain;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_settings::config::{ConfigError, memory_directory};
@@ -13,6 +14,7 @@ use aria_voice::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use aria_voice::microphone::Gate;
 use aria_voice::vocabulary::dictionary::{self, Dictionary};
 
+use std::path::Path;
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, watch};
@@ -142,7 +144,11 @@ fn compose(
     let startup = cache.effective();
     let settings = Arc::new(SettingsStore::new(Arc::clone(&cache)));
     let subscriptions = Arc::new(Subscriptions::new());
-    let history_store = Arc::new(HistoryStore::open(&context.home.join(".aria/history")));
+    let at_rest = storage_key(&context.home);
+    let history_store = Arc::new(HistoryStore::open(
+        &context.home.join(".aria/history"),
+        at_rest.as_deref(),
+    ));
     let microphone = Gate::new();
     let relay_microphone = Arc::clone(&microphone);
     let tasks = RuntimeTasks::new();
@@ -151,7 +157,8 @@ fn compose(
     let dictionary = Arc::new(Dictionary::new(vocabulary_directory.join(dictionary::FILE)));
     let (vocabulary, mut vocabulary_worker) = super::vocabulary::Runtime::new(
         vocabulary_directory,
-        super::vocabulary::PersonalSources::new(dictionary, memory),
+        at_rest.clone(),
+        super::vocabulary::PersonalSources::new(dictionary, memory, at_rest.clone()),
         matches!(context.lifetime, DaemonLifetime::Persistent),
         Arc::clone(&settings),
         aria_voice::vocabulary::discover::LocalCollector::new(
@@ -175,6 +182,7 @@ fn compose(
             cache: &cache,
             startup: &startup,
             history_store: &history_store,
+            at_rest: &at_rest,
         },
         wake_word,
         microphone,
@@ -198,14 +206,17 @@ fn compose(
     // A daemon that lives on catches up on what the last one left and keeps
     // up with the owner's chats; one serving a single press has no time for
     // an LLM call.
-    let memory_backlog = matches!(context.lifetime, DaemonLifetime::Persistent).then(|| {
-        MemoryBacklog::new(
-            context.home.clone(),
-            Arc::clone(&cache),
-            memory_woken,
-            Arc::clone(&vocabulary),
-        )
-    });
+    let memory_backlog = at_rest
+        .filter(|_| matches!(context.lifetime, DaemonLifetime::Persistent))
+        .map(|at_rest| {
+            MemoryBacklog::new(
+                context.home.clone(),
+                Arc::clone(&cache),
+                at_rest,
+                memory_woken,
+                Arc::clone(&vocabulary),
+            )
+        });
     let dictation_runtime = Arc::clone(&dictation);
     let relay_runtime = Arc::clone(&dictation);
     let chat_runtime = Arc::clone(&chat);
@@ -333,6 +344,33 @@ struct Dependencies<'a> {
     /// The settings as the daemon started with them.
     startup: &'a CheckedSettings,
     history_store: &'a Arc<HistoryStore>,
+    /// `None` when the Keychain refused it: nothing saved can be read.
+    at_rest: &'a Option<Arc<AtRest>>,
+}
+
+/// A unit-test daemon must never touch the developer's Keychain.
+fn storage_key(home: &Path) -> Option<Arc<AtRest>> {
+    match load_storage_key(home) {
+        Ok(at_rest) => Some(Arc::new(at_rest)),
+        Err(error) => {
+            tracing::warn!(
+                error = %error_chain(&error),
+                "history, memory, and the vocabulary cache are unavailable without the storage key"
+            );
+            None
+        }
+    }
+}
+
+#[cfg(not(test))]
+fn load_storage_key(home: &Path) -> Result<AtRest, AtRestError> {
+    AtRest::load(home)
+}
+
+/// Tests never touch the Keychain.
+#[cfg(test)]
+fn load_storage_key(_home: &Path) -> Result<AtRest, AtRestError> {
+    Ok(AtRest::for_tests())
 }
 
 /// Everything the daemon runs for as long as it lives: a runtime behind each
@@ -432,6 +470,7 @@ fn eager_workers(
         cache,
         startup,
         history_store,
+        at_rest,
     } = *dependencies;
     let DaemonConfig {
         dictation: dictation_config,
@@ -496,6 +535,7 @@ fn eager_workers(
             Arc::clone(cache),
             Some(memory_wake),
             Arc::clone(history_store),
+            at_rest.clone(),
         )),
         speaker: Arc::new(SpeakerRuntime::new(
             Some(speakers),
@@ -526,6 +566,7 @@ fn deferred_workers(
         cache,
         startup,
         history_store,
+        at_rest,
     } = *dependencies;
     // Reading and forgetting profiles is filesystem work, so a daemon with no
     // microphone of its own still answers those.
@@ -557,6 +598,7 @@ fn deferred_workers(
             Arc::clone(cache),
             None,
             Arc::clone(history_store),
+            at_rest.clone(),
         )),
         // An on-demand daemon builds its microphone for the one press it
         // serves, so there is none to enroll through.
