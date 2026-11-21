@@ -5,6 +5,8 @@ extension ShapeStyle where Self == Color {
     static var failure: Color { .red }
     /// A mark on something the person can put right.
     static var attention: Color { .orange }
+    /// Marks voice recording, wherever a voice is set up.
+    static var voice: Color { .purple }
 }
 
 struct NoticeText: View {

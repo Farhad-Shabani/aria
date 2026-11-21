@@ -9,8 +9,13 @@ struct AccessPicture: View {
     private static let boxRadius: CGFloat = 8
     private static let shadow = Color.black.opacity(0.12)
     private static let trafficLight: CGFloat = 10
+    /// Around the window's content.
     private static let inset: CGFloat = 14
+    /// Between the window's parts: toolbar, description, list, and buttons.
     private static let spacing: CGFloat = 10
+    private static let toolbarSpacing: CGFloat = 14
+    private static let chevronSpacing: CGFloat = 10
+    private static let rowInset: CGFloat = 10
     private static let rowSpacing: CGFloat = 8
     /// A gray bar stands for text that doesn't matter here.
     private static let barHeight: CGFloat = 7
@@ -49,13 +54,13 @@ struct AccessPicture: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: Self.inset) {
+        HStack(spacing: Self.toolbarSpacing) {
             HStack(spacing: Self.trafficLight * 0.8) {
                 ForEach(0..<3, id: \.self) { _ in
                     Circle().fill(.quaternary).frame(width: Self.trafficLight, height: Self.trafficLight)
                 }
             }
-            HStack(spacing: Self.spacing) {
+            HStack(spacing: Self.chevronSpacing) {
                 Image(systemName: "chevron.left")
                 Image(systemName: "chevron.right")
             }
@@ -108,7 +113,7 @@ struct AccessPicture: View {
 
     private func row(@ViewBuilder _ content: () -> some View) -> some View {
         HStack(spacing: Self.rowSpacing, content: content)
-            .padding(.horizontal, Self.spacing)
+            .padding(.horizontal, Self.rowInset)
             .frame(height: rowHeight)
     }
 

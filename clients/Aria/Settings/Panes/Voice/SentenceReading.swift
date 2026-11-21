@@ -1,10 +1,5 @@
 import SwiftUI
 
-extension ShapeStyle where Self == Color {
-    /// Marks voice recording, wherever a voice is set up.
-    static var voice: Color { .purple }
-}
-
 /// The sentence to read for the next sample, with a dot per sample.
 struct SentenceReading: View {
     private static let dotSide: CGFloat = 8

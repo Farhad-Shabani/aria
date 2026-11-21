@@ -28,7 +28,8 @@ struct AriaKeySpot: View {
         .frame(maxWidth: .infinity)
         .accessibilityElement()
         .accessibilityLabel(combo == nil ? "Aria key, \(name)" : "Shortcut, \(name)")
-        .task(id: combo) { await showPress() }
+        // Turning on Reduce Motion stops a press already under way.
+        .task(id: PressCue(combo: combo, isStill: reduceMotion)) { await showPress() }
     }
 
     private var name: String {
@@ -69,6 +70,11 @@ struct AriaKeySpot: View {
             }
         }
     }
+}
+
+private struct PressCue: Equatable {
+    let combo: ShortcutCombo?
+    let isStill: Bool
 }
 
 private enum Press {
