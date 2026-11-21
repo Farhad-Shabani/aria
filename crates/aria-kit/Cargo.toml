@@ -27,6 +27,7 @@ test-support = [  ]
 
 [dependencies]
 aria-primitives = { workspace = true }
+fst             = "0.4"
 serde           = { workspace = true }
 thiserror       = { workspace = true }
 tracing         = { workspace = true }

@@ -1,6 +1,9 @@
 use std::borrow::Cow;
+    // The folding test opens these same bytes, so no build that fails here
+    // passes the tests.
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use crate::cancel::CancelToken;
 
@@ -769,8 +772,9 @@ fn boundary(chars: &[char], position: usize) -> bool {
 }
 
 /// A word the user does not have in their list becomes the listed word it
-/// nearly is. Tokens are ASCII words; a match must share its first letter
-/// and about its length before the ratio is consulted.
+/// nearly is, unless it is a real English word. Tokens are ASCII words; a
+/// match must share its first letter and about its length before the ratio
+/// is consulted.
 fn apply_fuzzy<E>(
     text: &str,
     terms: &[String],
@@ -806,6 +810,32 @@ fn apply_fuzzy<E>(
     Ok((output, substitutions))
 }
 
+/// SCOWL size 35, lowercase words and contractions of three or more
+/// letters, as an fst set. `scripts/english-words.sh` rebuilds it, and
+/// `THIRD-PARTY-NOTICES.md` names the source and its terms.
+const ENGLISH_WORDS: &[u8] = include_bytes!("english.fst");
+
+/// "river's" and "red-shift" are real because "river", "red" and "shift"
+/// are, though the list holds no possessives or compounds.
+fn is_english(folded: &str) -> bool {
+    folded.split('-').all(|part| {
+        let stem = part
+            .strip_suffix("'s")
+            .or_else(|| part.strip_suffix('\''))
+            .unwrap_or(part);
+        in_english_list(part) || in_english_list(stem)
+    })
+}
+
+fn in_english_list(folded: &str) -> bool {
+    english_words().contains(folded)
+}
+
+fn english_words() -> &'static fst::Set<&'static [u8]> {
+    static WORDS: OnceLock<fst::Set<&'static [u8]>> = OnceLock::new();
+    WORDS.get_or_init(|| fst::Set::new(ENGLISH_WORDS).expect("the embedded words are an fst set"))
+}
+
 /// The next `[A-Za-z0-9][A-Za-z0-9'-]*` as byte offset and length.
 fn next_token(text: &str) -> Option<(usize, usize)> {
     let start = text.find(|c: char| c.is_ascii_alphanumeric())?;
@@ -832,24 +862,29 @@ fn best_term<'a, E>(
             return Ok(None);
         }
     }
-    let folded: Vec<char> = folded.chars().collect();
+    let chars: Vec<char> = folded.chars().collect();
     let mut best: Option<(&str, f64)> = None;
     for (term, term_folded) in terms.iter().zip(known) {
         check(0)?;
         // "speaker" against "wespeaker" scores 0.875: the first letter is
         // the guard that keeps it from matching.
-        if term_folded.first() != folded.first() {
+        if term_folded.first() != chars.first() {
             continue;
         }
-        let longest = folded.len().max(term_folded.len());
+        let longest = chars.len().max(term_folded.len());
         let allowed = ((0.2 * longest as f64) as usize).max(1);
-        if folded.len().abs_diff(term_folded.len()) > allowed {
+        if chars.len().abs_diff(term_folded.len()) > allowed {
             continue;
         }
-        let ratio = ratio(&folded, term_folded, check)?;
+        let ratio = ratio(&chars, term_folded, check)?;
         if ratio >= FUZZY_RATIO && best.is_none_or(|(_, best_ratio)| ratio > best_ratio) {
             best = Some((term, ratio));
         }
+    }
+    // A real word the recognizer wrote is what was said: "flick" is not a
+    // near miss of "Flickr".
+    if best.is_some() && is_english(&folded) {
+        return Ok(None);
     }
     Ok(best.map(|(term, _)| term))
 }
@@ -1112,18 +1147,44 @@ mod tests {
 
     #[test]
     fn fuzzy_fixes_a_near_miss_and_leaves_the_rest() {
-        let terms = strings(&["kubernetes", "wespeaker", "vex16"]);
+        let terms = strings(&[
+            "kubernetes",
+            "wespeaker",
+            "vex16",
+            "Flickr",
+            "Rivers",
+            "Redshift",
+            "Colours",
+            "Theyre",
+        ]);
         let cases = [
             ("kubernets rocks", "kubernetes rocks"),
             ("the speaker is loud", "the speaker is loud"),
             ("kubernetes is fine", "kubernetes is fine"),
             ("ok", "ok"),
             ("vexe16 boots", "vex16 boots"),
+            ("a flick of the wrist", "a flick of the wrist"),
+            ("the river's edge", "the river's edge"),
+            ("a red-shift", "a red-shift"),
+            ("colour me", "colour me"),
+            ("they're here", "they're here"),
         ];
         for (input, expected) in cases {
             assert_eq!(apply_corrections(input, &[], &terms).0, expected, "{input}");
         }
         assert_eq!(apply_corrections("kubernets", &[], &[]).0, "kubernets");
+    }
+
+    #[test]
+    fn the_english_words_are_folded_for_lookup() {
+        use fst::Streamer;
+        let mut words = english_words().stream();
+        while let Some(word) = words.next() {
+            let shaped = word.len() >= MIN_TOKEN_LEN
+                && word[0].is_ascii_lowercase()
+                && word.iter().all(|b| b.is_ascii_lowercase() || *b == b'\'');
+            assert!(shaped, "{:?}", String::from_utf8_lossy(word));
+        }
     }
 
     #[test]
