@@ -425,7 +425,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertNil(state.missingSummary, "nothing to say before the Mac is looked at")
         state.start()
         await waitUntil { state.step == .welcome }
-        XCTAssertEqual(state.missingSummary, "Everything is in place.")
+        XCTAssertNil(state.missingSummary, "a Mac with nothing missing needs no line saying so")
         XCTAssertNil(state.expressTotal, "a Mac with everything in place has nothing to download")
         state.express()
         XCTAssertEqual(state.step, .welcome, "an engine this Mac cannot run blocks Express too")

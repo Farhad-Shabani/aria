@@ -211,8 +211,8 @@ final class SetupState: ObservableObject {
 
     var blockedBy: String? { Self.blocked(selections, in: inspection) }
 
-    /// What the wizard still has to do on this Mac, as one line; nothing
-    /// until the Mac has been looked at.
+    /// What the wizard still has to do on this Mac, as one line. Nil before
+    /// the Mac has been looked at, and when nothing is missing.
     var missingSummary: String? {
         guard step != .inspecting else { return nil }
         let names = Self.wizardWork(in: inspection).map { missing in
@@ -227,11 +227,10 @@ final class SetupState: ObservableObject {
         }
         var seen = Set<String>()
         let unique = names.filter { seen.insert($0).inserted }
-        return unique.isEmpty ? "Everything is in place." : "Missing: \(unique.joined(separator: ", "))."
+        return unique.isEmpty ? nil : "Missing: \(unique.joined(separator: ", "))."
     }
 
-    /// What Continue downloads. Nil when it downloads nothing, which the
-    /// missing summary already implies.
+    /// What Continue downloads. Nil when it downloads nothing.
     var expressTotal: String? {
         let plan = Self.expressPlan(inspection, selections)
         return plan.isEmpty ? nil : Self.total(plan)
