@@ -41,7 +41,6 @@ use super::speaker;
 use super::speaker::SpeakerRuntime;
 use super::speech;
 use super::speech::SpeechRuntime;
-#[cfg(not(test))]
 use super::storage::load_storage_key;
 use super::subscriptions::Subscriptions;
 use super::system_transcription::SystemTranscriptionState;
@@ -362,15 +361,6 @@ fn storage_key(home: &Path, memory: &Path) -> Option<Arc<AtRest>> {
             None
         }
     }
-}
-
-/// A unit-test daemon must never touch the developer's Keychain.
-#[cfg(test)]
-fn load_storage_key(
-    _home: &Path,
-    _memory: &Path,
-) -> Result<AtRest, aria_platform::sqlite::AtRestError> {
-    Ok(AtRest::for_tests())
 }
 
 /// Everything the daemon runs for as long as it lives: a runtime behind each
