@@ -230,6 +230,13 @@ final class SetupState: ObservableObject {
         return unique.isEmpty ? "Everything is in place." : "Missing: \(unique.joined(separator: ", "))."
     }
 
+    /// What Continue downloads. Nil when it downloads nothing, which the
+    /// missing summary already implies.
+    var expressTotal: String? {
+        let plan = Self.expressPlan(inspection, selections)
+        return plan.isEmpty ? nil : Self.total(plan)
+    }
+
     var downloadTotal: String {
         let plan = Self.plan(inspection, selections)
         let chosen = plan.filter { downloads.contains($0.id) }

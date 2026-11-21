@@ -19,8 +19,7 @@ struct WelcomePage: View {
             } footer: {
                 VStack(alignment: .leading, spacing: SetupMetrics.footerSpacing) {
                     if state.step == .welcome {
-                        let plan = SetupState.expressPlan(state.inspection, state.selections)
-                        DownloadFooter(total: SetupState.total(plan), notes: state.selfFetchingNotes)
+                        DownloadFooter(total: state.expressTotal, notes: state.selfFetchingNotes)
                     }
                     if let missing = state.missingSummary {
                         Text(missing)

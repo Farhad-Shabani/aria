@@ -161,6 +161,7 @@ final class SetupStateTests: XCTestCase {
         let harness = Harness()
         let state = await welcome(harness)
         XCTAssertEqual(state.missingSummary, "Missing: settings.")
+        XCTAssertEqual(state.expressTotal, "Total download: 20 bytes")
 
         state.express()
         await waitUntil { harness.applyContinuation != nil }
@@ -412,6 +413,7 @@ final class SetupStateTests: XCTestCase {
         state.start()
         await waitUntil { state.step == .welcome }
         XCTAssertEqual(state.missingSummary, "Everything is in place.")
+        XCTAssertNil(state.expressTotal, "a Mac with everything in place has nothing to download")
         state.express()
         XCTAssertEqual(state.step, .welcome, "an engine this Mac cannot run blocks Express too")
         state.next()
