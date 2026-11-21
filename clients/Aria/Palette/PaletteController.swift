@@ -276,7 +276,7 @@ final class PaletteController: ObservableObject {
 
     /// Shows the chat `Chats.shown` holds.
     func showChat() {
-        if !panel.isVisible { open() }
+        open()
         if model.page == .result { promptRun.cancel() }
         model.openChat()
     }
@@ -722,7 +722,10 @@ final class PaletteController: ObservableObject {
         }
     }
 
+    /// Opening a shown palette leaves it as it is, since a reset would lose
+    /// what the person was doing.
     func open() {
+        guard !panel.isVisible else { return }
         openings += 1
         let front = NSWorkspace.shared.frontmostApplication
         frontApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : front

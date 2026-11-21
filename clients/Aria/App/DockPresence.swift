@@ -19,11 +19,20 @@ final class DockPresence: NSObject {
         }
     }
 
+    /// Dropping the Dock icon hands the keys to another app, so it waits
+    /// while one of Aria's panels holds them.
+    static func policy(
+        windows: [NSWindow], keyWindow: NSWindow?, current: NSApplication.ActivationPolicy
+    ) -> NSApplication.ActivationPolicy {
+        if needsDockIcon(windows: windows) { return .regular }
+        return keyWindow is NSPanel ? current : .accessory
+    }
+
     @objc private func update() {
         let app = NSApplication.shared
         // Hiding the app makes its windows read as not visible.
         guard !app.isHidden else { return }
-        let policy: NSApplication.ActivationPolicy = Self.needsDockIcon(windows: app.windows) ? .regular : .accessory
+        let policy = Self.policy(windows: app.windows, keyWindow: app.keyWindow, current: app.activationPolicy())
         guard policy != app.activationPolicy() else { return }
         app.setActivationPolicy(policy)
         if policy == .regular { app.activate() }

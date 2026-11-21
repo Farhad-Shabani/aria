@@ -41,4 +41,23 @@ final class DockPresenceTests: XCTestCase {
         untitled.orderFront(nil)
         XCTAssertFalse(DockPresence.needsDockIcon(windows: [panel, untitled]))
     }
+
+    func testAKeyPanelKeepsTheDockIconUntilItLetsGo() {
+        let closed = window()
+        let palette = NSPanel(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
+        XCTAssertEqual(DockPresence.policy(windows: [closed], keyWindow: palette, current: .regular), .regular)
+        XCTAssertEqual(DockPresence.policy(windows: [closed], keyWindow: nil, current: .regular), .accessory)
+    }
+
+    func testAShownWindowNeedsTheDockIconEvenUnderAKeyPanel() {
+        let shown = window()
+        shown.orderFront(nil)
+        let palette = NSPanel(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
+        XCTAssertEqual(DockPresence.policy(windows: [shown], keyWindow: palette, current: .accessory), .regular)
+    }
+
+    func testAKeyPanelOverAnotherAppAddsNoDockIcon() {
+        let palette = NSPanel(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
+        XCTAssertEqual(DockPresence.policy(windows: [], keyWindow: palette, current: .accessory), .accessory)
+    }
 }
