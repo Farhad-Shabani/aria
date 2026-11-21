@@ -32,6 +32,7 @@ mod shell;
 mod shutdown;
 mod speaker;
 mod speech;
+mod storage;
 mod subscriptions;
 mod system_transcription;
 mod tasks;
@@ -61,6 +62,7 @@ pub use session::{
 #[cfg(target_os = "macos")]
 pub use shell::{LoginShellError, login_shell_path, needs_login_shell_path};
 pub use shutdown::ShutdownError;
+pub use storage::load_storage_key;
 
 pub use inference::Paths as InferencePaths;
 #[cfg(any(test, feature = "test-support"))]

@@ -1,6 +1,6 @@
 mod store;
 
-pub use store::{MAX_ENTRY_BYTES, NewAsk, RetryLease, Store};
+pub use store::{DB_FILE, MAX_ENTRY_BYTES, NewAsk, RetryLease, Store};
 
 use aria_primitives::Cause;
 use std::path::PathBuf;

@@ -25,6 +25,7 @@ use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{ChatKey, ChatName, MAX_PROMPT_NAME_BYTES, Quote};
 
+pub const DB_FILE: &str = "history.db";
 const MAX_ERROR_MESSAGE_BYTES: usize = 256;
 const MAX_STORED_ERROR_BYTES: usize = 2 * 1024;
 pub const MAX_ENTRY_BYTES: usize = 128 * 1024;
@@ -172,7 +173,7 @@ impl Store {
         at_rest: &AtRest,
     ) -> Result<Arc<Self>, HistoryError> {
         let connection = Database::open(
-            &directory.join("history.db"),
+            &directory.join(DB_FILE),
             &DATABASE_POLICY,
             at_rest,
             &CancelToken::never(),
@@ -1146,12 +1147,12 @@ impl Store {
             sql_integer(id)?,
             true,
         )?;
-        RecordingReader::from_wav_in(&self.spool_dir, blob, Path::new("history.db")).map_err(
-            |error| match error {
+        RecordingReader::from_wav_in(&self.spool_dir, blob, Path::new(DB_FILE)).map_err(|error| {
+            match error {
                 CaptureError::Wav(_) => HistoryError::AudioUnavailable,
                 error => HistoryError::storage(error),
-            },
-        )
+            }
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {

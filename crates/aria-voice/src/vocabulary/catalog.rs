@@ -14,6 +14,7 @@ use super::{
     source_bytes,
 };
 
+pub const DB_FILE: &str = "catalog.db";
 const SCHEMA_VERSION: u32 = 2;
 const MAX_DATABASE_BYTES: u64 = 512 * 1024 * 1024;
 const DATABASE_POLICY: Policy = Policy {
@@ -99,7 +100,7 @@ impl From<sqlite::Error> for Error {
 impl Catalog {
     pub fn open(directory: &Path, at_rest: &AtRest, cancelled: CancelToken) -> Result<Self, Error> {
         let mut connection = Database::open(
-            &directory.join("catalog.db"),
+            &directory.join(DB_FILE),
             &DATABASE_POLICY,
             at_rest,
             &cancelled,

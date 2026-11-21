@@ -159,7 +159,7 @@ encrypt these files.
 
 The key is **Aria storage key** in your login Keychain.
 Without it, Aria can't read or save that data. To start over, delete
-`history.db`, `memory.db`, `catalog.db`, and `~/.aria/encrypted`.
+`history.db`, `memory.db`, and `catalog.db`.
 
 Encryption protects the files, not your account. Any program running as you
 can still read them through Aria, for example with `aria memory list`. Backups

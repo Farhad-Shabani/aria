@@ -4,7 +4,8 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, params};
 use rustix::fs::{AtFlags, Mode, OFlags};
@@ -12,16 +13,13 @@ use security_framework::os::macos::keychain::SecKeychain;
 use security_framework::random::SecRandom;
 use security_framework_sys::base::{errSecDuplicateItem, errSecItemNotFound};
 
-use aria_primitives::private_fs;
-
-use super::{Error, SIDECAR_SUFFIXES, create_if_missing, inspect, io, open_directory};
+use super::{Error, SIDECAR_SUFFIXES, create_if_missing, io};
 
 const SERVICE: &str = "Aria storage key";
 const ACCOUNT: &str = "databases";
 const KEY_BYTES: usize = 32;
 const SEALING_SUFFIX: &str = ".sealing";
-const MARKER_DIRECTORY: &str = ".aria";
-const MARKER_FILE: &str = "encrypted";
+const PLAINTEXT_HEADER: &[u8] = b"SQLite format 3\0";
 
 #[derive(Debug, thiserror::Error)]
 pub enum AtRestError {
@@ -33,8 +31,8 @@ pub enum AtRestError {
     Random(#[source] std::io::Error),
     #[error("the Keychain no longer holds the storage key Aria's saved data is encrypted with")]
     Missing,
-    #[error("could not record that a storage key exists")]
-    Marker(#[source] Error),
+    #[error("could not check whether a saved database is encrypted")]
+    Probe(#[source] std::io::Error),
 }
 
 /// The storage key every saved database is encrypted with.
@@ -43,11 +41,12 @@ pub struct AtRest {
 }
 
 impl AtRest {
-    /// Reads the storage key from the Keychain, creating it on first use.
-    pub fn load(home: &Path) -> Result<Self, AtRestError> {
+    /// Reads the storage key from the Keychain, creating it while none of
+    /// `databases` is encrypted yet.
+    pub fn load(databases: &[PathBuf]) -> Result<Self, AtRestError> {
         let keychain = SecKeychain::default().map_err(keychain_error)?;
         Self::find_or_create(
-            &Marker::open(home)?,
+            databases,
             || match keychain.find_generic_password(SERVICE, ACCOUNT) {
                 Ok((stored, _)) => Self::from_stored(&stored).map(Some),
                 Err(error) if error.code() == errSecItemNotFound => Ok(None),
@@ -58,19 +57,21 @@ impl AtRest {
     }
 
     /// A replacement key would leave the data under the lost one locked for
-    /// good, so a key goes missing loudly once one was made.
+    /// good, so a key goes missing loudly once a database uses it.
     fn find_or_create(
-        marker: &Marker,
+        databases: &[PathBuf],
         find: impl FnOnce() -> Result<Option<Self>, AtRestError>,
         create: impl FnOnce() -> Result<Self, AtRestError>,
     ) -> Result<Self, AtRestError> {
-        let at_rest = match find()? {
-            Some(at_rest) => at_rest,
-            None if marker.exists()? => return Err(AtRestError::Missing),
-            None => create()?,
-        };
-        marker.record()?;
-        Ok(at_rest)
+        if let Some(at_rest) = find()? {
+            return Ok(at_rest);
+        }
+        for database in databases {
+            if is_encrypted(database)? {
+                return Err(AtRestError::Missing);
+            }
+        }
+        create()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -210,37 +211,18 @@ impl AtRest {
     }
 }
 
-/// Marks that a storage key exists, outside the Keychain that may lose it.
-struct Marker {
-    directory: File,
-}
-
-impl Marker {
-    fn open(home: &Path) -> Result<Self, AtRestError> {
-        let path = home.join(MARKER_DIRECTORY);
-        private_fs::prepare_directory(&path).map_err(|error| AtRestError::Marker(error.into()))?;
-        let path = path
-            .canonicalize()
-            .map_err(|error| AtRestError::Marker(io("resolve the Aria directory")(error)))?;
-        let directory = open_directory(&path).map_err(AtRestError::Marker)?;
-        Ok(Self { directory })
-    }
-
-    fn exists(&self) -> Result<bool, AtRestError> {
-        inspect(&self.directory, OsStr::new(MARKER_FILE))
-            .map(|stat| stat.is_some())
-            .map_err(AtRestError::Marker)
-    }
-
-    fn record(&self) -> Result<(), AtRestError> {
-        if self.exists()? {
-            return Ok(());
-        }
-        create_if_missing(&self.directory, OsStr::new(MARKER_FILE)).map_err(AtRestError::Marker)?;
-        self.directory
-            .sync_all()
-            .map_err(|error| AtRestError::Marker(io("flush the Aria directory")(error)))
-    }
+/// An empty file is a new database, and a missing one was never made.
+fn is_encrypted(path: &Path) -> Result<bool, AtRestError> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(AtRestError::Probe(error)),
+    };
+    let mut header = Vec::with_capacity(PLAINTEXT_HEADER.len());
+    file.take(PLAINTEXT_HEADER.len() as u64)
+        .read_to_end(&mut header)
+        .map_err(AtRestError::Probe)?;
+    Ok(!header.is_empty() && header != PLAINTEXT_HEADER)
 }
 
 fn remove_if_present(directory: &File, name: &OsStr) -> Result<(), Error> {
@@ -283,7 +265,6 @@ mod tests {
         ownership: Ownership::Shared { lock: "data.lock" },
         drifted_mode: DriftedMode::Refuse,
     };
-    const PLAINTEXT_HEADER: &[u8] = b"SQLite format 3\0";
     const SECRET: &str = "the owner's private words";
 
     fn open(path: &Path, at_rest: &AtRest) -> Result<Database, Error> {
@@ -311,19 +292,14 @@ mod tests {
             .any(|window| window == needle)
     }
 
-    fn marker() -> (tempfile::TempDir, Marker) {
-        let home = tempfile::tempdir().unwrap();
-        let marker = Marker::open(&home.path().canonicalize().unwrap()).unwrap();
-        (home, marker)
-    }
-
     #[test]
     fn a_lost_key_is_reported_and_never_replaced() {
-        let (_home, marker) = marker();
-        AtRest::find_or_create(&marker, || Ok(None), || Ok(AtRest::for_tests())).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let databases = [temp.path().join("absent.db"), temp.path().join("data.db")];
+        write_secret(&open(&databases[1], &AtRest::for_tests()).unwrap());
 
         let lost = AtRest::find_or_create(
-            &marker,
+            &databases,
             || Ok(None),
             || panic!("a lost key must not be replaced"),
         );
@@ -332,16 +308,19 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_key_leaves_the_marker() {
-        let (_home, marker) = marker();
-        AtRest::find_or_create(
-            &marker,
-            || Ok(Some(AtRest::for_tests())),
-            || panic!("a stored key is used"),
-        )
-        .unwrap();
+    fn a_key_is_created_while_no_database_is_encrypted() {
+        let temp = tempfile::tempdir().unwrap();
+        let databases = [
+            temp.path().join("absent.db"),
+            temp.path().join("empty.db"),
+            temp.path().join("plain.db"),
+        ];
+        fs::write(&databases[1], b"").unwrap();
+        write_secret(&Connection::open(&databases[2]).unwrap());
 
-        assert!(marker.exists().unwrap());
+        let created = AtRest::find_or_create(&databases, || Ok(None), || Ok(AtRest::for_tests()));
+
+        assert!(created.is_ok());
     }
 
     #[test]

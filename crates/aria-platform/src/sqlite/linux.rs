@@ -2,7 +2,7 @@
 
 use std::ffi::OsStr;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
@@ -15,7 +15,7 @@ pub enum AtRestError {}
 pub struct AtRest(());
 
 impl AtRest {
-    pub fn load(_home: &Path) -> Result<Self, AtRestError> {
+    pub fn load(_databases: &[PathBuf]) -> Result<Self, AtRestError> {
         Ok(Self(()))
     }
 

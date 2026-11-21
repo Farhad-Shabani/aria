@@ -41,6 +41,7 @@ use super::speaker;
 use super::speaker::SpeakerRuntime;
 use super::speech;
 use super::speech::SpeechRuntime;
+use super::storage::HISTORY_DIRECTORY;
 use super::subscriptions::Subscriptions;
 use super::system_transcription::SystemTranscriptionState;
 use super::tasks::RuntimeTasks;
@@ -144,16 +145,16 @@ fn compose(
     let startup = cache.effective();
     let settings = Arc::new(SettingsStore::new(Arc::clone(&cache)));
     let subscriptions = Arc::new(Subscriptions::new());
-    let at_rest = storage_key(&context.home);
+    let memory = memory_directory(&startup.memory, &context.home);
+    let at_rest = storage_key(&context.home, &memory);
     let history_store = Arc::new(HistoryStore::open(
-        &context.home.join(".aria/history"),
+        &context.home.join(HISTORY_DIRECTORY),
         context.paths.spool_dir(),
         at_rest.as_deref(),
     ));
     let microphone = Gate::new();
     let relay_microphone = Arc::clone(&microphone);
     let tasks = RuntimeTasks::new();
-    let memory = memory_directory(&startup.memory, &context.home);
     let vocabulary_directory = context.home.join(dictionary::DIRECTORY);
     let dictionary = Arc::new(Dictionary::new(vocabulary_directory.join(dictionary::FILE)));
     let (vocabulary, mut vocabulary_worker) = super::vocabulary::Runtime::new(
@@ -350,8 +351,8 @@ struct Dependencies<'a> {
 }
 
 /// A unit-test daemon must never touch the developer's Keychain.
-fn storage_key(home: &Path) -> Option<Arc<AtRest>> {
-    match load_storage_key(home) {
+fn storage_key(home: &Path, memory: &Path) -> Option<Arc<AtRest>> {
+    match load_storage_key(home, memory) {
         Ok(at_rest) => Some(Arc::new(at_rest)),
         Err(error) => {
             tracing::warn!(
@@ -364,13 +365,13 @@ fn storage_key(home: &Path) -> Option<Arc<AtRest>> {
 }
 
 #[cfg(not(test))]
-fn load_storage_key(home: &Path) -> Result<AtRest, AtRestError> {
-    AtRest::load(home)
+fn load_storage_key(home: &Path, memory: &Path) -> Result<AtRest, AtRestError> {
+    super::storage::load_storage_key(home, memory)
 }
 
 /// Tests never touch the Keychain.
 #[cfg(test)]
-fn load_storage_key(_home: &Path) -> Result<AtRest, AtRestError> {
+fn load_storage_key(_home: &Path, _memory: &Path) -> Result<AtRest, AtRestError> {
     Ok(AtRest::for_tests())
 }
 
