@@ -14,6 +14,7 @@ final class DaemonEvents {
     private var chatHandlers: [(Aria_Daemon_V1_ChatEvent?) -> Void] = []
     private var speakerHandlers: [(Aria_Daemon_V1_SpeakerEvent?) -> Void] = []
     private var levelHandlers: [(Float) -> Void] = []
+    private var systemAudioLevelHandlers: [(Float) -> Void] = []
     private var hotkeyHandlers: [(ShortcutCombo) -> Void] = []
     private var settingsHandlers: [(Aria_Daemon_V1_SettingsStatus?) -> Void] = []
     private var systemTranscriptionHandlers: [(Aria_Daemon_V1_SystemTranscriptionEvent?) -> Void] = []
@@ -38,6 +39,12 @@ final class DaemonEvents {
     /// source: a level that did not arrive is a frame, not a gap.
     func onLevel(_ handle: @escaping (Float) -> Void) {
         levelHandlers.append(handle)
+    }
+
+    /// Called for every level of the Mac's audio while a system transcription
+    /// runs. Lossy at the source, as microphone levels are.
+    func onSystemAudioLevel(_ handle: @escaping (Float) -> Void) {
+        systemAudioLevelHandlers.append(handle)
     }
 
     /// Called for every chat stage, and with `nil` whenever the stream is
@@ -129,6 +136,10 @@ final class DaemonEvents {
         for handler in levelHandlers { handler(level) }
     }
 
+    private func publish(systemAudioLevel: Float) {
+        for handler in systemAudioLevelHandlers { handler(systemAudioLevel) }
+    }
+
     private func publish(hotkey: ShortcutCombo) {
         for handler in hotkeyHandlers { handler(hotkey) }
     }
@@ -153,6 +164,8 @@ final class DaemonEvents {
                             await MainActor.run { self.publish(ghost: ghost) }
                         case .level(let level):
                             await MainActor.run { self.publish(level: level.level) }
+                        case .systemAudioLevel(let level):
+                            await MainActor.run { self.publish(systemAudioLevel: level.level) }
                         case .chat(let chat):
                             await MainActor.run { self.publish(chat: chat) }
                         case .speaker(let speaker):

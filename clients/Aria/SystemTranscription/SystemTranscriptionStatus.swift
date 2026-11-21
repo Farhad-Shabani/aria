@@ -9,7 +9,11 @@ final class SystemTranscriptionStatus: ObservableObject {
     static let startFailure = "Aria couldn’t start transcribing your Mac’s audio. Try again."
     static let stopFailure = "Aria couldn’t stop transcribing. Try again."
 
-    @Published private(set) var isRunning = false
+    @Published private(set) var isRunning = false {
+        didSet { if !isRunning { level.value = 0 } }
+    }
+    /// How loud the Mac's audio is. Silent whenever no session runs.
+    let level = LiveLevel()
     @Published private(set) var isStarting = false
     @Published private(set) var didFailToStart = false
     @Published private(set) var isStopping = false
@@ -46,6 +50,7 @@ final class SystemTranscriptionStatus: ObservableObject {
     convenience init(events: DaemonEvents) {
         self.init()
         events.onSystemTranscription { [weak self] event in self?.handle(event) }
+        events.onSystemAudioLevel { [weak self] level in self?.hear(level: level) }
         events.onStreamOpened { [weak self] in self?.startReconciling() }
     }
 
@@ -90,6 +95,13 @@ final class SystemTranscriptionStatus: ObservableObject {
         case .unspecified, .UNRECOGNIZED:
             break
         }
+    }
+
+    /// A level from the session's last moments may arrive after its end, and
+    /// must not wake the meter.
+    func hear(level: Float) {
+        guard isRunning else { return }
+        self.level.value = level
     }
 
     /// The stream doesn't replay a session that started before it connected.

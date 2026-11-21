@@ -22,6 +22,19 @@ final class SystemTranscriptionStatusTests: XCTestCase {
         }
     }
 
+    func testAnEndedSessionFallsSilent() {
+        for ending in [Aria_Daemon_V1_SystemTranscriptionStage.stopped, .failed] {
+            let status = SystemTranscriptionStatus(readStatus: { false })
+            status.handle(event(.started))
+            status.hear(level: 0.8)
+            XCTAssertEqual(status.level.value, 0.8)
+            status.handle(event(ending))
+            XCTAssertEqual(status.level.value, 0)
+            status.hear(level: 0.6)
+            XCTAssertEqual(status.level.value, 0)
+        }
+    }
+
     func testAStageDuringAReadWinsOverTheRead() async {
         let reading = AsyncStream<Void>.makeStream()
         let finishing = AsyncStream<Void>.makeStream()

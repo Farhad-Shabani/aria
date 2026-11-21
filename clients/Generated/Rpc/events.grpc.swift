@@ -63,7 +63,8 @@ extension Aria_Daemon_V1_EventsService {
         /// >
         /// > Live events only, with no replay. Subscribe before starting an operation
         /// > whose result arrives here. At most 64 subscribers, each with a 16-event
-        /// > queue. A full queue drops microphone levels; other events close the stream.
+        /// > queue. A full queue drops microphone and system audio levels; other events
+        /// > close the stream.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_SubscribeRequest` message.
@@ -105,7 +106,8 @@ extension Aria_Daemon_V1_EventsService {
         /// >
         /// > Live events only, with no replay. Subscribe before starting an operation
         /// > whose result arrives here. At most 64 subscribers, each with a 16-event
-        /// > queue. A full queue drops microphone levels; other events close the stream.
+        /// > queue. A full queue drops microphone and system audio levels; other events
+        /// > close the stream.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_SubscribeRequest` message.
@@ -144,7 +146,8 @@ extension Aria_Daemon_V1_EventsService.ClientProtocol {
     /// >
     /// > Live events only, with no replay. Subscribe before starting an operation
     /// > whose result arrives here. At most 64 subscribers, each with a 16-event
-    /// > queue. A full queue drops microphone levels; other events close the stream.
+    /// > queue. A full queue drops microphone and system audio levels; other events
+    /// > close the stream.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_SubscribeRequest` message.
@@ -177,7 +180,8 @@ extension Aria_Daemon_V1_EventsService.ClientProtocol {
     /// >
     /// > Live events only, with no replay. Subscribe before starting an operation
     /// > whose result arrives here. At most 64 subscribers, each with a 16-event
-    /// > queue. A full queue drops microphone levels; other events close the stream.
+    /// > queue. A full queue drops microphone and system audio levels; other events
+    /// > close the stream.
     ///
     /// - Parameters:
     ///   - message: request message to send.
