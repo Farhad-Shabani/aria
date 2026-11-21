@@ -2,8 +2,6 @@ import SwiftUI
 
 /// Sizes setup's pages share, so a change to one reaches them all.
 enum SetupMetrics {
-    /// The rail's steps are one word each, so it needs less room than Settings' sidebar.
-    static let railWidth: CGFloat = 170
     /// Room above and below a drawing in its section.
     static let pictureInset: CGFloat = 8
     /// Between a drawing or hero and the words under it.

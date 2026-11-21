@@ -32,10 +32,6 @@ struct AriaKeySpot: View {
         .task(id: PressCue(combo: combo, isStill: reduceMotion)) { await showPress() }
     }
 
-    private var name: String {
-        combo.map(key.gesture(for:)) ?? key.title
-    }
-
     private func keys(_ caps: [Cap], litMidX: CGFloat, bounds: CGRect) -> some View {
         ZStack {
             ForEach(caps) { cap in
@@ -48,6 +44,10 @@ struct AriaKeySpot: View {
                         y: unit * (cap.y + cap.height / 2 - bounds.midY))
             }
         }
+    }
+
+    private var name: String {
+        combo.map(key.gesture(for:)) ?? key.title
     }
 
     /// A still drawing doesn't show the gesture: the Aria key taps alone, or

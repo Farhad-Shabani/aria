@@ -36,6 +36,14 @@ struct SetupProgress {
     private var reached: Set<Stage> = []
     private var last: Stage?
 
+    /// Where the walk stands, counted as Installer counts its steps. A
+    /// failure stays on the step that failed.
+    var caption: String {
+        if step == .done { return "Done" }
+        let stage = step.stage ?? last ?? .welcome
+        return "Step \(stage.rawValue + 1) of \(Stage.allCases.count)"
+    }
+
     /// Inspecting begins every walk, so it clears what an earlier walk reached.
     mutating func record(_ step: SetupState.Step) {
         if step == .inspecting { self = SetupProgress() }
@@ -54,14 +62,6 @@ struct SetupProgress {
         default:
             return stage == step.stage ? .current : passed(stage, before: step.stage)
         }
-    }
-
-    /// Where the walk stands, counted as Installer counts its steps. A
-    /// failure stays on the step that failed.
-    var caption: String {
-        if step == .done { return "Done" }
-        let stage = step.stage ?? last ?? .welcome
-        return "Step \(stage.rawValue + 1) of \(Stage.allCases.count)"
     }
 
     private func passed(_ stage: Stage, before mark: Stage?) -> Status {

@@ -4,6 +4,8 @@ import SwiftUI
 /// other apps, with the pointer on its switch, so the person knows what to
 /// look for there.
 struct AccessPicture: View {
+    private typealias Neighbor = (nameWidth: CGFloat, opacity: Double)
+
     private static let width: CGFloat = 380
     private static let windowRadius: CGFloat = 12
     private static let boxRadius: CGFloat = 8
@@ -24,8 +26,6 @@ struct AccessPicture: View {
     /// The list goes on past the drawing, fading as it goes.
     private static let before: [Neighbor] = [(nameWidth: 0.42, opacity: 0.55)]
     private static let after: [Neighbor] = [(nameWidth: 0.3, opacity: 0.4), (nameWidth: 0.5, opacity: 0.2)]
-
-    private typealias Neighbor = (nameWidth: CGFloat, opacity: Double)
 
     let pane: String
     @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 34

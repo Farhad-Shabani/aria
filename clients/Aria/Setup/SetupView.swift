@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct SetupView: View {
+    /// The rail's steps are one word each, so it needs less room than Settings' sidebar.
+    private static let railWidth: CGFloat = 170
     /// Where the grouped form draws its boxes, so the buttons line up with them.
     private static let boxInset: CGFloat = 20
     /// Where the form's rows and section headers start, so the title lines up with them.
@@ -15,7 +17,7 @@ struct SetupView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        SidebarWindow(sidebarWidth: SetupMetrics.railWidth) {
+        SidebarWindow(sidebarWidth: Self.railWidth) {
             SetupRail(progress: state.progress, installFraction: installFraction)
         } detail: {
             detail
@@ -85,7 +87,7 @@ struct SetupView: View {
     }
 
     private var installFraction: Double? {
-        state.applying == .models && state.step == .applying ? state.downloadTransfer?.fraction : nil
+        state.step == .applying && state.applying == .models ? state.downloadTransfer?.fraction : nil
     }
 
     /// The daemon's default until it answers.
