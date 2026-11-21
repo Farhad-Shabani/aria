@@ -20,8 +20,6 @@ final class SetupStateTests: XCTestCase {
         var speakers = [EnrolledSpeaker]()
         var enrolledNames = [String]()
         var enrollError: Error?
-        var spoken = [String]()
-        var speakError: Error?
         var launchAtLogin = 0
         var installedCommandLineTool = 0
         var commandLineToolProblem: String?
@@ -44,10 +42,6 @@ final class SetupStateTests: XCTestCase {
                 enroll: { name in
                     self.enrolledNames.append(name)
                     if let error = self.enrollError { throw error }
-                },
-                speak: {
-                    self.spoken.append($0)
-                    if let error = self.speakError { throw error }
                 },
                 launchAtLogin: {
                     self.launchAtLogin += 1
@@ -278,7 +272,6 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(harness.launchAtLogin, 0, "login starts only once setup finishes")
         state.dictationEvent(Self.delivered(words: 2))
         await waitUntil { state.step == .done }
-        XCTAssertEqual(harness.spoken, [SetupState.spokenReply])
         XCTAssertEqual(harness.launchAtLogin, 1)
         XCTAssertEqual(harness.installedCommandLineTool, 1)
         XCTAssertEqual(state.notice, "The aria command was not installed.", "the Done page says what did not land")
@@ -561,39 +554,36 @@ final class SetupStateTests: XCTestCase {
         return event
     }
 
-    private func walkToTryOut(_ harness: Harness) async -> SetupState {
-        let state = await walkToVoice(harness)
-        state.next()
-        XCTAssertEqual(state.step, .tryOut)
-        return state
-    }
-
     func testOnlyAnAriaKeyDictationThatTypedWordsFinishesTryIt() async {
         let harness = Harness()
         let state = await walkToVoice(harness)
         state.dictationEvent(Self.delivered(words: 2))
+        XCTAssertEqual(state.step, .voice, "a dictation before Try It is no try")
         state.next()
 
         state.dictationEvent(Self.delivered(words: 0))
         state.dictationEvent(Self.delivered(words: 2, outcome: .copied))
-        await Task.yield()
-        XCTAssertEqual(state.step, .tryOut)
-        XCTAssertEqual(harness.spoken, [], "a dictation before Try It, or one that typed nothing, is no try")
+        XCTAssertEqual(state.step, .tryOut, "a dictation that typed nothing is no try")
 
         state.dictationEvent(Self.delivered(words: 2))
-        await waitUntil { state.step == .done }
-        XCTAssertEqual(harness.spoken, [SetupState.spokenReply])
+        XCTAssertEqual(state.step, .done)
     }
 
-    func testAFailedReplyStaysOnTryItWithTheNotice() async {
+    func testASecondWalkStartsWithoutTheFirstOnesResults() async {
         let harness = Harness()
-        harness.speakError = Refused()
-        let state = await walkToTryOut(harness)
-
+        let state = await walkToVoice(harness)
+        state.voiceName = "Ada"
+        state.recordVoice()
+        await waitUntil { state.step == .tryOut }
+        state.typed = "hello there"
         state.dictationEvent(Self.delivered(words: 2))
-        await waitUntil { state.notice != nil }
+        XCTAssertEqual(state.step, .done)
 
-        XCTAssertEqual(state.notice, SetupState.speakFailure)
-        XCTAssertEqual(state.step, .tryOut)
+        state.start()
+
+        XCTAssertEqual(state.typed, "")
+        XCTAssertNil(state.enrolled)
+        XCTAssertEqual(state.voiceName, "")
+        XCTAssertNil(state.summary)
     }
 }

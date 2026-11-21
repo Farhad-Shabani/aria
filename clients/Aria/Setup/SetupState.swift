@@ -20,7 +20,6 @@ final class SetupState: ObservableObject {
         var openPrivacySettings: (AriaKeyState) -> Void
         var speakers: () async throws -> [EnrolledSpeaker]
         var enroll: (String) async throws -> Void
-        var speak: (String) async throws -> Void
         /// Returns what to tell the user when launch at login could not be enabled.
         var launchAtLogin: () -> String?
         /// Asks for an administrator's password. Returns what to tell the
@@ -53,7 +52,6 @@ final class SetupState: ObservableObject {
         let progress: Progress
     }
 
-    static let spokenReply = "Aria is ready."
     private static let installSteps: [(step: Aria_Setup_V1_Step, title: String)] = [
         (.settings, "Settings"), (.models, "Models"), (.service, "Background service"),
     ]
@@ -62,6 +60,7 @@ final class SetupState: ObservableObject {
         didSet {
             isMovingForward = step.order >= oldValue.order
             progress.record(step)
+            if step == .inspecting { forgetLastWalk() }
         }
     }
     @Published private(set) var progress = SetupProgress()
@@ -273,6 +272,15 @@ final class SetupState: ObservableObject {
         grantTask?.cancel()
     }
 
+    /// Inspecting begins every walk, so nothing an earlier walk did carries over.
+    private func forgetLastWalk() {
+        summary = nil
+        voiceName = ""
+        enrolled = nil
+        typed = ""
+        notice = nil
+    }
+
     func express() {
         guard step == .welcome, blockedBy == nil else { return }
         downloads = defaultDownloads
@@ -361,20 +369,9 @@ final class SetupState: ObservableObject {
 
     /// Try It ends once an Aria key dictation typed words, here or anywhere.
     func dictationEvent(_ event: Aria_Daemon_V1_DictationEvent) {
-        guard step == .tryOut, !isBusy, event.stage == .delivered, event.outcome == .inserted,
-            event.wordCount > 0
+        guard step == .tryOut, event.stage == .delivered, event.outcome == .inserted, event.wordCount > 0
         else { return }
-        isBusy = true
-        notice = nil
-        Task {
-            defer { isBusy = false }
-            do {
-                try await effects.speak(Self.spokenReply)
-                finish()
-            } catch {
-                notice = Self.notice(for: error, during: "try-out reply", otherwise: Self.speakFailure)
-            }
-        }
+        finish()
     }
 
     private func inspectNow() async {
@@ -469,7 +466,6 @@ final class SetupState: ObservableObject {
     static let inspectFailure = "Aria couldn’t check your Mac. Try again, or run `aria doctor` in Terminal to see why."
     static let applyFailure = "Setup couldn’t finish. Try again, or run `aria doctor` in Terminal to see why."
     static let missingBinary = "Aria’s installation is incomplete. Reinstall Aria, then try again."
-    static let speakFailure = "Aria couldn’t read the reply aloud. Try again."
     static let unknownFailure = "Something went wrong. Try again."
 
     /// Speaker errors carry text written for the user. Any other
