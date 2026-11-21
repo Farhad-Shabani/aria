@@ -55,7 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings.request()
         },
         openSetup: { [weak self] in self?.setup.request() },
-        delivered: { [weak status] outcome in status?.noteDelivery(outcome) })
+        delivered: { [weak status] outcome in status?.noteDelivery(outcome) },
+        opened: { [weak self] in self?.setupState.paletteOpened() })
     lazy var settingsHealth = SettingsHealth(
         effects: .live(reloadSettings: { [weak self] in await self?.daemonSettings?.sync() }))
 

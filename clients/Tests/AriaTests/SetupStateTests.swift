@@ -208,12 +208,12 @@ final class SetupStateTests: XCTestCase {
 
     func testStagesAndOrderFollowTheSteps() {
         let walk: [SetupState.Step] = [
-            .inspecting, .welcome, .choices, .applying, .grant, .voice, .tryOut, .done, .failed("x"),
+            .inspecting, .welcome, .choices, .applying, .grant, .voice, .tryOut, .openAria, .done, .failed("x"),
         ]
-        XCTAssertEqual(walk.map(\.order), [0, 0, 1, 2, 3, 4, 5, 6, 7], "inspecting and welcome share a page")
+        XCTAssertEqual(walk.map(\.order), [0, 0, 1, 2, 3, 4, 5, 6, 7, 8], "inspecting and welcome share a page")
         XCTAssertEqual(
             walk.map(\.stage),
-            [.welcome, .welcome, .engines, .install, .hotkey, .voice, .tryOut, nil, nil]
+            [.welcome, .welcome, .engines, .install, .hotkey, .voice, .tryOut, .openAria, nil, nil]
         )
         XCTAssertNil(SetupState.Step.failed("x").caption)
         XCTAssertEqual(SetupState.Step.welcome.title, "Welcome to Aria")
@@ -269,9 +269,11 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(harness.enrolledNames, ["Ada"])
         XCTAssertEqual(state.enrolled, "Voice saved for Ada.")
 
-        XCTAssertEqual(harness.launchAtLogin, 0, "login starts only once setup finishes")
         state.dictationEvent(Self.delivered(words: 2))
-        await waitUntil { state.step == .done }
+        XCTAssertEqual(state.step, .openAria)
+        XCTAssertEqual(harness.launchAtLogin, 0, "login starts only once setup finishes")
+        state.paletteOpened()
+        XCTAssertEqual(state.step, .done)
         XCTAssertEqual(harness.launchAtLogin, 1)
         XCTAssertEqual(harness.installedCommandLineTool, 1)
         XCTAssertEqual(state.notice, "The aria command was not installed.", "the Done page says what did not land")
@@ -566,7 +568,23 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.step, .tryOut, "a dictation that typed nothing is no try")
 
         state.dictationEvent(Self.delivered(words: 2))
+        XCTAssertEqual(state.step, .openAria)
+    }
+
+    func testOnlyOpeningAriaDuringItsStepFinishesSetup() async {
+        let harness = Harness()
+        let state = await walkToVoice(harness)
+        state.paletteOpened()
+        XCTAssertEqual(state.step, .voice, "opening Aria before its step is no try")
+        state.next()
+        state.paletteOpened()
+        XCTAssertEqual(state.step, .tryOut)
+
+        state.next()
+        XCTAssertEqual(state.step, .openAria, "skipping Try It still teaches Open Aria")
+        state.paletteOpened()
         XCTAssertEqual(state.step, .done)
+        XCTAssertEqual(harness.launchAtLogin, 1)
     }
 
     func testASecondWalkStartsWithoutTheFirstOnesResults() async {
@@ -577,6 +595,7 @@ final class SetupStateTests: XCTestCase {
         await waitUntil { state.step == .tryOut }
         state.typed = "hello there"
         state.dictationEvent(Self.delivered(words: 2))
+        state.next()
         XCTAssertEqual(state.step, .done)
 
         state.start()

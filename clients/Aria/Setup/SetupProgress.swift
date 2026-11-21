@@ -7,6 +7,7 @@ struct SetupProgress {
         case hotkey
         case voice
         case tryOut
+        case openAria
 
         var title: String {
             switch self {
@@ -16,6 +17,7 @@ struct SetupProgress {
             case .hotkey: "Permission"
             case .voice: "Your Voice"
             case .tryOut: "Try It"
+            case .openAria: "Open Aria"
             }
         }
     }

@@ -70,6 +70,7 @@ struct SetupView: View {
         case .grant: GrantPage(ariaKey: state.ariaKeyState)
         case .voice: VoicePage(state: state)
         case .tryOut: TryOutPage(state: state, ariaKey: ariaKey)
+        case .openAria: OpenAriaPage(state: state, ariaKey: ariaKey, shortcut: openAriaShortcut)
         case .done: DonePage(state: state, ariaKey: ariaKey, askCombo: askCombo)
         case .failed(let message): FailedPage(message: message)
         }
@@ -84,6 +85,12 @@ struct SetupView: View {
         guard let hotkey = settings.snapshot?.askShortcut else { return .shift }
         if case .combo(let combo) = hotkey.storedBinding { return combo }
         return nil
+    }
+
+    /// The daemon's default until it answers; nil when the shortcut is off.
+    private var openAriaShortcut: ShortcutBinding? {
+        guard let snapshot = settings.snapshot else { return .combo(.command) }
+        return snapshot.promptListShortcut.storedBinding
     }
 
     private var footer: some View {
@@ -127,7 +134,9 @@ struct SetupView: View {
                 .primaryAction()
                 .disabled(state.isBusy || state.voiceName.trimmingCharacters(in: .whitespaces).isEmpty)
         case .tryOut:
-            Button(state.typed.isEmpty ? "Skip" : "Finish") { state.next() }.disabled(state.isBusy)
+            Button(state.typed.isEmpty ? "Skip" : "Continue") { state.next() }.disabled(state.isBusy)
+        case .openAria:
+            Button("Skip") { state.next() }
         case .done:
             Button("Close") { dismiss() }
                 .primaryAction()

@@ -23,14 +23,8 @@ struct TryOutPage: View {
                     .labelsHidden()
                     .lineLimit(3...)
                     .focused($isFieldFocused)
-                } else if state.ariaKeyState == .refused {
-                    Text(markdown: "macOS didn’t let Aria hear the Aria key. Run `aria doctor` in Terminal to see why.")
-                        .foregroundStyle(.secondary)
                 } else {
-                    Text(
-                        "To use the Aria key, turn on Aria in System Settings > Privacy & Security > \(state.ariaKeyState.privacyPane)."
-                    )
-                    .foregroundStyle(.secondary)
+                    AriaKeyAccessNote(state: state.ariaKeyState)
                 }
             } footer: {
                 if let enrolled = state.enrolled {

@@ -36,6 +36,7 @@ final class SetupState: ObservableObject {
         case grant
         case voice
         case tryOut
+        case openAria
         case done
         case failed(String)
     }
@@ -301,6 +302,8 @@ final class SetupState: ObservableObject {
         case .voice:
             step = .tryOut
         case .tryOut:
+            step = .openAria
+        case .openAria:
             finish()
         default:
             break
@@ -371,6 +374,12 @@ final class SetupState: ObservableObject {
     func dictationEvent(_ event: Aria_Daemon_V1_DictationEvent) {
         guard step == .tryOut, event.stage == .delivered, event.outcome == .inserted, event.wordCount > 0
         else { return }
+        step = .openAria
+    }
+
+    /// Open Aria ends once its shortcut opened Aria.
+    func paletteOpened() {
+        guard step == .openAria else { return }
         finish()
     }
 
@@ -518,6 +527,7 @@ extension SetupState.Step {
         case .grant: .hotkey
         case .voice: .voice
         case .tryOut: .tryOut
+        case .openAria: .openAria
         case .done, .failed: nil
         }
     }
@@ -538,6 +548,7 @@ extension SetupState.Step {
         case .grant: "Allow Access"
         case .voice: "Your Voice"
         case .tryOut: "Try It"
+        case .openAria: "Open Aria"
         case .done: "Aria Is Ready"
         case .failed: "Setup Didn’t Finish"
         }
@@ -551,6 +562,7 @@ extension SetupState.Step {
         case .grant: "Aria uses it to hear the Aria key and type what you say."
         case .voice: "Aria can tell who is speaking once it knows your voice."
         case .tryOut: "Tap the Aria key and say a few words."
+        case .openAria: "Use this shortcut to open Aria from any app."
         case .done: "Aria runs in the background. Find it in the menu bar."
         case .failed: nil
         }

@@ -16,7 +16,7 @@ final class SetupProgressTests: XCTestCase {
         XCTAssertEqual(progress.status(of: .engines), .skipped)
         XCTAssertEqual(progress.status(of: .install), .current)
         XCTAssertEqual(progress.status(of: .hotkey), .upcoming)
-        XCTAssertEqual(progress.fraction, 2.0 / 6.0)
+        XCTAssertEqual(progress.fraction, 2.0 / 7.0)
     }
 
     func testGoingBackLeavesLaterStagesUpcoming() {
@@ -32,7 +32,7 @@ final class SetupProgressTests: XCTestCase {
         XCTAssertEqual(progress.status(of: .engines), .done)
         XCTAssertEqual(progress.status(of: .install), .failed)
         XCTAssertEqual(progress.status(of: .hotkey), .upcoming)
-        XCTAssertEqual(progress.fraction, 2.0 / 6.0)
+        XCTAssertEqual(progress.fraction, 2.0 / 7.0)
     }
 
     func testFinishingMarksStagesNeverReachedAsSkipped() {
