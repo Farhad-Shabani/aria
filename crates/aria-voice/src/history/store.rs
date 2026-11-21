@@ -25,6 +25,7 @@ use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{ChatKey, ChatName, MAX_PROMPT_NAME_BYTES, Quote};
 
+pub const DIRECTORY: &str = ".aria/history";
 pub const DB_FILE: &str = "history.db";
 const MAX_ERROR_MESSAGE_BYTES: usize = 256;
 const MAX_STORED_ERROR_BYTES: usize = 2 * 1024;

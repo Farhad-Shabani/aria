@@ -3,7 +3,7 @@
 use crate::daemon::config::{DaemonConfig, HotkeyConfig, RelayConfig, WakeWordOverride};
 use aria_kit::audio::{WakeWordMonitor, remove_all_spools};
 use aria_platform::runtime::PreparedRuntimePaths;
-use aria_platform::sqlite::{AtRest, AtRestError};
+use aria_platform::sqlite::AtRest;
 use aria_primitives::error_chain;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_settings::config::{ConfigError, memory_directory};
@@ -41,7 +41,8 @@ use super::speaker;
 use super::speaker::SpeakerRuntime;
 use super::speech;
 use super::speech::SpeechRuntime;
-use super::storage::HISTORY_DIRECTORY;
+#[cfg(not(test))]
+use super::storage::load_storage_key;
 use super::subscriptions::Subscriptions;
 use super::system_transcription::SystemTranscriptionState;
 use super::tasks::RuntimeTasks;
@@ -148,7 +149,7 @@ fn compose(
     let memory = memory_directory(&startup.memory, &context.home);
     let at_rest = storage_key(&context.home, &memory);
     let history_store = Arc::new(HistoryStore::open(
-        &context.home.join(HISTORY_DIRECTORY),
+        &context.home.join(aria_voice::history::DIRECTORY),
         context.paths.spool_dir(),
         at_rest.as_deref(),
     ));
@@ -350,7 +351,6 @@ struct Dependencies<'a> {
     at_rest: &'a Option<Arc<AtRest>>,
 }
 
-/// A unit-test daemon must never touch the developer's Keychain.
 fn storage_key(home: &Path, memory: &Path) -> Option<Arc<AtRest>> {
     match load_storage_key(home, memory) {
         Ok(at_rest) => Some(Arc::new(at_rest)),
@@ -364,14 +364,12 @@ fn storage_key(home: &Path, memory: &Path) -> Option<Arc<AtRest>> {
     }
 }
 
-#[cfg(not(test))]
-fn load_storage_key(home: &Path, memory: &Path) -> Result<AtRest, AtRestError> {
-    super::storage::load_storage_key(home, memory)
-}
-
-/// Tests never touch the Keychain.
+/// A unit-test daemon must never touch the developer's Keychain.
 #[cfg(test)]
-fn load_storage_key(_home: &Path, _memory: &Path) -> Result<AtRest, AtRestError> {
+fn load_storage_key(
+    _home: &Path,
+    _memory: &Path,
+) -> Result<AtRest, aria_platform::sqlite::AtRestError> {
     Ok(AtRest::for_tests())
 }
 

@@ -188,14 +188,12 @@ fn consolidate() -> anyhow::Result<()> {
     let settings = aria_settings::load(&home)?;
     let config = aria_daemon::config::load_memory(&settings.memory, &home);
     let terms = Dictionary::from_home(&home).words()?.unwrap_or_default();
+    let at_rest = aria_daemon::load_storage_key(&home, &config.dir)?;
     let report = aria_assistant::memory::run_backlog(
         config,
         &terms,
         &home,
-        &aria_daemon::load_storage_key(
-            &home,
-            &aria_settings::config::memory_directory(&settings.memory, &home),
-        )?,
+        &at_rest,
         &aria_kit::cancel::CancelToken::never(),
     )?;
     let results = report.results;
