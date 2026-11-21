@@ -30,4 +30,16 @@ pub enum SystemTranscriptionStage {
 
 pub type SystemTranscriptionEventEmitter = EventEmitter<SystemTranscriptionStage>;
 
+/// How loud the Mac's audio is right now, from silent to pinned. About 20
+/// a second while a session runs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SystemAudioLevel {
+    /// 0 at the noise floor, 1 at loud audio.
+    pub level: f32,
+}
+
+/// A level that arrives late is worth less than none, so whoever wires this
+/// drops levels a full queue can't take.
+pub type SystemAudioLevelEmitter = EventEmitter<SystemAudioLevel>;
+
 pub const EVENT_THREAD: &str = "aria-transcribe-events";

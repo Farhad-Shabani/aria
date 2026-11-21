@@ -14,7 +14,8 @@ import "aria/daemon/v1/transcription.proto";
 service EventsService {
   // Live events only, with no replay. Subscribe before starting an operation
   // whose result arrives here. At most 64 subscribers, each with a 16-event
-  // queue. A full queue drops microphone levels; other events close the stream.
+  // queue. A full queue drops microphone and system audio levels; other events
+  // close the stream.
   rpc Subscribe(SubscribeRequest) returns (stream Event);
 }
 
@@ -35,6 +36,7 @@ message Event {
     // Whenever the status changes: a change of values from a reload or a
     // write, a restart key, a revert, or a fault.
     SettingsStatus settings = 10;
+    SystemAudioLevel system_audio_level = 11;
   }
 }
 

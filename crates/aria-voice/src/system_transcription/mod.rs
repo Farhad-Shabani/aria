@@ -9,6 +9,7 @@ mod track;
 
 pub use event::SystemTranscriptionStage;
 pub use event::{EVENT_THREAD, SystemTranscriptionEventEmitter};
+pub use event::{SystemAudioLevel, SystemAudioLevelEmitter};
 pub use session::run_session;
 pub use sink::TranscriptFile;
 pub use sink::{GAP_BREAK, stamp};

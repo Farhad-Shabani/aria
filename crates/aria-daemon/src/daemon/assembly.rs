@@ -286,6 +286,7 @@ fn compose(
             Arc::clone(&cache),
             Arc::clone(&settings),
             system_transcription_event_emitter(Arc::clone(&subscriptions)),
+            system_audio_level_emitter(Arc::clone(&subscriptions)),
             Arc::clone(&vocabulary),
             Arc::clone(&history_store),
         ))),
@@ -397,6 +398,16 @@ fn system_transcription_event_emitter(
             subscriptions.broadcast(stage);
         },
     )
+}
+
+/// Levels skip the event thread and drop on a full queue, as dictation's do:
+/// a late level is worth less than none.
+fn system_audio_level_emitter(
+    subscriptions: Arc<Subscriptions>,
+) -> aria_voice::system_transcription::SystemAudioLevelEmitter {
+    aria_voice::system_transcription::SystemAudioLevelEmitter::forwarded_by(move |level| {
+        subscriptions.broadcast_lossy(level);
+    })
 }
 
 fn build_workers(

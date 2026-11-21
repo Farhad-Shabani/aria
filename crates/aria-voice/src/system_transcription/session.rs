@@ -19,8 +19,12 @@ use crate::stt::{Language, Recognizer, Stream, Streaming, Transcription, Transcr
 use crate::vocabulary::Vocabulary;
 use aria_kit::audio::RecordingReader;
 
-use super::event::{SystemTranscriptionEventEmitter, SystemTranscriptionStage};
+use super::event::{
+    SystemAudioLevel, SystemAudioLevelEmitter, SystemTranscriptionEventEmitter,
+    SystemTranscriptionStage,
+};
 use super::{SystemAudioCapture, SystemTranscriptionError, TranscriptFile};
+use crate::level::Meter;
 
 use crate::dictation::Utterance;
 use crate::speaker::{self, Diarizer, Label, VoiceTrack, VoiceprintTracker};
@@ -40,13 +44,18 @@ pub fn run_session(
     speaker_config: &SpeakerConfig,
     vocabulary: &Vocabulary,
     events: &SystemTranscriptionEventEmitter,
+    levels: &SystemAudioLevelEmitter,
     capture: SystemAudioCapture,
     recording: RecordingReader,
     sink: TranscriptFile,
     cancel: &CancelToken,
 ) -> Result<(), SystemTranscriptionError> {
     events.emit(SystemTranscriptionStage::Started);
-    let session = Session { vocabulary, events };
+    let session = Session {
+        vocabulary,
+        events,
+        levels,
+    };
     session.run(
         &config.engine,
         cancel,
@@ -60,6 +69,7 @@ pub fn run_session(
 struct Session<'a> {
     vocabulary: &'a Vocabulary,
     events: &'a SystemTranscriptionEventEmitter,
+    levels: &'a SystemAudioLevelEmitter,
 }
 
 /// The models that system transcription tells speech and voices apart with: VAD, the diarizer
@@ -121,6 +131,7 @@ impl Session<'_> {
         // Forked before the model loads, because loading is seconds of audio the
         // track would otherwise never hear.
         let track_audio = recording.fork();
+        let meter = self.meter(&recording, cancel);
         let result = match load(transcription, cancel) {
             Ok((stream, engine)) => self.transcribe_all(
                 recording,
@@ -134,7 +145,23 @@ impl Session<'_> {
             Err(error) => Err(SystemTranscriptionError::Transcription(error)),
         };
         capture.stopper().stop();
-        result.and(capture.finish())
+        let finished = capture.finish();
+        // After capture ends, which is what ends the meter's wait.
+        drop(meter);
+        result.and(finished)
+    }
+
+    /// Levels for the palette from a fork of their own, so they flow while the
+    /// model loads and never wait on transcription.
+    fn meter(&self, recording: &RecordingReader, cancel: &CancelToken) -> Meter {
+        let cancel = cancel.clone();
+        let levels = self.levels.clone();
+        Meter::watching(
+            recording,
+            "aria-system-audio-level",
+            move || cancel.is_cancelled(),
+            move |level| levels.emit(SystemAudioLevel { level }),
+        )
     }
 
     fn transcribe_all<T, V>(
@@ -400,9 +427,11 @@ mod tests {
         };
         let vocabulary = Vocabulary::default();
         let events = SystemTranscriptionEventEmitter::unsubscribed();
+        let levels = SystemAudioLevelEmitter::unsubscribed();
         let session = Session {
             vocabulary: &vocabulary,
             events: &events,
+            levels: &levels,
         };
         let parakeet = SystemTranscriptionEngine::new(SttConfig::Parakeet {
             model_directory: directory.path().to_path_buf(),
@@ -466,6 +495,7 @@ mod tests {
         let session = Session {
             vocabulary,
             events: &SystemTranscriptionEventEmitter::unsubscribed(),
+            levels: &SystemAudioLevelEmitter::unsubscribed(),
         };
         let listening = Listening {
             vad,

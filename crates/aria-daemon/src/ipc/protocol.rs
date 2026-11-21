@@ -40,8 +40,8 @@ use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use aria_voice::stt::LanguageCodeError;
 use aria_voice::system_transcription::{
-    SystemTranscriptionSnapshot, SystemTranscriptionStage, SystemTranscriptionStarted,
-    SystemTranscriptionStopped,
+    SystemAudioLevel, SystemTranscriptionSnapshot, SystemTranscriptionStage,
+    SystemTranscriptionStarted, SystemTranscriptionStopped,
 };
 use prost::Message;
 use std::collections::BTreeMap;
@@ -1462,6 +1462,16 @@ impl TryFrom<wire::StartSystemTranscriptionRequest> for Option<std::path::PathBu
                 Ok(output)
             })
             .transpose()
+    }
+}
+
+impl From<SystemAudioLevel> for wire::Event {
+    fn from(level: SystemAudioLevel) -> Self {
+        Self {
+            payload: Some(wire::event::Payload::SystemAudioLevel(
+                wire::SystemAudioLevel { level: level.level },
+            )),
+        }
     }
 }
 
@@ -5149,6 +5159,18 @@ mod tests {
             <(u64, SettingsPatch)>::try_from(wire::UpdateSettingsRequest::from((3, patch.clone())))
                 .unwrap(),
             (3, patch)
+        );
+    }
+
+    #[test]
+    fn a_system_audio_level_travels_as_its_own_payload() {
+        let sent = wire::Event::from(SystemAudioLevel { level: 0.25 });
+
+        assert_eq!(
+            sent.payload,
+            Some(wire::event::Payload::SystemAudioLevel(
+                wire::SystemAudioLevel { level: 0.25 }
+            ))
         );
     }
 
