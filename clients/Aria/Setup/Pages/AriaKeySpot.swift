@@ -203,6 +203,8 @@ private struct Cap: Identifiable {
 }
 
 private struct KeyCap: View {
+    private static let litStroke: CGFloat = 1.5
+
     let cap: Cap
     let isLit: Bool
     let isDown: Bool
@@ -223,7 +225,7 @@ private struct KeyCap: View {
                 }
             }
             .overlay {
-                if isLit { shape.strokeBorder(.tint, lineWidth: SetupMetrics.highlightStroke) }
+                if isLit { shape.strokeBorder(.tint, lineWidth: Self.litStroke) }
             }
             .scaleEffect(isDown ? Press.heldScale : 1)
     }

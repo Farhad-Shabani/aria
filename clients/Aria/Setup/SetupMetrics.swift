@@ -10,7 +10,6 @@ enum SetupMetrics {
     static let footerSpacing: CGFloat = 4
     /// How strongly a drawing's picked-out part takes the tint.
     static let highlightOpacity = 0.15
-    static let highlightStroke: CGFloat = 1.5
 }
 
 extension View {

@@ -26,7 +26,6 @@ final class SetupState: ObservableObject {
         /// user when the command did not land.
         var installCommandLineTool: () -> String?
         var waitForGrant: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
-        var now: () -> Date = Date.init
     }
 
     enum Step: Hashable {
@@ -83,7 +82,6 @@ final class SetupState: ObservableObject {
     /// What the running install fetches, so its bar counts models not started yet.
     private var fetching: [Aria_Setup_V1_Model] = []
     private var downloadPace = DownloadPace()
-    @Published private(set) var downloadTimeLeft: String?
     private var summary: Aria_Setup_V1_Summary?
     @Published var voiceName = ""
     /// Nil until the daemon starts recording the voice.
@@ -273,6 +271,11 @@ final class SetupState: ObservableObject {
         step == .applying && applying == .models ? downloadTransfer : nil
     }
 
+    /// Nil until the pace is known, and once the models are in.
+    var downloadTimeLeft: String? {
+        runningDownload.flatMap { downloadPace.timeLeft(of: $0.total) }
+    }
+
     /// Every model the install fetches. A model not started yet counts at
     /// the size setup lists for it.
     private var downloadTransfer: ModelTransfer? {
@@ -436,7 +439,6 @@ final class SetupState: ObservableObject {
         downloadProgress = [:]
         fetching = Self.plan(inspection, selections).filter { downloads.contains($0.id) }
         downloadPace = DownloadPace()
-        downloadTimeLeft = nil
         var request = Aria_Setup_V1_ApplyRequest()
         request.selections = selections
         request.downloads = fetching.map(\.id)
@@ -468,8 +470,7 @@ final class SetupState: ObservableObject {
         case .download(let download):
             downloadProgress[download.modelID] = download
             guard let transfer = downloadTransfer else { return }
-            downloadPace.record(transfer.received, at: effects.now())
-            downloadTimeLeft = downloadPace.timeLeft(of: transfer.total)
+            downloadPace.record(transfer.received, at: Date())
         case nil: break
         }
     }
