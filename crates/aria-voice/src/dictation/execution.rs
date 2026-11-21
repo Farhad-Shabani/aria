@@ -1898,6 +1898,8 @@ mod tests {
         assert!(control.return_dropped());
     }
 
+    // The invariant is a `debug_assert!`, so release builds never panic.
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "a Return was dropped while typing still held it")]
     fn a_submitted_return_is_never_dropped_while_typing_holds_return() {
