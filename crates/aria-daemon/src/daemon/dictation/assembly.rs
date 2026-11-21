@@ -232,6 +232,7 @@ fn load_engine(
 /// its pipeline.
 struct SelectedEngine {
     name: &'static str,
+    input: AudioInputKind,
     preload: Option<Preload>,
     build: Box<dyn FnOnce(ExecutionParts) -> RuntimeExecutor>,
 }
@@ -239,11 +240,13 @@ struct SelectedEngine {
 impl SelectedEngine {
     fn new<T: Recognizer, M: Mode>(
         name: &'static str,
+        input: AudioInputKind,
         transcription: Transcription<T, M>,
         preload: Option<Preload>,
     ) -> Self {
         Self {
             name,
+            input,
             preload,
             build: Box::new(move |parts: ExecutionParts| parts.finish(name, transcription)),
         }
@@ -270,6 +273,7 @@ fn select_remote(
     let remote = RemoteRecognizer::open_matching(home, pairing)?;
     Ok(SelectedEngine::new(
         aria_settings::config::backend::SERVER,
+        SERVER_INPUT,
         Transcription::<_, Streaming>::delegated(remote),
         None,
     ))
@@ -286,10 +290,12 @@ fn select_local(
     let model = loading.load(engine)?;
     let preload = model.preload();
     Ok(match stream {
-        Some(stream) => SelectedEngine::new(name, Transcription::stream(stream, model), preload),
+        Some(stream) => {
+            SelectedEngine::new(name, input, Transcription::stream(stream, model), preload)
+        }
         // A whole-mode engine reads the finished recording, so its input
         // kind decides whether the pipeline hands it samples or a WAV file.
-        None => SelectedEngine::new(name, Transcription::complete(input, model), preload),
+        None => SelectedEngine::new(name, input, Transcription::complete(input, model), preload),
     })
 }
 
@@ -340,6 +346,9 @@ impl ExecutionParts {
 pub(super) struct DictationEngine {
     pub(super) name: &'static str,
     pub(super) backend: SttBackend,
+    /// How the engine reads a finished recording, so a retry hands kept
+    /// audio to the disk only for one that reads files.
+    pub(super) input: AudioInputKind,
     executor: RuntimeExecutor,
     preload: Option<Preload>,
 }
@@ -394,6 +403,7 @@ impl DictationEngine {
     ) -> Self {
         Self {
             name,
+            input: backend_input(&backend),
             backend,
             executor,
             preload: None,
@@ -461,6 +471,7 @@ impl DictationEngine {
         Self {
             name: backend.backend_name(),
             backend: backend.clone(),
+            input: backend_input(&backend),
             executor: Box::new(Unusable {
                 backend,
                 build,
@@ -566,6 +577,7 @@ impl EngineParts {
         Ok(DictationEngine {
             name: selected.name,
             backend: backend.clone(),
+            input: selected.input,
             executor: (selected.build)(parts),
             preload: selected.preload,
         })
@@ -648,6 +660,7 @@ pub(super) fn build_dictation(
     let slot = EngineSlot::new(DictationEngine {
         name: engine.name,
         backend,
+        input: engine.input,
         executor: (engine.build)(ExecutionParts {
             capture: Arc::clone(&capture),
             delivery,
@@ -678,9 +691,39 @@ pub(super) enum RetryTarget<'a> {
     Server { engine: Option<&'a str> },
 }
 
-/// The input the engine `config` names reads.
-pub(super) fn engine_input(config: &SttConfig) -> Result<AudioInputKind, DictationError> {
-    Ok(EngineConfig::try_from(config.clone())?.input())
+/// The server takes samples: the client streams them, and the server spools
+/// for its own engines that read files.
+const SERVER_INPUT: AudioInputKind = AudioInputKind::Samples;
+
+/// The input of the engine `backend` names, for an engine not built yet. A
+/// local engine this build can't configure never transcribes, so its input
+/// never matters.
+fn backend_input(backend: &SttBackend) -> AudioInputKind {
+    match backend {
+        SttBackend::Server(_) => SERVER_INPUT,
+        SttBackend::Local(config) => EngineConfig::try_from(config.clone())
+            .map_or(AudioInputKind::Samples, |engine| engine.input()),
+    }
+}
+
+/// Runs `transcribe` on kept audio the way an engine reading `input` takes
+/// it. The audio stays in memory. Only an engine that reads files gets a
+/// spool copy, which goes when the run ends.
+pub(super) fn with_kept_audio<T, E: From<DictationError>>(
+    input: AudioInputKind,
+    spool_dir: &Path,
+    recording: &mut RecordingReader,
+    transcribe: impl FnOnce(&mut RecordingReader) -> Result<T, E>,
+) -> Result<T, E> {
+    match input {
+        AudioInputKind::Samples => transcribe(recording),
+        AudioInputKind::Wav => {
+            let spooled = recording
+                .fill()
+                .and_then(|()| RecordingReader::from_samples_in(spool_dir, recording.samples()));
+            transcribe(&mut spooled.map_err(DictationError::Capture)?)
+        }
+    }
 }
 
 pub(super) fn transcribe_retry(
@@ -688,12 +731,13 @@ pub(super) fn transcribe_retry(
     target: RetryTarget<'_>,
     recording: &mut RecordingReader,
     settings: &DictationSettings,
+    spool_dir: &Path,
     cancel: &CancelToken,
 ) -> Result<Transcribed, DictationError> {
     let config = &setup.dictation;
     let rewrites = Rewrites::load(config, &setup.home)
         .map_err(|error| DictationError::Transcription(error.into()))?;
-    let (transcription, engine) = retry_transcription(&setup.home, target, cancel)?;
+    let (transcription, engine, input) = retry_transcription(&setup.home, target, cancel)?;
     let snapshot = setup.vocabulary.snapshot(settings.project.as_ref());
     let (diarizer, segmenter) = if settings.own_voice_only {
         speaker::tracking_models(&setup.speaker)
@@ -704,15 +748,17 @@ pub(super) fn transcribe_retry(
         .hearing_speech(speaker::speech_gate())
         .tracking_voices(diarizer, segmenter)
         .rewriting(rewrites);
-    pipeline.transcribe(
-        recording,
-        &settings.stt_language,
-        settings.own_voice_only,
-        Some(snapshot.matcher.as_ref()),
-        settings.cleanup,
-        engine,
-        cancel,
-    )
+    with_kept_audio(input, spool_dir, recording, |recording| {
+        pipeline.transcribe(
+            recording,
+            &settings.stt_language,
+            settings.own_voice_only,
+            Some(snapshot.matcher.as_ref()),
+            settings.cleanup,
+            engine,
+            cancel,
+        )
+    })
 }
 
 /// A retry decodes the stored recording once, so every engine runs whole.
@@ -722,7 +768,7 @@ fn retry_transcription(
     home: &Path,
     target: RetryTarget<'_>,
     cancel: &CancelToken,
-) -> Result<(RetryTranscription, &'static str), TranscriptionError> {
+) -> Result<(RetryTranscription, &'static str, AudioInputKind), TranscriptionError> {
     match target {
         RetryTarget::Server { engine } => {
             let mut remote = RemoteRecognizer::open(home)?;
@@ -733,14 +779,17 @@ fn retry_transcription(
             Ok((
                 Transcription::delegated(remote),
                 aria_settings::config::backend::SERVER,
+                SERVER_INPUT,
             ))
         }
         RetryTarget::Local(config) => {
             let name = config.backend_name();
             let engine = EngineConfig::try_from(config)?;
+            let input = engine.input();
             Ok((
-                Transcription::complete(engine.input(), engine.load(cancel)?),
+                Transcription::complete(input, engine.load(cancel)?),
                 name,
+                input,
             ))
         }
     }
@@ -1107,6 +1156,7 @@ pub(in crate::daemon::dictation) mod tests {
             target,
             &mut recording,
             &settings,
+            home.path(),
             &CancelToken::never(),
         );
         assert!(matches!(

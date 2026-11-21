@@ -6,7 +6,7 @@ use super::super::subscriptions::Subscriptions;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::assembly::{
     BuiltDictation, DictationInitializationError, EngineSlot, ModelLoading, RetryTarget,
-    RuntimeExecutor, build_dictation, engine_input, transcribe_retry,
+    RuntimeExecutor, build_dictation, transcribe_retry, with_kept_audio,
 };
 use super::follower::EngineFollower;
 use crate::daemon::DaemonLifetime;
@@ -15,7 +15,6 @@ use crate::daemon::inference::pairing_id;
 use crate::daemon::relay::Showing;
 use aria_kit::audio::{RecordingReader, WakeWordMonitor};
 use aria_kit::cancel::{CancelToken, Deadline};
-use aria_kit::transcription::AudioInputKind;
 use aria_platform::delivery::DeliveryFactory;
 use aria_primitives::lazy::Lazy;
 use aria_settings::config::{ConfigError, backend};
@@ -34,7 +33,7 @@ use aria_voice::dictation::{
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
 use aria_voice::stt::Language;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
@@ -527,13 +526,10 @@ impl DictationRuntime {
                 || engine.name == backend::SERVER
                 || !names_an_engine(requested)
         }) {
-            let input = match &engine.backend {
-                SttBackend::Server(_) => AudioInputKind::Samples,
-                SttBackend::Local(config) => engine_input(config).map_err(transcription)?,
-            };
-            let mut spooled = spooled(input, &self.spool_dir, recording)?;
-            let transcribed = self
-                .transcribe(spooled.as_mut().unwrap_or(recording), settings, cancel)
+            let transcribed =
+                with_kept_audio(engine.input, &self.spool_dir, recording, |recording| {
+                    self.transcribe(recording, settings, cancel)
+                })
                 .map_err(transcription)?;
             if names_an_engine(requested) && transcribed.engine != requested {
                 return Err(HistoryError::transcription(
@@ -555,13 +551,8 @@ impl DictationRuntime {
             |engine| engine.backend.clone(),
         );
         let target = retry_target(&backend, &setup.home, requested)?;
-        let input = match &target {
-            RetryTarget::Server { .. } => AudioInputKind::Samples,
-            RetryTarget::Local(config) => engine_input(config).map_err(transcription)?,
-        };
-        let mut spooled = spooled(input, &self.spool_dir, recording)?;
-        let recording = spooled.as_mut().unwrap_or(recording);
-        transcribe_retry(setup, target, recording, settings, cancel).map_err(transcription)
+        transcribe_retry(setup, target, recording, settings, &self.spool_dir, cancel)
+            .map_err(transcription)
     }
 
     pub(in crate::daemon) fn execute(
@@ -656,25 +647,6 @@ fn retry_target<'a>(
             .for_backend(engine, home)
             .map(RetryTarget::Local)
             .map_err(|error| HistoryError::transcription(RpcErrorCode::TranscriptionFailed, error)),
-    }
-}
-
-/// Kept audio is decrypted into memory. Only an engine that reads files gets
-/// it as a plaintext spool file, which goes when the retry drops it. A server
-/// takes samples: the client streams them, and the server spools for its own.
-fn spooled(
-    input: AudioInputKind,
-    spool_dir: &Path,
-    recording: &mut RecordingReader,
-) -> Result<Option<RecordingReader>, HistoryError> {
-    match input {
-        AudioInputKind::Samples => Ok(None),
-        AudioInputKind::Wav => {
-            recording.fill().map_err(HistoryError::storage)?;
-            RecordingReader::from_samples_in(spool_dir, recording.samples())
-                .map(Some)
-                .map_err(HistoryError::storage)
-        }
     }
 }
 

@@ -568,7 +568,7 @@ mod tests {
         ));
         let mut lease = saved.storage().unwrap().begin_retry(found[0].id).unwrap();
         let audio = lease.recording.finished_audio().unwrap();
-        assert_ne!(audio.path(), Some(original.as_path()));
+        assert_eq!(audio.path(), None);
     }
 
     #[test]
