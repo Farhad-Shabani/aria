@@ -23,7 +23,7 @@ pub(super) struct HistoryStore {
 }
 
 impl HistoryStore {
-    /// History is unavailable without `at_rest`: the Keychain refused it.
+    /// History is unavailable without `at_rest`: the storage key didn't load.
     /// A retry's audio is decrypted into `spool_dir`.
     pub(super) fn open(directory: &Path, spool_dir: &Path, at_rest: Option<&AtRest>) -> Self {
         let opened = directory

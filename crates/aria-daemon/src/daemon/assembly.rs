@@ -347,7 +347,7 @@ struct Dependencies<'a> {
     /// The settings as the daemon started with them.
     startup: &'a CheckedSettings,
     history_store: &'a Arc<HistoryStore>,
-    /// `None` when the Keychain refused it: nothing saved can be read.
+    /// `None` when the storage key didn't load: nothing saved can be read.
     at_rest: &'a Option<Arc<AtRest>>,
 }
 

@@ -230,7 +230,7 @@ pub(super) struct Worker<C: Collector> {
     runtime: Arc<Runtime>,
     requests: mpsc::Receiver<Command>,
     directory: PathBuf,
-    /// `None` when the Keychain refused it, so no catalog opens.
+    /// `None` when the storage key didn't load, so no catalog opens.
     at_rest: Option<Arc<AtRest>>,
     sources: PersonalSources,
     personal: PersonalRules,
@@ -244,7 +244,7 @@ pub(super) struct Worker<C: Collector> {
 pub(super) struct PersonalSources {
     dictionary: Arc<Dictionary>,
     memory: PathBuf,
-    /// `None` when the Keychain refused it, so memory teaches no pairs.
+    /// `None` when the storage key didn't load, so memory teaches no pairs.
     at_rest: Option<Arc<AtRest>>,
 }
 

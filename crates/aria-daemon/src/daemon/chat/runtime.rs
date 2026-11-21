@@ -170,7 +170,7 @@ pub(in crate::daemon) struct ChatRuntime {
     typing: TypingTurns,
     /// Where chats and prompt results are saved, while history is on.
     history: Arc<HistoryStore>,
-    /// `None` when the Keychain refused it, so no turn is remembered.
+    /// `None` when the storage key didn't load, so no turn is remembered.
     at_rest: Option<Arc<AtRest>>,
 }
 
