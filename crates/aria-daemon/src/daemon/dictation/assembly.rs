@@ -347,8 +347,9 @@ pub(super) struct DictationEngine {
     pub(super) name: &'static str,
     pub(super) backend: SttBackend,
     /// How the engine reads a finished recording, so a retry hands kept
-    /// audio to the disk only for one that reads files.
-    pub(super) input: AudioInputKind,
+    /// audio to the disk only for one that reads files. `None` for an engine
+    /// this build can't configure, whose own error answers every call.
+    input: Option<AudioInputKind>,
     executor: RuntimeExecutor,
     preload: Option<Preload>,
 }
@@ -401,10 +402,11 @@ impl DictationEngine {
         backend: SttBackend,
         executor: RuntimeExecutor,
     ) -> Self {
+        let input = backend_input(&backend);
         Self {
             name,
-            input: backend_input(&backend),
             backend,
+            input,
             executor,
             preload: None,
         }
@@ -478,6 +480,31 @@ impl DictationEngine {
                 built: Slot::empty(),
             }),
             preload: None,
+        }
+    }
+
+    /// Transcribes kept audio on this engine, the snapshot the caller holds,
+    /// so a swap meanwhile can't hand it to an engine that reads it otherwise.
+    pub(super) fn transcribe_kept(
+        &self,
+        recording: &mut RecordingReader,
+        settings: &DictationSettings,
+        spool_dir: &Path,
+        cancel: &CancelToken,
+    ) -> Result<Transcribed, RetryError> {
+        let transcribe = |recording: &mut RecordingReader| {
+            self.executor.transcribe(
+                recording,
+                &settings.stt_language,
+                settings.own_voice_only,
+                settings.project.as_ref(),
+                settings.cleanup,
+                cancel,
+            )
+        };
+        match self.input {
+            Some(input) => with_kept_audio(recording, input, spool_dir, transcribe),
+            None => Ok(transcribe(recording)?),
         }
     }
 
@@ -577,7 +604,7 @@ impl EngineParts {
         Ok(DictationEngine {
             name: selected.name,
             backend: backend.clone(),
-            input: selected.input,
+            input: Some(selected.input),
             executor: (selected.build)(parts),
             preload: selected.preload,
         })
@@ -660,7 +687,7 @@ pub(super) fn build_dictation(
     let slot = EngineSlot::new(DictationEngine {
         name: engine.name,
         backend,
-        input: engine.input,
+        input: Some(engine.input),
         executor: (engine.build)(ExecutionParts {
             capture: Arc::clone(&capture),
             delivery,
@@ -695,33 +722,43 @@ pub(super) enum RetryTarget<'a> {
 /// for its own engines that read files.
 const SERVER_INPUT: AudioInputKind = AudioInputKind::Samples;
 
-/// The input of the engine `backend` names, for an engine not built yet. A
-/// local engine this build can't configure never transcribes, so its input
-/// never matters.
-fn backend_input(backend: &SttBackend) -> AudioInputKind {
+/// The input of the engine `backend` names, for an engine not built yet.
+/// `None` when this build can't configure it.
+fn backend_input(backend: &SttBackend) -> Option<AudioInputKind> {
     match backend {
-        SttBackend::Server(_) => SERVER_INPUT,
+        SttBackend::Server(_) => Some(SERVER_INPUT),
         SttBackend::Local(config) => EngineConfig::try_from(config.clone())
-            .map_or(AudioInputKind::Samples, |engine| engine.input()),
+            .ok()
+            .map(|engine| engine.input()),
     }
+}
+
+/// Why a retry failed: spooling the kept audio, or transcribing it.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum RetryError {
+    #[error("the kept audio could not be spooled")]
+    Spool(#[source] CaptureError),
+    #[error(transparent)]
+    Transcription(#[from] DictationError),
 }
 
 /// Runs `transcribe` on kept audio the way an engine reading `input` takes
 /// it. The audio stays in memory. Only an engine that reads files gets a
 /// spool copy, which goes when the run ends.
-pub(super) fn with_kept_audio<T, E: From<DictationError>>(
+fn with_kept_audio(
+    recording: &mut RecordingReader,
     input: AudioInputKind,
     spool_dir: &Path,
-    recording: &mut RecordingReader,
-    transcribe: impl FnOnce(&mut RecordingReader) -> Result<T, E>,
-) -> Result<T, E> {
+    transcribe: impl FnOnce(&mut RecordingReader) -> Result<Transcribed, DictationError>,
+) -> Result<Transcribed, RetryError> {
     match input {
-        AudioInputKind::Samples => transcribe(recording),
+        AudioInputKind::Samples => Ok(transcribe(recording)?),
         AudioInputKind::Wav => {
-            let spooled = recording
+            let mut spooled = recording
                 .fill()
-                .and_then(|()| RecordingReader::from_samples_in(spool_dir, recording.samples()));
-            transcribe(&mut spooled.map_err(DictationError::Capture)?)
+                .and_then(|()| RecordingReader::from_samples_in(spool_dir, recording.samples()))
+                .map_err(RetryError::Spool)?;
+            Ok(transcribe(&mut spooled)?)
         }
     }
 }
@@ -733,11 +770,12 @@ pub(super) fn transcribe_retry(
     settings: &DictationSettings,
     spool_dir: &Path,
     cancel: &CancelToken,
-) -> Result<Transcribed, DictationError> {
+) -> Result<Transcribed, RetryError> {
     let config = &setup.dictation;
     let rewrites = Rewrites::load(config, &setup.home)
         .map_err(|error| DictationError::Transcription(error.into()))?;
-    let (transcription, engine, input) = retry_transcription(&setup.home, target, cancel)?;
+    let (transcription, engine, input) =
+        retry_transcription(&setup.home, target, cancel).map_err(DictationError::from)?;
     let snapshot = setup.vocabulary.snapshot(settings.project.as_ref());
     let (diarizer, segmenter) = if settings.own_voice_only {
         speaker::tracking_models(&setup.speaker)
@@ -748,7 +786,11 @@ pub(super) fn transcribe_retry(
         .hearing_speech(speaker::speech_gate())
         .tracking_voices(diarizer, segmenter)
         .rewriting(rewrites);
-    with_kept_audio(input, spool_dir, recording, |recording| {
+    // The model load blocks, so a retry cancelled meanwhile writes no file.
+    if cancel.is_cancelled() {
+        return Err(DictationError::Cancelled.into());
+    }
+    with_kept_audio(recording, input, spool_dir, |recording| {
         pipeline.transcribe(
             recording,
             &settings.stt_language,
@@ -810,6 +852,59 @@ pub(in crate::daemon::dictation) mod tests {
     use aria_voice::stt::{Language, TranscriptionError};
 
     use super::*;
+
+    fn kept_recording(directory: &Path) -> RecordingReader {
+        let audio = aria_kit::audio::canonical_fixture(directory);
+        let bytes = std::fs::read(&audio).unwrap();
+        RecordingReader::from_wav(bytes.as_slice(), &audio).unwrap()
+    }
+
+    #[test]
+    fn kept_audio_reaches_the_spool_only_for_an_engine_that_reads_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let spool = directory.path().join("spool");
+        aria_primitives::private_fs::prepare_directory(&spool).unwrap();
+        for (input, spools) in [
+            (AudioInputKind::Samples, false),
+            (AudioInputKind::Wav, true),
+        ] {
+            let mut recording = kept_recording(directory.path());
+            let mut seen = None;
+
+            let result = with_kept_audio(&mut recording, input, &spool, |recording| {
+                recording.fill().unwrap();
+                seen = recording
+                    .finished_audio()
+                    .unwrap()
+                    .path()
+                    .map(Path::to_path_buf);
+                assert!(seen.as_deref().is_none_or(Path::exists));
+                Err(DictationError::NoSpeech)
+            });
+
+            assert!(matches!(
+                result,
+                Err(RetryError::Transcription(DictationError::NoSpeech))
+            ));
+            assert_eq!(seen.is_some_and(|file| file.starts_with(&spool)), spools);
+            assert_eq!(std::fs::read_dir(&spool).unwrap().count(), 0);
+        }
+    }
+
+    #[test]
+    fn a_spool_that_cannot_be_written_is_a_spool_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut recording = kept_recording(directory.path());
+
+        let result = with_kept_audio(
+            &mut recording,
+            AudioInputKind::Wav,
+            &directory.path().join("missing"),
+            |_| unreachable!("audio that never spooled is never transcribed"),
+        );
+
+        assert!(matches!(result, Err(RetryError::Spool(_))));
+    }
 
     struct Named {
         name: &'static str,
@@ -1161,8 +1256,8 @@ pub(in crate::daemon::dictation) mod tests {
         );
         assert!(matches!(
             result,
-            Err(DictationError::Transcription(TranscriptionError::Processing(
-                aria_kit::transcription::layer::Error::Failed(error)
+            Err(RetryError::Transcription(DictationError::Transcription(
+                TranscriptionError::Processing(aria_kit::transcription::layer::Error::Failed(error))
             ))) if matches!(error.downcast_ref::<LlmCleanupError>(), Some(LlmCleanupError::PromptRead))
         ));
     }

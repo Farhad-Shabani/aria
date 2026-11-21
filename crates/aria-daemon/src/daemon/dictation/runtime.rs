@@ -5,8 +5,8 @@ use super::super::history::HistoryStore;
 use super::super::subscriptions::Subscriptions;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::assembly::{
-    BuiltDictation, DictationInitializationError, EngineSlot, ModelLoading, RetryTarget,
-    RuntimeExecutor, build_dictation, transcribe_retry, with_kept_audio,
+    BuiltDictation, DictationInitializationError, EngineSlot, ModelLoading, RetryError,
+    RetryTarget, RuntimeExecutor, build_dictation, transcribe_retry,
 };
 use super::follower::EngineFollower;
 use crate::daemon::DaemonLifetime;
@@ -434,28 +434,6 @@ impl DictationRuntime {
             .map_err(DictationRuntimeError::Execution)
     }
 
-    pub(in crate::daemon) fn transcribe(
-        &self,
-        recording: &mut RecordingReader,
-        settings: &DictationSettings,
-        cancel: &CancelToken,
-    ) -> Result<Transcribed, DictationRuntimeError> {
-        if cancel.is_cancelled() {
-            return Err(DictationError::Cancelled.into());
-        }
-        self.loaded()?
-            .coordinator
-            .transcribe(
-                recording,
-                &settings.stt_language,
-                settings.own_voice_only,
-                settings.project.as_ref(),
-                settings.cleanup,
-                cancel,
-            )
-            .map_err(DictationRuntimeError::Execution)
-    }
-
     pub(in crate::daemon) fn retry_history(
         &self,
         id: u64,
@@ -526,11 +504,9 @@ impl DictationRuntime {
                 || engine.name == backend::SERVER
                 || !names_an_engine(requested)
         }) {
-            let transcribed =
-                with_kept_audio(engine.input, &self.spool_dir, recording, |recording| {
-                    self.transcribe(recording, settings, cancel)
-                })
-                .map_err(transcription)?;
+            let transcribed = engine
+                .transcribe_kept(recording, settings, &self.spool_dir, cancel)
+                .map_err(retry_error)?;
             if names_an_engine(requested) && transcribed.engine != requested {
                 return Err(HistoryError::transcription(
                     RpcErrorCode::TranscriptionFailed,
@@ -552,7 +528,7 @@ impl DictationRuntime {
         );
         let target = retry_target(&backend, &setup.home, requested)?;
         transcribe_retry(setup, target, recording, settings, &self.spool_dir, cancel)
-            .map_err(transcription)
+            .map_err(retry_error)
     }
 
     pub(in crate::daemon) fn execute(
@@ -647,6 +623,13 @@ fn retry_target<'a>(
             .for_backend(engine, home)
             .map(RetryTarget::Local)
             .map_err(|error| HistoryError::transcription(RpcErrorCode::TranscriptionFailed, error)),
+    }
+}
+
+fn retry_error(error: RetryError) -> HistoryError {
+    match error {
+        RetryError::Spool(error) => HistoryError::storage(error),
+        RetryError::Transcription(error) => transcription(error),
     }
 }
 
@@ -1268,6 +1251,13 @@ mod history_tests {
                 },
             }
         }
+    }
+
+    #[test]
+    fn a_retry_that_cannot_spool_reports_storage_not_capture() {
+        let error = retry_error(RetryError::Spool(aria_kit::audio::CaptureError::SourceGone));
+
+        assert!(matches!(error, HistoryError::Storage(_)));
     }
 
     fn samples_engine() -> SttConfig {
