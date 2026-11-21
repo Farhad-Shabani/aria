@@ -276,6 +276,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.enrolled, "Voice saved for Ada.")
 
         state.dictationEvent(Self.delivered(words: 2))
+        state.next()
         XCTAssertEqual(state.step, .openAria)
         XCTAssertEqual(
             state.installNotice, "The aria command was not installed.", "the last page says what did not land")
@@ -301,6 +302,9 @@ final class SetupStateTests: XCTestCase {
 
         XCTAssertEqual(state.applying, .models)
         XCTAssertEqual(state.downloadProgress["parakeet"]?.receivedBytes, 5)
+        XCTAssertEqual(
+            state.downloadTransfer, ModelTransfer(received: 5, total: 20),
+            "the bar counts the model not started yet at its listed size")
     }
 
     func testContinueAnywayLeavesTheGrantPage() async {
@@ -562,18 +566,21 @@ final class SetupStateTests: XCTestCase {
         return event
     }
 
-    func testOnlyAnAriaKeyDictationThatTypedWordsFinishesTryIt() async {
+    func testOnlyAnAriaKeyDictationThatTypedWordsCountsAsATry() async {
         let harness = Harness()
         let state = await walkToVoice(harness)
         state.dictationEvent(Self.delivered(words: 2))
-        XCTAssertEqual(state.step, .voice, "a dictation before Try It is no try")
+        XCTAssertNil(state.typedWordCount, "a dictation before Try It is no try")
         state.next()
 
         state.dictationEvent(Self.delivered(words: 0))
         state.dictationEvent(Self.delivered(words: 2, outcome: .copied))
-        XCTAssertEqual(state.step, .tryOut, "a dictation that typed nothing is no try")
+        XCTAssertNil(state.typedWordCount, "a dictation that typed nothing is no try")
 
-        state.dictationEvent(Self.delivered(words: 2))
+        state.dictationEvent(Self.delivered(words: 13))
+        XCTAssertEqual(state.typedWordCount, 13)
+        XCTAssertEqual(state.step, .tryOut, "the words stay in view until the person moves on")
+        state.next()
         XCTAssertEqual(state.step, .openAria)
     }
 
@@ -640,11 +647,13 @@ final class SetupStateTests: XCTestCase {
         state.typed = "hello there"
         state.dictationEvent(Self.delivered(words: 2))
         state.next()
+        state.next()
         XCTAssertEqual(state.step, .done)
 
         state.start()
 
         XCTAssertEqual(state.typed, "")
+        XCTAssertNil(state.typedWordCount)
         XCTAssertNil(state.enrolled)
         XCTAssertEqual(state.voiceName, "")
     }

@@ -1,38 +1,62 @@
 import SwiftUI
 
+/// Says what Aria gives, as Apple's own welcome screens do. Setup's chores
+/// wait for Customize….
 struct WelcomePage: View {
     @ObservedObject var state: SetupState
+    /// One width for every symbol, so the titles line up.
+    @ScaledMetric(relativeTo: .body) private var symbolWidth: CGFloat = 22
 
     var body: some View {
         Form {
             Section {
-                Label("Choose speech engines", systemImage: "waveform")
-                Label("Download the models they need", systemImage: "arrow.down.circle")
-                Label("Run Aria in the background", systemImage: "gearshape")
+                benefit(
+                    "waveform", "Dictate anywhere", "Tap the Aria key and speak. Aria types where your cursor is.")
+                benefit("magnifyingglass", "Open Aria from any app", "Search commands, prompts, and history.")
+                benefit("bubble.left.and.text.bubble.right", "Ask your assistant", "Speak or type a question.")
+            } header: {
+                hero
             } footer: {
-                if let missing = state.missingSummary {
-                    Text(missing)
+                VStack(alignment: .leading, spacing: 4) {
+                    if state.step == .welcome {
+                        let plan = SetupState.expressPlan(state.inspection, state.selections)
+                        DownloadFooter(total: SetupState.total(plan), notes: state.selfFetchingNotes)
+                    }
+                    if let missing = state.missingSummary {
+                        Text(missing)
+                    }
+                    NoticeText(notice: state.blockedBy)
                 }
-                NoticeText(notice: state.blockedBy)
             }
-            if state.step == .welcome { expressDownloads }
         }
     }
 
-    private var expressDownloads: some View {
-        let plan = SetupState.expressPlan(state.inspection, state.selections)
-        return Section {
-            ForEach(plan, id: \.id) { model in
-                LabeledContent(model.title) {
-                    Text(SetupState.downloadSize(of: [model])).monospacedDigit()
-                }
+    private var hero: some View {
+        VStack(spacing: 8) {
+            AppIcon(side: 72)
+            Text(state.step.title)
+                .font(.largeTitle.bold())
+                .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
+            if let caption = state.step.caption {
+                Text(caption)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
             }
-        } header: {
-            if !plan.isEmpty {
-                Text("Downloads")
-            }
-        } footer: {
-            DownloadFooter(total: SetupState.total(plan), notes: state.selfFetchingNotes)
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 12)
+    }
+
+    private func benefit(_ symbol: String, _ title: String, _ detail: String) -> some View {
+        Label {
+            Text(title)
+            Text(detail)
+        } icon: {
+            Image(systemName: symbol)
+                .foregroundStyle(.tint)
+                .frame(width: symbolWidth)
         }
     }
 }

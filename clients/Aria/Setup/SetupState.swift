@@ -26,6 +26,7 @@ final class SetupState: ObservableObject {
         /// user when the command did not land.
         var installCommandLineTool: () -> String?
         var waitForGrant: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
+        var now: () -> Date = Date.init
     }
 
     enum Step: Hashable {
@@ -79,12 +80,20 @@ final class SetupState: ObservableObject {
     @Published var downloads = Set<String>()
     @Published private(set) var applying: Aria_Setup_V1_Step = .unspecified
     @Published private(set) var downloadProgress: [String: Aria_Setup_V1_DownloadProgress] = [:]
+    /// What the running install fetches, so its bar counts models not started yet.
+    private var fetching: [Aria_Setup_V1_Model] = []
+    private var downloadPace = DownloadPace()
+    @Published private(set) var downloadTimeLeft: String?
     private var summary: Aria_Setup_V1_Summary?
     @Published var voiceName = ""
-    @Published private(set) var voicePrompt: String?
+    /// Nil until the daemon starts recording the voice.
+    @Published private(set) var voiceSampling: VoiceSampling?
     @Published private(set) var enrolled: String?
     /// What the Aria key typed into Try It's field.
     @Published var typed = ""
+    /// What the last Aria key dictation typed during Try It, which stays on
+    /// the page so the person sees their words land.
+    @Published private(set) var typedWordCount: Int?
     @Published private(set) var ariaKeyState = AriaKeyState.needsAccessibility
     /// Whether the dictation hotkey answers, so Done can teach it.
     var isHotkeyReady: Bool { ariaKeyState == .armed }
@@ -253,6 +262,21 @@ final class SetupState: ObservableObject {
         }
     }
 
+    /// Every model the install fetches, as one transfer. A model not started
+    /// yet counts at the size setup lists for it.
+    var downloadTransfer: ModelTransfer? {
+        guard !fetching.isEmpty else { return nil }
+        var received: UInt64 = 0
+        var total: UInt64 = 0
+        for model in fetching {
+            let transfer = downloadProgress[model.id].flatMap(ModelTransfer.init)
+            let size = transfer?.total ?? model.sizeBytes
+            total += size
+            received += min(transfer?.received ?? 0, size)
+        }
+        return ModelTransfer(received: received, total: total)
+    }
+
     func title(ofModel id: String) -> String {
         inspection.models.first { $0.id == id }?.title ?? id
     }
@@ -288,6 +312,7 @@ final class SetupState: ObservableObject {
         voiceName = ""
         enrolled = nil
         typed = ""
+        typedWordCount = nil
         notice = nil
     }
 
@@ -349,7 +374,7 @@ final class SetupState: ObservableObject {
         guard !name.isEmpty, !isBusy else { return }
         isBusy = true
         notice = nil
-        voicePrompt = "Starting…"
+        voiceSampling = VoiceSampling()
         Task {
             do {
                 try await effects.enroll(name)
@@ -359,25 +384,20 @@ final class SetupState: ObservableObject {
                 notice = Self.notice(for: error, during: "enroll")
             }
             isBusy = false
-            voicePrompt = nil
+            voiceSampling = nil
         }
     }
 
-    /// What the daemon says between samples; shown only while recording.
     func speakerEvent(_ event: Aria_Daemon_V1_SpeakerEvent) {
         guard step == .voice, isBusy else { return }
-        switch event.stage {
-        case .recording: voicePrompt = "Say something (\(event.index)/\(event.samples))…"
-        case .sampleTaken: voicePrompt = "Heard (\(event.index)/\(event.samples))"
-        default: break
-        }
+        voiceSampling?.hear(event)
     }
 
-    /// Try It ends once an Aria key dictation typed words, here or anywhere.
+    /// Try It counts only an Aria key dictation that typed words, here or anywhere.
     func dictationEvent(_ event: Aria_Daemon_V1_DictationEvent) {
         guard step == .tryOut, event.stage == .delivered, event.outcome == .inserted, event.wordCount > 0
         else { return }
-        step = .openAria
+        typedWordCount = Int(event.wordCount)
     }
 
     /// Setup ends once the shortcut it teaches opened Aria.
@@ -403,9 +423,12 @@ final class SetupState: ObservableObject {
         step = .applying
         applying = .unspecified
         downloadProgress = [:]
+        fetching = Self.plan(inspection, selections).filter { downloads.contains($0.id) }
+        downloadPace = DownloadPace()
+        downloadTimeLeft = nil
         var request = Aria_Setup_V1_ApplyRequest()
         request.selections = selections
-        request.downloads = Self.plan(inspection, selections).map(\.id).filter(downloads.contains)
+        request.downloads = fetching.map(\.id)
         applyTask = Task {
             do {
                 let summary = try await runner.run {
@@ -431,7 +454,11 @@ final class SetupState: ObservableObject {
         // Bundled wake-word models are copied in a blink; the app shows no step for it.
         case .started(.wakeword): break
         case .started(let step): applying = step
-        case .download(let download): downloadProgress[download.modelID] = download
+        case .download(let download):
+            downloadProgress[download.modelID] = download
+            guard let transfer = downloadTransfer else { return }
+            downloadPace.record(transfer.received, at: effects.now())
+            downloadTimeLeft = downloadPace.timeLeft(of: transfer.total)
         case nil: break
         }
     }
@@ -552,7 +579,7 @@ extension SetupState.Step {
         switch self {
         case .inspecting, .welcome: "Welcome to Aria"
         case .choices: "Choose Your Engines"
-        case .applying: "Setting Up…"
+        case .applying: "Installing…"
         case .grant: "Allow Access"
         case .voice: "Your Voice"
         case .tryOut: "Try It"

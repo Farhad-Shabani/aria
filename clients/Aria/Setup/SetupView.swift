@@ -54,7 +54,12 @@ struct SetupView: View {
         .clipShape(SidesOnly())
     }
 
-    private var header: some View {
+    /// Welcome draws its own title, centered over what Aria does.
+    @ViewBuilder private var header: some View {
+        if state.step.stage != .welcome { pageTitle }
+    }
+
+    private var pageTitle: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(state.step.title).font(.title2.bold())
             if let caption = state.step.caption {
@@ -137,7 +142,12 @@ struct SetupView: View {
                 .primaryAction()
                 .disabled(state.isBusy || state.voiceName.trimmingCharacters(in: .whitespaces).isEmpty)
         case .tryOut:
-            Button(state.typed.isEmpty ? "Skip" : "Continue") { state.next() }.disabled(state.isBusy)
+            if state.typedWordCount == nil {
+                Button("Skip") { state.next() }
+            } else {
+                Button("Continue") { state.next() }
+                    .primaryAction()
+            }
         case .openAria, .done:
             Button("Done") { state.next() }
                 .primaryAction()

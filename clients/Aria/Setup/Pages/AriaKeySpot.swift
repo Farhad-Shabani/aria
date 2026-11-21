@@ -8,6 +8,8 @@ struct AriaKeySpot: View {
     var combo: ShortcutCombo?
     /// One key width. The drawing is laid out in key widths, so it grows with the text size.
     @ScaledMetric(relativeTo: .body) private var unit: CGFloat = 44
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var press = Press.up
 
     var body: some View {
         let caps = Cap.layout(for: key, combo: combo)
@@ -18,7 +20,7 @@ struct AriaKeySpot: View {
         ZStack {
             ForEach(caps) { cap in
                 let isLit = cap.isLit(for: combo)
-                KeyCap(cap: cap, isLit: isLit, unit: unit)
+                KeyCap(cap: cap, isLit: isLit, isDown: press.holds(cap, isLit: isLit), unit: unit)
                     .frame(width: unit * cap.width, height: unit * cap.height)
                     .opacity(isLit ? 1 : cap.opacity)
                     .offset(
@@ -30,6 +32,40 @@ struct AriaKeySpot: View {
         .frame(maxWidth: .infinity)
         .accessibilityElement()
         .accessibilityLabel(combo.map { "Shortcut, \(key.gesture(for: $0))" } ?? "Aria key, \(key.title)")
+        .task(id: combo) { await showPress() }
+    }
+
+    /// A still drawing doesn't say "hold, then press": the Aria key goes
+    /// down, then its partner, then both lift, a few times over.
+    private func showPress() async {
+        guard combo != nil, !reduceMotion else { return }
+        for _ in 0..<3 {
+            do {
+                try await Task.sleep(for: .milliseconds(800))
+                withAnimation(.easeOut(duration: 0.12)) { press = .ariaKeyDown }
+                try await Task.sleep(for: .milliseconds(350))
+                withAnimation(.easeOut(duration: 0.12)) { press = .bothDown }
+                try await Task.sleep(for: .milliseconds(700))
+                withAnimation(.easeOut(duration: 0.2)) { press = .up }
+            } catch {
+                press = .up
+                return
+            }
+        }
+    }
+}
+
+private enum Press {
+    case up
+    case ariaKeyDown
+    case bothDown
+
+    func holds(_ cap: Cap, isLit: Bool) -> Bool {
+        switch self {
+        case .up: false
+        case .ariaKeyDown: cap.isAriaKey
+        case .bothDown: isLit
+        }
     }
 }
 
@@ -132,6 +168,7 @@ private struct Cap: Identifiable {
 private struct KeyCap: View {
     let cap: Cap
     let isLit: Bool
+    let isDown: Bool
     let unit: CGFloat
 
     var body: some View {
@@ -143,7 +180,7 @@ private struct KeyCap: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
                 if isLit {
-                    shape.fill(.tint.opacity(0.15))
+                    shape.fill(.tint.opacity(isDown ? 0.35 : 0.15))
                 } else {
                     shape.fill(.quaternary)
                 }
@@ -151,6 +188,7 @@ private struct KeyCap: View {
             .overlay {
                 if isLit { shape.strokeBorder(.tint, lineWidth: 1.5) }
             }
+            .scaleEffect(isDown ? 0.92 : 1)
     }
 
     @ViewBuilder private var face: some View {
