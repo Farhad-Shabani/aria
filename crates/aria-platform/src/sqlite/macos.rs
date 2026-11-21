@@ -18,7 +18,7 @@ use super::{
     Error, SIDECAR_SUFFIXES, create_if_missing, inspect, io, open_directory, remove_if_present,
 };
 
-const SERVICE: &str = "io.github.farhad-shabani.aria.storage";
+const SERVICE: &str = "Aria storage key";
 const ACCOUNT: &str = "databases";
 const KEY_BYTES: usize = 32;
 const SEALING_SUFFIX: &str = ".sealing";
