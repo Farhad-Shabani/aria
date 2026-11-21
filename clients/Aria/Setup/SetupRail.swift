@@ -9,10 +9,9 @@ struct SetupRail: View {
     var body: some View {
         List {
             Section {
+                // The rows' marks show where setup stands, as Installer's sidebar does.
                 SidebarHeader {
-                    HeadlineStack(title: "Set Up Aria") {
-                        Text(progress.caption)
-                    }
+                    Text("Set Up Aria").font(.headline)
                 }
             }
             Section {
