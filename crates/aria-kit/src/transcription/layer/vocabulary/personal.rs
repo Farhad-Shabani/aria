@@ -26,7 +26,7 @@ pub struct PersonalRules {
 impl PersonalRules {
     pub fn new(terms: Vec<String>, learned: Vec<(String, String)>) -> Self {
         let mut pairs: Vec<_> = variant_pairs(&terms).collect();
-        let listed = spellings(&terms);
+        let listed = casings(&terms);
         pairs.extend(
             learned
                 .into_iter()
@@ -42,7 +42,7 @@ impl PersonalRules {
         learned: Vec<(String, String)>,
         cancel: &CancelToken,
     ) -> Result<Self, MatchError> {
-        let listed = spellings(&terms);
+        let listed = casings(&terms);
         let learned = learned
             .into_iter()
             .filter(|(_, correct)| listed.contains_key(&correct.to_lowercase()))
@@ -782,13 +782,13 @@ fn variant_pairs(terms: &[String]) -> impl Iterator<Item = (String, String)> + '
         .filter(move |(variant, _)| !listed.contains(&variant.to_lowercase()))
 }
 
-/// Every listed spelling of each word, by the word in lowercase.
-fn spellings(terms: &[String]) -> HashMap<String, Vec<&str>> {
-    let mut spellings: HashMap<String, Vec<&str>> = HashMap::new();
+/// Every listed casing of each word, by the word in lowercase.
+fn casings(terms: &[String]) -> HashMap<String, Vec<&str>> {
+    let mut casings: HashMap<String, Vec<&str>> = HashMap::new();
     for term in terms {
-        spellings.entry(term.to_lowercase()).or_default().push(term);
+        casings.entry(term.to_lowercase()).or_default().push(term);
     }
-    spellings
+    casings
 }
 
 /// What a learned pair types: its word's listed capitals, so a pair learned
@@ -897,12 +897,8 @@ fn is_english(folded: &str) -> bool {
             .strip_suffix("'s")
             .or_else(|| part.strip_suffix('\''))
             .unwrap_or(part);
-        in_english_list(part) || in_english_list(stem)
+        english_words().contains(part) || english_words().contains(stem)
     })
-}
-
-fn in_english_list(folded: &str) -> bool {
-    english_words().contains(folded)
 }
 
 fn english_words() -> &'static fst::Set<&'static [u8]> {
