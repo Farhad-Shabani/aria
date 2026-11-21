@@ -156,7 +156,7 @@ fn compose(
     let microphone = Gate::new();
     let relay_microphone = Arc::clone(&microphone);
     let tasks = RuntimeTasks::new();
-    let vocabulary_directory = context.home.join(dictionary::DIRECTORY);
+    let vocabulary_directory = context.home.join(aria_voice::vocabulary::DIRECTORY);
     let dictionary = Arc::new(Dictionary::new(vocabulary_directory.join(dictionary::FILE)));
     let (vocabulary, mut vocabulary_worker) = super::vocabulary::Runtime::new(
         vocabulary_directory,
