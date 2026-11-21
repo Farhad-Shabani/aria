@@ -68,18 +68,20 @@ impl RecordingReader {
     }
 
     /// A finished recording of the canonical WAV read from `wav`, such as one
-    /// a database keeps, saved as a private WAV in `spool_dir`. `path` names
-    /// the source in errors.
+    /// a database keeps, held only in memory. `path` names the source in
+    /// errors.
     #[cfg(not(target_family = "wasm"))]
-    pub fn from_wav_in(
-        spool_dir: &Path,
+    pub fn from_wav(
         wav: impl std::io::Read,
         path: &Path,
     ) -> std::result::Result<Self, CaptureError> {
         let reader = canonical_wav(wav, path)?;
         check_declared_length(&reader, path, MAX_RECORDING_DURATION)?;
         let samples = collect_samples(reader, path)?;
-        Self::from_pcm16_in(spool_dir, &samples)
+        let (recording, writer) = super::Recording::prerecorded();
+        writer.push_pcm16(&samples);
+        writer.finish();
+        Ok(recording)
     }
 }
 
@@ -369,22 +371,24 @@ mod tests {
     }
 
     #[test]
-    fn a_canonical_wav_read_from_memory_lands_in_the_spool() {
+    fn a_canonical_wav_read_from_memory_stays_in_memory() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
-        let bytes = std::fs::read(canonical_fixture(directory.path())).expect("fixture reads");
-        let spool = directory.path().join("spool");
-        aria_primitives::private_fs::prepare_directory(&spool).expect("spool is creatable");
+        let fixture = canonical_fixture(directory.path());
+        let bytes = std::fs::read(&fixture).expect("fixture reads");
+        let expected = RecordingReader::from_wav_file(&fixture)
+            .and_then(|mut recording| recording.fill().map(|()| recording.samples().to_vec()))
+            .expect("the fixture is canonical");
 
-        let mut recording =
-            RecordingReader::from_wav_in(&spool, bytes.as_slice(), Path::new("kept.wav"))
-                .expect("the bytes are canonical");
+        let mut recording = RecordingReader::from_wav(bytes.as_slice(), Path::new("kept.wav"))
+            .expect("the bytes are canonical");
 
         recording.fill().expect("the recording already ended");
-        assert_eq!(recording.samples().len(), FIXTURE_SAMPLES);
+        assert_eq!(recording.samples(), expected.as_slice());
         let audio = recording
             .finished_audio()
             .expect("the recording already ended");
-        assert!(audio.path().expect("spooled").starts_with(&spool));
+        assert_eq!(audio.path(), None);
+        assert_eq!(audio.duration(), Duration::from_secs(1));
     }
 
     #[test]

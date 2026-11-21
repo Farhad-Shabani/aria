@@ -123,8 +123,6 @@ fn budget(section: HistorySection) -> Budget {
 pub struct Store {
     /// The file, so an error reading kept audio names where it lives.
     database: PathBuf,
-    /// Where a retry's audio is decrypted to, for as long as the retry runs.
-    spool_dir: PathBuf,
     // The one lock also bounds audio copies. Copies need their own admission
     // if reads stall.
     state: Mutex<State>,
@@ -138,7 +136,7 @@ struct State {
 
 pub struct RetryLease {
     pub entry: HistoryEntry,
-    /// Decrypted into a spool file the recording deletes when it drops.
+    /// Decrypted into memory only, so no plaintext copy reaches the disk.
     pub recording: RecordingReader,
     store: Arc<Store>,
 }
@@ -170,11 +168,7 @@ pub struct NewAsk<'a> {
 }
 
 impl Store {
-    pub fn open(
-        directory: &Path,
-        spool_dir: &Path,
-        at_rest: &AtRest,
-    ) -> Result<Arc<Self>, HistoryError> {
+    pub fn open(directory: &Path, at_rest: &AtRest) -> Result<Arc<Self>, HistoryError> {
         let database = directory.join(DB_FILE);
         let connection =
             Database::open(&database, &DATABASE_POLICY, at_rest, &CancelToken::never())?;
@@ -202,7 +196,6 @@ impl Store {
         remove_plaintext_audio(directory)?;
         let store = Arc::new(Self {
             database,
-            spool_dir: spool_dir.to_path_buf(),
             state: Mutex::new(State {
                 connection,
                 pinned: HashSet::new(),
@@ -808,7 +801,7 @@ impl Store {
         if entry.deletion_pending || !matches!(entry.audio(), AudioAvailability::Available { .. }) {
             return Err(HistoryError::AudioUnavailable);
         }
-        let recording = match self.spool_audio(&state, id) {
+        let recording = match self.kept_audio(&state, id) {
             Ok(recording) => recording,
             Err(error @ HistoryError::Storage(_)) => return Err(error),
             Err(_) => {
@@ -1138,9 +1131,7 @@ impl Store {
         Ok(())
     }
 
-    /// Decrypts the audio into a spool recording, which startup sweeps if a
-    /// crash leaves it behind.
-    fn spool_audio(&self, state: &State, id: u64) -> Result<RecordingReader, HistoryError> {
+    fn kept_audio(&self, state: &State, id: u64) -> Result<RecordingReader, HistoryError> {
         let blob = state.connection.blob_open(
             rusqlite::MAIN_DB,
             c"audio",
@@ -1148,7 +1139,7 @@ impl Store {
             sql_integer(id)?,
             true,
         )?;
-        RecordingReader::from_wav_in(&self.spool_dir, blob, &self.database).map_err(|error| {
+        RecordingReader::from_wav(blob, &self.database).map_err(|error| {
             match error {
                 CaptureError::Wav(error) => {
                     tracing::warn!(error = %error_chain(&error), "kept audio is unreadable and is dropped");
@@ -2095,7 +2086,7 @@ mod tests {
 
     /// Replaces the store's database with a version 1 one built by `build`.
     fn version_one(directory: &Path, build: &str) {
-        drop(Store::open(directory, directory, &AtRest::for_tests()).unwrap());
+        drop(Store::open(directory, &AtRest::for_tests()).unwrap());
         let database = keyed(directory.join("history.db"));
         database
             .execute_batch(&format!(
@@ -2156,7 +2147,7 @@ mod tests {
     /// A store in a fresh folder, which lives as long as the guard.
     fn opened() -> (tempfile::TempDir, Arc<Store>) {
         let directory = tempfile::tempdir().unwrap();
-        let store = Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
         (directory, store)
     }
 
@@ -2188,7 +2179,7 @@ mod tests {
             .unwrap();
         drop(database);
 
-        let store = Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
 
         let entries = listed(&store);
         assert_eq!(entries.len(), 1);
@@ -2196,7 +2187,7 @@ mod tests {
         assert!(matches!(entries[0].content, HistoryContent::Dictation(_)));
         assert_eq!(user_version(&store), SCHEMA_VERSION);
         drop(store);
-        Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        Store::open(directory.path(), &AtRest::for_tests()).unwrap();
     }
 
     #[test]
@@ -2216,7 +2207,7 @@ mod tests {
             .unwrap();
         drop(database);
 
-        let store = Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
 
         assert_eq!(
             questions(&store.recall("s1", 1024).unwrap()),
@@ -2273,7 +2264,7 @@ mod tests {
             .unwrap();
         drop(database);
 
-        let store = Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
 
         assert_eq!(user_version(&store), SCHEMA_VERSION);
         let entries = listed(&store)
@@ -2333,12 +2324,12 @@ mod tests {
         let (directory, store) = opened();
         assert_eq!(user_version(&store), SCHEMA_VERSION);
         drop(store);
-        let store = Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
         tamper(&store, "PRAGMA user_version=3", []);
         drop(store);
 
         assert!(matches!(
-            Store::open(directory.path(), directory.path(), &AtRest::for_tests()),
+            Store::open(directory.path(), &AtRest::for_tests()),
             Err(HistoryError::Unavailable)
         ));
     }
@@ -2363,7 +2354,7 @@ mod tests {
         tamper(&store, "PRAGMA user_version=1", []);
         drop(store);
 
-        let store = Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
         let quote = Quote::new("the notes".to_owned()).unwrap();
         quoted_ask(&store, "Shorter?", chat("notes"), &quote);
 
@@ -2521,8 +2512,7 @@ mod tests {
         assert_eq!(key(&named), Some(chat("first")));
         assert_eq!(key(&folders), None);
         drop(store);
-        let reopened =
-            Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let reopened = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
         assert_eq!(key(&reopened.get(named.id).unwrap()), Some(chat("first")));
     }
 
@@ -2754,7 +2744,7 @@ mod tests {
         let next = ask(&store, "three", Some(chat("Trip plans")));
         assert_eq!(chat_names(&[next]), [("three", Some("Trip plans"))]);
         drop(store);
-        let store = Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
         assert_eq!(
             chat_names(&listed(&store))[0],
             ("three", Some("Trip plans"))
@@ -2862,7 +2852,7 @@ mod tests {
             1
         );
         drop(store);
-        let store = Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
         assert_eq!(store.get(saved.id).unwrap().title, Some(title));
         assert_eq!(store.rename(saved.id, None).unwrap().title, None);
     }
@@ -3277,8 +3267,7 @@ mod tests {
             saved.push((id, RpcFailure::new(RpcErrorCode::Internal, text)));
         }
         drop(store);
-        let reopened =
-            Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let reopened = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
         for (id, expected) in saved {
             let found = reopened.get(id).unwrap();
             assert_eq!(found.text, "keep transcript");
@@ -3376,7 +3365,7 @@ mod tests {
         let created = first.created_at_ms;
         drop(store);
 
-        let store = Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
 
         let found = store.get(first.id).unwrap();
         assert_eq!(found.text, "private words");
@@ -3424,7 +3413,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
         let history = directory.path().join("history");
-        let store = Store::open(&history, &history, &AtRest::for_tests()).unwrap();
+        let store = Store::open(&history, &AtRest::for_tests()).unwrap();
         let mut last_id = 0;
         for status in [
             HistoryStatus::Success,
@@ -3464,7 +3453,7 @@ mod tests {
         store.clear(None).unwrap();
         drop(store);
 
-        let store = Store::open(directory.path(), directory.path(), &AtRest::for_tests()).unwrap();
+        let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
 
         let later = save(&store, "later", HistoryStatus::Success, None);
         assert!(later.id > last.id);
@@ -3508,7 +3497,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
         let history = directory.path().join("history");
-        let store = Store::open(&history, &history, &AtRest::for_tests()).unwrap();
+        let store = Store::open(&history, &AtRest::for_tests()).unwrap();
         let failed = save(
             &store,
             "partial",
@@ -3517,16 +3506,16 @@ mod tests {
         );
         let lease = store.begin_retry(failed.id).unwrap();
         assert!(matches!(
-            Store::open(&history, &history, &AtRest::for_tests()),
+            Store::open(&history, &AtRest::for_tests()),
             Err(HistoryError::Busy)
         ));
         drop(store);
         assert!(matches!(
-            Store::open(&history, &history, &AtRest::for_tests()),
+            Store::open(&history, &AtRest::for_tests()),
             Err(HistoryError::Busy)
         ));
         drop(lease);
-        let reopened = Store::open(&history, &history, &AtRest::for_tests()).unwrap();
+        let reopened = Store::open(&history, &AtRest::for_tests()).unwrap();
         assert_eq!(reopened.get(failed.id).unwrap().text, "partial");
         assert!(has_audio(&reopened, failed.id));
         assert!(
@@ -3617,7 +3606,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
         let history = directory.path().join("history");
-        let store = Store::open(&history, &history, &AtRest::for_tests()).unwrap();
+        let store = Store::open(&history, &AtRest::for_tests()).unwrap();
         let original = save(&store, "first", HistoryStatus::Success, Some(&source));
         for (text, engine, language) in [("second", "whisper", "fr"), ("third", "moonshine", "en")]
         {
@@ -3633,7 +3622,7 @@ mod tests {
             drop(lease);
         }
         drop(store);
-        let store = Store::open(&history, &history, &AtRest::for_tests()).unwrap();
+        let store = Store::open(&history, &AtRest::for_tests()).unwrap();
         let lease = store.begin_retry(original.id).unwrap();
         assert_eq!(lease.entry.text, "third");
         let recovered = store
@@ -3674,13 +3663,11 @@ mod tests {
     }
 
     #[test]
-    fn saved_audio_lives_in_the_database_and_a_retry_reads_it_from_the_spool() {
+    fn saved_audio_lives_in_the_database_and_a_retry_reads_it_into_memory() {
         let directory = tempfile::tempdir().unwrap();
         let source = audio(directory.path());
         let history = directory.path().join("history");
-        let spool = directory.path().join("spool");
-        private_fs::prepare_directory(&spool).unwrap();
-        let store = Store::open(&history, &spool, &AtRest::for_tests()).unwrap();
+        let store = Store::open(&history, &AtRest::for_tests()).unwrap();
         let saved = save(
             &store,
             "partial",
@@ -3695,43 +3682,13 @@ mod tests {
         assert_eq!(kept, ["history.db", "history.lock"]);
 
         let mut lease = store.begin_retry(saved.id).unwrap();
-        let retried = lease.recording.finished_audio().unwrap().path().unwrap();
-        assert!(retried.starts_with(spool.canonicalize().unwrap()) || retried.starts_with(&spool));
-        let original = RecordingReader::from_wav_file(&source).unwrap();
+
+        let mut original = RecordingReader::from_wav_file(&source).unwrap();
+        original.fill().unwrap();
+        lease.recording.fill().unwrap();
+        assert!(!original.samples().is_empty());
         assert_eq!(lease.recording.samples(), original.samples());
-        drop(lease);
-        assert_eq!(fs::read_dir(&spool).unwrap().count(), 0);
-    }
-
-    #[test]
-    fn startup_sweeps_the_audio_a_crashed_retry_left_in_the_spool() {
-        let directory = tempfile::tempdir().unwrap();
-        let source = audio(directory.path());
-        let history = directory.path().join("history");
-        let spool = directory.path().join("spool");
-        private_fs::prepare_directory(&spool).unwrap();
-        let store = Store::open(&history, &spool, &AtRest::for_tests()).unwrap();
-        let saved = save(
-            &store,
-            "partial",
-            HistoryStatus::TranscriptionFailed,
-            Some(&source),
-        );
-        let mut lease = store.begin_retry(saved.id).unwrap();
-        let left = lease
-            .recording
-            .finished_audio()
-            .unwrap()
-            .path()
-            .unwrap()
-            .to_path_buf();
-        // A crash runs no destructor.
-        std::mem::forget(lease);
-        assert!(left.exists());
-
-        aria_kit::audio::remove_all_spools(&spool);
-
-        assert!(!left.exists());
+        assert_eq!(lease.recording.finished_audio().unwrap().path(), None);
     }
 
     #[test]
@@ -3743,7 +3700,7 @@ mod tests {
         private_fs::prepare_directory(&files).unwrap();
         fs::write(files.join("1.wav"), "plaintext audio").unwrap();
 
-        drop(Store::open(&history, &history, &AtRest::for_tests()).unwrap());
+        drop(Store::open(&history, &AtRest::for_tests()).unwrap());
 
         assert!(!files.exists());
     }
@@ -4053,7 +4010,7 @@ mod tests {
         private_fs::prepare_directory(&history).unwrap();
         symlink(&target, history.join("history.db")).unwrap();
         assert!(matches!(
-            Store::open(&history, &history, &AtRest::for_tests()),
+            Store::open(&history, &AtRest::for_tests()),
             Err(HistoryError::Storage(_))
         ));
         assert_eq!(fs::read_to_string(&target).unwrap(), "untouched");
@@ -4061,15 +4018,15 @@ mod tests {
         private_fs::prepare_directory(&other).unwrap();
         symlink(&target, other.join("history.db-journal")).unwrap();
         assert!(matches!(
-            Store::open(&other, &other, &AtRest::for_tests()),
+            Store::open(&other, &AtRest::for_tests()),
             Err(HistoryError::Storage(_))
         ));
         let third = directory.path().join("third");
-        let store = Store::open(&third, &third, &AtRest::for_tests()).unwrap();
+        let store = Store::open(&third, &AtRest::for_tests()).unwrap();
         drop(store);
         fs::set_permissions(third.join("history.db"), fs::Permissions::from_mode(0o644)).unwrap();
         assert!(matches!(
-            Store::open(&third, &third, &AtRest::for_tests()),
+            Store::open(&third, &AtRest::for_tests()),
             Err(HistoryError::Storage(_))
         ));
     }
