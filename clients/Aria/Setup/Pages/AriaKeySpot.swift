@@ -72,8 +72,23 @@ private struct Cap: Identifiable {
     static func layout(for key: AriaKey, combo: ShortcutCombo?) -> [Cap] {
         switch (key, combo) {
         case (.rightOption, .shift):
-            layout(for: key, combo: nil) + [
-                Cap(face: .modifier(symbol: "shift", name: "shift"), x: 2.11, y: -1.12, width: 2.3, completes: .shift)
+            // Right shift ends the row, so the left side gives up keys to keep the lit pair mid-drawing.
+            [
+                Cap(face: .arrow(symbol: "arrowtriangle.left.fill"), x: 1.12, y: 0.52, height: 0.48, opacity: 0.5),
+                Cap(face: .arrow(symbol: "arrowtriangle.up.fill"), x: 2.24, y: 0, height: 0.46, opacity: 0.25),
+                Cap(face: .arrow(symbol: "arrowtriangle.down.fill"), x: 2.24, y: 0.54, height: 0.46, opacity: 0.25),
+                Cap(face: .arrow(symbol: "arrowtriangle.right.fill"), x: 3.36, y: 0.52, height: 0.48, opacity: 0.2),
+                Cap(face: .marks(">", "."), x: -0.13, y: -1.12, opacity: 0.35),
+                Cap(face: .marks("?", "/"), x: 0.99, y: -1.12, opacity: 0.5),
+                Cap(face: .modifier(symbol: "shift", name: "shift"), x: 2.11, y: -1.12, width: 2.3, completes: .shift),
+                Cap(face: .modifier(symbol: "option", name: "option"), x: 0, y: 0, isAriaKey: true),
+            ]
+        case (.fn, .shift):
+            // Left shift is as wide as fn and control together, so the row stops there.
+            [
+                Cap(face: .modifier(symbol: "control", name: "control"), x: 1.12, y: 0, opacity: 0.5),
+                Cap(face: .modifier(symbol: "shift", name: "shift"), x: 0, y: -1.12, width: 2.25, completes: .shift),
+                Cap(face: .modifier(symbol: "globe", name: "fn"), x: 0, y: 0, isAriaKey: true),
             ]
         case (.rightOption, .command):
             // The space bar and M balance the arrows, so the lit pair sits mid-drawing.

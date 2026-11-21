@@ -23,8 +23,11 @@ struct TryOutPage: View {
                     .labelsHidden()
                     .lineLimit(3...)
                     .focused($isFieldFocused)
+                    // The daemon types where focus is, so the field takes it
+                    // whenever it shows, even in a window that already has focus.
+                    .onAppear { isFieldFocused = true }
                 } else {
-                    AriaKeyAccessNote(state: state.ariaKeyState)
+                    AriaKeyAccessNote(keyState: state.ariaKeyState)
                 }
             } footer: {
                 if let enrolled = state.enrolled {
@@ -33,7 +36,5 @@ struct TryOutPage: View {
                 NoticeText(notice: state.notice)
             }
         }
-        // The daemon types where focus is, so the field must hold it.
-        .defaultFocus($isFieldFocused, true)
     }
 }

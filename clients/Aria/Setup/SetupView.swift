@@ -90,10 +90,10 @@ struct SetupView: View {
         return nil
     }
 
-    /// The daemon's default until it answers; nil when the shortcut is off.
-    private var openAriaShortcut: ShortcutBinding? {
-        guard let snapshot = settings.snapshot else { return .combo(.command) }
-        return snapshot.promptListShortcut.storedBinding
+    /// The daemon's default until it answers.
+    private var openAriaShortcut: Aria_Daemon_V1_Shortcut? {
+        guard let snapshot = settings.snapshot else { return Aria_Daemon_V1_Shortcut(.combo(.command)) }
+        return snapshot.hasPromptListShortcut ? snapshot.promptListShortcut : nil
     }
 
     private var footer: some View {

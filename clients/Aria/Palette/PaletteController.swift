@@ -33,7 +33,7 @@ final class PaletteController: ObservableObject {
     private let settingsHealth: SettingsHealth
     /// Shows in the pill how typing went, once the palette is gone.
     private let delivered: @MainActor (Result<Aria_Daemon_V1_DeliveryOutcome, any Error>) -> Void
-    private let opened: @MainActor () -> Void
+    private let openedByShortcut: @MainActor () -> Void
     private lazy var panel = PalettePanel(
         resignedKey: { [weak self] in self?.close() },
         pressed: { [weak self] event in self?.press(event) ?? false },
@@ -72,7 +72,7 @@ final class PaletteController: ObservableObject {
         openSettings: @escaping @MainActor (SettingsPane?) -> Void,
         openSetup: @escaping @MainActor () -> Void,
         delivered: @escaping @MainActor (Result<Aria_Daemon_V1_DeliveryOutcome, any Error>) -> Void,
-        opened: @escaping @MainActor () -> Void
+        openedByShortcut: @escaping @MainActor () -> Void
     ) {
         self.prompts = prompts
         self.ask = ask
@@ -81,7 +81,7 @@ final class PaletteController: ObservableObject {
         self.chats = chats
         self.openSettings = openSettings
         self.openSetup = openSetup
-        self.opened = opened
+        self.openedByShortcut = openedByShortcut
         self.setup = setup
         self.settingsHealth = settingsHealth
         self.delivered = delivered
@@ -174,7 +174,9 @@ final class PaletteController: ObservableObject {
     func press() {
         switch gesture.press(isOpen: panel.isVisible, isBusy: { prompts.isBusy($0) }) {
         case .ignore: break
-        case .open: open()
+        case .open:
+            open()
+            openedByShortcut()
         case .close: close()
         }
     }
@@ -732,7 +734,6 @@ final class PaletteController: ObservableObject {
         nameAssistants()
         readDictionary()
         panel.show(PaletteView(controller: self, systemTranscription: systemTranscription, history: history))
-        opened()
     }
 
     /// On every open, since an editor can change the file between opens.

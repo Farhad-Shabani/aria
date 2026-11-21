@@ -56,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         },
         openSetup: { [weak self] in self?.setup.request() },
         delivered: { [weak status] outcome in status?.noteDelivery(outcome) },
-        opened: { [weak self] in self?.setupState.paletteOpened() })
+        openedByShortcut: { [weak self] in self?.setupState.shortcutOpenedAria() })
     lazy var settingsHealth = SettingsHealth(
         effects: .live(reloadSettings: { [weak self] in await self?.daemonSettings?.sync() }))
 

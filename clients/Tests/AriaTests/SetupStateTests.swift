@@ -260,10 +260,14 @@ final class SetupStateTests: XCTestCase {
         XCTAssertFalse(state.selections.wake)
         XCTAssertEqual(harness.applied?.downloads, ["parakeet", "segmentation"], "the speaker model is off by default")
         XCTAssertEqual(harness.stoppedDaemon, 1, "a spawned daemon must give the socket to the service")
+        XCTAssertEqual(harness.launchAtLogin, 0, "login waits for the install to finish")
+        XCTAssertEqual(harness.installedCommandLineTool, 0)
 
         harness.applyContinuation?.resume(returning: harness.summary)
         await waitUntil { state.step == .voice }
         XCTAssertEqual(harness.startedDaemon, 0, "the service owns the daemon after a finished apply")
+        XCTAssertEqual(harness.launchAtLogin, 1, "the install ends while the person still watches it")
+        XCTAssertEqual(harness.installedCommandLineTool, 1)
 
         state.voiceName = " Ada "
         state.recordVoice()
@@ -273,11 +277,10 @@ final class SetupStateTests: XCTestCase {
 
         state.dictationEvent(Self.delivered(words: 2))
         XCTAssertEqual(state.step, .openAria)
-        XCTAssertEqual(harness.launchAtLogin, 1, "login starts on the last page")
-        XCTAssertEqual(harness.installedCommandLineTool, 1)
-        XCTAssertEqual(state.notice, "The aria command was not installed.", "the last page says what did not land")
+        XCTAssertEqual(
+            state.installNotice, "The aria command was not installed.", "the last page says what did not land")
 
-        state.paletteOpened()
+        state.shortcutOpenedAria()
         XCTAssertEqual(state.step, .done)
         XCTAssertEqual(harness.launchAtLogin, 1, "ending setup starts nothing more")
     }
@@ -357,7 +360,7 @@ final class SetupStateTests: XCTestCase {
 
         harness.ariaKey = .armed
         await waitUntil { state.step == .voice }
-        XCTAssertTrue(state.isHotkeyReady, "Done teaches the hotkey once it arms")
+        XCTAssertTrue(state.isHotkeyReady, "the last page teaches the Aria key once it arms")
     }
 
     func testTheGrantPageFollowsThePermissionTheAriaKeyLacks() async {
@@ -577,16 +580,45 @@ final class SetupStateTests: XCTestCase {
     func testOnlyOpeningAriaDuringItsStepFinishesSetup() async {
         let harness = Harness()
         let state = await walkToVoice(harness)
-        state.paletteOpened()
+        state.shortcutOpenedAria()
         XCTAssertEqual(state.step, .voice, "opening Aria before its step is no try")
         state.next()
-        state.paletteOpened()
+        state.shortcutOpenedAria()
         XCTAssertEqual(state.step, .tryOut)
 
         state.next()
         XCTAssertEqual(state.step, .openAria, "skipping Try It still teaches Open Aria")
-        state.paletteOpened()
+        state.shortcutOpenedAria()
         XCTAssertEqual(state.step, .done)
+    }
+
+    func testAccessGrantedAfterSkipReachesTryIt() async {
+        let harness = Harness()
+        harness.summary = Self.summary(grant: .waiting)
+        let state = await walkToApplying(harness)
+        harness.applyContinuation?.resume(returning: harness.summary)
+        await waitUntil { state.step == .grant }
+        state.next()
+        await waitUntil { state.step == .voice }
+        state.next()
+        XCTAssertFalse(state.isHotkeyReady)
+
+        harness.ariaKey = .armed
+        await waitUntil { state.isHotkeyReady }
+        XCTAssertEqual(state.step, .tryOut)
+    }
+
+    func testClosingTheLastPageEndsSetup() async {
+        let harness = Harness()
+        let state = await walkToVoice(harness)
+        state.next()
+        state.next()
+        XCTAssertEqual(state.step, .openAria)
+
+        state.stop()
+        XCTAssertEqual(state.step, .done)
+        state.start()
+        XCTAssertEqual(state.step, .inspecting, "reopening starts a new walk")
     }
 
     func testDoneEndsSetupWithoutTheShortcut() async {

@@ -1,19 +1,17 @@
 import SwiftUI
 
-/// The last page: the shortcut that opens Aria, then the other two gestures
-/// to keep. Pressing the shortcut ends setup in Aria itself.
 struct OpenAriaPage: View {
     @ObservedObject var state: SetupState
     let ariaKey: AriaKey
-    /// Nil when the shortcut is off.
-    let shortcut: ShortcutBinding?
+    /// Nil when the daemon hasn't said what the shortcut is.
+    let shortcut: Aria_Daemon_V1_Shortcut?
     /// Nil when the Ask shortcut holds a chord or nothing.
     let askCombo: ShortcutCombo?
 
     var body: some View {
         Form {
             Section {
-                switch shortcut {
+                switch shortcut?.storedBinding {
                 case .combo(let combo):
                     VStack(spacing: 8) {
                         AriaKeySpot(key: ariaKey, combo: combo)
@@ -24,7 +22,7 @@ struct OpenAriaPage: View {
                     }
                     .padding(.vertical, 8)
                     if !state.isHotkeyReady {
-                        AriaKeyAccessNote(state: state.ariaKeyState)
+                        AriaKeyAccessNote(keyState: state.ariaKeyState)
                     }
                 case .chord(let chord):
                     ChordLabel(chord: chord)
@@ -32,8 +30,12 @@ struct OpenAriaPage: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                 case nil:
-                    Text("The shortcut is off. Turn it on in Settings > Shortcuts.")
-                        .foregroundStyle(.secondary)
+                    Text(
+                        isOff
+                            ? "The shortcut is off. Turn it on in Settings > Shortcuts."
+                            : "Find the shortcut in Settings > Shortcuts."
+                    )
+                    .foregroundStyle(.secondary)
                 }
             } footer: {
                 Text("Search commands, prompts, and history.")
@@ -44,8 +46,13 @@ struct OpenAriaPage: View {
                     LabeledContent("Ask your assistant", value: ariaKey.gesture(for: askCombo))
                 }
             } footer: {
-                NoticeText(notice: state.notice)
+                NoticeText(notice: state.installNotice)
             }
         }
+    }
+
+    /// A binding this build can't read isn't off.
+    private var isOff: Bool {
+        shortcut.map { $0.binding == nil } ?? false
     }
 }
