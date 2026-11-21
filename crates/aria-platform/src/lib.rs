@@ -6,5 +6,7 @@ pub mod feedback;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod hotkey;
 pub mod runtime;
+#[cfg(feature = "secret")]
+pub mod secret;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;

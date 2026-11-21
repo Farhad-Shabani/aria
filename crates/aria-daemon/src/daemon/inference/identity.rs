@@ -5,11 +5,13 @@ use std::time::Instant;
 
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::pem::PemObject;
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use super::PairedServer;
 use crate::daemon::relay::{PairingCode, PairingCodes, PairingError, fingerprint, mint, to_hex};
+use aria_platform::secret::{Secret, SecretError};
 use aria_primitives::cancel::CancelToken;
 use aria_primitives::private_document::{DocumentError, PrivateDocument};
 use aria_settings::config::ServerEndpoint;
@@ -18,6 +20,9 @@ use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 pub(super) const MAX_DOCUMENT_BYTES: u64 = 16 * 1024;
 const MAX_CLIENTS: usize = 16;
 pub(super) const CERTIFICATE_NAME: &str = "aria.inference";
+const KEY_SERVICE: &str = "Aria Server Pairing Identity";
+const SERVER_KEY_ACCOUNT: &str = "server";
+const CLIENT_KEY_ACCOUNT: &str = "client";
 
 /// Parsing checks the pin and the code, so a parsed invitation is usable.
 #[derive(Serialize, Deserialize)]
@@ -69,24 +74,42 @@ pub(crate) struct PinnedServer {
     pub fingerprint: [u8; 32],
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(super) struct Credentials {
     pub certificate_pem: String,
     pub key_pem: String,
 }
 
+impl Credentials {
+    fn stored(&self) -> StoredCredentials {
+        StoredCredentials::new(self.certificate_pem.clone())
+    }
+}
+
+/// What a document keeps of its credentials. The key is a secret apart.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredCredentials {
+    certificate_pem: String,
+    /// Only a document from before the key became a secret has one. Such a
+    /// document reads as none, so its pairing starts over.
+    #[serde(default, rename = "key_pem", skip_serializing)]
+    held_key: Option<IgnoredAny>,
+}
+
+impl StoredCredentials {
+    fn new(certificate_pem: String) -> Self {
+        Self {
+            certificate_pem,
+            held_key: None,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredServer {
-    credentials: Credentials,
+    credentials: StoredCredentials,
     clients: Vec<[u8; 32]>,
-}
-
-#[derive(Serialize)]
-struct ServerUpdate<'a> {
-    credentials: &'a Credentials,
-    clients: &'a [[u8; 32]],
 }
 
 pub(in crate::daemon) struct ServerAccess {
@@ -105,13 +128,16 @@ struct Trust {
 
 impl ServerAccess {
     pub(in crate::daemon) fn load_or_create(path: &Path) -> Result<Arc<Self>, Error> {
-        let stored = load_or_create(path, || {
-            Ok(StoredServer {
-                credentials: generate()?,
+        let (stored, credentials) = load_or_create(
+            path,
+            &key_secret(SERVER_KEY_ACCOUNT, path),
+            |stored: &StoredServer| &stored.credentials,
+            |credentials| StoredServer {
+                credentials,
                 clients: Vec::new(),
-            })
-        })?;
-        super::tls::validate_credentials(&stored.credentials)?;
+            },
+        )?;
+        super::tls::validate_credentials(&credentials)?;
         if stored.clients.len() > MAX_CLIENTS
             || stored
                 .clients
@@ -123,7 +149,7 @@ impl ServerAccess {
         }
         Ok(Arc::new(Self {
             path: path.to_owned(),
-            credentials: stored.credentials,
+            credentials,
             codes: PairingCodes::default(),
             state: Mutex::new(Trust {
                 clients: stored.clients,
@@ -258,9 +284,9 @@ impl ServerAccess {
     fn write(&self, clients: &[[u8; 32]]) -> Result<(), Error> {
         persist(
             &PrivateDocument::new(&self.path, MAX_DOCUMENT_BYTES),
-            &ServerUpdate {
-                credentials: &self.credentials,
-                clients,
+            &StoredServer {
+                credentials: self.credentials.stored(),
+                clients: clients.to_vec(),
             },
         )
     }
@@ -297,52 +323,74 @@ impl Drop for Admission {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredClient {
-    credentials: Credentials,
+    credentials: StoredCredentials,
     server: Option<PinnedServer>,
 }
 
+/// The key stays in its secret until a connection asks for it, so looking
+/// at a pairing never reaches the Keychain.
 pub(crate) struct ClientIdentity {
     path: PathBuf,
-    stored: StoredClient,
+    certificate_pem: String,
+    server: Option<PinnedServer>,
     fingerprint: [u8; 32],
 }
 
 impl ClientIdentity {
     /// Opens an access that pairing already created.
     pub(crate) fn open(path: &Path) -> Result<Self, Error> {
-        let stored = PrivateDocument::new(path, MAX_DOCUMENT_BYTES)
-            .read::<StoredClient>()?
-            .ok_or(Error::Unpaired)?;
-        Self::validated(path, stored)
+        let stored = read_current(
+            &PrivateDocument::new(path, MAX_DOCUMENT_BYTES),
+            |stored: &StoredClient| &stored.credentials,
+        )?
+        .ok_or(Error::Unpaired)?;
+        Self::validated(path, stored.credentials.certificate_pem, stored.server)
     }
 
     pub(super) fn load_or_create(path: &Path) -> Result<Self, Error> {
-        let stored = load_or_create(path, || {
-            Ok(StoredClient {
-                credentials: generate()?,
+        let (stored, credentials) = load_or_create(
+            path,
+            &client_key(path),
+            |stored: &StoredClient| &stored.credentials,
+            |credentials| StoredClient {
+                credentials,
                 server: None,
-            })
-        })?;
-        Self::validated(path, stored)
+            },
+        )?;
+        super::tls::validate_credentials(&credentials)?;
+        Self::validated(path, credentials.certificate_pem, stored.server)
     }
 
-    fn validated(path: &Path, stored: StoredClient) -> Result<Self, Error> {
-        super::tls::validate_credentials(&stored.credentials)?;
-        if let Some(server) = &stored.server {
+    fn validated(
+        path: &Path,
+        certificate_pem: String,
+        server: Option<PinnedServer>,
+    ) -> Result<Self, Error> {
+        if let Some(server) = &server {
             validate_pin(&server.certificate_pem, &server.fingerprint)?;
         }
-        let certificate =
-            CertificateDer::from_pem_slice(stored.credentials.certificate_pem.as_bytes())
-                .map_err(|_| Error::InvalidIdentity)?;
+        let certificate = CertificateDer::from_pem_slice(certificate_pem.as_bytes())
+            .map_err(|_| Error::InvalidIdentity)?;
+        super::tls::validate_certificate(&certificate)?;
         Ok(Self {
             path: path.to_owned(),
             fingerprint: fingerprint(&certificate),
-            stored,
+            certificate_pem,
+            server,
         })
     }
 
-    pub(super) fn credentials(&self) -> &Credentials {
-        &self.stored.credentials
+    /// Reads the key, so only a connection calls it.
+    pub(super) fn credentials(&self) -> Result<Credentials, Error> {
+        let key_pem = client_key(&self.path)
+            .read()?
+            .ok_or(Error::InvalidIdentity)?;
+        let credentials = Credentials {
+            certificate_pem: self.certificate_pem.clone(),
+            key_pem,
+        };
+        super::tls::validate_credentials(&credentials)?;
+        Ok(credentials)
     }
 
     pub(super) fn fingerprint(&self) -> [u8; 32] {
@@ -350,14 +398,14 @@ impl ClientIdentity {
     }
 
     pub(crate) fn paired_server(&self) -> Option<PairedServer> {
-        self.stored.server.as_ref().map(|server| PairedServer {
+        self.server.as_ref().map(|server| PairedServer {
             endpoint: server.endpoint.clone(),
             client_fingerprint: to_hex(&self.fingerprint),
         })
     }
 
     pub(super) fn pinned_server(&self) -> Result<&PinnedServer, Error> {
-        self.stored.server.as_ref().ok_or(Error::Unpaired)
+        self.server.as_ref().ok_or(Error::Unpaired)
     }
 
     pub(super) fn remember(&mut self, invitation: &Invitation) -> Result<(), Error> {
@@ -366,19 +414,14 @@ impl ClientIdentity {
             certificate_pem: invitation.certificate_pem.clone(),
             fingerprint: invitation.fingerprint,
         };
-        #[derive(Serialize)]
-        struct Update<'a> {
-            credentials: &'a Credentials,
-            server: &'a PinnedServer,
-        }
         persist(
             &PrivateDocument::new(&self.path, MAX_DOCUMENT_BYTES),
-            &Update {
-                credentials: &self.stored.credentials,
-                server: &server,
+            &StoredClient {
+                credentials: StoredCredentials::new(self.certificate_pem.clone()),
+                server: Some(server.clone()),
             },
         )?;
-        self.stored.server = Some(server);
+        self.server = Some(server);
         Ok(())
     }
 }
@@ -401,18 +444,58 @@ fn generate() -> Result<Credentials, Error> {
     })
 }
 
-/// Reads the document, or persists `create`'s value when there is none yet.
+pub(super) fn client_key(path: &Path) -> Secret {
+    key_secret(CLIENT_KEY_ACCOUNT, path)
+}
+
+/// Where there is no Keychain, the key sits beside its document.
+fn key_secret(account: &'static str, document: &Path) -> Secret {
+    crate::daemon::secret::secret(KEY_SERVICE, account, document.with_extension("key"))
+}
+
+/// Reads the document and its credentials, or persists `create`'s document
+/// with new credentials when there is none yet. A document whose key is gone
+/// is invalid, never replaced.
 fn load_or_create<T: Serialize + serde::de::DeserializeOwned>(
     path: &Path,
-    create: impl FnOnce() -> Result<T, Error>,
-) -> Result<T, Error> {
+    secret: &Secret,
+    credentials_of: impl Fn(&T) -> &StoredCredentials,
+    create: impl FnOnce(StoredCredentials) -> T,
+) -> Result<(T, Credentials), Error> {
     let document = PrivateDocument::new(path, MAX_DOCUMENT_BYTES);
-    if let Some(stored) = document.read::<T>()? {
-        return Ok(stored);
+    if let Some(stored) = read_current(&document, &credentials_of)? {
+        let key_pem = secret.read()?.ok_or(Error::InvalidIdentity)?;
+        let certificate_pem = credentials_of(&stored).certificate_pem.clone();
+        return Ok((
+            stored,
+            Credentials {
+                certificate_pem,
+                key_pem,
+            },
+        ));
     }
-    let stored = create()?;
+    let credentials = generate()?;
+    // Before the document, so a document never names a key that isn't kept.
+    secret.write(&credentials.key_pem)?;
+    let stored = create(credentials.stored());
     persist(&document, &stored)?;
-    Ok(stored)
+    Ok((stored, credentials))
+}
+
+/// The document, or `None` when there is none or it is from before the key
+/// became a secret.
+fn read_current<T: serde::de::DeserializeOwned>(
+    document: &PrivateDocument,
+    credentials_of: impl Fn(&T) -> &StoredCredentials,
+) -> Result<Option<T>, Error> {
+    let Some(stored) = document.read::<T>()? else {
+        return Ok(None);
+    };
+    if credentials_of(&stored).held_key.is_some() {
+        tracing::warn!("a remote access document from before the Keychain; pairing starts over");
+        return Ok(None);
+    }
+    Ok(Some(stored))
 }
 
 fn persist(document: &PrivateDocument, value: &impl Serialize) -> Result<(), Error> {
@@ -427,6 +510,8 @@ fn persist(document: &PrivateDocument, value: &impl Serialize) -> Result<(), Err
 pub enum Error {
     #[error("the remote access document is not usable")]
     Document(#[from] DocumentError),
+    #[error("the remote access key is not usable")]
+    Key(#[from] SecretError),
     #[error(
         "the access was published, but durability is unconfirmed; authorization was not granted"
     )]
@@ -487,6 +572,7 @@ impl From<Error> for RpcFailure {
             Error::Busy => (RpcErrorCode::Busy, "inference is busy"),
             Error::Stopped => (RpcErrorCode::ShuttingDown, "inference host is stopping"),
             Error::Document(_)
+            | Error::Key(_)
             | Error::InvalidIdentity
             | Error::Certificate(_)
             | Error::Invite(_)
@@ -543,9 +629,9 @@ mod tests {
             return Err(error().into());
         }
         let document = PrivateDocument::new(&access.path, MAX_DOCUMENT_BYTES);
-        let prepared = document.prepare(&ServerUpdate {
-            credentials: &access.credentials,
-            clients,
+        let prepared = document.prepare(&StoredServer {
+            credentials: access.credentials.stored(),
+            clients: clients.to_vec(),
         })?;
         if matches!(fault, WriteFault::Rename) {
             return Err(error().into());
@@ -554,6 +640,44 @@ mod tests {
         Err(Error::DurabilityUnconfirmed(
             DocumentError::DurabilityUnconfirmed(io::ErrorKind::Other.into()),
         ))
+    }
+
+    #[test]
+    fn a_document_from_before_the_keychain_starts_over() {
+        let (_directory, path, before) = access();
+        grant(&before, [1; 32]);
+        let mut held: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        held["credentials"]["key_pem"] = serde_json::json!(before.credentials.key_pem);
+        std::fs::write(&path, serde_json::to_vec(&held).unwrap()).unwrap();
+
+        let after = ServerAccess::load_or_create(&path).unwrap();
+
+        assert!(after.credentials.certificate_pem != before.credentials.certificate_pem);
+        assert!(!after.contains(&[1; 32]));
+        assert!(
+            !String::from_utf8(std::fs::read(&path).unwrap())
+                .unwrap()
+                .contains("key_pem")
+        );
+    }
+
+    #[test]
+    fn a_document_whose_key_is_gone_or_unreadable_is_refused_and_kept() {
+        let (_directory, path, _) = access();
+        let document = std::fs::read(&path).unwrap();
+        let key = path.with_extension("key");
+        std::fs::remove_file(&key).unwrap();
+        assert!(matches!(
+            ServerAccess::load_or_create(&path),
+            Err(Error::InvalidIdentity)
+        ));
+        std::fs::create_dir(&key).unwrap();
+        assert!(matches!(
+            ServerAccess::load_or_create(&path),
+            Err(Error::Key(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), document);
     }
 
     #[test]
@@ -568,16 +692,16 @@ mod tests {
 
     #[test]
     fn identity_rejects_mismatched_keys_and_excess_clients() {
-        let (_directory, path, _) = access();
-        let document = PrivateDocument::new(&path, MAX_DOCUMENT_BYTES);
-        let mut stored: StoredServer = document.read().unwrap().unwrap();
-        stored.credentials.key_pem = generate().unwrap().key_pem;
-        persist(&document, &stored).unwrap();
+        let (_directory, path, before) = access();
+        let key = key_secret(SERVER_KEY_ACCOUNT, &path);
+        key.write(&generate().unwrap().key_pem).unwrap();
         assert!(matches!(
             ServerAccess::load_or_create(&path),
             Err(Error::Tls(_))
         ));
-        stored.credentials = generate().unwrap();
+        key.write(&before.credentials.key_pem).unwrap();
+        let document = PrivateDocument::new(&path, MAX_DOCUMENT_BYTES);
+        let mut stored: StoredServer = document.read().unwrap().unwrap();
         stored.clients = (0..=MAX_CLIENTS).map(|index| [index as u8; 32]).collect();
         persist(&document, &stored).unwrap();
         assert!(matches!(
@@ -784,11 +908,12 @@ mod tests {
         assert!(matches!(ClientIdentity::open(&path), Err(Error::Unpaired)));
         assert!(!path.exists());
         let mut client = ClientIdentity::load_or_create(&path).unwrap();
-        let certificate = client.credentials().certificate_pem.clone();
+        let certificate = client.credentials().unwrap().certificate_pem;
         assert_eq!(
             ClientIdentity::load_or_create(&path)
                 .unwrap()
                 .credentials()
+                .unwrap()
                 .certificate_pem,
             certificate
         );

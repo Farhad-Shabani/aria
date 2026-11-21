@@ -23,6 +23,7 @@ mod microphone;
 mod operation;
 mod phone;
 pub(crate) mod relay;
+mod secret;
 mod server;
 mod service;
 mod session;

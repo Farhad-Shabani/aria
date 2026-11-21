@@ -50,8 +50,8 @@ cannot promise that other voices are left out.
 
 The server keeps no history. It deletes its working copies when each
 recognition ends, though crashes and backups can keep them. Encryption
-protects audio on the way, not from the person running the server. Pairing
-keys sit unencrypted in `~/.aria/inference/`, readable only by your account.
+protects audio on the way, not from the person running the server.
+[Files and folders](#files-and-folders) says where pairing keys live.
 
 To stop uploads, turn off **Recognize speech on your server** in **Settings → Recognition**,
 or run `aria setup --local`. Cancelling a dictation or revoking
@@ -157,9 +157,14 @@ project vocabulary cache. Transcribing saved audio again makes a temporary
 unencrypted copy. Transcript files aren't encrypted. On Linux, Aria doesn't
 encrypt these files.
 
-The key is **Aria storage key** in your default Keychain, usually **login**.
+The key is **Aria Safe Storage** in your default Keychain, usually **login**.
 Without it, Aria can't read or save that data. To start over, delete
 `history.db`, `memory.db`, and `catalog.db`.
+
+The private keys that pair your phone and your server are in the same
+Keychain, as **Aria Phone Pairing Identity** and **Aria Server Pairing
+Identity**. On Linux, they sit unencrypted in `.key` files beside the pairing
+files in `~/.aria`, readable only by your account.
 
 Encryption protects the files, not your account. Any program running as you
 can still read them through Aria, for example with `aria memory list`. Backups

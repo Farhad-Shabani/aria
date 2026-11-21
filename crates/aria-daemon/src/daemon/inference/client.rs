@@ -202,7 +202,8 @@ impl RemoteRecognizer {
 
     fn connect(identity: &ClientIdentity) -> Result<Self, RemoteClientError> {
         let server = identity.pinned_server().map_err(identity_error)?;
-        let endpoint = tls::endpoint(identity, server)
+        let credentials = identity.credentials().map_err(identity_error)?;
+        let endpoint = tls::endpoint(&credentials, server)
             .map_err(|error| RemoteClientError::Identity(error.into()))?;
         let runtime = RemoteRuntime::new()?;
         let channel = {

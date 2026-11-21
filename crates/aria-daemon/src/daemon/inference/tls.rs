@@ -17,9 +17,7 @@ use tokio_rustls::rustls::{
 };
 use tonic::transport::{ClientTlsConfig, Endpoint, Identity};
 
-use super::identity::{
-    CERTIFICATE_NAME, ClientIdentity, Credentials, Invitation, PinnedServer, ServerAccess,
-};
+use super::identity::{CERTIFICATE_NAME, Credentials, Invitation, PinnedServer, ServerAccess};
 use crate::daemon::relay::fingerprint;
 use aria_settings::config::ServerEndpoint;
 
@@ -39,20 +37,23 @@ pub(super) fn server(access: &Arc<ServerAccess>) -> Result<TlsAcceptor, Error> {
 }
 
 pub(super) fn invited_endpoint(
-    client: &ClientIdentity,
+    credentials: &Credentials,
     invitation: &Invitation,
 ) -> Result<Endpoint, Error> {
     configured_endpoint(
-        client,
+        credentials,
         &invitation.endpoint,
         &invitation.certificate_pem,
         invitation.fingerprint,
     )
 }
 
-pub(super) fn endpoint(client: &ClientIdentity, server: &PinnedServer) -> Result<Endpoint, Error> {
+pub(super) fn endpoint(
+    credentials: &Credentials,
+    server: &PinnedServer,
+) -> Result<Endpoint, Error> {
     configured_endpoint(
-        client,
+        credentials,
         &server.endpoint,
         &server.certificate_pem,
         server.fingerprint,
@@ -60,7 +61,7 @@ pub(super) fn endpoint(client: &ClientIdentity, server: &PinnedServer) -> Result
 }
 
 fn configured_endpoint(
-    client: &ClientIdentity,
+    credentials: &Credentials,
     address: &ServerEndpoint,
     pem: &str,
     pin: [u8; 32],
@@ -73,7 +74,6 @@ fn configured_endpoint(
         pin,
         verifier: certificate_verifier(certificate)?,
     });
-    let credentials = client.credentials();
     let tls = ClientTlsConfig::new()
         .domain_name(CERTIFICATE_NAME)
         .identity(Identity::from_pem(
@@ -251,6 +251,7 @@ mod tests {
     use tonic_health::pb::HealthCheckRequest;
     use tonic_health::pb::health_client::HealthClient;
 
+    use super::super::identity::ClientIdentity;
     use super::*;
 
     async fn listening(
@@ -294,12 +295,13 @@ mod tests {
         let (access, client) = identities(&directory);
         let (address, task, accepted) = listening(server(&access).unwrap()).await;
         let invitation = access.issue(&address).unwrap();
-        let certificate =
-            CertificateDer::from_pem_slice(client.credentials().certificate_pem.as_bytes())
-                .unwrap();
+        let certificate = CertificateDer::from_pem_slice(
+            client.credentials().unwrap().certificate_pem.as_bytes(),
+        )
+        .unwrap();
         let pin = fingerprint(&certificate);
         access.pair(pin, &invitation.code).unwrap();
-        let channel = invited_endpoint(&client, &invitation)
+        let channel = invited_endpoint(&client.credentials().unwrap(), &invitation)
             .unwrap()
             .connect()
             .await
@@ -320,7 +322,10 @@ mod tests {
             certificate_pem: invitation.certificate_pem,
             fingerprint: invitation.fingerprint,
         };
-        let connected = endpoint(&client, &pinned).unwrap().connect().await;
+        let connected = endpoint(&client.credentials().unwrap(), &pinned)
+            .unwrap()
+            .connect()
+            .await;
         assert!(!accepted.await.unwrap());
         if let Ok(channel) = connected {
             assert!(
@@ -345,7 +350,7 @@ mod tests {
         substitute.issue(&address).unwrap();
         let invitation = trusted.issue(&address).unwrap();
         assert!(
-            invited_endpoint(&client, &invitation)
+            invited_endpoint(&client.credentials().unwrap(), &invitation)
                 .unwrap()
                 .connect()
                 .await
@@ -374,7 +379,7 @@ mod tests {
         let (address, task, _) = listening(TlsAcceptor::from(Arc::new(config))).await;
         let invitation = access.issue(&address).unwrap();
         assert!(
-            invited_endpoint(&client, &invitation)
+            invited_endpoint(&client.credentials().unwrap(), &invitation)
                 .unwrap()
                 .connect()
                 .await

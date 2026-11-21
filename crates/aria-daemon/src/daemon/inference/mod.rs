@@ -106,8 +106,13 @@ pub(crate) fn pairing_id_of(
 /// Stores a client identity pinned to `endpoint`, as pairing would, and
 /// returns its fingerprint.
 #[cfg(any(test, feature = "test-support"))]
+///
+/// Also keeps this process's secrets in files, so the tests that call it
+/// never reach the developer's Keychain.
 pub fn pair_server_for_tests(home: &Path, endpoint: &str) -> String {
     use sha2::Digest;
+
+    aria_platform::secret::keep_in_files_for_tests();
 
     let params = rcgen::CertificateParams::new(vec!["aria.inference".to_owned()]).unwrap();
     let key = rcgen::KeyPair::generate().unwrap();
@@ -116,7 +121,6 @@ pub fn pair_server_for_tests(home: &Path, endpoint: &str) -> String {
     let stored = serde_json::json!({
         "credentials": {
             "certificate_pem": certificate.pem(),
-            "key_pem": key.serialize_pem(),
         },
         "server": {
             "endpoint": endpoint,
@@ -125,16 +129,17 @@ pub fn pair_server_for_tests(home: &Path, endpoint: &str) -> String {
         },
     });
     aria_primitives::private_fs::prepare_directory(&home.join(".aria")).unwrap();
-    aria_primitives::private_document::PrivateDocument::new(
-        Paths::in_home(home).client_identity(),
-        identity::MAX_DOCUMENT_BYTES,
-    )
-    .prepare(&stored)
-    .unwrap()
-    .commit()
-    .unwrap()
-    .confirm_durability()
-    .unwrap();
+    let path = Paths::in_home(home).client_identity();
+    aria_primitives::private_document::PrivateDocument::new(&path, identity::MAX_DOCUMENT_BYTES)
+        .prepare(&stored)
+        .unwrap()
+        .commit()
+        .unwrap()
+        .confirm_durability()
+        .unwrap();
+    identity::client_key(&path)
+        .write(&key.serialize_pem())
+        .unwrap();
     fingerprint
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -175,8 +180,10 @@ mod tests {
         let key = rcgen::KeyPair::generate().unwrap();
         stored["credentials"] = serde_json::json!({
             "certificate_pem": params.self_signed(&key).unwrap().pem(),
-            "key_pem": key.serialize_pem(),
         });
+        identity::client_key(&path)
+            .write(&key.serialize_pem())
+            .unwrap();
         aria_primitives::private_document::PrivateDocument::new(
             &path,
             identity::MAX_DOCUMENT_BYTES,

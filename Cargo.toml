@@ -85,6 +85,7 @@ toml_edit    = { version = "0.25", default-features = false }
 tracing      = "0.1"
 
 cidre                  = { version = "=0.28.0", default-features = false }
+core-foundation        = { version = "0.10", default-features = false }
 objc2                  = "0.6"
 objc2-foundation       = { version = "0.3.2", default-features = false }
 rusqlite               = { version = "0.43", features = [ "bundled", "hooks" ] }
