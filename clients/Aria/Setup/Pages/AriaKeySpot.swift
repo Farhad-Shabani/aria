@@ -40,6 +40,8 @@ private struct Cap: Identifiable {
         /// A character key: its shifted mark over its plain one.
         case marks(String, String)
         case arrow(symbol: String)
+        /// A key with nothing printed on it, like the space bar.
+        case blank
     }
 
     let face: Face
@@ -72,6 +74,12 @@ private struct Cap: Identifiable {
         case (.rightOption, .shift):
             layout(for: key, combo: nil) + [
                 Cap(face: .modifier(symbol: "shift", name: "shift"), x: 2.11, y: -1.12, width: 2.3, completes: .shift)
+            ]
+        case (.rightOption, .command):
+            // The space bar and M balance the arrows, so the lit pair sits mid-drawing.
+            layout(for: key, combo: nil) + [
+                Cap(face: .blank, x: -3.69, y: 0, width: 2.2, opacity: 0.25),
+                Cap(face: .marks("M", ""), x: -2.37, y: -1.12, opacity: 0.2),
             ]
         case (.fn, .command):
             layout(for: key, combo: nil) + [
@@ -147,6 +155,8 @@ private struct KeyCap: View {
             .font(.callout)
         case .arrow(let symbol):
             Image(systemName: symbol).font(.caption2).imageScale(.small)
+        case .blank:
+            Color.clear
         }
     }
 }

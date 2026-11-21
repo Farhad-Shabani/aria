@@ -39,7 +39,7 @@ struct OpenAriaPage: View {
                 Text("Search commands, prompts, and history.")
             }
             Section {
-                LabeledContent("Dictate", value: state.isHotkeyReady ? "Tap \(ariaKey.title)" : "Needs permission")
+                LabeledContent("Dictate", value: state.isHotkeyReady ? ariaKey.title : "Needs permission")
                 if state.isHotkeyReady, let askCombo {
                     LabeledContent("Ask your assistant", value: ariaKey.gesture(for: askCombo))
                 }
