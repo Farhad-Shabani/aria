@@ -8,7 +8,7 @@ use rusqlite::Connection;
 
 use super::Error;
 
-/// Loading the plaintext marker never fails.
+/// Loading never fails: there is no key to load.
 #[derive(Debug, thiserror::Error)]
 pub enum AtRestError {}
 
@@ -27,7 +27,7 @@ impl AtRest {
     #[cfg(any(test, feature = "test-support"))]
     pub fn unlock_for_tests(&self, _connection: &Connection) {}
 
-    pub(super) fn is_plaintext(&self, _path: &Path, _len: i64) -> Result<bool, Error> {
+    pub(super) fn is_plaintext(&self, _directory: &File, _name: &OsStr) -> Result<bool, Error> {
         Ok(false)
     }
 

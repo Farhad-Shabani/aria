@@ -137,7 +137,7 @@ impl Database {
 
         create_if_missing(&directory_handle, name)?;
         let mut before = check_database(&directory_handle, name, policy)?;
-        if at_rest.is_plaintext(&directory.join(name), before.st_size)? {
+        if at_rest.is_plaintext(&directory_handle, name)? {
             if let Ownership::Shared { .. } = policy.ownership {
                 exclusive(&ownership)?;
             }

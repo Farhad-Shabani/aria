@@ -108,23 +108,17 @@ impl AtRest {
         Ok(Self { key })
     }
 
-    /// Whether `path` holds an unencrypted database. An empty file is a new
-    /// database, not a plaintext one.
-    pub(super) fn is_plaintext(&self, path: &Path, len: i64) -> Result<bool, Error> {
-        if len == 0 {
-            return Ok(false);
-        }
-        let probe = Connection::open_with_flags(
-            path,
-            OpenFlags::SQLITE_OPEN_READ_ONLY
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX
-                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-        )?;
-        match read_schema(&probe) {
-            Ok(()) => Ok(true),
-            Err(error) if is_not_a_database(&error) => Ok(false),
-            Err(error) => Err(error.into()),
-        }
+    /// Whether the database `name` in `directory` is unencrypted.
+    pub(super) fn is_plaintext(&self, directory: &File, name: &OsStr) -> Result<bool, Error> {
+        let file = rustix::fs::openat(
+            directory,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(io("open the database"))?;
+        let contents = Contents::read(File::from(file)).map_err(io("read the database header"))?;
+        Ok(contents == Contents::Plaintext)
     }
 
     /// Replaces the plaintext database `name` with an encrypted copy. The
@@ -211,18 +205,45 @@ impl AtRest {
     }
 }
 
-/// An empty file is a new database, and a missing one was never made.
+/// What a database file holds, told by its header alone.
+#[derive(Debug, PartialEq, Eq)]
+enum Contents {
+    /// A new database.
+    Empty,
+    Plaintext,
+    Encrypted,
+}
+
+impl Contents {
+    /// A plaintext database is at least one page, so a short header that
+    /// isn't empty is ciphertext.
+    fn read(file: impl Read) -> std::io::Result<Self> {
+        let mut header = Vec::with_capacity(PLAINTEXT_HEADER.len());
+        file.take(PLAINTEXT_HEADER.len() as u64)
+            .read_to_end(&mut header)?;
+        Ok(if header.is_empty() {
+            Self::Empty
+        } else if header == PLAINTEXT_HEADER {
+            Self::Plaintext
+        } else {
+            Self::Encrypted
+        })
+    }
+}
+
+/// A missing database was never made.
 fn is_encrypted(path: &Path) -> Result<bool, AtRestError> {
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(AtRestError::Probe(error)),
+    let file = match rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(file) => File::from(file),
+        Err(rustix::io::Errno::NOENT) => return Ok(false),
+        Err(error) => return Err(AtRestError::Probe(error.into())),
     };
-    let mut header = Vec::with_capacity(PLAINTEXT_HEADER.len());
-    file.take(PLAINTEXT_HEADER.len() as u64)
-        .read_to_end(&mut header)
-        .map_err(AtRestError::Probe)?;
-    Ok(!header.is_empty() && header != PLAINTEXT_HEADER)
+    let contents = Contents::read(file).map_err(AtRestError::Probe)?;
+    Ok(contents == Contents::Encrypted)
 }
 
 fn remove_if_present(directory: &File, name: &OsStr) -> Result<(), Error> {
