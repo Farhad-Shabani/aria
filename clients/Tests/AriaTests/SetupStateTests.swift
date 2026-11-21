@@ -222,6 +222,19 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(SetupState.Step.welcome.title, "Welcome to Aria")
     }
 
+    func testTheRailNamesEachStepAndThePageSaysWhatToDo() {
+        XCTAssertEqual(
+            SetupProgress.Stage.allCases.map(\.title),
+            ["Welcome", "Engines", "Installation", "Access", "Voice", "Dictation", "Shortcut"])
+        let pages: [SetupState.Step] = [.welcome, .choices, .applying, .grant, .voice, .tryOut, .openAria]
+        XCTAssertEqual(
+            pages.map(\.title),
+            [
+                "Welcome to Aria", "Choose Your Engines", "Installing…", "Allow Access", "Set Up Your Voice",
+                "Try Dictation", "Open Aria from Any App",
+            ])
+    }
+
     func testSummariesReadAsSentences() async {
         let harness = Harness()
         let state = await welcome(harness)

@@ -588,9 +588,9 @@ extension SetupState.Step {
         case .choices: "Choose Your Engines"
         case .applying: "Installing…"
         case .grant: "Allow Access"
-        case .voice: "Your Voice"
-        case .tryOut: "Try It"
-        case .openAria, .done: "Open Aria"
+        case .voice: "Set Up Your Voice"
+        case .tryOut: "Try Dictation"
+        case .openAria, .done: "Open Aria from Any App"
         case .failed: "Setup Didn’t Finish"
         }
     }
@@ -600,10 +600,10 @@ extension SetupState.Step {
         case .inspecting, .welcome: "Dictation stays on your Mac. Chat uses your selected assistant."
         case .choices: "Speech stays on your Mac. You can change these later."
         case .applying: "This takes a moment. Downloads can be canceled."
-        case .grant: "Aria uses it to hear the Aria key and type what you say."
+        case .grant: "Aria needs permission to hear the Aria key and type for you."
         case .voice: "Aria can tell who is speaking once it knows your voice."
         case .tryOut: "Tap the Aria key and say a few words."
-        case .openAria, .done: "Use this shortcut to open Aria from any app."
+        case .openAria, .done: "Try the shortcut now, or click **Done**."
         case .failed: nil
         }
     }
