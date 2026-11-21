@@ -3,7 +3,6 @@
 use crate::daemon::config::{DaemonConfig, HotkeyConfig, RelayConfig, WakeWordOverride};
 use aria_kit::audio::{WakeWordMonitor, remove_all_spools};
 use aria_platform::runtime::PreparedRuntimePaths;
-use aria_platform::sqlite::AtRest;
 use aria_primitives::error_chain;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_settings::config::{ConfigError, memory_directory};
@@ -14,7 +13,6 @@ use aria_voice::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use aria_voice::microphone::Gate;
 use aria_voice::vocabulary::dictionary::{self, Dictionary};
 
-use std::path::Path;
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, watch};
@@ -41,7 +39,7 @@ use super::speaker;
 use super::speaker::SpeakerRuntime;
 use super::speech;
 use super::speech::SpeechRuntime;
-use super::storage::load_storage_key;
+use super::storage::StorageKey;
 use super::subscriptions::Subscriptions;
 use super::system_transcription::SystemTranscriptionState;
 use super::tasks::RuntimeTasks;
@@ -146,11 +144,11 @@ fn compose(
     let settings = Arc::new(SettingsStore::new(Arc::clone(&cache)));
     let subscriptions = Arc::new(Subscriptions::new());
     let memory = memory_directory(&startup.memory, &context.home);
-    let at_rest = storage_key(&context.home, &memory);
+    let key = Arc::new(StorageKey::new(context.home.clone(), memory.clone()));
     let history_store = Arc::new(HistoryStore::open(
         &context.home.join(aria_voice::history::DIRECTORY),
         context.paths.spool_dir(),
-        at_rest.as_deref(),
+        Arc::clone(&key),
     ));
     let microphone = Gate::new();
     let relay_microphone = Arc::clone(&microphone);
@@ -159,8 +157,8 @@ fn compose(
     let dictionary = Arc::new(Dictionary::new(vocabulary_directory.join(dictionary::FILE)));
     let (vocabulary, mut vocabulary_worker) = super::vocabulary::Runtime::new(
         vocabulary_directory,
-        at_rest.clone(),
-        super::vocabulary::PersonalSources::new(dictionary, memory, at_rest.clone()),
+        Arc::clone(&key),
+        super::vocabulary::PersonalSources::new(dictionary, memory, Arc::clone(&key)),
         matches!(context.lifetime, DaemonLifetime::Persistent),
         Arc::clone(&settings),
         aria_voice::vocabulary::discover::LocalCollector::new(
@@ -184,7 +182,7 @@ fn compose(
             cache: &cache,
             startup: &startup,
             history_store: &history_store,
-            at_rest: &at_rest,
+            key: &key,
         },
         wake_word,
         microphone,
@@ -208,17 +206,15 @@ fn compose(
     // A daemon that lives on catches up on what the last one left and keeps
     // up with the owner's chats; one serving a single press has no time for
     // an LLM call.
-    let memory_backlog = at_rest
-        .filter(|_| matches!(context.lifetime, DaemonLifetime::Persistent))
-        .map(|at_rest| {
-            MemoryBacklog::new(
-                context.home.clone(),
-                Arc::clone(&cache),
-                at_rest,
-                memory_woken,
-                Arc::clone(&vocabulary),
-            )
-        });
+    let memory_backlog = matches!(context.lifetime, DaemonLifetime::Persistent).then(|| {
+        MemoryBacklog::new(
+            context.home.clone(),
+            Arc::clone(&cache),
+            key,
+            memory_woken,
+            Arc::clone(&vocabulary),
+        )
+    });
     let dictation_runtime = Arc::clone(&dictation);
     let relay_runtime = Arc::clone(&dictation);
     let chat_runtime = Arc::clone(&chat);
@@ -346,21 +342,7 @@ struct Dependencies<'a> {
     /// The settings as the daemon started with them.
     startup: &'a CheckedSettings,
     history_store: &'a Arc<HistoryStore>,
-    /// `None` when the storage key didn't load: nothing saved can be read.
-    at_rest: &'a Option<Arc<AtRest>>,
-}
-
-fn storage_key(home: &Path, memory: &Path) -> Option<Arc<AtRest>> {
-    match load_storage_key(home, memory) {
-        Ok(at_rest) => Some(Arc::new(at_rest)),
-        Err(error) => {
-            tracing::warn!(
-                error = %error_chain(&error),
-                "history, memory, and the vocabulary cache are unavailable without the storage key"
-            );
-            None
-        }
-    }
+    key: &'a Arc<StorageKey>,
 }
 
 /// Everything the daemon runs for as long as it lives: a runtime behind each
@@ -460,7 +442,7 @@ fn eager_workers(
         cache,
         startup,
         history_store,
-        at_rest,
+        key,
     } = *dependencies;
     let DaemonConfig {
         dictation: dictation_config,
@@ -525,7 +507,7 @@ fn eager_workers(
             Arc::clone(cache),
             Some(memory_wake),
             Arc::clone(history_store),
-            at_rest.clone(),
+            Arc::clone(key),
         )),
         speaker: Arc::new(SpeakerRuntime::new(
             Some(speakers),
@@ -556,7 +538,7 @@ fn deferred_workers(
         cache,
         startup,
         history_store,
-        at_rest,
+        key,
     } = *dependencies;
     // Reading and forgetting profiles is filesystem work, so a daemon with no
     // microphone of its own still answers those.
@@ -588,7 +570,7 @@ fn deferred_workers(
             Arc::clone(cache),
             None,
             Arc::clone(history_store),
-            at_rest.clone(),
+            Arc::clone(key),
         )),
         // An on-demand daemon builds its microphone for the one press it
         // serves, so there is none to enroll through.

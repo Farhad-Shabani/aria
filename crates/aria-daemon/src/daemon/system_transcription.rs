@@ -338,7 +338,7 @@ mod tests {
         let history = Arc::new(HistoryStore::open(
             &directory.path().join("history"),
             directory.path(),
-            Some(&aria_platform::sqlite::AtRest::for_tests()),
+            Arc::new(crate::daemon::storage::StorageKey::for_tests()),
         ));
         let transcript = directory.path().join("transcript.md");
         std::fs::write(&transcript, "Standup notes.").expect("the transcript is written");

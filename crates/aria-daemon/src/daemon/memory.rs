@@ -10,9 +10,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::config::load_memory;
+use super::storage::StorageKey;
 use super::tasks::Supervised;
 use aria_assistant::memory::{StoreError, run_backlog};
-use aria_platform::sqlite::AtRest;
+use aria_platform::sqlite::AtRestError;
 use aria_primitives::error_chain;
 use aria_settings::SettingsCache;
 
@@ -23,6 +24,7 @@ enum Skipped {
     /// A run marks its chats done, so one without the words would never
     /// learn their pairs. The chats wait for a readable file.
     UnreadDictionary(super::vocabulary::Error),
+    NoKey(AtRestError),
     Failed(StoreError),
 }
 
@@ -34,7 +36,7 @@ pub(super) fn wake_channel() -> (mpsc::Sender<()>, mpsc::Receiver<()>) {
 pub(super) struct MemoryBacklog {
     home: PathBuf,
     cache: std::sync::Arc<SettingsCache>,
-    at_rest: std::sync::Arc<AtRest>,
+    key: std::sync::Arc<StorageKey>,
     wake: mpsc::Receiver<()>,
     vocabulary: std::sync::Arc<super::vocabulary::Runtime>,
 }
@@ -43,14 +45,14 @@ impl MemoryBacklog {
     pub(super) fn new(
         home: PathBuf,
         cache: std::sync::Arc<SettingsCache>,
-        at_rest: std::sync::Arc<AtRest>,
+        key: std::sync::Arc<StorageKey>,
         wake: mpsc::Receiver<()>,
         vocabulary: std::sync::Arc<super::vocabulary::Runtime>,
     ) -> Self {
         Self {
             home,
             cache,
-            at_rest,
+            key,
             wake,
             vocabulary,
         }
@@ -62,8 +64,9 @@ impl MemoryBacklog {
         let home = self.home.clone();
         let cache = std::sync::Arc::clone(&self.cache);
         let vocabulary = std::sync::Arc::clone(&self.vocabulary);
-        let at_rest = std::sync::Arc::clone(&self.at_rest);
+        let key = std::sync::Arc::clone(&self.key);
         let backlog = move || {
+            let at_rest = key.load().map_err(Skipped::NoKey)?;
             let settings = cache.effective();
             let config = load_memory(&settings.memory, &home);
             let terms = vocabulary.list_words().map_err(Skipped::UnreadDictionary)?;
@@ -73,6 +76,9 @@ impl MemoryBacklog {
             Ok(Ok(_)) => self.vocabulary.prepare(None),
             Ok(Err(Skipped::UnreadDictionary(error))) => {
                 tracing::warn!(error = %error_chain(&error), "the dictionary could not be read");
+            }
+            Ok(Err(Skipped::NoKey(error))) => {
+                tracing::warn!(error = %error_chain(&error), "the memory backlog waits for the storage key");
             }
             Ok(Err(Skipped::Failed(error))) => {
                 tracing::warn!(error = %error_chain(&error), "the memory backlog did not run");

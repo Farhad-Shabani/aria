@@ -1,7 +1,7 @@
+use super::storage::StorageKey;
 use super::tasks::Supervised;
 use aria_assistant::memory::{PairsError, learned_pairs};
 use aria_kit::cancel::{CancelToken, Deadline};
-use aria_platform::sqlite::AtRest;
 use aria_primitives::Cause;
 use aria_primitives::error_chain;
 use aria_settings::rpc::RpcErrorCode;
@@ -230,8 +230,7 @@ pub(super) struct Worker<C: Collector> {
     runtime: Arc<Runtime>,
     requests: mpsc::Receiver<Command>,
     directory: PathBuf,
-    /// `None` when the storage key didn't load, so no catalog opens.
-    at_rest: Option<Arc<AtRest>>,
+    key: Arc<StorageKey>,
     sources: PersonalSources,
     personal: PersonalRules,
     /// The dictionary file `personal` was read from.
@@ -244,20 +243,15 @@ pub(super) struct Worker<C: Collector> {
 pub(super) struct PersonalSources {
     dictionary: Arc<Dictionary>,
     memory: PathBuf,
-    /// `None` when the storage key didn't load, so memory teaches no pairs.
-    at_rest: Option<Arc<AtRest>>,
+    key: Arc<StorageKey>,
 }
 
 impl PersonalSources {
-    pub(super) fn new(
-        dictionary: Arc<Dictionary>,
-        memory: PathBuf,
-        at_rest: Option<Arc<AtRest>>,
-    ) -> Self {
+    pub(super) fn new(dictionary: Arc<Dictionary>, memory: PathBuf, key: Arc<StorageKey>) -> Self {
         Self {
             dictionary,
             memory,
-            at_rest,
+            key,
         }
     }
 
@@ -267,18 +261,22 @@ impl PersonalSources {
         Self::new(
             Arc::new(Dictionary::new(directory.join("dictionary.txt"))),
             directory.to_owned(),
-            Some(Arc::new(AtRest::for_tests())),
+            Arc::new(StorageKey::for_tests()),
         )
     }
 
-    /// No dictionary file means no rules, whatever memory learned.
+    /// No dictionary file means no rules, whatever memory learned. Without
+    /// the storage key, your words still apply without memory's pairs.
     fn rules(&self, cancel: &CancelToken) -> Result<PersonalRules, PersonalError> {
         let Some(words) = self.dictionary.words()? else {
             return Ok(PersonalRules::default());
         };
-        let learned = match &self.at_rest {
-            Some(at_rest) => learned_pairs(&self.memory, at_rest, cancel)?,
-            None => Vec::new(),
+        let learned = match self.key.load() {
+            Ok(at_rest) => learned_pairs(&self.memory, &at_rest, cancel)?,
+            Err(error) => {
+                tracing::warn!(error = %error_chain(&error), "memory's pairs are left out without the storage key");
+                Vec::new()
+            }
         };
         Ok(PersonalRules::from_stored(words, learned, cancel)?)
     }
@@ -297,7 +295,7 @@ enum PersonalError {
 impl Runtime {
     pub(super) fn new<C: Collector>(
         directory: PathBuf,
-        at_rest: Option<Arc<AtRest>>,
+        key: Arc<StorageKey>,
         sources: PersonalSources,
         persistent: bool,
         settings: Arc<SettingsStore>,
@@ -332,7 +330,7 @@ impl Runtime {
             runtime: Arc::clone(&runtime),
             requests: receiver,
             directory,
-            at_rest,
+            key,
             sources,
             personal: PersonalRules::default(),
             stamp: None,
@@ -989,8 +987,8 @@ impl<C: Collector> Worker<C> {
         token: &CancelToken,
     ) -> Result<&'a mut Catalog, Error> {
         if catalog.is_none() {
-            let at_rest = self.at_rest.as_deref().ok_or(Error::Unavailable(None))?;
-            let opened = Catalog::open(&self.directory, at_rest, token.clone())?;
+            let at_rest = self.key.load().map_err(Error::unavailable)?;
+            let opened = Catalog::open(&self.directory, &at_rest, token.clone())?;
             if let Some(key) = &self.cache_key {
                 opened.remove_other_pipelines(key)?;
             }
@@ -1266,7 +1264,7 @@ mod tests {
     fn local_runtime(root: &Path) -> (Arc<Runtime>, Worker<LocalCollector<LocalExtractor>>) {
         Runtime::new(
             root.join("catalog"),
-            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
+            Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(root),
             true,
             settings(root),
@@ -1367,7 +1365,7 @@ mod tests {
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
-            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
+            Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(temporary.path()),
             true,
             settings(temporary.path()),
@@ -1409,7 +1407,7 @@ mod tests {
         };
         Runtime::new(
             base.join("catalog"),
-            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
+            Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(base),
             true,
             settings(base),
@@ -1575,7 +1573,7 @@ mod tests {
         };
         let (runtime, mut worker) = Runtime::new(
             temporary.path().join("catalog"),
-            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
+            Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(temporary.path()),
             true,
             settings(temporary.path()),
@@ -1624,7 +1622,7 @@ mod tests {
         let configured = project(root.path(), "configured");
         let (runtime, mut worker) = Runtime::new(
             root.path().join("catalog"),
-            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
+            Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(root.path()),
             true,
             settings_with(
@@ -1690,7 +1688,7 @@ mod tests {
         let selected = project(root.path(), "project");
         let (runtime, _worker) = Runtime::new(
             root.path().join("catalog"),
-            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
+            Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(root.path()),
             true,
             settings_with(root.path(), "enabled = false"),
@@ -1996,7 +1994,7 @@ mod tests {
         let (exited_tx, exited_rx) = mpsc::channel();
         let (runtime, worker) = Runtime::new(
             root.path().join("catalog"),
-            Some(Arc::new(aria_platform::sqlite::AtRest::for_tests())),
+            Arc::new(StorageKey::for_tests()),
             PersonalSources::in_directory(root.path()),
             true,
             settings(root.path()),

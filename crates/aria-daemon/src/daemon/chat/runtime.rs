@@ -2,11 +2,10 @@
 //! chat it continues, and the reply's optional delivery. The actor
 //! orders asks.
 
-use aria_platform::sqlite::AtRest;
-
 use super::super::config::{load_chat, load_memory};
 use super::super::context::Context;
 use super::super::history::HistoryStore;
+use super::super::storage::StorageKey;
 use super::super::subscriptions::Subscriptions;
 use super::control::JobControl;
 use super::error::{ChatError, ResolveError};
@@ -170,8 +169,8 @@ pub(in crate::daemon) struct ChatRuntime {
     typing: TypingTurns,
     /// Where chats and prompt results are saved, while history is on.
     history: Arc<HistoryStore>,
-    /// `None` when the storage key didn't load, so no turn is remembered.
-    at_rest: Option<Arc<AtRest>>,
+    /// Without it, no turn is remembered.
+    key: Arc<StorageKey>,
 }
 
 impl ChatRuntime {
@@ -183,7 +182,7 @@ impl ChatRuntime {
         cache: Arc<SettingsCache>,
         memory_wake: Option<mpsc::Sender<()>>,
         history: Arc<HistoryStore>,
-        at_rest: Option<Arc<AtRest>>,
+        key: Arc<StorageKey>,
     ) -> Self {
         Self {
             emitter: event_emitter(context, subscriptions),
@@ -198,7 +197,7 @@ impl ChatRuntime {
             delivery: context.delivery.clone(),
             typing: TypingTurns::default(),
             history,
-            at_rest,
+            key,
             #[cfg(test)]
             assistant_overrides: None,
         }
@@ -948,12 +947,15 @@ impl ChatRuntime {
             tracing::warn!("no owner is enrolled; the chat is not remembered");
             return;
         }
-        let Some(at_rest) = &self.at_rest else {
-            tracing::warn!("without the storage key, the chat is not remembered");
-            return;
+        let at_rest = match self.key.load() {
+            Ok(at_rest) => at_rest,
+            Err(error) => {
+                tracing::warn!(error = %error_chain(&error), "without the storage key, the chat is not remembered");
+                return;
+            }
         };
         let session = request.memory_session().to_string();
-        let recorded = Store::open(&memory.dir.join(DB_FILE), at_rest)
+        let recorded = Store::open(&memory.dir.join(DB_FILE), &at_rest)
             .and_then(|store| store.add_turn(&session, &request.text));
         if let Err(error) = recorded {
             tracing::warn!(error = %error_chain(&error), "chat turn not remembered");
@@ -1428,9 +1430,9 @@ pub(super) mod tests {
             history: Arc::new(HistoryStore::open(
                 &directory.join(".aria/history"),
                 directory,
-                Some(&AtRest::for_tests()),
+                Arc::new(StorageKey::for_tests()),
             )),
-            at_rest: Some(Arc::new(AtRest::for_tests())),
+            key: Arc::new(StorageKey::for_tests()),
         };
         (runtime, received, woken)
     }
@@ -1455,7 +1457,7 @@ pub(super) mod tests {
     fn turns(home: &Path, request: &ChatRequest) -> Vec<String> {
         let store = Store::open(
             &home.join(".aria/memory").join(DB_FILE),
-            &AtRest::for_tests(),
+            &aria_platform::sqlite::AtRest::for_tests(),
         )
         .expect("opens");
         store

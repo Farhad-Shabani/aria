@@ -384,7 +384,7 @@ mod tests {
             ),
             None,
             Arc::new(crate::daemon::history::HistoryStore::new()),
-            None,
+            Arc::new(crate::daemon::storage::StorageKey::for_tests()),
         );
         let (chat, chat_actor) = chat_channel(Arc::new(chat));
         let mut dictation = DictationRuntime::detached(settings);
