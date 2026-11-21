@@ -43,22 +43,23 @@ extension PaletteHeader where Detail == EmptyView {
 }
 
 /// A page's top bar and footer. On macOS 26 they float over the scrolling
-/// content, which softens as it passes under them, as Settings does.
+/// content. It softens as it passes under the top bar, as Settings does, and
+/// fades out before the footer, so nothing rules the footer off from the page.
 struct PaletteBars<Top: View, Content: View, Bottom: View>: View {
     @ViewBuilder let top: Top
     @ViewBuilder let content: Content
     @ViewBuilder let bottom: Bottom
-    @Environment(\.isOverSand) private var isOverSand
 
     var body: some View {
         if #available(macOS 26, *) {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .mask { FooterFade() }
                 .safeAreaBar(edge: .top, spacing: 0) { top }
-                .safeAreaBar(edge: .bottom, spacing: 0) { bottom }
-                .scrollEdgeEffectStyle(.soft, for: .vertical)
-                // The sand already sets the footer apart; the edge would cut across it.
-                .scrollEdgeEffectHidden(isOverSand, for: .bottom)
+                // An inset, not a bar: a bar draws an edge along its top.
+                .safeAreaInset(edge: .bottom, spacing: 0) { bottom }
+                .scrollEdgeEffectStyle(.soft, for: .top)
+                .scrollEdgeEffectHidden(true, for: .bottom)
         } else {
             VStack(spacing: 0) {
                 top
@@ -66,5 +67,22 @@ struct PaletteBars<Top: View, Content: View, Bottom: View>: View {
                 bottom
             }
         }
+    }
+}
+
+/// Opaque down to the footer's top, then clear before its text, so a row
+/// scrolling under the footer fades out instead of crossing its words.
+private struct FooterFade: View {
+    /// How far into the footer a row is gone: just above its text.
+    private static let reach: CGFloat = 12
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.black
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: Self.reach)
+            Color.clear.frame(height: PaletteBarMetrics.footerHeight - Self.reach)
+        }
+        .ignoresSafeArea()
     }
 }

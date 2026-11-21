@@ -2,15 +2,18 @@ import SwiftUI
 
 /// The band's shape and color. Heights are in points from the band's top.
 private enum SandBandTuning {
-    static let height: CGFloat = 90
-    /// Where the sand settles in silence: deep enough to sit behind the footer.
-    static let restingLine = 54.0
+    static let height: CGFloat = 56
+    /// Where the sand settles in silence: inside the footer, so its surface
+    /// never lines up with the footer's top and reads as a border.
+    static let restingLine = 33.0
     /// How far loud audio lifts the line.
-    static let lift = 8.0
+    static let lift = 6.0
     /// Gap between the two currents' baselines.
-    static let spread = 7.0
+    static let spread = 6.0
     /// Wave height at full share. Low, so sensitivity reads as motion, not height.
-    static let maxHeight = 12.0
+    static let maxHeight = 10.0
+    /// The share the waves keep in silence, so the surface is never a ruled line.
+    static let restShare = 0.2
     static let segmentCount = 48
     /// The site's glow mixed into its paper. Primary text reads about 7 : 1 on it.
     static let sand = Color(red: 0.204, green: 0.306, blue: 0.278)
@@ -77,7 +80,10 @@ struct PaletteSandBand: View {
         )
         // Under Reduce Motion the sand still rises and falls with the audio, but doesn't flow.
         let phase = reduceMotion ? 0 : motion.phase
-        let (back, front) = RibbonMotion.currents(phase: phase, share: motion.share(at:), geometry: geometry)
+        let (back, front) = RibbonMotion.currents(
+            phase: phase,
+            share: { max(motion.share(at: $0), SandBandTuning.restShare) },
+            geometry: geometry)
         let top = geometry.middle - geometry.spread - geometry.maxHeight
         let shading = GraphicsContext.Shading.linearGradient(
             Gradient(colors: [SandBandTuning.sand.opacity(0.7), SandBandTuning.sand]),
@@ -106,6 +112,6 @@ struct PaletteSandBand: View {
 }
 
 extension EnvironmentValues {
-    /// Whether the sand band sits behind the footer, so its text reads at full ink.
-    @Entry var isOverSand = false
+    /// The level the footer's sand follows, or nil while no transcript runs.
+    @Entry var sandLevel: LiveLevel?
 }

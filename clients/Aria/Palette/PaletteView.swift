@@ -29,16 +29,7 @@ struct PaletteView: View {
                 }
             }
         }
-        .background(alignment: .bottom) {
-            ZStack {
-                if systemTranscription.isRunning {
-                    PaletteSandBand(level: systemTranscription.level)
-                        .transition(.opacity)
-                }
-            }
-            .animation(.easeInOut(duration: 0.4), value: systemTranscription.isRunning)
-        }
-        .environment(\.isOverSand, systemTranscription.isRunning)
+        .environment(\.sandLevel, systemTranscription.isRunning ? systemTranscription.level : nil)
         .frame(width: PalettePanel.size.width, height: PalettePanel.size.height)
     }
 }

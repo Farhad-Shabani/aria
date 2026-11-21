@@ -4,7 +4,7 @@ struct PaletteFooter<Note: View, Actions: View>: View {
 
     @ViewBuilder let note: Note
     @ViewBuilder let actions: Actions
-    @Environment(\.isOverSand) private var isOverSand
+    @Environment(\.sandLevel) private var sandLevel
 
     var body: some View {
         HStack(spacing: 4) {
@@ -16,10 +16,22 @@ struct PaletteFooter<Note: View, Actions: View>: View {
         // With no note the row is only its actions, and they still sit right.
         .frame(maxWidth: .infinity, alignment: .trailing)
         .font(.caption)
-        .foregroundStyle(isOverSand ? .primary : .secondary)
+        // Secondary text is too faint over the sand.
+        .foregroundStyle(sandLevel == nil ? .secondary : .primary)
         .padding(.leading, PaletteBarMetrics.leading)
         .padding(.trailing, PaletteBarMetrics.trailing)
         .frame(minHeight: PaletteBarMetrics.footerHeight)
+        // In the bar itself: the bar blurs whatever lies behind it, up to a
+        // hard edge at its top, which would smear sand drawn further back.
+        .background(alignment: .bottom) {
+            ZStack {
+                if let sandLevel {
+                    PaletteSandBand(level: sandLevel)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.4), value: sandLevel != nil)
+        }
     }
 }
 
