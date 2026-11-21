@@ -48,6 +48,7 @@ struct PaletteBars<Top: View, Content: View, Bottom: View>: View {
     @ViewBuilder let top: Top
     @ViewBuilder let content: Content
     @ViewBuilder let bottom: Bottom
+    @Environment(\.isOverSand) private var isOverSand
 
     var body: some View {
         if #available(macOS 26, *) {
@@ -56,6 +57,8 @@ struct PaletteBars<Top: View, Content: View, Bottom: View>: View {
                 .safeAreaBar(edge: .top, spacing: 0) { top }
                 .safeAreaBar(edge: .bottom, spacing: 0) { bottom }
                 .scrollEdgeEffectStyle(.soft, for: .vertical)
+                // The sand already sets the footer apart; the edge would cut across it.
+                .scrollEdgeEffectHidden(isOverSand, for: .bottom)
         } else {
             VStack(spacing: 0) {
                 top

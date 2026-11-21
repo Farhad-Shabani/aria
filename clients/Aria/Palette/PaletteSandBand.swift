@@ -6,11 +6,11 @@ private enum SandBandTuning {
     /// Where the sand settles in silence: deep enough to sit behind the footer.
     static let restingLine = 54.0
     /// How far loud audio lifts the line.
-    static let lift = 14.0
+    static let lift = 8.0
     /// Gap between the two currents' baselines.
     static let spread = 7.0
-    /// Wave height at full share.
-    static let maxHeight = 18.0
+    /// Wave height at full share. Low, so sensitivity reads as motion, not height.
+    static let maxHeight = 12.0
     static let segmentCount = 48
     /// The site's glow mixed into its paper. Primary text reads about 7 : 1 on it.
     static let sand = Color(red: 0.204, green: 0.306, blue: 0.278)
@@ -19,6 +19,11 @@ private enum SandBandTuning {
     /// Edge blur in silence and at full height: a soft haze that firms with sound.
     static let quietBlur = 3.0
     static let loudBlur = 1.4
+    /// Seconds for the loudest recent level to fade. The band follows the audio
+    /// against it, so quiet audio moves it as much as loud.
+    static let peakFade = 3.0
+    /// The quietest peak the band scales to, so silence stays still.
+    static let peakFloor: Float = 0.08
     /// The palette needs no more: the motion reads the same at half the display's rate.
     static let frameInterval = 1.0 / 30
 }
@@ -28,11 +33,14 @@ private enum SandBandTuning {
 private final class SandBandModel {
     private(set) var motion = RibbonMotion()
     private var lastFrame: Date?
+    private var peak = SandBandTuning.peakFloor
 
     func step(at date: Date, level: Float) -> RibbonMotion {
         let dt = lastFrame.map { date.timeIntervalSince($0) } ?? 0
         lastFrame = date
-        motion.listen(to: Double(level), for: dt)
+        let fade = Float(exp(-dt / SandBandTuning.peakFade))
+        peak = max(level, peak * fade, SandBandTuning.peakFloor)
+        motion.listen(to: Double(level / peak), for: dt)
         return motion
     }
 }
