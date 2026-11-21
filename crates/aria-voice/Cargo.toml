@@ -24,7 +24,6 @@ aria-settings         = { workspace = true }
 aria-speaker          = { workspace = true }
 aria-stt              = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "whisper", "whisper-candle" ] }
 aria-tts              = { workspace = true, features = [ "kokoro", "qwen", "system" ] }
-hound                 = { workspace = true }
 ignore                = "0.4"
 rusqlite              = { workspace = true, features = [ "blob" ] }
 rustix                = { workspace = true, features = [ "fs", "process", "system", "termios" ] }

@@ -344,7 +344,6 @@ dependencies = [
  "ashpd",
  "cidre",
  "futures-util",
- "getrandom 0.3.4",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -362,7 +361,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "x11rb",
- "zeroize",
 ]
 
 [[package]]
@@ -479,7 +477,6 @@ dependencies = [
  "aria-stt",
  "aria-tts",
  "cidre",
- "hound",
  "ignore",
  "rtrb",
  "rusqlite",

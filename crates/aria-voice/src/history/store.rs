@@ -19,7 +19,7 @@ use super::{
     HistoryEntry, HistoryError, HistoryPage, HistoryQuery, HistorySection, HistorySource,
     HistoryStatus, PromptResult, Title, TranscriptRead,
 };
-use aria_kit::audio::{CANONICAL_SAMPLE_RATE, RecordingReader};
+use aria_kit::audio::{CaptureError, RecordingReader};
 use aria_platform::delivery::Application;
 use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
@@ -1146,20 +1146,12 @@ impl Store {
             sql_integer(id)?,
             true,
         )?;
-        let wav = hound::WavReader::new(blob).map_err(|_| HistoryError::AudioUnavailable)?;
-        let spec = wav.spec();
-        if spec.channels != 1
-            || spec.sample_rate != CANONICAL_SAMPLE_RATE
-            || spec.bits_per_sample != 16
-            || spec.sample_format != hound::SampleFormat::Int
-        {
-            return Err(HistoryError::AudioUnavailable);
-        }
-        let samples = wav
-            .into_samples::<i16>()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| HistoryError::AudioUnavailable)?;
-        RecordingReader::from_pcm16_in(&self.spool_dir, &samples).map_err(HistoryError::storage)
+        RecordingReader::from_wav_in(&self.spool_dir, blob, Path::new("history.db")).map_err(
+            |error| match error {
+                CaptureError::Wav(_) => HistoryError::AudioUnavailable,
+                error => HistoryError::storage(error),
+            },
+        )
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
