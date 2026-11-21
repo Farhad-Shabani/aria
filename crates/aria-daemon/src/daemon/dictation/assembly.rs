@@ -232,7 +232,6 @@ fn load_engine(
 /// its pipeline.
 struct SelectedEngine {
     name: &'static str,
-    input: AudioInputKind,
     preload: Option<Preload>,
     build: Box<dyn FnOnce(ExecutionParts) -> RuntimeExecutor>,
 }
@@ -240,13 +239,11 @@ struct SelectedEngine {
 impl SelectedEngine {
     fn new<T: Recognizer, M: Mode>(
         name: &'static str,
-        input: AudioInputKind,
         transcription: Transcription<T, M>,
         preload: Option<Preload>,
     ) -> Self {
         Self {
             name,
-            input,
             preload,
             build: Box::new(move |parts: ExecutionParts| parts.finish(name, transcription)),
         }
@@ -273,7 +270,6 @@ fn select_remote(
     let remote = RemoteRecognizer::open_matching(home, pairing)?;
     Ok(SelectedEngine::new(
         aria_settings::config::backend::SERVER,
-        SERVER_INPUT,
         Transcription::<_, Streaming>::delegated(remote),
         None,
     ))
@@ -290,12 +286,10 @@ fn select_local(
     let model = loading.load(engine)?;
     let preload = model.preload();
     Ok(match stream {
-        Some(stream) => {
-            SelectedEngine::new(name, input, Transcription::stream(stream, model), preload)
-        }
+        Some(stream) => SelectedEngine::new(name, Transcription::stream(stream, model), preload),
         // A whole-mode engine reads the finished recording, so its input
         // kind decides whether the pipeline hands it samples or a WAV file.
-        None => SelectedEngine::new(name, input, Transcription::complete(input, model), preload),
+        None => SelectedEngine::new(name, Transcription::complete(input, model), preload),
     })
 }
 
@@ -346,10 +340,6 @@ impl ExecutionParts {
 pub(super) struct DictationEngine {
     pub(super) name: &'static str,
     pub(super) backend: SttBackend,
-    /// How the engine reads a finished recording, so a retry hands kept
-    /// audio to the disk only for one that reads files. `None` for an engine
-    /// this build can't configure, whose own error answers every call.
-    input: Option<AudioInputKind>,
     executor: RuntimeExecutor,
     preload: Option<Preload>,
 }
@@ -402,11 +392,9 @@ impl DictationEngine {
         backend: SttBackend,
         executor: RuntimeExecutor,
     ) -> Self {
-        let input = backend_input(&backend);
         Self {
             name,
             backend,
-            input,
             executor,
             preload: None,
         }
@@ -473,7 +461,6 @@ impl DictationEngine {
         Self {
             name: backend.backend_name(),
             backend: backend.clone(),
-            input: backend_input(&backend),
             executor: Box::new(Unusable {
                 backend,
                 build,
@@ -502,10 +489,8 @@ impl DictationEngine {
                 cancel,
             )
         };
-        match self.input {
-            Some(input) => with_kept_audio(recording, input, spool_dir, transcribe),
-            None => Ok(transcribe(recording)?),
-        }
+        let input = backend_input(&self.backend)?;
+        with_kept_audio(recording, input, spool_dir, transcribe)
     }
 
     /// Loads the model ahead of use. A stop leaves nothing half loaded.
@@ -604,7 +589,6 @@ impl EngineParts {
         Ok(DictationEngine {
             name: selected.name,
             backend: backend.clone(),
-            input: Some(selected.input),
             executor: (selected.build)(parts),
             preload: selected.preload,
         })
@@ -687,7 +671,6 @@ pub(super) fn build_dictation(
     let slot = EngineSlot::new(DictationEngine {
         name: engine.name,
         backend,
-        input: Some(engine.input),
         executor: (engine.build)(ExecutionParts {
             capture: Arc::clone(&capture),
             delivery,
@@ -722,14 +705,11 @@ pub(super) enum RetryTarget<'a> {
 /// for its own engines that read files.
 const SERVER_INPUT: AudioInputKind = AudioInputKind::Samples;
 
-/// The input of the engine `backend` names, for an engine not built yet.
-/// `None` when this build can't configure it.
-fn backend_input(backend: &SttBackend) -> Option<AudioInputKind> {
+/// How the engine `backend` names reads a finished recording.
+fn backend_input(backend: &SttBackend) -> Result<AudioInputKind, DictationError> {
     match backend {
-        SttBackend::Server(_) => Some(SERVER_INPUT),
-        SttBackend::Local(config) => EngineConfig::try_from(config.clone())
-            .ok()
-            .map(|engine| engine.input()),
+        SttBackend::Server(_) => Ok(SERVER_INPUT),
+        SttBackend::Local(config) => Ok(EngineConfig::try_from(config.clone())?.input()),
     }
 }
 
