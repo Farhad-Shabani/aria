@@ -49,17 +49,19 @@ struct AriaKeySpot: View {
         }
     }
 
-    /// A still drawing doesn't say "hold, then press": the Aria key goes
-    /// down, then its partner, then both lift, a few times over.
+    /// A still drawing doesn't show the gesture: the Aria key taps alone, or
+    /// goes down first and its partner joins it, a few times over.
     private func showPress() async {
-        guard combo != nil, !reduceMotion else { return }
+        guard !reduceMotion else { return }
         for _ in 0..<Press.runs {
             do {
                 try await Task.sleep(for: Press.rest)
                 withAnimation(Press.sink) { press = .ariaKeyDown }
-                try await Task.sleep(for: Press.lead)
-                withAnimation(Press.sink) { press = .bothDown }
-                try await Task.sleep(for: Press.hold)
+                if combo != nil {
+                    try await Task.sleep(for: Press.lead)
+                    withAnimation(Press.sink) { press = .bothDown }
+                }
+                try await Task.sleep(for: combo == nil ? Press.tap : Press.hold)
                 withAnimation(Press.lift) { press = .up }
             } catch {
                 press = .up
@@ -77,15 +79,17 @@ private enum Press {
     /// Enough to show the gesture, then the drawing rests.
     static let runs = 3
     /// Before each press, so one press reads apart from the next.
-    static let rest = Duration.milliseconds(800)
+    static let rest = Duration.milliseconds(1_400)
     /// How long the Aria key leads, the way a person holds it first.
-    static let lead = Duration.milliseconds(350)
-    static let hold = Duration.milliseconds(700)
-    static let sink = Animation.easeOut(duration: 0.12)
-    static let lift = Animation.easeOut(duration: 0.2)
-    /// A held key sinks and takes more of the tint.
-    static let heldScale: CGFloat = 0.92
-    static let heldOpacity = 0.35
+    static let lead = Duration.milliseconds(500)
+    static let hold = Duration.milliseconds(900)
+    static let tap = Duration.milliseconds(450)
+    /// Springs without bounce settle like a real key, with no snap.
+    static let sink = Animation.smooth(duration: 0.35)
+    static let lift = Animation.smooth(duration: 0.55)
+    /// A held key sinks a little and takes a little more of the tint.
+    static let heldScale: CGFloat = 0.96
+    static let heldOpacity = 0.28
 
     func holds(_ cap: Cap, isLit: Bool) -> Bool {
         switch self {
