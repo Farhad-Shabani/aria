@@ -20,7 +20,6 @@ final class SetupState: ObservableObject {
         var openPrivacySettings: (AriaKeyState) -> Void
         var speakers: () async throws -> [EnrolledSpeaker]
         var enroll: (String) async throws -> Void
-        var transcribe: () async throws -> String
         var speak: (String) async throws -> Void
         /// Returns what to tell the user when launch at login could not be enabled.
         var launchAtLogin: () -> String?
@@ -82,7 +81,8 @@ final class SetupState: ObservableObject {
     @Published var voiceName = ""
     @Published private(set) var voicePrompt: String?
     @Published private(set) var enrolled: String?
-    @Published private(set) var heard: String?
+    /// What the Aria key typed into Try It's field.
+    @Published var typed = ""
     @Published private(set) var ariaKeyState = AriaKeyState.needsAccessibility
     /// Whether the dictation hotkey answers, so Done can teach it.
     var isHotkeyReady: Bool { ariaKeyState == .armed }
@@ -359,19 +359,15 @@ final class SetupState: ObservableObject {
         }
     }
 
-    func tryPress() {
-        guard !isBusy else { return }
+    /// Try It ends once an Aria key dictation typed words, here or anywhere.
+    func dictationEvent(_ event: Aria_Daemon_V1_DictationEvent) {
+        guard step == .tryOut, !isBusy, event.stage == .delivered, event.outcome == .inserted,
+            event.wordCount > 0
+        else { return }
         isBusy = true
         notice = nil
-        heard = nil
         Task {
             defer { isBusy = false }
-            do {
-                heard = try await effects.transcribe()
-            } catch {
-                notice = Self.notice(for: error, during: "try-out transcription", otherwise: Self.transcriptionFailure)
-                return
-            }
             do {
                 try await effects.speak(Self.spokenReply)
                 finish()
@@ -473,16 +469,15 @@ final class SetupState: ObservableObject {
     static let inspectFailure = "Aria couldn’t check your Mac. Try again, or run `aria doctor` in Terminal to see why."
     static let applyFailure = "Setup couldn’t finish. Try again, or run `aria doctor` in Terminal to see why."
     static let missingBinary = "Aria’s installation is incomplete. Reinstall Aria, then try again."
-    static let transcriptionFailure = "Aria couldn’t transcribe that. Try again."
     static let speakFailure = "Aria couldn’t read the reply aloud. Try again."
     static let unknownFailure = "Something went wrong. Try again."
 
-    /// Speaker and try-out errors carry text written for the user. Any other
+    /// Speaker errors carry text written for the user. Any other
     /// error's text goes to the log instead.
     private static func message(
         for error: any Error, during step: String, otherwise fallback: String = unknownFailure
     ) -> String {
-        if error is SpeakerFailure || error is TryOutFailure { return error.localizedDescription }
+        if error is SpeakerFailure { return error.localizedDescription }
         log.error("Setup \(step, privacy: .public) failed: \(String(describing: error), privacy: .private)")
         if case .ariaBinaryMissing? = error as? DaemonProcessError { return missingBinary }
         return SetupClientError.message(for: error, otherwise: fallback)
@@ -559,7 +554,7 @@ extension SetupState.Step {
         case .applying: "This takes a moment. Downloads can be canceled."
         case .grant: "Aria uses it to hear the Aria key and type what you say."
         case .voice: "Aria can tell who is speaking once it knows your voice."
-        case .tryOut: "Click **Record** and say a few words. Nothing is typed into other apps."
+        case .tryOut: "Tap the Aria key and say a few words."
         case .done: "Aria runs in the background. Find it in the menu bar."
         case .failed: nil
         }

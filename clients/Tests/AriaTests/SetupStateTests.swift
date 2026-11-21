@@ -20,9 +20,8 @@ final class SetupStateTests: XCTestCase {
         var speakers = [EnrolledSpeaker]()
         var enrolledNames = [String]()
         var enrollError: Error?
-        var heard = "hello there"
-        var transcribeError: Error?
         var spoken = [String]()
+        var speakError: Error?
         var launchAtLogin = 0
         var installedCommandLineTool = 0
         var commandLineToolProblem: String?
@@ -46,11 +45,10 @@ final class SetupStateTests: XCTestCase {
                     self.enrolledNames.append(name)
                     if let error = self.enrollError { throw error }
                 },
-                transcribe: {
-                    if let error = self.transcribeError { throw error }
-                    return self.heard
+                speak: {
+                    self.spoken.append($0)
+                    if let error = self.speakError { throw error }
                 },
-                speak: { self.spoken.append($0) },
                 launchAtLogin: {
                     self.launchAtLogin += 1
                     return nil
@@ -278,9 +276,8 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.enrolled, "Voice saved for Ada.")
 
         XCTAssertEqual(harness.launchAtLogin, 0, "login starts only once setup finishes")
-        state.tryPress()
+        state.dictationEvent(Self.delivered(words: 2))
         await waitUntil { state.step == .done }
-        XCTAssertEqual(state.heard, "hello there")
         XCTAssertEqual(harness.spoken, [SetupState.spokenReply])
         XCTAssertEqual(harness.launchAtLogin, 1)
         XCTAssertEqual(harness.installedCommandLineTool, 1)
@@ -554,26 +551,49 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.step, .voice)
     }
 
-    func testAFailedTranscriptionShowsTheFallbackForAnUnknownError() async {
-        let harness = Harness()
-        harness.transcribeError = Refused()
-        let state = await walkToVoice(harness)
-
-        state.tryPress()
-        await waitUntil { !state.isBusy }
-
-        XCTAssertEqual(state.notice, SetupState.transcriptionFailure)
-        XCTAssertNil(state.heard)
+    private static func delivered(
+        words: UInt32, outcome: Aria_Daemon_V1_DeliveryOutcome = .inserted
+    ) -> Aria_Daemon_V1_DictationEvent {
+        var event = Aria_Daemon_V1_DictationEvent()
+        event.stage = .delivered
+        event.outcome = outcome
+        event.wordCount = words
+        return event
     }
 
-    func testACanceledTryOutShowsNoNotice() async {
-        let harness = Harness()
-        harness.transcribeError = CancellationError()
+    private func walkToTryOut(_ harness: Harness) async -> SetupState {
         let state = await walkToVoice(harness)
+        state.next()
+        XCTAssertEqual(state.step, .tryOut)
+        return state
+    }
 
-        state.tryPress()
-        await waitUntil { !state.isBusy }
+    func testOnlyAnAriaKeyDictationThatTypedWordsFinishesTryIt() async {
+        let harness = Harness()
+        let state = await walkToVoice(harness)
+        state.dictationEvent(Self.delivered(words: 2))
+        state.next()
 
-        XCTAssertNil(state.notice)
+        state.dictationEvent(Self.delivered(words: 0))
+        state.dictationEvent(Self.delivered(words: 2, outcome: .copied))
+        await Task.yield()
+        XCTAssertEqual(state.step, .tryOut)
+        XCTAssertEqual(harness.spoken, [], "a dictation before Try It, or one that typed nothing, is no try")
+
+        state.dictationEvent(Self.delivered(words: 2))
+        await waitUntil { state.step == .done }
+        XCTAssertEqual(harness.spoken, [SetupState.spokenReply])
+    }
+
+    func testAFailedReplyStaysOnTryItWithTheNotice() async {
+        let harness = Harness()
+        harness.speakError = Refused()
+        let state = await walkToTryOut(harness)
+
+        state.dictationEvent(Self.delivered(words: 2))
+        await waitUntil { state.notice != nil }
+
+        XCTAssertEqual(state.notice, SetupState.speakFailure)
+        XCTAssertEqual(state.step, .tryOut)
     }
 }

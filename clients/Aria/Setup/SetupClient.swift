@@ -252,7 +252,6 @@ extension SetupState.Effects {
             openPrivacySettings: { SetupClient.openPrivacySettings(for: $0) },
             speakers: { try await SpeakerClient.list() },
             enroll: { name in try await SpeakerClient.enroll(name: name) },
-            transcribe: { try await TryOutClient.transcribe() },
             speak: { text in try await SpeechClient.speak(text) },
             launchAtLogin: {
                 do {

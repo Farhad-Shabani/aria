@@ -160,6 +160,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        events.onDictation { [weak self] event in
+            guard let self, let event else { return }
+            setupState.dictationEvent(event)
+        }
+
         events.onSpeaker { [weak self] event in
             guard let self, let event else { return }
             setupState.speakerEvent(event)
