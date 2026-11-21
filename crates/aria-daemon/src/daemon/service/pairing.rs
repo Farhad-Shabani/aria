@@ -8,7 +8,7 @@ use tonic::{Request, Response, Status};
 use crate::ipc::wire;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
-use super::super::relay::{Invite, PairingError, Phones, presented};
+use super::super::relay::{HardwareModel, Invite, PairingError, Phones, presented};
 use aria_primitives::error_chain;
 
 /// Served on the LAN to unpaired phones too: the code is the credential.
@@ -30,12 +30,18 @@ impl wire::pairing_service_server::PairingService for PairingRpc {
     ) -> Result<Response<wire::PairResponse>, Status> {
         const METHOD: &str = "PairingService/Pair";
         let phone = presented(&request);
-        let code = request.into_inner().code;
+        let wire::PairRequest {
+            code,
+            hardware_model,
+        } = request.into_inner();
         let Some(phone) = phone else {
             return Err(super::failed(METHOD, &PairingError::CodeRefused));
         };
+        // Checked first, so a malformed request leaves the code live.
+        let hardware_model = HardwareModel::from_identifier(hardware_model)
+            .map_err(|error| crate::daemon::relay::redacted(super::failed(METHOD, &error)))?;
         let phones = Arc::clone(&self.phones);
-        super::blocking(METHOD, move || phones.pair(phone, &code))
+        super::blocking(METHOD, move || phones.pair(phone, &code, hardware_model))
             .await?
             .map_err(|error| crate::daemon::relay::redacted(super::failed(METHOD, &error)))?;
         super::served(METHOD);
@@ -105,6 +111,39 @@ impl wire::pairing_admin_service_server::PairingAdminService for PairingAdminRpc
         super::served(METHOD);
         Ok(Response::new(wire::RevokePhonesResponse {}))
     }
+
+    async fn list_phones(
+        &self,
+        _request: Request<wire::ListPhonesRequest>,
+    ) -> Result<Response<wire::ListPhonesResponse>, Status> {
+        const METHOD: &str = "PairingAdminService/ListPhones";
+        let response = wire::ListPhonesResponse::from(self.phones.list());
+        // The Mac app asks again each time a phone pairs or is revoked.
+        tracing::debug!(method = METHOD, status = "ok", "request served");
+        Ok(Response::new(response))
+    }
+
+    async fn revoke_phone(
+        &self,
+        request: Request<wire::RevokePhoneRequest>,
+    ) -> Result<Response<wire::RevokePhoneResponse>, Status> {
+        const METHOD: &str = "PairingAdminService/RevokePhone";
+        let fingerprint: [u8; 32] = request.into_inner().fingerprint.try_into().map_err(|_| {
+            super::failed(
+                METHOD,
+                RpcFailure::new(
+                    RpcErrorCode::InvalidRequest,
+                    "a fingerprint must contain 32 bytes",
+                ),
+            )
+        })?;
+        let phones = Arc::clone(&self.phones);
+        super::blocking(METHOD, move || phones.revoke(&fingerprint))
+            .await?
+            .map_err(|error| super::failed(METHOD, &error))?;
+        super::served(METHOD);
+        Ok(Response::new(wire::RevokePhoneResponse {}))
+    }
 }
 
 #[cfg(test)]
@@ -113,8 +152,11 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
-    async fn issue_invite_reports_the_live_code_and_the_pin() {
+    fn admin() -> (
+        tempfile::TempDir,
+        crate::daemon::relay::Pairing,
+        PairingAdminRpc,
+    ) {
         let directory = tempfile::tempdir().unwrap();
         let pairing = crate::daemon::relay::load_pairing(
             &directory.path().join("pairing.json"),
@@ -126,6 +168,12 @@ mod tests {
             "Aria (test)".to_owned(),
             pairing.certificate_fingerprint,
         );
+        (directory, pairing, rpc)
+    }
+
+    #[tokio::test]
+    async fn issue_invite_reports_the_live_code_and_the_pin() {
+        let (_directory, pairing, rpc) = admin();
 
         let issued = rpc
             .issue_invite(Request::new(wire::IssueInviteRequest {}))
@@ -141,7 +189,7 @@ mod tests {
         assert!(expires_in <= std::time::Duration::from_secs(60));
         assert_eq!(issued.pairing_count, 0);
 
-        pairing.phones.pair([1; 32], live.raw()).unwrap();
+        pairing.phones.pair([1; 32], live.raw(), None).unwrap();
         let reissued = rpc
             .issue_invite(Request::new(wire::IssueInviteRequest {}))
             .await
@@ -154,24 +202,76 @@ mod tests {
 
     #[tokio::test]
     async fn revoke_phones_unpins_every_phone() {
-        let directory = tempfile::tempdir().unwrap();
-        let pairing = crate::daemon::relay::load_pairing(
-            &directory.path().join("pairing.json"),
-            "Aria (test)",
-        )
-        .unwrap();
-        let rpc = PairingAdminRpc::new(
-            Arc::clone(&pairing.phones),
-            "Aria (test)".to_owned(),
-            pairing.certificate_fingerprint,
-        );
+        let (_directory, pairing, rpc) = admin();
         let (live, _) = pairing.phones.issue().unwrap();
-        pairing.phones.pair([1; 32], live.raw()).unwrap();
+        pairing.phones.pair([1; 32], live.raw(), None).unwrap();
 
         rpc.revoke_phones(Request::new(wire::RevokePhonesRequest {}))
             .await
             .unwrap();
 
         assert!(!pairing.phones.contains(&[1; 32]));
+    }
+
+    #[tokio::test]
+    async fn list_phones_reports_each_phone_with_its_model_and_pair_time() {
+        let (_directory, pairing, rpc) = admin();
+        let (live, _) = pairing.phones.issue().unwrap();
+        pairing
+            .phones
+            .pair(
+                [1; 32],
+                live.raw(),
+                HardwareModel::from_identifier("iPhone18,1".to_owned()).unwrap(),
+            )
+            .unwrap();
+
+        let listed = rpc
+            .list_phones(Request::new(wire::ListPhonesRequest {}))
+            .await
+            .unwrap()
+            .into_inner()
+            .phones;
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].fingerprint, [1; 32]);
+        assert_eq!(listed[0].hardware_model, "iPhone18,1");
+        assert!(listed[0].pair_time.is_some());
+    }
+
+    #[tokio::test]
+    async fn revoke_phone_unpins_only_that_phone() {
+        let (_directory, pairing, rpc) = admin();
+        for fingerprint in [[1; 32], [2; 32]] {
+            let (live, _) = pairing.phones.issue().unwrap();
+            pairing.phones.pair(fingerprint, live.raw(), None).unwrap();
+        }
+
+        rpc.revoke_phone(Request::new(wire::RevokePhoneRequest {
+            fingerprint: vec![1; 32],
+        }))
+        .await
+        .unwrap();
+
+        assert!(!pairing.phones.contains(&[1; 32]));
+        assert!(pairing.phones.contains(&[2; 32]));
+    }
+
+    #[tokio::test]
+    async fn revoke_phone_refuses_a_fingerprint_that_is_not_32_bytes() {
+        let (_directory, pairing, rpc) = admin();
+        let (live, _) = pairing.phones.issue().unwrap();
+        pairing.phones.pair([1; 32], live.raw(), None).unwrap();
+
+        let refused = rpc
+            .revoke_phone(Request::new(wire::RevokePhoneRequest {
+                fingerprint: vec![1; 31],
+            }))
+            .await
+            .unwrap_err();
+
+        let failure = crate::ipc::protocol::rpc_failure(&refused).unwrap();
+        assert_eq!(failure.code, RpcErrorCode::InvalidRequest);
+        assert!(pairing.phones.contains(&[1; 32]));
     }
 }

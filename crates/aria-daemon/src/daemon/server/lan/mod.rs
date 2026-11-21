@@ -434,7 +434,7 @@ mod tests {
     /// Pins `phone` the way Pair does: with a code the Mac issued.
     fn pin(phones: &Phones, phone: &Phone) {
         let (code, _) = phones.issue().unwrap();
-        phones.pair(phone.fingerprint, code.raw()).unwrap();
+        phones.pair(phone.fingerprint, code.raw(), None).unwrap();
     }
 
     async fn loopback() -> (TcpListener, std::net::SocketAddr) {
@@ -590,6 +590,7 @@ mod tests {
         wire::pairing_service_client::PairingServiceClient::new(channel.clone())
             .pair(wire::PairRequest {
                 code: code.to_owned(),
+                hardware_model: String::new(),
             })
             .await
             .map(drop)
@@ -830,6 +831,39 @@ mod tests {
             _ = incoming.next() => panic!("a revoked phone shook hands"),
         };
         assert!(refused.is_err(), "a revoked phone gets no new connection");
+    }
+
+    #[tokio::test]
+    async fn revoking_one_phone_leaves_the_other_connected() {
+        let (_directory, pairing) = material();
+        let (listener, address) = loopback().await;
+        let (revoked, kept) = (Phone::mint(), Phone::mint());
+        pin(&pairing.phones, &revoked);
+        pin(&pairing.phones, &kept);
+        let mut incoming = Box::pin(tls::Handshake::new(&pairing).unwrap().secured(
+            connections::admitted(listener, 2),
+            SHORT,
+            SHORT,
+            2,
+        ));
+        let mut byte = [0u8; 1];
+        let mut connect = async |phone: &Phone| {
+            let shaking = tokio::spawn(handshake(address, client(&pairing, Some(phone))));
+            let connection = incoming.next().await.unwrap().unwrap();
+            (connection, shaking.await.unwrap().unwrap())
+        };
+        let (mut revoked_connection, _revoked_client) = connect(&revoked).await;
+        let (mut kept_connection, _kept_client) = connect(&kept).await;
+
+        pairing.phones.revoke(&revoked.fingerprint).unwrap();
+
+        let ended = tokio::time::timeout(SHORT, revoked_connection.read(&mut byte))
+            .await
+            .expect("revoking ends the connection at once")
+            .expect_err("revoking ends the connection");
+        assert_eq!(ended.kind(), io::ErrorKind::ConnectionAborted);
+        let open = tokio::time::timeout(SHORT * 2, kept_connection.read(&mut byte)).await;
+        assert!(open.is_err(), "the other phone stays connected");
     }
 
     /// A phone can pair on the connection a code let it in on, so a revoke

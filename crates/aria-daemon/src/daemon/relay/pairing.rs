@@ -1,9 +1,11 @@
 //! This Mac's certificate, which phones pin, and the phones it pins in turn.
-//! One private file holds both.
+//! One private file holds both. A second one keeps a record of each phone,
+//! so the Mac can list them. It decides nothing.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::pem::PemObject;
@@ -19,8 +21,13 @@ use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use super::code::{PairingCode, PairingCodes};
 
 pub(crate) const RELATIVE_PATH: &str = ".aria/phone/pairing.json";
+/// Beside the pairing file. A separate file, because a daemon that predates
+/// records refuses a pairing file with fields it doesn't know, and mints new
+/// material over it.
+const RECORDS_FILE_NAME: &str = "phones.json";
 const MAX_FILE_BYTES: u64 = 16 * 1024;
 const MAX_PHONES: usize = 16;
+const MAX_HARDWARE_MODEL_BYTES: usize = 32;
 /// The certificate's subject alternative name. The phone never checks it;
 /// the pin is the check.
 const CERTIFICATE_NAME: &str = "aria.local";
@@ -40,6 +47,7 @@ pub(in crate::daemon) struct Pairing {
 #[derive(Debug)]
 pub(in crate::daemon) struct Phones {
     path: PathBuf,
+    records: PathBuf,
     codes: PairingCodes,
     /// Held for the whole of a write. Handshakes read `paired`, so they
     /// never wait on the disk.
@@ -49,15 +57,79 @@ pub(in crate::daemon) struct Phones {
 
 #[derive(Debug)]
 struct Paired {
-    fingerprints: Vec<[u8; 32]>,
-    /// The next revoke cancels it, ending every connection opened since the
-    /// last one.
-    revocation: CancellationToken,
+    /// In the order they paired.
+    phones: Vec<PairedPhone>,
+    /// What ends each pinned phone's connections: its revoke cancels it.
+    connections: HashMap<[u8; 32], CancellationToken>,
+    /// What ends connections that opened before their phone was pinned.
+    /// Which phone pairs on one is unknown, so any revoke cancels it.
+    unpinned: CancellationToken,
+}
+
+impl Paired {
+    fn pins(&self, fingerprint: &[u8; 32]) -> bool {
+        self.phones
+            .iter()
+            .any(|phone| &phone.fingerprint == fingerprint)
+    }
+}
+
+/// A phone this Mac pins.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PairedPhone {
+    pub(crate) fingerprint: [u8; 32],
+    /// `None` for a phone that paired before the Mac kept records.
+    pub(crate) record: Option<PhoneRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PhoneRecord {
+    /// `None` when the phone didn't say.
+    pub(crate) hardware_model: Option<HardwareModel>,
+    pub(crate) paired_at: SystemTime,
+}
+
+/// A phone's model identifier, as `uname` reports it, such as `iPhone18,1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub(crate) struct HardwareModel(String);
+
+impl HardwareModel {
+    /// `None` for an empty identifier, which a phone sends when it doesn't
+    /// say.
+    pub(in crate::daemon) fn from_identifier(value: String) -> Result<Option<Self>, PairingError> {
+        if value.is_empty() {
+            return Ok(None);
+        }
+        Self::try_from(value).map(Some)
+    }
+}
+
+impl TryFrom<String> for HardwareModel {
+    type Error = PairingError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let is_valid = !value.is_empty()
+            && value.len() <= MAX_HARDWARE_MODEL_BYTES
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b',');
+        if !is_valid {
+            return Err(PairingError::HardwareModelRefused);
+        }
+        Ok(Self(value))
+    }
+}
+
+impl From<HardwareModel> for String {
+    fn from(model: HardwareModel) -> Self {
+        model.0
+    }
 }
 
 impl Phones {
     pub(in crate::daemon) fn contains(&self, fingerprint: &[u8; 32]) -> bool {
-        self.paired().fingerprints.contains(fingerprint)
+        self.paired().pins(fingerprint)
     }
 
     /// What ends a paired phone's connection: cancelled when the phone is
@@ -66,16 +138,22 @@ impl Phones {
         &self,
         fingerprint: &[u8; 32],
     ) -> Option<CancellationToken> {
-        let paired = self.paired();
-        paired
-            .fingerprints
-            .contains(fingerprint)
-            .then(|| paired.revocation.clone())
+        let mut paired = self.paired();
+        if !paired.pins(fingerprint) {
+            return None;
+        }
+        Some(paired.connections.entry(*fingerprint).or_default().clone())
     }
 
-    /// What the next revoke cancels.
-    pub(in crate::daemon) fn revocation(&self) -> CancellationToken {
-        self.paired().revocation.clone()
+    /// What ends a connection that opened before its phone was pinned: the
+    /// next revoke of any phone.
+    pub(in crate::daemon) fn unpinned_connection(&self) -> CancellationToken {
+        self.paired().unpinned.clone()
+    }
+
+    /// The phones this Mac pins, in the order they paired.
+    pub(in crate::daemon) fn list(&self) -> Vec<PairedPhone> {
+        self.paired().phones.clone()
     }
 
     /// The live code and how long it has left, minting one if none is live.
@@ -99,8 +177,11 @@ impl Phones {
         &self,
         fingerprint: [u8; 32],
         code: &str,
+        hardware_model: Option<HardwareModel>,
     ) -> Result<(), PairingError> {
-        self.pair_with(fingerprint, || self.codes.redeem(code, Instant::now()))
+        self.pair_with(fingerprint, hardware_model, || {
+            self.codes.redeem(code, Instant::now())
+        })
     }
 
     /// Redeems under the write lock, so a revoke either sees the phone
@@ -108,6 +189,7 @@ impl Phones {
     fn pair_with(
         &self,
         fingerprint: [u8; 32],
+        hardware_model: Option<HardwareModel>,
         redeem: impl FnOnce() -> bool,
     ) -> Result<(), PairingError> {
         let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
@@ -116,28 +198,62 @@ impl Phones {
         }
         let mut phones = {
             let paired = self.paired();
-            if paired.fingerprints.contains(&fingerprint) {
+            if paired.pins(&fingerprint) {
                 self.codes.record_pairing();
                 return Ok(());
             }
-            if paired.fingerprints.len() >= MAX_PHONES {
+            if paired.phones.len() >= MAX_PHONES {
                 return Err(PairingError::Full);
             }
-            paired.fingerprints.clone()
+            paired.phones.clone()
         };
-        phones.push(fingerprint);
+        phones.push(PairedPhone {
+            fingerprint,
+            record: Some(PhoneRecord {
+                hardware_model,
+                paired_at: SystemTime::now(),
+            }),
+        });
         let document = PrivateDocument::new(&self.path, MAX_FILE_BYTES);
         let mut stored = document
             .read::<StoredPairing>()?
             .ok_or(PairingError::Missing)?;
         // From memory, not the file: a revoke whose write failed left the
         // file pinning phones this daemon no longer trusts.
-        stored.phones = phones;
+        stored.phones = phones.iter().map(|phone| phone.fingerprint).collect();
         write(&document, &stored)?;
+        self.write_records(&phones);
         let mut paired = self.paired();
-        paired.fingerprints.push(fingerprint);
+        // The write lock kept every other change out since the clone.
+        paired.phones = phones;
         self.codes.record_pairing();
-        tracing::info!(paired_phones = paired.fingerprints.len(), "paired a phone");
+        tracing::info!(paired_phones = paired.phones.len(), "paired a phone");
+        Ok(())
+    }
+
+    /// Unpins one phone and closes its connections, and those still
+    /// pairing, in memory before on disk, as `revoke_all` does. The live
+    /// code stays, for the other phones. A phone this Mac doesn't pin
+    /// changes nothing.
+    pub(in crate::daemon) fn revoke(&self, fingerprint: &[u8; 32]) -> Result<(), PairingError> {
+        let _writing = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let phones = {
+            let mut paired = self.paired();
+            if !paired.pins(fingerprint) {
+                return Ok(());
+            }
+            paired
+                .phones
+                .retain(|phone| &phone.fingerprint != fingerprint);
+            if let Some(connection) = paired.connections.remove(fingerprint) {
+                connection.cancel();
+            }
+            std::mem::take(&mut paired.unpinned).cancel();
+            paired.phones.clone()
+        };
+        self.store(&phones)
+            .map_err(|error| PairingError::RevokeUnconfirmed(Box::new(error)))?;
+        tracing::info!(paired_phones = phones.len(), "revoked a phone");
         Ok(())
     }
 
@@ -150,26 +266,62 @@ impl Phones {
         self.codes.retire();
         let revoked = {
             let mut paired = self.paired();
-            std::mem::take(&mut paired.revocation).cancel();
-            std::mem::take(&mut paired.fingerprints).len()
+            for connection in std::mem::take(&mut paired.connections).into_values() {
+                connection.cancel();
+            }
+            std::mem::take(&mut paired.unpinned).cancel();
+            std::mem::take(&mut paired.phones).len()
         };
-        self.unpin_stored()
+        self.store(&[])
             .map_err(|error| PairingError::RevokeUnconfirmed(Box::new(error)))?;
         tracing::info!(revoked_phones = revoked, "revoked every phone");
         Ok(())
     }
 
-    /// A file that is gone or damaged pins nobody, since the next start
-    /// mints new material over it, so there is nothing to rewrite.
-    fn unpin_stored(&self) -> Result<(), PairingError> {
+    /// Pins only `phones` on disk. A file that is gone or damaged pins
+    /// nobody, since the next start mints new material over it, so there is
+    /// nothing to rewrite.
+    fn store(&self, phones: &[PairedPhone]) -> Result<(), PairingError> {
         let document = PrivateDocument::new(&self.path, MAX_FILE_BYTES);
         let mut stored = match document.read::<StoredPairing>() {
             Ok(Some(stored)) => stored,
             Ok(None) | Err(DocumentError::Parse(_)) => return Ok(()),
             Err(error) => return Err(error.into()),
         };
-        stored.phones.clear();
-        write(&document, &stored)
+        stored.phones = phones.iter().map(|phone| phone.fingerprint).collect();
+        write(&document, &stored)?;
+        self.write_records(phones);
+        Ok(())
+    }
+
+    /// A failed write only leaves the phones without records after a restart, so
+    /// it is logged, not returned.
+    fn write_records(&self, phones: &[PairedPhone]) {
+        let stored = StoredRecords {
+            phones: phones
+                .iter()
+                .filter_map(|phone| {
+                    let record = phone.record.as_ref()?;
+                    Some(StoredRecord {
+                        fingerprint: phone.fingerprint,
+                        hardware_model: record.hardware_model.clone(),
+                        paired_at_ms: record
+                            .paired_at
+                            .duration_since(UNIX_EPOCH)
+                            .map_or(0, |since| {
+                                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+                            }),
+                    })
+                })
+                .collect(),
+        };
+        let document = PrivateDocument::new(&self.records, MAX_FILE_BYTES);
+        if let Err(error) = write(&document, &stored) {
+            tracing::warn!(
+                error = %error_chain(&error),
+                "the phones are saved, but their records are not"
+            );
+        }
     }
 
     // Each change only pushes or takes, so a poisoned lock still holds a
@@ -186,6 +338,49 @@ struct StoredPairing {
     certificate_pem: String,
     key_pem: String,
     phones: Vec<[u8; 32]>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredRecords {
+    phones: Vec<StoredRecord>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredRecord {
+    fingerprint: [u8; 32],
+    hardware_model: Option<HardwareModel>,
+    paired_at_ms: u64,
+}
+
+/// Each pinned phone, with its record where the records file has one. A
+/// record for a phone the pairing file doesn't pin is dropped. A records file
+/// that is gone or unusable leaves every phone without one.
+fn with_records(pins: Vec<[u8; 32]>, path: &Path) -> Vec<PairedPhone> {
+    let records = match PrivateDocument::new(path, MAX_FILE_BYTES).read::<StoredRecords>() {
+        Ok(Some(stored)) => stored.phones,
+        Ok(None) => Vec::new(),
+        Err(error) => {
+            tracing::warn!(
+                error = %error_chain(&error),
+                "the phone records are unusable; listing the phones without them"
+            );
+            Vec::new()
+        }
+    };
+    pins.into_iter()
+        .map(|fingerprint| PairedPhone {
+            fingerprint,
+            record: records
+                .iter()
+                .find(|record| record.fingerprint == fingerprint)
+                .map(|record| PhoneRecord {
+                    hardware_model: record.hardware_model.clone(),
+                    paired_at: UNIX_EPOCH + Duration::from_millis(record.paired_at_ms),
+                }),
+        })
+        .collect()
 }
 
 /// Reads the material, minting it on first use. A changed hostname rewrites
@@ -215,17 +410,21 @@ pub(in crate::daemon) fn load_or_create(
             (fresh, fingerprint)
         }
     };
+    let records = path.with_file_name(RECORDS_FILE_NAME);
+    let phones = with_records(stored.phones, &records);
     Ok(Pairing {
         certificate_pem: stored.certificate_pem,
         key_pem: stored.key_pem,
         certificate_fingerprint: fingerprint,
         phones: Arc::new(Phones {
             path: path.to_owned(),
+            records,
             codes: PairingCodes::default(),
             writing: Mutex::new(()),
             paired: Mutex::new(Paired {
-                fingerprints: stored.phones,
-                revocation: CancellationToken::new(),
+                phones,
+                connections: HashMap::new(),
+                unpinned: CancellationToken::new(),
             }),
         }),
     })
@@ -269,13 +468,13 @@ fn read_usable(
     }
 }
 
-fn write(document: &PrivateDocument, stored: &StoredPairing) -> Result<(), PairingError> {
+fn write(document: &PrivateDocument, stored: &impl Serialize) -> Result<(), PairingError> {
     let committed = document.prepare(stored)?.commit()?;
     // The rename already landed, so the material is on disk either way.
     if let Err(error) = committed.confirm_durability() {
         tracing::warn!(
             error = %error_chain(&error),
-            "the pairing file is written, but its durability is unconfirmed"
+            "a pairing file is written, but its durability is unconfirmed"
         );
     }
     Ok(())
@@ -384,6 +583,11 @@ pub enum PairingError {
 
     #[error("the phones are cut off, but the pairing file still pins them")]
     RevokeUnconfirmed(#[source] Box<Self>),
+
+    #[error(
+        "the hardware model must be up to {MAX_HARDWARE_MODEL_BYTES} ASCII letters, digits, and commas"
+    )]
+    HardwareModelRefused,
 }
 
 impl From<&PairingError> for RpcErrorCode {
@@ -392,6 +596,7 @@ impl From<&PairingError> for RpcErrorCode {
             PairingError::Full => Self::PermissionDenied,
             PairingError::CodeRefused => Self::Unauthenticated,
             PairingError::RevokeUnconfirmed(_) => Self::DurabilityUnconfirmed,
+            PairingError::HardwareModelRefused => Self::InvalidRequest,
             PairingError::Document(_)
             | PairingError::Random(_)
             | PairingError::Certificate(_)
@@ -460,7 +665,7 @@ mod tests {
         let path = pairing_path(&directory);
 
         let before = load_or_create(&path, "Aria (old)").unwrap();
-        before.phones.pair_with(phone(1), || true).unwrap();
+        before.phones.pair_with(phone(1), None, || true).unwrap();
         let after = load_or_create(&path, "Aria (new)").unwrap();
 
         assert_eq!(after.certificate_pem, before.certificate_pem);
@@ -482,8 +687,8 @@ mod tests {
     fn a_paired_phone_survives_a_reload() {
         let (_directory, path, pairing) = mac();
 
-        pairing.phones.pair_with(phone(1), || true).unwrap();
-        pairing.phones.pair_with(phone(1), || true).unwrap();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
 
         assert!(pairing.phones.contains(&phone(1)));
         assert!(!pairing.phones.contains(&phone(2)));
@@ -497,8 +702,8 @@ mod tests {
         let (_directory, _path, pairing) = mac();
         let (code, _) = pairing.phones.issue().unwrap();
 
-        pairing.phones.pair(phone(1), code.raw()).unwrap();
-        let reused = pairing.phones.pair(phone(2), code.raw());
+        pairing.phones.pair(phone(1), code.raw(), None).unwrap();
+        let reused = pairing.phones.pair(phone(2), code.raw(), None);
 
         assert!(pairing.phones.contains(&phone(1)));
         assert!(matches!(reused, Err(PairingError::CodeRefused)));
@@ -514,15 +719,15 @@ mod tests {
         pairing.phones.revoke_all().unwrap();
 
         assert!(!pairing.phones.pairing_is_open());
-        let refused = pairing.phones.pair(phone(1), code.raw());
+        let refused = pairing.phones.pair(phone(1), code.raw(), None);
         assert!(matches!(refused, Err(PairingError::CodeRefused)));
     }
 
     #[test]
     fn revoking_unpins_every_phone_and_keeps_the_certificate() {
         let (_directory, path, pairing) = mac();
-        pairing.phones.pair_with(phone(1), || true).unwrap();
-        pairing.phones.pair_with(phone(2), || true).unwrap();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
+        pairing.phones.pair_with(phone(2), None, || true).unwrap();
 
         pairing.phones.revoke_all().unwrap();
 
@@ -537,14 +742,14 @@ mod tests {
     #[test]
     fn revoking_ends_open_connections_but_not_later_ones() {
         let (_directory, _path, pairing) = mac();
-        pairing.phones.pair_with(phone(1), || true).unwrap();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
         let before = pairing.phones.connection(&phone(1)).unwrap();
 
         pairing.phones.revoke_all().unwrap();
 
         assert!(before.is_cancelled());
         assert!(pairing.phones.connection(&phone(1)).is_none());
-        pairing.phones.pair_with(phone(1), || true).unwrap();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
         let after = pairing.phones.connection(&phone(1)).unwrap();
         assert!(!after.is_cancelled());
     }
@@ -552,7 +757,7 @@ mod tests {
     #[test]
     fn a_revoke_racing_a_handshake_never_leaves_an_open_connection() {
         let (_directory, _path, pairing) = mac();
-        pairing.phones.pair_with(phone(1), || true).unwrap();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let phones = Arc::clone(&pairing.phones);
         let ready = Arc::clone(&barrier);
@@ -580,7 +785,7 @@ mod tests {
 
         pairing
             .phones
-            .pair_with(phone(1), || {
+            .pair_with(phone(1), None, || {
                 revoking = Some(std::thread::spawn(move || phones.revoke_all()));
                 // Long enough for a revoke that ignored the lock to finish first.
                 std::thread::sleep(std::time::Duration::from_millis(50));
@@ -601,7 +806,7 @@ mod tests {
         let (code, _) = pairing.phones.issue().unwrap();
         let writing = pairing.phones.writing.lock().unwrap();
         let phones = Arc::clone(&pairing.phones);
-        let pairer = std::thread::spawn(move || phones.pair(phone(1), code.raw()));
+        let pairer = std::thread::spawn(move || phones.pair(phone(1), code.raw(), None));
         // Long enough for a pairing that ignored the lock to redeem first.
         std::thread::sleep(std::time::Duration::from_millis(50));
         pairing.phones.codes.retire();
@@ -616,7 +821,7 @@ mod tests {
     #[test]
     fn a_revoke_that_cannot_be_written_still_cuts_the_phones_off() {
         let (_directory, path, pairing) = mac();
-        pairing.phones.pair_with(phone(1), || true).unwrap();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
         let connection = pairing.phones.connection(&phone(1)).unwrap();
         // A file others can read is refused, so the revoke can't rewrite it.
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -636,7 +841,7 @@ mod tests {
     #[test]
     fn revoking_over_a_damaged_file_is_saved() {
         let (_directory, path, pairing) = mac();
-        pairing.phones.pair_with(phone(1), || true).unwrap();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
         std::fs::write(&path, b"{ not json").unwrap();
 
         pairing.phones.revoke_all().unwrap();
@@ -649,7 +854,7 @@ mod tests {
     #[test]
     fn pairing_after_an_unsaved_revoke_does_not_pin_the_revoked_phones_again() {
         let (_directory, path, pairing) = mac();
-        pairing.phones.pair_with(phone(1), || true).unwrap();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
         let mode = |bits| std::fs::Permissions::from_mode(bits);
         std::fs::set_permissions(&path, mode(0o644)).unwrap();
         let unsaved = pairing.phones.revoke_all();
@@ -657,7 +862,7 @@ mod tests {
         assert!(matches!(unsaved, Err(PairingError::RevokeUnconfirmed(_))));
         assert_eq!(stored(&path).phones, [phone(1)], "the write did fail");
 
-        pairing.phones.pair_with(phone(2), || true).unwrap();
+        pairing.phones.pair_with(phone(2), None, || true).unwrap();
 
         assert_eq!(stored(&path).phones, [phone(2)]);
     }
@@ -668,11 +873,13 @@ mod tests {
         for index in 0..MAX_PHONES {
             pairing
                 .phones
-                .pair_with(phone(index as u8), || true)
+                .pair_with(phone(index as u8), None, || true)
                 .unwrap();
         }
 
-        let refused = pairing.phones.pair_with(phone(MAX_PHONES as u8), || true);
+        let refused = pairing
+            .phones
+            .pair_with(phone(MAX_PHONES as u8), None, || true);
 
         assert!(matches!(refused, Err(PairingError::Full)));
         assert!(!pairing.phones.contains(&phone(MAX_PHONES as u8)));
@@ -726,9 +933,184 @@ mod tests {
         }
     }
 
+    fn model(identifier: &str) -> Option<HardwareModel> {
+        HardwareModel::from_identifier(identifier.to_owned()).unwrap()
+    }
+
+    #[test]
+    fn revoking_one_phone_ends_only_its_connections() {
+        let (_directory, path, pairing) = mac();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
+        pairing.phones.pair_with(phone(2), None, || true).unwrap();
+        let first = pairing.phones.connection(&phone(1)).unwrap();
+        let second = pairing.phones.connection(&phone(2)).unwrap();
+
+        pairing.phones.revoke(&phone(1)).unwrap();
+
+        assert!(first.is_cancelled());
+        assert!(!second.is_cancelled());
+        assert!(!pairing.phones.contains(&phone(1)));
+        assert!(pairing.phones.contains(&phone(2)));
+        assert_eq!(stored(&path).phones, [phone(2)]);
+    }
+
+    #[test]
+    fn any_revoke_ends_connections_still_pairing() {
+        type Revoke = fn(&Phones);
+        let rows: [(&str, Revoke); 2] = [
+            ("one", |phones| phones.revoke(&phone(1)).unwrap()),
+            ("all", |phones| phones.revoke_all().unwrap()),
+        ];
+        for (label, revoke) in rows {
+            let (_directory, _path, pairing) = mac();
+            let pairing_connection = pairing.phones.unpinned_connection();
+            pairing.phones.pair_with(phone(1), None, || true).unwrap();
+
+            revoke(&pairing.phones);
+
+            assert!(pairing_connection.is_cancelled(), "{label}");
+            assert!(
+                !pairing.phones.unpinned_connection().is_cancelled(),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn revoking_one_phone_keeps_the_live_code() {
+        let (_directory, _path, pairing) = mac();
+        let (code, _) = pairing.phones.issue().unwrap();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
+
+        pairing.phones.revoke(&phone(1)).unwrap();
+
+        pairing.phones.pair(phone(2), code.raw(), None).unwrap();
+        assert!(pairing.phones.contains(&phone(2)));
+    }
+
+    #[test]
+    fn a_paired_phone_keeps_its_model_and_date_across_a_reload() {
+        let (_directory, path, pairing) = mac();
+        let before = SystemTime::now() - Duration::from_millis(1);
+        pairing
+            .phones
+            .pair_with(phone(1), model("iPhone18,1"), || true)
+            .unwrap();
+        pairing.phones.pair_with(phone(2), None, || true).unwrap();
+        let after = SystemTime::now();
+
+        let listed = load_or_create(&path, "Aria (studio)")
+            .unwrap()
+            .phones
+            .list();
+
+        let fingerprints: Vec<_> = listed.iter().map(|phone| phone.fingerprint).collect();
+        assert_eq!(fingerprints, [phone(1), phone(2)]);
+        let first = listed[0].record.clone().unwrap();
+        assert_eq!(first.hardware_model, model("iPhone18,1"));
+        assert!(before <= first.paired_at && first.paired_at <= after);
+        assert_eq!(listed[1].record.clone().unwrap().hardware_model, None);
+    }
+
+    #[test]
+    fn a_revoked_phone_pairs_again_with_a_new_record() {
+        let (_directory, path, pairing) = mac();
+        pairing
+            .phones
+            .pair_with(phone(1), model("iPhone15,2"), || true)
+            .unwrap();
+        pairing.phones.revoke(&phone(1)).unwrap();
+        pairing
+            .phones
+            .pair_with(phone(1), model("iPhone18,1"), || true)
+            .unwrap();
+
+        let listed = load_or_create(&path, "Aria (studio)")
+            .unwrap()
+            .phones
+            .list();
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].record.clone().unwrap().hardware_model,
+            model("iPhone18,1")
+        );
+    }
+
+    #[test]
+    fn phones_without_usable_records_still_list() {
+        type Damage = fn(&Path);
+        let rows: [(&str, Damage); 2] = [
+            ("no records file", |records| {
+                std::fs::remove_file(records).unwrap();
+            }),
+            ("a damaged records file", |records| {
+                std::fs::write(records, b"{ not json").unwrap();
+            }),
+        ];
+        for (label, damage) in rows {
+            let (_directory, path, pairing) = mac();
+            pairing
+                .phones
+                .pair_with(phone(1), model("iPhone18,1"), || true)
+                .unwrap();
+            damage(&path.with_file_name(RECORDS_FILE_NAME));
+
+            let listed = load_or_create(&path, "Aria (studio)")
+                .unwrap()
+                .phones
+                .list();
+
+            assert_eq!(listed.len(), 1, "{label}");
+            assert_eq!(listed[0].fingerprint, phone(1), "{label}");
+            assert_eq!(listed[0].record, None, "{label}");
+        }
+    }
+
+    #[test]
+    fn a_hardware_model_is_up_to_32_ascii_letters_digits_and_commas() {
+        for bad in ["iPhone 18", "iPhone18,1\n", "é", &"x".repeat(33)] {
+            let refused = HardwareModel::from_identifier(bad.to_owned());
+            assert!(
+                matches!(refused, Err(PairingError::HardwareModelRefused)),
+                "{bad:?}"
+            );
+        }
+
+        assert_eq!(HardwareModel::from_identifier(String::new()).unwrap(), None);
+        assert!(
+            HardwareModel::from_identifier("x".repeat(32))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn revoking_a_phone_the_mac_does_not_pin_changes_nothing() {
+        let (_directory, path, pairing) = mac();
+        pairing.phones.pair_with(phone(1), None, || true).unwrap();
+        let pairing_connection = pairing.phones.unpinned_connection();
+        let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        pairing.phones.revoke(&phone(2)).unwrap();
+
+        assert!(!pairing_connection.is_cancelled());
+        assert!(pairing.phones.contains(&phone(1)));
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            written
+        );
+    }
+
+    /// A daemon that predates records must still read the pairing file, or
+    /// it mints new material and every phone loses its pin.
     #[test]
     fn the_file_shape_is_stable() {
-        let (_directory, path, _) = mac();
+        let (_directory, path, pairing) = mac();
+        pairing
+            .phones
+            .pair_with(phone(1), model("iPhone18,1"), || true)
+            .unwrap();
 
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();

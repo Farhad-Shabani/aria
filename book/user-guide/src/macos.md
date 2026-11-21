@@ -174,8 +174,10 @@ next time.
 
 **Copy Code** puts the code on the clipboard, marked hidden from clipboard
 managers and wiped when the code expires. Universal Clipboard may still carry
-it to your other devices meanwhile. **Revoke All…** unpairs every phone at
-once, and each phone scans a new code to pair again.
+it to your other devices meanwhile. **Paired Phones** lists each phone with
+its model and the day it paired. **Revoke…** beside a phone unpairs that
+phone alone, and **Revoke All…** unpairs every phone at once. A revoked phone
+scans a new code to pair again.
 
 While your iPhone or Apple Watch records, the status pill on your Mac shows how
 long it has been recording and the device's icon. A dictation you start on

@@ -42,6 +42,9 @@ struct PhoneSettings: View {
                 Section {
                     live(invite, expiresAt: expiresAt)
                 }
+                PairedPhonesSection(phones: pairing.phones, canRevoke: pairing.canRevoke) { phone in
+                    Task { await pairing.revoke(phone) }
+                }
             }
             if let snapshot = settings.snapshot {
                 let editor = SettingsEditor(snapshot: snapshot, settings: settings)

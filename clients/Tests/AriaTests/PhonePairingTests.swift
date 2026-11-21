@@ -96,7 +96,9 @@ final class PhonePairingTests: XCTestCase {
                 return Self.issued("before", expiresAt: now + 60)
             },
             setPairing: { _ in },
-            revokePhones: {}
+            revokePhones: {},
+            listPhones: { [] },
+            revokePhone: { _ in }
         )
         let control = FakeDaemonControl()
         control.running = true
@@ -157,7 +159,9 @@ final class PhonePairingTests: XCTestCase {
                 return Self.issued("before", expiresAt: now + 60)
             },
             setPairing: { _ in },
-            revokePhones: {}
+            revokePhones: {},
+            listPhones: { [] },
+            revokePhone: { _ in }
         )
         let pairing = PhonePairing(
             poller: StatusPoller(client: FakeDaemonControl(), probeInterval: .milliseconds(1)), daemon: daemon)
@@ -180,9 +184,72 @@ final class PhonePairingTests: XCTestCase {
         XCTAssertEqual(pairing.actionError, "Your phones are revoked only until Aria restarts. Try again.")
     }
 
+    @MainActor
+    func testEachPollListsThePhonesAgain() async {
+        let now = Date.now
+        let lists = OSAllocatedUnfairLock(initialState: 0)
+        let pairing = Self.pairing(
+            invites: [Self.issued("a", expiresAt: now + 60), Self.issued("a", expiresAt: now + 60)],
+            listPhones: {
+                let count = lists.withLock { lists in
+                    lists += 1
+                    return lists
+                }
+                return Array(repeating: Self.phone(1), count: count)
+            })
+
+        await pairing.poll()
+        XCTAssertEqual(pairing.phones, .listed([Self.phone(1)]))
+        await pairing.poll()
+
+        XCTAssertEqual(pairing.phones, .listed([Self.phone(1), Self.phone(1)]))
+    }
+
+    @MainActor
+    func testAFailedListSaysSoRatherThanNoPhones() async {
+        let pairing = Self.pairing(
+            invites: [Self.issued("a", expiresAt: .now + 60)], listPhones: { throw DaemonFailure.unimplemented })
+
+        await pairing.poll()
+
+        XCTAssertEqual(pairing.phones, .failed)
+    }
+
+    @MainActor
+    func testRevokingAPhoneSendsItsFingerprintAndListsAgain() async {
+        let revoked = OSAllocatedUnfairLock<[Data]>(initialState: [])
+        let pairing = Self.pairing(
+            invites: [],
+            listPhones: { revoked.withLock { $0.isEmpty } ? [Self.phone(1), Self.phone(2)] : [Self.phone(2)] },
+            revokePhone: { fingerprint in revoked.withLock { $0.append(fingerprint) } })
+
+        await pairing.revoke(Self.phone(1))
+
+        XCTAssertEqual(revoked.withLock { $0 }, [Self.phone(1).fingerprint])
+        XCTAssertEqual(pairing.phones, .listed([Self.phone(2)]))
+        XCTAssertNil(pairing.actionError)
+    }
+
+    @MainActor
+    func testAPhoneRevokeThatCouldNotBeSavedSaysItLastsUntilARestart() async {
+        let pairing = Self.pairing(
+            invites: [],
+            revokePhone: { _ in
+                throw DaemonFailure.refused(.durabilityUnconfirmed)
+            })
+
+        await pairing.revoke(Self.phone(1))
+
+        XCTAssertEqual(pairing.actionError, "Your iPhone is revoked only until Aria restarts. Try again.")
+    }
+
     func testAnyOtherRevokeFailureAsksToTryAgain() {
         XCTAssertEqual(
             PhonePairing.revokeFailure(for: DaemonFailure.unavailable), "Aria couldn’t revoke the phones. Try again.")
+    }
+
+    private static func phone(_ index: UInt8) -> PairedPhone {
+        PairedPhone(fingerprint: Data(repeating: index, count: 32), hardwareModel: "iPhone18,1", pairedAt: nil)
     }
 
     private static func invite(_ code: String) -> PairingInvite {
@@ -199,7 +266,9 @@ final class PhonePairingTests: XCTestCase {
         invites: [IssuedInvite],
         setPairingError: (any Error)? = nil,
         control: FakeDaemonControl = FakeDaemonControl(),
-        revokePhones: @escaping @Sendable () async throws -> Void = {}
+        revokePhones: @escaping @Sendable () async throws -> Void = {},
+        listPhones: @escaping @Sendable () async throws -> [PairedPhone] = { [] },
+        revokePhone: @escaping @Sendable (Data) async throws -> Void = { _ in }
     ) -> PhonePairing {
         let queue = OSAllocatedUnfairLock(initialState: invites)
         let daemon = PairingDaemon(
@@ -212,7 +281,9 @@ final class PhonePairingTests: XCTestCase {
             setPairing: { _ in
                 if let setPairingError { throw setPairingError }
             },
-            revokePhones: revokePhones
+            revokePhones: revokePhones,
+            listPhones: listPhones,
+            revokePhone: revokePhone
         )
         return PhonePairing(poller: StatusPoller(client: control, probeInterval: .milliseconds(1)), daemon: daemon)
     }

@@ -28,6 +28,16 @@ final class PhonePairing: ObservableObject {
 
     @Published private(set) var status: Status = .loading
     @Published private(set) var phonePairedAt: Date?
+    enum PhoneList: Equatable {
+        case loading
+        case listed([PairedPhone])
+        case failed
+    }
+
+    static let listFailure = "Aria couldn’t list your phones. It keeps trying."
+
+    /// The phones your Mac pins, as the daemon last listed them.
+    @Published private(set) var phones: PhoneList = .loading
     /// The switch position shown while pairing turns on or off. Nil otherwise.
     @Published private(set) var targetIsOn: Bool?
     @Published private(set) var actionError: String?
@@ -87,6 +97,7 @@ final class PhonePairing: ObservableObject {
     private func startPolling() {
         pairingCount = nil
         phonePairedAt = nil
+        phones = .loading
         actionError = nil
         // A restart in progress still owns the status.
         if status != .restarting { status = .loading }
@@ -122,11 +133,34 @@ final class PhonePairing: ObservableObject {
             phonePairedAt = .now
         }
         pairingCount = issued.pairingCount
+        let next: Duration
         if case .live(let shown, let expiresAt) = status, shown == issued.invite {
-            return Self.nextPoll(expiresAt: expiresAt)
+            next = Self.nextPoll(expiresAt: expiresAt)
+        } else {
+            status = .live(issued.invite, expiresAt: issued.expiresAt)
+            next = Self.nextPoll(expiresAt: issued.expiresAt)
         }
-        status = .live(issued.invite, expiresAt: issued.expiresAt)
-        return Self.nextPoll(expiresAt: issued.expiresAt)
+        // Each poll, so a failed list recovers and the list never goes stale.
+        await listPhones()
+        return next
+    }
+
+    /// A list asked for before a revoke is dropped, so a revoked phone
+    /// never shows again.
+    private func listPhones() async {
+        let generation = self.generation
+        do {
+            let listed = try await daemon.listPhones()
+            guard self.generation == generation else { return }
+            phones = .listed(listed)
+        } catch {
+            guard self.generation == generation else { return }
+            // Polled every couple of seconds, so only a new failure is logged.
+            if phones != .failed {
+                log.error("Listing paired phones failed: \(String(describing: error), privacy: .private)")
+            }
+            phones = .failed
+        }
     }
 
     /// The daemon registers IssueInvite only while the relay runs, so
@@ -185,6 +219,20 @@ final class PhonePairing: ObservableObject {
             actionError = Self.revokeFailure(for: error)
         }
         await poll()
+        await listPhones()
+    }
+
+    /// The code on screen stays, for your other phones.
+    func revoke(_ phone: PairedPhone) async {
+        generation += 1
+        do {
+            try await daemon.revokePhone(phone.fingerprint)
+            actionError = nil
+        } catch {
+            log.error("Revoking a phone failed: \(String(describing: error), privacy: .private)")
+            actionError = Self.revokePhoneFailure(for: error)
+        }
+        await listPhones()
     }
 
     nonisolated static func revokeFailure(for error: any Error) -> String {
@@ -192,6 +240,13 @@ final class PhonePairing: ObservableObject {
             return "Your phones are revoked only until Aria restarts. Try again."
         }
         return "Aria couldn’t revoke the phones. Try again."
+    }
+
+    nonisolated static func revokePhoneFailure(for error: any Error) -> String {
+        if error as? DaemonFailure == .refused(.durabilityUnconfirmed) {
+            return "Your iPhone is revoked only until Aria restarts. Try again."
+        }
+        return "Aria couldn’t revoke your iPhone. Try again."
     }
 
     /// The poller refuses a restart while it is already starting or stopping
