@@ -29,7 +29,7 @@ struct PaletteView: View {
                 }
             }
         }
-        .environment(\.sandLevel, systemTranscription.isRunning ? systemTranscription.level : nil)
+        .environment(\.audioLevel, systemTranscription.isRunning ? systemTranscription.level : nil)
         .frame(width: PalettePanel.size.width, height: PalettePanel.size.height)
     }
 }

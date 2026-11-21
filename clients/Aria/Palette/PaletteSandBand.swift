@@ -1,17 +1,18 @@
 import SwiftUI
 
-/// The band's shape and color. Heights are in points from the band's top.
+/// The band's shape and color, in points.
 private enum SandBandTuning {
     static let height: CGFloat = 56
-    /// Where the sand settles in silence: inside the footer, so its surface
-    /// never lines up with the footer's top and reads as a border.
-    static let restingLine = 33.0
+    /// How high the sand settles in silence, from the band's bottom: inside
+    /// the footer, so its surface never lines up with the footer's top and
+    /// reads as a border.
+    static let restingHeight = 24.0
     /// How far loud audio lifts the line.
     static let lift = 6.0
     /// Gap between the two currents' baselines.
     static let spread = 6.0
     /// Wave height at full share. Low, so sensitivity reads as motion, not height.
-    static let maxHeight = 10.0
+    static let maxHeight = 8.0
     /// The share the waves keep in silence, so the surface is never a ruled line.
     static let restShare = 0.2
     static let segmentCount = 48
@@ -48,8 +49,9 @@ private final class SandBandModel {
     }
 }
 
-/// Sand behind the footer while Live Transcript runs, moving with the Mac's
-/// audio in the logo's two currents.
+/// Sand that rises and flows with a level, in the logo's two currents. The
+/// whole effect lives in this file and needs only the level, so another can
+/// take its place in `PaletteAudioBackdrop`.
 struct PaletteSandBand: View {
     let level: LiveLevel
 
@@ -73,7 +75,7 @@ struct PaletteSandBand: View {
         let geometry = RibbonGeometry(
             left: 0,
             width: size.width,
-            middle: SandBandTuning.restingLine - SandBandTuning.lift * energy,
+            middle: size.height - SandBandTuning.restingHeight - SandBandTuning.lift * energy,
             spread: SandBandTuning.spread,
             maxHeight: SandBandTuning.maxHeight,
             segmentCount: SandBandTuning.segmentCount
@@ -109,9 +111,4 @@ struct PaletteSandBand: View {
             path.closeSubpath()
         }
     }
-}
-
-extension EnvironmentValues {
-    /// The level the footer's sand follows, or nil while no transcript runs.
-    @Entry var sandLevel: LiveLevel?
 }
