@@ -479,6 +479,7 @@ dependencies = [
  "aria-stt",
  "aria-tts",
  "cidre",
+ "hound",
  "ignore",
  "rtrb",
  "rusqlite",

@@ -24,7 +24,8 @@ pub(super) struct HistoryStore {
 
 impl HistoryStore {
     /// History is unavailable without `at_rest`: the Keychain refused it.
-    pub(super) fn open(directory: &Path, at_rest: Option<&AtRest>) -> Self {
+    /// A retry's audio is decrypted into `spool_dir`.
+    pub(super) fn open(directory: &Path, spool_dir: &Path, at_rest: Option<&AtRest>) -> Self {
         let opened = directory
             .parent()
             .zip(at_rest)
@@ -32,7 +33,7 @@ impl HistoryStore {
             .and_then(|(parent, at_rest)| {
                 aria_primitives::private_fs::prepare_directory(parent)
                     .map_err(HistoryError::storage)?;
-                Store::open(directory, at_rest)
+                Store::open(directory, spool_dir, at_rest)
             });
         match opened {
             Ok(storage) => Self {
@@ -386,6 +387,7 @@ mod tests {
     fn store(directory: &Path) -> Arc<HistoryStore> {
         Arc::new(HistoryStore::open(
             &directory.join(".aria/history"),
+            directory,
             Some(&aria_platform::sqlite::AtRest::for_tests()),
         ))
     }
@@ -590,12 +592,12 @@ mod tests {
             sink.dictation_finished(Ok(()));
         }
         assert!(entries(&saved).is_empty());
-        assert_eq!(
-            std::fs::read_dir(directory.path().join(".aria/history/audio"))
-                .unwrap()
-                .count(),
-            0
-        );
+        let mut kept: Vec<_> = std::fs::read_dir(directory.path().join(".aria/history"))
+            .unwrap()
+            .map(|item| item.unwrap().file_name())
+            .collect();
+        kept.sort();
+        assert_eq!(kept, ["history.db", "history.lock"]);
     }
 
     #[test]

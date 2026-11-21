@@ -147,6 +147,7 @@ fn compose(
     let at_rest = storage_key(&context.home);
     let history_store = Arc::new(HistoryStore::open(
         &context.home.join(".aria/history"),
+        context.paths.spool_dir(),
         at_rest.as_deref(),
     ));
     let microphone = Gate::new();

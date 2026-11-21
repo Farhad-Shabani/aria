@@ -1197,6 +1197,7 @@ mod history_tests {
             let directory = tempfile::tempdir().unwrap();
             let history = Arc::new(HistoryStore::open(
                 &directory.path().join("history"),
+                directory.path(),
                 Some(&aria_platform::sqlite::AtRest::for_tests()),
             ));
             let audio = aria_kit::audio::canonical_fixture(directory.path());

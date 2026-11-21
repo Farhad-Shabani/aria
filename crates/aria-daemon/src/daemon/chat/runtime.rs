@@ -1427,6 +1427,7 @@ pub(super) mod tests {
             typing: TypingTurns::default(),
             history: Arc::new(HistoryStore::open(
                 &directory.join(".aria/history"),
+                directory,
                 Some(&AtRest::for_tests()),
             )),
             at_rest: Some(Arc::new(AtRest::for_tests())),

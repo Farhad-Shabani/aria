@@ -337,6 +337,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("a temporary directory");
         let history = Arc::new(HistoryStore::open(
             &directory.path().join("history"),
+            directory.path(),
             Some(&aria_platform::sqlite::AtRest::for_tests()),
         ));
         let transcript = directory.path().join("transcript.md");
