@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PaletteView: View {
     @ObservedObject var controller: PaletteController
-    let systemTranscription: SystemTranscriptionStatus
+    @ObservedObject var systemTranscription: SystemTranscriptionStatus
     let history: HistoryState
 
     var body: some View {
@@ -29,6 +29,16 @@ struct PaletteView: View {
                 }
             }
         }
+        .background(alignment: .bottom) {
+            ZStack {
+                if systemTranscription.isRunning {
+                    PaletteSandBand(level: systemTranscription.level)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.4), value: systemTranscription.isRunning)
+        }
+        .environment(\.isOverSand, systemTranscription.isRunning)
         .frame(width: PalettePanel.size.width, height: PalettePanel.size.height)
     }
 }

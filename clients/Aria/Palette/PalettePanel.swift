@@ -10,9 +10,9 @@ final class PalettePanel {
     /// How far above the screen's middle the panel sits, as a share of the space above it when
     /// centered, as Spotlight does.
     private static let lift: CGFloat = 0.35
-    /// Black laid over the blur, so the palette reads darker than the
-    /// material alone.
-    private static let dimming: CGFloat = 0.35
+    /// The site's paper laid over the blur, so the palette reads darker than
+    /// the material alone, in Aria's own shade.
+    private static let tint = NSColor(srgbRed: 0x11 / 255, green: 0x12 / 255, blue: 0x14 / 255, alpha: 0.6)
 
     private let panel: KeyPanel
     private let host = NSHostingView(rootView: AnyView(EmptyView()))
@@ -73,7 +73,7 @@ final class PalettePanel {
 
         let dim = NSView(frame: blur.bounds)
         dim.wantsLayer = true
-        dim.layer?.backgroundColor = NSColor.black.withAlphaComponent(Self.dimming).cgColor
+        dim.layer?.backgroundColor = Self.tint.cgColor
         dim.autoresizingMask = [.width, .height]
         blur.addSubview(dim)
 
