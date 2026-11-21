@@ -36,8 +36,8 @@ pub use execution::{
     DictationExecutor, DictationPolicy, DictationPolicyError, EscapeRule, ExecutionControl,
     Relayed, Transcribed,
 };
-use level::Meter;
 pub use level::MicLevel;
+use level::meter;
 pub use llm::{LlmCleanup, LlmCleanupError};
 pub use pipeline::DictationPipeline;
 pub use rewrites::{Cleanup, ConfiguredLayers, Rewrites};

@@ -36,7 +36,7 @@ use super::{
     DictationEventEmitter, DictationResult, DictationSettings, DictationStage, ExecutionControl,
     GhostSnapshot, HeardSpeaker, ReturnOffer, StopMode, Transcribed, TranscriptSink, Utterance,
 };
-use super::{CapturedMicrophone, Cleanup, Meter, Rewrites, rewrites};
+use super::{CapturedMicrophone, Cleanup, Rewrites, meter, rewrites};
 
 /// Records a press, hears it, and publishes each segment to its sinks.
 /// Where the text goes — history, the cursor — is the sinks' business.
@@ -602,7 +602,7 @@ where
             );
             // Held only for the transcribing stage: the meter ends with
             // capture, and the pill has its next stage to draw by then.
-            let meter = Meter::watching(&recording, control, events);
+            let meter = meter(&recording, control, events);
             // Transcription can fail before it has read the press to its end —
             // an unsupported language is refused on the first line. Capture would
             // otherwise keep running until its own timeout, and the meter above

@@ -3,6 +3,7 @@ pub mod dictation;
 pub mod enrollment;
 mod hearing;
 pub mod history;
+mod level;
 pub mod microphone;
 pub mod speaker;
 pub mod speech;
