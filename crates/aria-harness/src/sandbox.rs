@@ -4,6 +4,13 @@
 
 use std::path::Path;
 use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::process::Stdio;
+#[cfg(target_os = "macos")]
+use std::time::{Duration, Instant};
+
+#[cfg(target_os = "macos")]
+use aria_primitives::process::{ChildProcess, WaitOutcome};
 
 use tempfile::TempDir;
 
@@ -18,6 +25,12 @@ const ARIA_ENV_PREFIX: &str = "ARIA_";
 const LOG_FILTER_ENV: &str = "RUST_LOG";
 const UNATTENDED_ENV: &str = "ARIA_UNATTENDED";
 const UNATTENDED: &str = "1";
+#[cfg(target_os = "macos")]
+const KEYCHAIN_DIRECTORY: &str = "Library/Keychains";
+#[cfg(target_os = "macos")]
+const LOGIN_KEYCHAIN: &str = "login.keychain-db";
+#[cfg(target_os = "macos")]
+const KEYCHAIN_DEADLINE: Duration = Duration::from_secs(10);
 
 pub struct Sandbox {
     home: TempDir,
@@ -33,6 +46,12 @@ pub enum SandboxError {
 
     #[error("failed to write the settings")]
     WriteConfig(#[source] std::io::Error),
+
+    #[error("failed to create the fake login Keychain")]
+    CreateKeychain(#[source] std::io::Error),
+
+    #[error("`security create-keychain` did not finish: {outcome}")]
+    KeychainCommand { outcome: String },
 
     #[error("settings value contains control characters: {value:?}")]
     UnquotableValue { value: String },
@@ -59,7 +78,37 @@ impl Sandbox {
     pub fn create(settings: &str) -> Result<Self, SandboxError> {
         let home = tempfile::tempdir().map_err(SandboxError::CreateHome)?;
         write_settings(home.path(), settings)?;
-        Ok(Self { home })
+        let sandbox = Self { home };
+        #[cfg(target_os = "macos")]
+        sandbox.create_login_keychain()?;
+        Ok(sandbox)
+    }
+
+    /// The daemon keeps its storage key in the default Keychain, which macOS
+    /// finds through `HOME`; a fake home has none. `security` runs with the
+    /// fake home, so the new Keychain joins that home's search list, never
+    /// the developer's.
+    #[cfg(target_os = "macos")]
+    fn create_login_keychain(&self) -> Result<(), SandboxError> {
+        let directory = self.home.path().join(KEYCHAIN_DIRECTORY);
+        std::fs::create_dir_all(&directory).map_err(SandboxError::CreateKeychain)?;
+        let mut command = Command::new("/usr/bin/security");
+        self.apply(&mut command);
+        command
+            .args(["create-keychain", "-p", ""])
+            .arg(directory.join(LOGIN_KEYCHAIN))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut process =
+            ChildProcess::spawn(&mut command).map_err(SandboxError::CreateKeychain)?;
+        let outcome = match process.wait_until(Instant::now() + KEYCHAIN_DEADLINE, || false) {
+            Ok(WaitOutcome::Exited(status)) if status.success() => return Ok(()),
+            Ok(WaitOutcome::Exited(status)) => status.to_string(),
+            Ok(WaitOutcome::TimedOut | WaitOutcome::Cancelled) => "timed out".to_owned(),
+            Err(error) => aria_primitives::error_chain(&error),
+        };
+        Err(SandboxError::KeychainCommand { outcome })
     }
 
     /// Where the daemon binds, which it does before loading its model.
