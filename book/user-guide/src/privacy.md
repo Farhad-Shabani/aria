@@ -132,11 +132,11 @@ mishears. Aria adds those facts to later chats. This includes
 voice profile. Without one, Aria saves nothing.
 
 Memory lives in `~/.aria/memory/`, or the folder `memory.dir` names. Only your
-user account and administrators can read it. On a Mac, Aria encrypts the
-memory database there, as [Files and folders](#files-and-folders) describes.
-`profile.md` stays plain text and lists the facts Aria found. Aria deletes a
-saved request once it's 30 days old and Aria has checked it for facts. Facts and learned
-substitutions stay until you delete them.
+user account and administrators can read it. On a Mac, Aria
+[encrypts](#files-and-folders) the memory database, but not `profile.md`, which
+lists the facts Aria found. Aria deletes a saved request once it's 30 days old
+and Aria has checked it for facts. Facts and learned substitutions stay until
+you delete them.
 
 Turning **Memory** off keeps what's stored. To delete it, run
 `aria memory clear`. This keeps your dictionary, `~/.aria/vocabulary/dictionary.txt`,
@@ -152,20 +152,18 @@ version. Turn it off in **Settings → About** with
 
 ## Files and folders
 
-On a Mac, Aria encrypts its history database, its memory database, and its
-project vocabulary cache on disk. The key lives in your login Keychain, under
-`io.github.farhad-shabani.aria.storage`. Audio that history keeps for a retry
-sits inside the encrypted history database. A retry, like a recording, decrypts
-that audio to a temporary plaintext file and deletes it afterward. Transcript
-files aren't encrypted.
+On a Mac, Aria encrypts history, including its saved audio, memory, and the
+project vocabulary cache. Transcribing saved audio again makes a temporary
+unencrypted copy. Transcript files aren't encrypted. On Linux, Aria doesn't
+encrypt these files.
 
-Encryption protects the files on disk, not your account. Any program running
-as you can still read your history and memory through Aria, for example with
-`aria memory list`. If the Keychain item goes missing, Aria can't read the data
-it saved before and stops saving more. Restore the item to read the data again.
-To start over, delete the three encrypted databases and `~/.aria/encrypted`.
-Copies made before encryption, such as backups and snapshots, stay plain
-text. On Linux, Aria doesn't encrypt these files.
+The key is `io.github.farhad-shabani.aria.storage` in your login Keychain.
+Without it, Aria can't read or save that data. To start over, delete
+`history.db`, `memory.db`, `catalog.db`, and `~/.aria/encrypted`.
+
+Encryption protects the files, not your account. Any program running as you
+can still read them through Aria, for example with `aria memory list`. Backups
+and snapshots made before encryption stay plain text.
 
 `~/.aria/settings.toml` holds engine and model choices, shortcuts, prompt names
 and paths, and per-app choices. It holds no recordings, transcripts, or
