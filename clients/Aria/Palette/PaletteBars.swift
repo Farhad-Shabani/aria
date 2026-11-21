@@ -49,15 +49,23 @@ struct PaletteBars<Top: View, Content: View, Bottom: View>: View {
     @ViewBuilder let top: Top
     @ViewBuilder let content: Content
     @ViewBuilder let bottom: Bottom
+    /// The bottom bar's height: the footer, plus a follow-up row on some pages.
+    @State private var bottomHeight = PaletteBarMetrics.footerHeight
 
     var body: some View {
         if #available(macOS 26, *) {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .mask { FooterFade() }
+                .mask { BottomFade(height: bottomHeight) }
                 .safeAreaBar(edge: .top, spacing: 0) { top }
                 // An inset, not a bar: a bar draws an edge along its top.
-                .safeAreaInset(edge: .bottom, spacing: 0) { bottom }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    bottom.onGeometryChange(for: CGFloat.self) {
+                        $0.size.height
+                    } action: {
+                        bottomHeight = $0
+                    }
+                }
                 .scrollEdgeEffectStyle(.soft, for: .top)
                 .scrollEdgeEffectHidden(true, for: .bottom)
         } else {
@@ -70,18 +78,19 @@ struct PaletteBars<Top: View, Content: View, Bottom: View>: View {
     }
 }
 
-/// Opaque down to the footer's top, then clear before its text, so a row
-/// scrolling under the footer fades out instead of crossing its words.
-private struct FooterFade: View {
-    /// How far into the footer a row is gone: just above its text.
+/// Opaque down to the bottom bar's top, then clear before its text, so a row
+/// scrolling under the bar fades out instead of crossing its words.
+private struct BottomFade: View {
+    /// How far into the bar a row is gone: just above its text.
     private static let reach: CGFloat = 12
+    let height: CGFloat
 
     var body: some View {
         VStack(spacing: 0) {
             Color.black
             LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
                 .frame(height: Self.reach)
-            Color.clear.frame(height: PaletteBarMetrics.footerHeight - Self.reach)
+            Color.clear.frame(height: max(height - Self.reach, 0))
         }
         .ignoresSafeArea()
     }

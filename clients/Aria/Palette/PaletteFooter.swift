@@ -21,7 +21,12 @@ struct PaletteFooter<Note: View, Actions: View>: View {
         .padding(.leading, PaletteBarMetrics.leading)
         .padding(.trailing, PaletteBarMetrics.trailing)
         .frame(minHeight: PaletteBarMetrics.footerHeight)
-        .background(alignment: .bottom) { PaletteAudioBackdrop() }
+        .background {
+            // The footer's bounds, so a crest never paints over the row above.
+            PaletteAudioBackdrop()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .clipped()
+        }
     }
 }
 
