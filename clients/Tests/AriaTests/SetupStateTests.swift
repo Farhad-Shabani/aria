@@ -231,7 +231,7 @@ final class SetupStateTests: XCTestCase {
             pages.map(\.title),
             [
                 "Welcome to Aria", "Choose Your Engines", "Installing…", "Allow Access", "Set Up Your Voice",
-                "Try Dictation", "Open Aria from Any App",
+                "Try Dictation", "Open Aria",
             ])
     }
 

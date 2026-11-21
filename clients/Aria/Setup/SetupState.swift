@@ -589,7 +589,7 @@ extension SetupState.Step {
         case .grant: "Allow Access"
         case .voice: "Set Up Your Voice"
         case .tryOut: "Try Dictation"
-        case .openAria, .done: "Open Aria from Any App"
+        case .openAria, .done: "Open Aria"
         case .failed: "Setup Didn’t Finish"
         }
     }
