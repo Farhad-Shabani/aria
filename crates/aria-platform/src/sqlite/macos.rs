@@ -7,16 +7,14 @@ use std::fs::File;
 use std::path::Path;
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, params};
-use rustix::fs::{Mode, OFlags};
+use rustix::fs::{AtFlags, Mode, OFlags};
 use security_framework::os::macos::keychain::SecKeychain;
 use security_framework::random::SecRandom;
 use security_framework_sys::base::{errSecDuplicateItem, errSecItemNotFound};
 
 use aria_primitives::private_fs;
 
-use super::{
-    Error, SIDECAR_SUFFIXES, create_if_missing, inspect, io, open_directory, remove_if_present,
-};
+use super::{Error, SIDECAR_SUFFIXES, create_if_missing, inspect, io, open_directory};
 
 const SERVICE: &str = "Aria storage key";
 const ACCOUNT: &str = "databases";
@@ -242,6 +240,13 @@ impl Marker {
         self.directory
             .sync_all()
             .map_err(|error| AtRestError::Marker(io("flush the Aria directory")(error)))
+    }
+}
+
+fn remove_if_present(directory: &File, name: &OsStr) -> Result<(), Error> {
+    match rustix::fs::unlinkat(directory, name, AtFlags::empty()) {
+        Ok(()) | Err(rustix::io::Errno::NOENT) => Ok(()),
+        Err(error) => Err(io("remove a database file")(error)),
     }
 }
 

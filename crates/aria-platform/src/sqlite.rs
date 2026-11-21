@@ -315,13 +315,6 @@ fn create_if_missing(directory: &File, name: &OsStr) -> Result<(), Error> {
     }
 }
 
-fn remove_if_present(directory: &File, name: &OsStr) -> Result<(), Error> {
-    match rustix::fs::unlinkat(directory, name, AtFlags::empty()) {
-        Ok(()) | Err(rustix::io::Errno::NOENT) => Ok(()),
-        Err(error) => Err(io("remove a database file")(error)),
-    }
-}
-
 fn inspect(directory: &File, name: &OsStr) -> Result<Option<Stat>, Error> {
     match rustix::fs::statat(directory, name, AtFlags::SYMLINK_NOFOLLOW) {
         Ok(stat) => Ok(Some(stat)),
