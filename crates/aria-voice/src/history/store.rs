@@ -121,6 +121,8 @@ fn budget(section: HistorySection) -> Budget {
 }
 
 pub struct Store {
+    /// The file, so an error reading kept audio names where it lives.
+    database: PathBuf,
     /// Where a retry's audio is decrypted to, for as long as the retry runs.
     spool_dir: PathBuf,
     // The one lock also bounds audio copies. Copies need their own admission
@@ -173,12 +175,9 @@ impl Store {
         spool_dir: &Path,
         at_rest: &AtRest,
     ) -> Result<Arc<Self>, HistoryError> {
-        let connection = Database::open(
-            &directory.join(DB_FILE),
-            &DATABASE_POLICY,
-            at_rest,
-            &CancelToken::never(),
-        )?;
+        let database = directory.join(DB_FILE);
+        let connection =
+            Database::open(&database, &DATABASE_POLICY, at_rest, &CancelToken::never())?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version > SCHEMA_VERSION {
             return Err(HistoryError::Unavailable);
@@ -202,6 +201,7 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", true)?;
         remove_plaintext_audio(directory)?;
         let store = Arc::new(Self {
+            database,
             spool_dir: spool_dir.to_path_buf(),
             state: Mutex::new(State {
                 connection,
@@ -1148,9 +1148,12 @@ impl Store {
             sql_integer(id)?,
             true,
         )?;
-        RecordingReader::from_wav_in(&self.spool_dir, blob, Path::new(DB_FILE)).map_err(|error| {
+        RecordingReader::from_wav_in(&self.spool_dir, blob, &self.database).map_err(|error| {
             match error {
-                CaptureError::Wav(_) => HistoryError::AudioUnavailable,
+                CaptureError::Wav(error) => {
+                    tracing::warn!(error = %error_chain(&error), "kept audio is unreadable and is dropped");
+                    HistoryError::AudioUnavailable
+                }
                 error => HistoryError::storage(error),
             }
         })
