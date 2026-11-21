@@ -30,9 +30,14 @@ final class SystemTranscriptionStatusTests: XCTestCase {
             XCTAssertEqual(status.level.value, 0.8)
             status.handle(event(ending))
             XCTAssertEqual(status.level.value, 0)
-            status.hear(level: 0.6)
-            XCTAssertEqual(status.level.value, 0)
         }
+    }
+
+    func testALevelShowsASessionThatStartedBeforeAriaOpened() {
+        let status = SystemTranscriptionStatus(readStatus: { false })
+        status.hear(level: 0.4)
+        XCTAssertTrue(status.isRunning)
+        XCTAssertEqual(status.level.value, 0.4)
     }
 
     func testAStageDuringAReadWinsOverTheRead() async {

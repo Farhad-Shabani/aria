@@ -97,10 +97,13 @@ final class SystemTranscriptionStatus: ObservableObject {
         }
     }
 
-    /// A level from the session's last moments may arrive after its end, and
-    /// must not wake the meter.
+    /// Only a running session sends levels, so one shows the session even
+    /// before a stage or a status read does, as when Aria opens partway
+    /// through. The daemon sends the last level before the session's end.
     func hear(level: Float) {
-        guard isRunning else { return }
+        // A stream update, so a status read it overtook is dropped.
+        stagesSeen += 1
+        isRunning = true
         self.level.value = level
     }
 
