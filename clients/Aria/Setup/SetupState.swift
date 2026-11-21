@@ -36,6 +36,7 @@ final class SetupState: ObservableObject {
         case grant
         case voice
         case tryOut
+        case openAria
         case done
         case failed(String)
     }
@@ -61,6 +62,8 @@ final class SetupState: ObservableObject {
             isMovingForward = step.order >= oldValue.order
             progress.record(step)
             if step == .inspecting { forgetLastWalk() }
+            // Access granted after Skip on Allow Access still reaches Try It and Open Aria.
+            if step == .tryOut, !isHotkeyReady { watchGrant() }
         }
     }
     @Published private(set) var progress = SetupProgress()
@@ -76,7 +79,7 @@ final class SetupState: ObservableObject {
     @Published var downloads = Set<String>()
     @Published private(set) var applying: Aria_Setup_V1_Step = .unspecified
     @Published private(set) var downloadProgress: [String: Aria_Setup_V1_DownloadProgress] = [:]
-    @Published private(set) var summary: Aria_Setup_V1_Summary?
+    private var summary: Aria_Setup_V1_Summary?
     @Published var voiceName = ""
     @Published private(set) var voicePrompt: String?
     @Published private(set) var enrolled: String?
@@ -87,6 +90,8 @@ final class SetupState: ObservableObject {
     var isHotkeyReady: Bool { ariaKeyState == .armed }
     /// A step's own failure, which setup carries on past.
     @Published private(set) var notice: String?
+    /// What install couldn't set up, which the last page names.
+    @Published private(set) var installNotice: String?
     @Published private(set) var isBusy = false
 
     private let effects: Effects
@@ -263,18 +268,23 @@ final class SetupState: ObservableObject {
             Task { await inspectNow() }
         case .grant:
             watchGrant()
+        case .tryOut where !isHotkeyReady:
+            watchGrant()
         default:
             return
         }
     }
 
+    /// Closing the window on the last page ends setup, so reopening starts a new walk.
     func stop() {
         grantTask?.cancel()
+        if step == .openAria { step = .done }
     }
 
     /// Inspecting begins every walk, so nothing an earlier walk did carries over.
     private func forgetLastWalk() {
         summary = nil
+        installNotice = nil
         voiceName = ""
         enrolled = nil
         typed = ""
@@ -301,16 +311,12 @@ final class SetupState: ObservableObject {
         case .voice:
             step = .tryOut
         case .tryOut:
-            finish()
+            step = .openAria
+        case .openAria:
+            step = .done
         default:
             break
         }
-    }
-
-    private func finish() {
-        let problems = [effects.launchAtLogin(), effects.installCommandLineTool()].compactMap { $0 }
-        notice = problems.isEmpty ? nil : problems.joined(separator: " ")
-        step = .done
     }
 
     func back() {
@@ -371,7 +377,13 @@ final class SetupState: ObservableObject {
     func dictationEvent(_ event: Aria_Daemon_V1_DictationEvent) {
         guard step == .tryOut, event.stage == .delivered, event.outcome == .inserted, event.wordCount > 0
         else { return }
-        finish()
+        step = .openAria
+    }
+
+    /// Setup ends once the shortcut it teaches opened Aria.
+    func shortcutOpenedAria() {
+        guard step == .openAria else { return }
+        step = .done
     }
 
     private func inspectNow() async {
@@ -424,8 +436,12 @@ final class SetupState: ObservableObject {
         }
     }
 
+    /// Login and the `aria` command finish the install while the person still
+    /// watches it, so the password prompt never lands over another app.
     private func finishApply(_ summary: Aria_Setup_V1_Summary) async {
         self.summary = summary
+        let problems = [effects.launchAtLogin(), effects.installCommandLineTool()].compactMap { $0 }
+        installNotice = problems.isEmpty ? nil : problems.joined(separator: " ")
         ariaKeyState = summary.grant == .armed ? .armed : .needsAccessibility
         if summary.grant != .armed {
             step = .grant
@@ -518,16 +534,18 @@ extension SetupState.Step {
         case .grant: .hotkey
         case .voice: .voice
         case .tryOut: .tryOut
+        case .openAria: .openAria
         case .done, .failed: nil
         }
     }
 
     /// Where the step sits in the walk, so pages slide the right way.
-    /// Inspecting and welcome share a page, so they share a slot.
+    /// Inspecting and welcome share a page, so they share a slot. Done
+    /// closes the window over the last page, so it keeps that page's slot.
     var order: Int {
         if let stage { return stage.rawValue }
-        let stages = SetupProgress.Stage.allCases.count
-        return self == .done ? stages : stages + 1
+        if self == .done { return SetupProgress.Stage.openAria.rawValue }
+        return SetupProgress.Stage.allCases.count
     }
 
     var title: String {
@@ -538,7 +556,7 @@ extension SetupState.Step {
         case .grant: "Allow Access"
         case .voice: "Your Voice"
         case .tryOut: "Try It"
-        case .done: "Aria Is Ready"
+        case .openAria, .done: "Open Aria"
         case .failed: "Setup Didn’t Finish"
         }
     }
@@ -551,7 +569,7 @@ extension SetupState.Step {
         case .grant: "Aria uses it to hear the Aria key and type what you say."
         case .voice: "Aria can tell who is speaking once it knows your voice."
         case .tryOut: "Tap the Aria key and say a few words."
-        case .done: "Aria runs in the background. Find it in the menu bar."
+        case .openAria, .done: "Use this shortcut to open Aria from any app."
         case .failed: nil
         }
     }

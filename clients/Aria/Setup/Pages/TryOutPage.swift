@@ -23,14 +23,11 @@ struct TryOutPage: View {
                     .labelsHidden()
                     .lineLimit(3...)
                     .focused($isFieldFocused)
-                } else if state.ariaKeyState == .refused {
-                    Text(markdown: "macOS didn’t let Aria hear the Aria key. Run `aria doctor` in Terminal to see why.")
-                        .foregroundStyle(.secondary)
+                    // The daemon types where focus is, so the field takes it
+                    // whenever it shows, even in a window that already has focus.
+                    .onAppear { isFieldFocused = true }
                 } else {
-                    Text(
-                        "To use the Aria key, turn on Aria in System Settings > Privacy & Security > \(state.ariaKeyState.privacyPane)."
-                    )
-                    .foregroundStyle(.secondary)
+                    AriaKeyAccessNote(keyState: state.ariaKeyState)
                 }
             } footer: {
                 if let enrolled = state.enrolled {
@@ -39,7 +36,5 @@ struct TryOutPage: View {
                 NoticeText(notice: state.notice)
             }
         }
-        // The daemon types where focus is, so the field must hold it.
-        .defaultFocus($isFieldFocused, true)
     }
 }

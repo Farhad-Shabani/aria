@@ -22,6 +22,9 @@ struct SetupView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: state.step)
         .onAppear { state.start() }
+        .onChange(of: state.step) {
+            if state.step == .done { dismiss() }
+        }
         .onDisappear { state.stop() }
     }
 
@@ -70,7 +73,8 @@ struct SetupView: View {
         case .grant: GrantPage(ariaKey: state.ariaKeyState)
         case .voice: VoicePage(state: state)
         case .tryOut: TryOutPage(state: state, ariaKey: ariaKey)
-        case .done: DonePage(state: state, ariaKey: ariaKey, askCombo: askCombo)
+        case .openAria, .done:
+            OpenAriaPage(state: state, ariaKey: ariaKey, shortcut: openAriaShortcut, askCombo: askCombo)
         case .failed(let message): FailedPage(message: message)
         }
     }
@@ -84,6 +88,12 @@ struct SetupView: View {
         guard let hotkey = settings.snapshot?.askShortcut else { return .shift }
         if case .combo(let combo) = hotkey.storedBinding { return combo }
         return nil
+    }
+
+    /// The daemon's default until it answers.
+    private var openAriaShortcut: Aria_Daemon_V1_Shortcut? {
+        guard let snapshot = settings.snapshot else { return Aria_Daemon_V1_Shortcut(.combo(.command)) }
+        return snapshot.hasPromptListShortcut ? snapshot.promptListShortcut : nil
     }
 
     private var footer: some View {
@@ -127,9 +137,9 @@ struct SetupView: View {
                 .primaryAction()
                 .disabled(state.isBusy || state.voiceName.trimmingCharacters(in: .whitespaces).isEmpty)
         case .tryOut:
-            Button(state.typed.isEmpty ? "Skip" : "Finish") { state.next() }.disabled(state.isBusy)
-        case .done:
-            Button("Close") { dismiss() }
+            Button(state.typed.isEmpty ? "Skip" : "Continue") { state.next() }.disabled(state.isBusy)
+        case .openAria, .done:
+            Button("Done") { state.next() }
                 .primaryAction()
         case .failed:
             Button("Close") { dismiss() }
