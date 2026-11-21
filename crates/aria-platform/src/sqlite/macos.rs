@@ -9,8 +9,8 @@ use std::path::Path;
 use rusqlite::{Connection, ErrorCode, OpenFlags, params};
 use rustix::fs::{Mode, OFlags};
 use security_framework::os::macos::keychain::SecKeychain;
+use security_framework::random::SecRandom;
 use security_framework_sys::base::{errSecDuplicateItem, errSecItemNotFound};
-use zeroize::Zeroizing;
 
 use aria_primitives::private_fs;
 
@@ -32,7 +32,7 @@ pub enum AtRestError {
     #[error("the storage key in the Keychain is malformed")]
     Malformed,
     #[error("no randomness was available for a new storage key")]
-    Random(#[source] getrandom::Error),
+    Random(#[source] std::io::Error),
     #[error("the Keychain no longer holds the storage key Aria's saved data is encrypted with")]
     Missing,
     #[error("could not record that a storage key exists")]
@@ -41,7 +41,7 @@ pub enum AtRestError {
 
 /// The storage key every saved database is encrypted with.
 pub struct AtRest {
-    key: Zeroizing<[u8; KEY_BYTES]>,
+    key: [u8; KEY_BYTES],
 }
 
 impl AtRest {
@@ -82,15 +82,15 @@ impl AtRest {
 
     #[cfg(any(test, feature = "test-support"))]
     fn from_key(key: [u8; KEY_BYTES]) -> Self {
-        Self {
-            key: Zeroizing::new(key),
-        }
+        Self { key }
     }
 
     fn create(keychain: &SecKeychain) -> Result<Self, AtRestError> {
-        let mut key = Zeroizing::new([0; KEY_BYTES]);
-        getrandom::fill(key.as_mut_slice()).map_err(AtRestError::Random)?;
-        match keychain.add_generic_password(SERVICE, ACCOUNT, key.as_slice()) {
+        let mut key = [0; KEY_BYTES];
+        SecRandom::default()
+            .copy_bytes(&mut key)
+            .map_err(AtRestError::Random)?;
+        match keychain.add_generic_password(SERVICE, ACCOUNT, &key) {
             Ok(()) => Ok(Self { key }),
             // Another Aria process stored one first, and its databases may
             // already use it.
@@ -105,11 +105,7 @@ impl AtRest {
     }
 
     fn from_stored(stored: &[u8]) -> Result<Self, AtRestError> {
-        let mut key = Zeroizing::new([0; KEY_BYTES]);
-        if stored.len() != KEY_BYTES {
-            return Err(AtRestError::Malformed);
-        }
-        key.copy_from_slice(stored);
+        let key = stored.try_into().map_err(|_| AtRestError::Malformed)?;
         Ok(Self { key })
     }
 
@@ -201,12 +197,7 @@ impl AtRest {
 
     /// Keys `connection`, which must not have read the database yet.
     pub(super) fn unlock(&self, connection: &Connection) -> Result<(), Error> {
-        let literal = self.key_literal();
-        let mut pragma = Zeroizing::new(String::with_capacity(literal.len() + 16));
-        pragma.push_str("PRAGMA key = \"");
-        pragma.push_str(&literal);
-        pragma.push('"');
-        connection.execute_batch(&pragma)?;
+        connection.execute_batch(&format!("PRAGMA key = \"{}\"", self.key_literal()))?;
         match read_schema(connection) {
             Ok(()) => Ok(()),
             Err(error) if is_not_a_database(&error) => Err(Error::Locked),
@@ -215,16 +206,9 @@ impl AtRest {
     }
 
     /// SQLCipher's raw-key form, which skips its passphrase derivation.
-    fn key_literal(&self) -> Zeroizing<String> {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut literal = Zeroizing::new(String::with_capacity(KEY_BYTES * 2 + 3));
-        literal.push_str("x'");
-        for byte in self.key.iter() {
-            literal.push(char::from(HEX[usize::from(byte >> 4)]));
-            literal.push(char::from(HEX[usize::from(byte & 0x0f)]));
-        }
-        literal.push('\'');
-        literal
+    fn key_literal(&self) -> String {
+        let hex: String = self.key.iter().map(|byte| format!("{byte:02x}")).collect();
+        format!("x'{hex}'")
     }
 }
 

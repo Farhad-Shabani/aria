@@ -12,7 +12,7 @@ publish              = false
 workspace = true
 
 [features]
-sqlite       = [ "dep:getrandom", "dep:rusqlite", "dep:security-framework", "dep:security-framework-sys", "dep:zeroize" ]
+sqlite       = [ "dep:rusqlite", "dep:security-framework", "dep:security-framework-sys" ]
 test-support = [  ]
 
 [dependencies]
@@ -46,10 +46,8 @@ x11rb        = { version = "0.13", features = [ "xtest" ] }
 # SQLCipher in place of plain SQLite. Leave every `OPENSSL_*` variable unset,
 # so it builds on CommonCrypto rather than an OpenSSL it finds.
 rusqlite               = { workspace = true, optional = true, features = [ "bundled-sqlcipher" ] }
-getrandom              = { workspace = true, optional = true, features = [ "std" ] }
 security-framework     = { workspace = true, optional = true }
 security-framework-sys = { workspace = true, optional = true }
-zeroize                = { workspace = true, optional = true }
 cidre                  = { workspace = true, features = [ "ax", "dispatch", "macos_14_2" ] }
 objc2                  = { workspace = true }
 objc2-app-kit          = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
