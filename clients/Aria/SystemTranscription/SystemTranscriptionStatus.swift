@@ -32,6 +32,9 @@ final class SystemTranscriptionStatus: ObservableObject {
     private let stopSession: StopSession
     /// Goes up with every stream update, so a status read that one overtook is dropped.
     private var stagesSeen = 0
+    /// A reply said no session runs before the stream did, so levels still
+    /// queued belong to the session that ended. The next Started clears it.
+    private var areLevelsStale = false
     private let reconcileInterval: Duration
     private var reconciling: Task<Void, Never>?
 
@@ -77,12 +80,15 @@ final class SystemTranscriptionStatus: ObservableObject {
         guard let event else {
             reconciling?.cancel()
             isRunning = false
+            // A new stream replays no levels from before it.
+            areLevelsStale = false
             return
         }
         transcript.apply(event, at: now)
         switch event.stage {
         case .started:
             didFailToStop = false
+            areLevelsStale = false
             isRunning = true
             startedAt = now
         case .segmentTranscribed, .speakerMerged:
@@ -101,9 +107,13 @@ final class SystemTranscriptionStatus: ObservableObject {
     /// before a stage or a status read does, as when Aria opens partway
     /// through. The daemon sends the last level before the session's end.
     func hear(level: Float) {
-        // A stream update, so a status read it overtook is dropped.
-        stagesSeen += 1
-        isRunning = true
+        guard !areLevelsStale else { return }
+        // Levels come 20 times a second. Only the first may publish, or every
+        // observer redraws with each one and every status read is dropped.
+        if !isRunning {
+            stagesSeen += 1
+            isRunning = true
+        }
         self.level.value = level
     }
 
@@ -113,6 +123,7 @@ final class SystemTranscriptionStatus: ObservableObject {
         let stagesAtRead = stagesSeen
         guard let isRunning = try? await readStatus(), stagesSeen == stagesAtRead else { return }
         self.isRunning = isRunning
+        areLevelsStale = !isRunning
     }
 
     /// Answers once the daemon accepted the session. Capture can still fail
@@ -140,6 +151,7 @@ final class SystemTranscriptionStatus: ObservableObject {
         do {
             try await stopSession()
             isRunning = false
+            areLevelsStale = true
         } catch {
             await catchUp()
             didFailToStop = isRunning
