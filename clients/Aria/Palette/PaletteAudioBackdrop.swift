@@ -14,7 +14,7 @@ struct PaletteAudioBackdrop: View {
     var body: some View {
         ZStack {
             if let level {
-                PaletteSandBand(level: level)
+                PaletteTide(level: level)
                     .transition(.opacity)
             }
         }
