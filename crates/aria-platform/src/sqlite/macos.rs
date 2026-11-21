@@ -7,15 +7,20 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use core_foundation::data::CFData;
 use rusqlite::{Connection, ErrorCode, OpenFlags, params};
 use rustix::fs::{AtFlags, Mode, OFlags};
-use security_framework::os::macos::keychain::SecKeychain;
+use security_framework::item::{ItemAddOptions, ItemAddValue, ItemClass};
+use security_framework::passwords::{self, PasswordOptions};
 use security_framework::random::SecRandom;
 use security_framework_sys::base::{errSecDuplicateItem, errSecItemNotFound};
 
 use super::{Error, SIDECAR_SUFFIXES, create_if_missing, io};
 
-const SERVICE: &str = "Aria storage key";
+// "<App> Safe Storage", as Chromium names the key that encrypts its local
+// data. Electron apps use the app's name as the account, so this one differs
+// and an Electron app called Aria never shares the item.
+const SERVICE: &str = "Aria Safe Storage";
 const ACCOUNT: &str = "databases";
 const KEY_BYTES: usize = 32;
 const SEALING_SUFFIX: &str = ".sealing";
@@ -44,16 +49,7 @@ impl AtRest {
     /// Reads the storage key from the Keychain, creating it while none of
     /// `databases` is encrypted yet.
     pub fn load(databases: &[PathBuf]) -> Result<Self, AtRestError> {
-        let keychain = SecKeychain::default().map_err(keychain_error)?;
-        Self::find_or_create(
-            databases,
-            || match keychain.find_generic_password(SERVICE, ACCOUNT) {
-                Ok((stored, _)) => Self::from_stored(&stored).map(Some),
-                Err(error) if error.code() == errSecItemNotFound => Ok(None),
-                Err(error) => Err(keychain_error(error)),
-            },
-            || Self::create(&keychain),
-        )
+        Self::find_or_create(databases, Self::find, Self::create)
     }
 
     /// A replacement key would leave the data under the lost one locked for
@@ -84,20 +80,30 @@ impl AtRest {
         Self { key }
     }
 
-    fn create(keychain: &SecKeychain) -> Result<Self, AtRestError> {
+    fn find() -> Result<Option<Self>, AtRestError> {
+        match passwords::generic_password(PasswordOptions::new_generic_password(SERVICE, ACCOUNT)) {
+            Ok(stored) => Self::from_stored(&stored).map(Some),
+            Err(error) if error.code() == errSecItemNotFound => Ok(None),
+            Err(error) => Err(keychain_error(error)),
+        }
+    }
+
+    /// Adds without replacing, unlike `passwords::set_generic_password`: a
+    /// key another process stored may already encrypt its databases.
+    fn create() -> Result<Self, AtRestError> {
         let mut key = [0; KEY_BYTES];
         SecRandom::default()
             .copy_bytes(&mut key)
             .map_err(AtRestError::Random)?;
-        match keychain.add_generic_password(SERVICE, ACCOUNT, &key) {
+        let mut item = ItemAddOptions::new(ItemAddValue::Data {
+            class: ItemClass::generic_password(),
+            data: CFData::from_buffer(&key),
+        });
+        item.set_service(SERVICE).set_account_name(ACCOUNT);
+        match item.add() {
             Ok(()) => Ok(Self { key }),
-            // Another Aria process stored one first, and its databases may
-            // already use it.
             Err(error) if error.code() == errSecDuplicateItem => {
-                let (stored, _) = keychain
-                    .find_generic_password(SERVICE, ACCOUNT)
-                    .map_err(keychain_error)?;
-                Self::from_stored(&stored)
+                Self::find()?.ok_or_else(|| keychain_error(error))
             }
             Err(error) => Err(keychain_error(error)),
         }

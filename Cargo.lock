@@ -343,6 +343,7 @@ dependencies = [
  "aria-primitives",
  "ashpd",
  "cidre",
+ "core-foundation",
  "futures-util",
  "objc2",
  "objc2-app-kit",
