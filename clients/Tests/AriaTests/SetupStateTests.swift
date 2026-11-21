@@ -317,8 +317,14 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.applying, .models)
         XCTAssertEqual(state.downloadProgress["parakeet"]?.receivedBytes, 5)
         XCTAssertEqual(
-            state.downloadTransfer, ModelTransfer(received: 5, total: 20),
+            state.runningDownload, ModelTransfer(received: 5, total: 20),
             "the bar counts the model not started yet at its listed size")
+
+        var service = Aria_Setup_V1_SetupEvent()
+        service.started = .service
+        harness.onEvent?(service)
+        await waitUntil { state.applying == .service }
+        XCTAssertNil(state.runningDownload, "the download ends when the models step does")
     }
 
     func testContinueAnywayLeavesTheGrantPage() async {

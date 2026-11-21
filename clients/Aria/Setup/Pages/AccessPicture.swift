@@ -29,7 +29,7 @@ struct AccessPicture: View {
 
     let pane: String
     @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 34
-    @ScaledMetric(relativeTo: .body) private var iconSide = SettingsMetrics.iconSide
+    @ScaledMetric(relativeTo: .body) private var iconSide = IconMetrics.rowSide
 
     var body: some View {
         VStack(alignment: .leading, spacing: Self.spacing) {

@@ -46,7 +46,7 @@ private struct AppRow: View {
         HStack {
             Image(nsImage: app.icon)
                 .resizable()
-                .frame(width: SettingsMetrics.iconSide, height: SettingsMetrics.iconSide)
+                .frame(width: IconMetrics.rowSide, height: IconMetrics.rowSide)
                 .accessibilityHidden(true)
             Text(app.name)
             if isExcluded {

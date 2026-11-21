@@ -13,7 +13,7 @@ struct InstallingPage: View {
                         Text(row.title).foregroundStyle(row.progress == .pending ? .secondary : .primary)
                     }
                     .accessibilityValue(spoken(row.progress))
-                    if row.step == .models, row.progress != .pending, let transfer = state.downloadTransfer {
+                    if row.step == .models, let transfer = state.runningDownload {
                         total(transfer)
                         if state.downloadProgress.count > 1 {
                             DisclosureGroup("Details") {

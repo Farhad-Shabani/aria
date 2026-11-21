@@ -95,7 +95,7 @@ final class SetupState: ObservableObject {
     /// the page so the person sees their words land.
     @Published private(set) var typedWordCount: Int?
     @Published private(set) var ariaKeyState = AriaKeyState.needsAccessibility
-    /// Whether the dictation hotkey answers, so Done can teach it.
+    /// Whether the Aria key answers, so the last pages can teach it.
     var isHotkeyReady: Bool { ariaKeyState == .armed }
     /// A step's own failure, which setup carries on past.
     @Published private(set) var notice: String?
@@ -268,9 +268,14 @@ final class SetupState: ObservableObject {
         }
     }
 
-    /// Every model the install fetches, as one transfer. A model not started
-    /// yet counts at the size setup lists for it.
-    var downloadTransfer: ModelTransfer? {
+    /// The models' download while the install fetches them, as one transfer.
+    var runningDownload: ModelTransfer? {
+        step == .applying && applying == .models ? downloadTransfer : nil
+    }
+
+    /// Every model the install fetches. A model not started yet counts at
+    /// the size setup lists for it.
+    private var downloadTransfer: ModelTransfer? {
         guard !fetching.isEmpty else { return nil }
         var received: UInt64 = 0
         var total: UInt64 = 0

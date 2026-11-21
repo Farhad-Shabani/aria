@@ -18,7 +18,7 @@ struct SetupView: View {
 
     var body: some View {
         SidebarWindow(sidebarWidth: Self.railWidth) {
-            SetupRail(progress: state.progress, installFraction: installFraction)
+            SetupRail(progress: state.progress, installFraction: state.runningDownload?.fraction)
         } detail: {
             detail
         }
@@ -84,10 +84,6 @@ struct SetupView: View {
             OpenAriaPage(state: state, ariaKey: ariaKey, shortcut: openAriaShortcut, askCombo: askCombo)
         case .failed(let message): FailedPage(message: message)
         }
-    }
-
-    private var installFraction: Double? {
-        state.step == .applying && state.applying == .models ? state.downloadTransfer?.fraction : nil
     }
 
     /// The daemon's default until it answers.

@@ -32,7 +32,7 @@ struct WelcomePage: View {
 
     private var hero: some View {
         VStack(spacing: SetupMetrics.captionSpacing) {
-            AppIcon(side: SettingsMetrics.heroIconSide)
+            AppIcon(side: IconMetrics.heroSide)
             Text(state.step.title)
                 .font(.largeTitle.bold())
                 .foregroundStyle(.primary)

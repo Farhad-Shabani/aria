@@ -9,7 +9,7 @@ struct AboutSettings: View {
         Form {
             Section {
                 VStack(spacing: 4) {
-                    AppIcon(side: SettingsMetrics.heroIconSide)
+                    AppIcon(side: IconMetrics.heroSide)
                     Text(Bundle.main.displayName).font(.title2.weight(.semibold))
                     if let version = Bundle.main.shortVersion {
                         Text("Version \(version)").foregroundStyle(.secondary)
