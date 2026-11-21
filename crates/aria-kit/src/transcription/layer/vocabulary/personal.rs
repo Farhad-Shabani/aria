@@ -270,21 +270,25 @@ impl PersonalRules {
         Ok(forms)
     }
 
-    /// Defers the words of a spoken form that waits on a symbol, where more
-    /// speech may still change it: a form the cut would split, as learned
-    /// "tilde dot" → `~.` in "cd tilde dot", or one the text ends inside, as
-    /// "use see sharp" may become "see sharp dot" → `C#.`. Forms are read
-    /// in the text between claims, as [`Self::apply_checked`] reads them.
+    /// Defers the words of a spoken form that more speech may still change:
+    /// a form the cut would split, or one the text ends inside.
     pub(super) fn defer_waiting_forms(&self, text: &str, claimed: &mut Claimed<'_>) {
+        if self.forms.is_empty() {
+            return;
+        }
+        self.defer_a_split_form(text, claimed);
+        self.defer_an_unfinished_form(text, claimed);
+    }
+
+    /// Defers a form the cut would split, as learned "tilde dot" → `~.` in
+    /// "cd tilde dot". Forms are read in the text between claims, as
+    /// [`Self::apply_checked`] reads them.
+    fn defer_a_split_form(&self, text: &str, claimed: &mut Claimed<'_>) {
         let cut = claimed.deferred_from();
         let Some(gap) = unclaimed_around(claimed.words(), text.len(), cut) else {
             return;
         };
-        if self.forms.is_empty() {
-            return;
-        }
         let (offsets, chars): (Vec<usize>, Vec<char>) = text[gap.clone()].char_indices().unzip();
-        let at = |index: usize| gap.start + offsets[index];
         let cut = offsets.partition_point(|offset| gap.start + offset < cut);
         let forms = self
             .forms_typed(&chars, &|| Ok::<_, std::convert::Infallible>(()))
@@ -293,24 +297,37 @@ impl PersonalRules {
             .iter()
             .find(|(form, _)| form.start < cut && cut < form.end)
         {
-            claimed.defer_at(at(form.start));
-            return;
+            claimed.defer_at(gap.start + offsets[form.start]);
         }
-        if gap.end < text.len() {
-            return;
-        }
-        let after_forms = forms.last().map_or(0, |(form, _)| form.end);
-        if let Some(start) =
-            (after_forms..cut).find(|&start| self.begins_a_waiting_form(&chars, start))
-        {
-            claimed.defer_at(at(start));
+    }
+
+    /// Defers the words the text ends on when they begin a longer form:
+    /// "detect db" may go on as "db 1" → `db1`, and "use see sharp" as "see
+    /// sharp dot" → `C#.`. The words are read as heard from where each claim
+    /// starts, whatever claimed them, because the whole form outranks a later step's claim on its
+    /// words: "i eighteen" begins "i eighteen n" → `i18n`. A finished form
+    /// waits too when it begins another, as "db 1" begins "db 1 cluster".
+    fn defer_an_unfinished_form(&self, text: &str, claimed: &mut Claimed<'_>) {
+        let cut = claimed.deferred_from();
+        let (offsets, chars): (Vec<usize>, Vec<char>) = text.trim_end().char_indices().unzip();
+        let start = claimed
+            .words()
+            .iter()
+            .map(|word| word.span.start)
+            .take_while(|&start| start < cut)
+            .find(|&start| {
+                let position = offsets.partition_point(|&offset| offset < start);
+                self.begins_a_longer_form(&chars, position)
+            });
+        if let Some(start) = start {
+            claimed.defer_at(start);
         }
     }
 
     /// Whether the words from `position` to the end of `chars` begin a
-    /// longer form that waits on a symbol: "see sharp" begins "see sharp
-    /// dot".
-    fn begins_a_waiting_form(&self, chars: &[char], position: usize) -> bool {
+    /// longer form: "see sharp" begins "see sharp dot", and "db" begins
+    /// "db 1".
+    fn begins_a_longer_form(&self, chars: &[char], position: usize) -> bool {
         let said = &chars[position..];
         let Some(first) = said.first() else {
             return false;
@@ -325,11 +342,10 @@ impl PersonalRules {
                     .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
         };
         boundary(chars, position)
-            && self.forms.get(&first).is_some_and(|forms| {
-                forms
-                    .iter()
-                    .any(|(form, _)| edges_on_a_symbol(form) && begins(form))
-            })
+            && self
+                .forms
+                .get(&first)
+                .is_some_and(|forms| forms.iter().any(|(form, _)| begins(form)))
     }
 
     /// Claims the forms in `between`, the text from one claim to the next,
