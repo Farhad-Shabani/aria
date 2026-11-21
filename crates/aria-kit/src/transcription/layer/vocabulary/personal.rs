@@ -1,6 +1,4 @@
 use std::borrow::Cow;
-    // The folding test opens these same bytes, so no build that fails here
-    // passes the tests.
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::OnceLock;
@@ -28,7 +26,12 @@ pub struct PersonalRules {
 impl PersonalRules {
     pub fn new(terms: Vec<String>, learned: Vec<(String, String)>) -> Self {
         let mut pairs: Vec<_> = variant_pairs(&terms).collect();
-        pairs.extend(learned);
+        let listed = spellings(&terms);
+        pairs.extend(
+            learned
+                .into_iter()
+                .map(|(spoken, correct)| (spoken, as_listed(&listed, correct))),
+        );
         Self::from_pairs(terms, pairs)
     }
 
@@ -39,10 +42,11 @@ impl PersonalRules {
         learned: Vec<(String, String)>,
         cancel: &CancelToken,
     ) -> Result<Self, MatchError> {
-        let listed: HashSet<String> = terms.iter().map(|term| term.to_lowercase()).collect();
+        let listed = spellings(&terms);
         let learned = learned
             .into_iter()
-            .filter(|(_, correct)| listed.contains(&correct.to_lowercase()));
+            .filter(|(_, correct)| listed.contains_key(&correct.to_lowercase()))
+            .map(|(spoken, correct)| (spoken, as_listed(&listed, correct)));
         let forms = Self::forms(variant_pairs(&terms).chain(learned), Some(cancel))?;
         let rules = Self {
             known: known(&terms),
@@ -273,11 +277,28 @@ impl PersonalRules {
     /// Defers the words of a spoken form that more speech may still change:
     /// a form the cut would split, or one the text ends inside.
     pub(super) fn defer_waiting_forms(&self, text: &str, claimed: &mut Claimed<'_>) {
+        self.defer_a_capital(text, claimed);
         if self.forms.is_empty() {
             return;
         }
         self.defer_a_split_form(text, claimed);
         self.defer_an_unfinished_form(text, claimed);
+    }
+
+    /// Defers a listed word before the cut that would take its capitals: a
+    /// spoken symbol in more speech may join it into a written name, which
+    /// keeps it as heard. "open aria" may go on as "aria dot toml".
+    fn defer_a_capital(&self, text: &str, claimed: &mut Claimed<'_>) {
+        let before = text[..claimed.deferred_from()].trim_end();
+        let start = before
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '\'' || c == '-'))
+            .map_or(0, |end| end + 1);
+        let never = &|_| Ok::<_, std::convert::Infallible>(());
+        let capital = best_term(&before[start..], &self.terms, &self.known, never)
+            .unwrap_or_else(|never| match never {});
+        if matches!(capital, Some(Fix::Capitals(_))) {
+            claimed.defer_at(start);
+        }
     }
 
     /// Defers a form the cut would split, as learned "tilde dot" → `~.` in
@@ -761,6 +782,35 @@ fn variant_pairs(terms: &[String]) -> impl Iterator<Item = (String, String)> + '
         .filter(move |(variant, _)| !listed.contains(&variant.to_lowercase()))
 }
 
+/// Every listed spelling of each word, by the word in lowercase.
+fn spellings(terms: &[String]) -> HashMap<String, Vec<&str>> {
+    let mut spellings: HashMap<String, Vec<&str>> = HashMap::new();
+    for term in terms {
+        spellings.entry(term.to_lowercase()).or_default().push(term);
+    }
+    spellings
+}
+
+/// What a learned pair types: its word's listed capitals, so a pair learned
+/// as arya → aria types `Aria`.
+fn as_listed(listed: &HashMap<String, Vec<&str>>, correct: String) -> String {
+    listed
+        .get(&correct.to_lowercase())
+        .and_then(|listed| capitals(listed))
+        .map_or(correct, str::to_owned)
+}
+
+/// The capitals a word's `listed` spellings restore wherever it is typed.
+/// A word listed without capitals types as heard, and one listed in two
+/// casings has no one spelling to restore.
+fn capitals<'a>(listed: &[&'a str]) -> Option<&'a str> {
+    let [term, others @ ..] = listed else {
+        return None;
+    };
+    (others.iter().all(|other| other == term) && term.chars().any(char::is_uppercase))
+        .then_some(term)
+}
+
 /// Each term lowercased, as the fuzzy pass compares it.
 fn known(terms: &[String]) -> Vec<Vec<char>> {
     terms
@@ -790,7 +840,9 @@ fn boundary(chars: &[char], position: usize) -> bool {
 /// A word the user does not have in their list becomes the listed word it
 /// nearly is, unless it is a real English word. Tokens are ASCII words; a
 /// match must share its first letter and about its length before the ratio
-/// is consulted.
+/// is consulted. A listed word heard in another case types its listed
+/// capitals. Neither fix reaches into a written name such as
+/// `src/aria.toml`.
 fn apply_fuzzy<E>(
     text: &str,
     terms: &[String],
@@ -808,7 +860,13 @@ fn apply_fuzzy<E>(
         check(output.len().saturating_add(start))?;
         output.push_str(&rest[..start]);
         let token = &rest[start..start + length];
-        match best_term(token, terms, known, check)? {
+        let term = if in_a_written_name(&rest[..start], &rest[start + length..]) {
+            None
+        } else {
+            best_term(token, terms, known, check)?
+                .map(|(Fix::Capitals(term) | Fix::NearMiss(term))| term)
+        };
+        match term {
             Some(term) => {
                 check(output.len().saturating_add(term.len()))?;
                 substitutions.push((token.to_owned(), term.to_owned()));
@@ -849,6 +907,8 @@ fn in_english_list(folded: &str) -> bool {
 
 fn english_words() -> &'static fst::Set<&'static [u8]> {
     static WORDS: OnceLock<fst::Set<&'static [u8]>> = OnceLock::new();
+    // The folding test opens these same bytes, so no build that fails here
+    // passes the tests.
     WORDS.get_or_init(|| fst::Set::new(ENGLISH_WORDS).expect("the embedded words are an fst set"))
 }
 
@@ -866,17 +926,24 @@ fn best_term<'a, E>(
     terms: &'a [String],
     known: &[Vec<char>],
     check: &impl Fn(usize) -> Result<(), E>,
-) -> Result<Option<&'a str>, E> {
+) -> Result<Option<Fix<'a>>, E> {
     check(0)?;
     let folded = token.to_lowercase();
     if token.chars().count() < MIN_TOKEN_LEN {
         return Ok(None);
     }
-    for word in known {
+    let mut listed = Vec::new();
+    for (term, word) in terms.iter().zip(known) {
         check(0)?;
         if word.iter().copied().eq(folded.chars()) {
-            return Ok(None);
+            listed.push(term.as_str());
         }
+    }
+    // Listing `Linear` asks for its capitals, so a listed word takes them
+    // even where it is also a real word, as in "a linear model".
+    if !listed.is_empty() {
+        let capitals = capitals(&listed).filter(|term| *term != token);
+        return Ok(capitals.map(Fix::Capitals));
     }
     let chars: Vec<char> = folded.chars().collect();
     let mut best: Option<(&str, f64)> = None;
@@ -902,7 +969,26 @@ fn best_term<'a, E>(
     if best.is_some() && is_english(&folded) {
         return Ok(None);
     }
-    Ok(best.map(|(term, _)| term))
+    Ok(best.map(|(term, _)| Fix::NearMiss(term)))
+}
+
+/// What the fuzzy pass types in place of a heard word.
+enum Fix<'a> {
+    /// The listed spelling of a word heard in another case.
+    Capitals(&'a str),
+    /// The listed word a heard word nearly is.
+    NearMiss(&'a str),
+}
+
+/// Whether a word sits inside a written name, as "aria" does in
+/// `src/aria.toml`, `aria_kit` and `@aria`. `before` and `after` are the
+/// text on either side of it.
+fn in_a_written_name(before: &str, after: &str) -> bool {
+    const JOINS: [char; 6] = ['.', '/', '\\', '_', '@', ':'];
+    let mut after = after.chars();
+    before.ends_with(JOINS)
+        || (after.next().is_some_and(|next| JOINS.contains(&next))
+            && after.next().is_some_and(char::is_alphanumeric))
 }
 
 /// Python's `difflib.SequenceMatcher.ratio`: twice the characters in the
@@ -986,6 +1072,16 @@ mod tests {
 
         let (typed, _) = stored.apply("db two and Vexe16");
         assert_eq!(typed, "db9 and vex16");
+    }
+
+    #[test]
+    fn a_learned_pair_types_its_word_as_listed() {
+        let learned = vec![("arya".to_owned(), "aria".to_owned())];
+
+        let stored =
+            PersonalRules::from_stored(strings(&["Aria"]), learned, &CancelToken::never()).unwrap();
+
+        assert_eq!(stored.apply("saying arya now").0, "saying Aria now");
     }
 
     #[test]
@@ -1200,6 +1296,58 @@ mod tests {
                 && word[0].is_ascii_lowercase()
                 && word.iter().all(|b| b.is_ascii_lowercase() || *b == b'\'');
             assert!(shaped, "{:?}", String::from_utf8_lossy(word));
+        }
+    }
+
+    #[test]
+    fn a_listed_capital_types_as_listed() {
+        let rules = PersonalRules::new(strings(&["Aria", "kubernetes"]), vec![]);
+        let cases = [
+            ("saying aria now", "saying Aria now"),
+            ("ARIA is here", "Aria is here"),
+            ("Kubernetes is fine", "Kubernetes is fine"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(rules.apply(input).0, expected, "{input}");
+        }
+        let both = PersonalRules::new(strings(&["Aria", "aria"]), vec![]);
+        assert_eq!(both.apply("saying aria now").0, "saying aria now");
+    }
+
+    #[test]
+    fn a_near_miss_stays_out_of_written_names() {
+        let rules = PersonalRules::new(strings(&["kubernetes"]), vec![]);
+        assert_eq!(
+            rules.apply("in src/kubernets.yaml").0,
+            "in src/kubernets.yaml"
+        );
+        assert_eq!(rules.apply("kubernets rocks").0, "kubernetes rocks");
+    }
+
+    #[test]
+    fn a_listed_capital_holds_where_it_is_also_a_real_word() {
+        let rules = PersonalRules::new(strings(&["Linear"]), vec![]);
+        assert_eq!(rules.apply("a linear model").0, "a Linear model");
+    }
+
+    #[test]
+    fn a_listed_capital_stays_out_of_written_names() {
+        let rules = PersonalRules::new(strings(&["Aria", "Rust"]), vec![]);
+        for heard in [
+            "open aria-kit and rust-analyzer",
+            "in src/rust/aria.toml",
+            "call aria_kit and @aria",
+        ] {
+            assert_eq!(rules.apply(heard).0, heard);
+        }
+        assert_eq!(rules.apply("I like aria.").0, "I like Aria.");
+    }
+
+    #[test]
+    fn two_listed_casings_of_a_word_stay_as_heard() {
+        let rules = PersonalRules::new(strings(&["Mac", "MAC"]), vec![]);
+        for heard in ["the MAC address", "a Mac here", "my mac"] {
+            assert_eq!(rules.apply(heard).0, heard);
         }
     }
 
