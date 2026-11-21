@@ -99,7 +99,7 @@ private struct SettingsSearchResults: View {
                             Text(row.title)
                         } icon: {
                             // Lines the title up under its pane's.
-                            Color.clear.frame(width: SettingsMetrics.iconSide, height: SettingsMetrics.iconSide)
+                            Color.clear.frame(width: IconMetrics.rowSide, height: IconMetrics.rowSide)
                         }
                         .tag(Pick.row(row))
                     }

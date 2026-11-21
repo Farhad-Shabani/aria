@@ -27,10 +27,7 @@ struct PhoneSettings: View {
                 ) {
                     Text(SettingsRow.phonePairing.title)
                     if pairing.status == .restarting {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Restarting Aria…")
-                        }
+                        ProgressLabel("Restarting Aria…")
                     }
                 }
                 .disabled(!pairing.canSwitch)

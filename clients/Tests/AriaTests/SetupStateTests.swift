@@ -151,6 +151,15 @@ final class SetupStateTests: XCTestCase {
         return state
     }
 
+    /// Access is still off when the install ends, so the walk stops on Allow Access.
+    private func walkToGrant(_ harness: Harness) async -> SetupState {
+        harness.summary = Self.summary(grant: .waiting)
+        let state = await walkToApplying(harness)
+        harness.applyContinuation?.resume(returning: harness.summary)
+        await waitUntil { state.step == .grant }
+        return state
+    }
+
     func testModelTitleFallsBackToItsKey() async {
         let state = await welcome(Harness())
         XCTAssertEqual(state.title(ofModel: "speaker"), "Speaker")
@@ -161,6 +170,7 @@ final class SetupStateTests: XCTestCase {
         let harness = Harness()
         let state = await welcome(harness)
         XCTAssertEqual(state.missingSummary, "Missing: settings.")
+        XCTAssertEqual(state.expressTotal, "Total download: 20 bytes")
 
         state.express()
         await waitUntil { harness.applyContinuation != nil }
@@ -276,6 +286,7 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.enrolled, "Voice saved for Ada.")
 
         state.dictationEvent(Self.delivered(words: 2))
+        state.next()
         XCTAssertEqual(state.step, .openAria)
         XCTAssertEqual(
             state.installNotice, "The aria command was not installed.", "the last page says what did not land")
@@ -301,14 +312,20 @@ final class SetupStateTests: XCTestCase {
 
         XCTAssertEqual(state.applying, .models)
         XCTAssertEqual(state.downloadProgress["parakeet"]?.receivedBytes, 5)
+        XCTAssertEqual(
+            state.runningDownload, ModelTransfer(received: 5, total: 20),
+            "the bar counts the model not started yet at its listed size")
+
+        var service = Aria_Setup_V1_SetupEvent()
+        service.started = .service
+        harness.onEvent?(service)
+        await waitUntil { state.applying == .service }
+        XCTAssertNil(state.runningDownload, "the download ends when the models step does")
     }
 
     func testContinueAnywayLeavesTheGrantPage() async {
         let harness = Harness()
-        harness.summary = Self.summary(grant: .waiting)
-        let state = await walkToApplying(harness)
-        harness.applyContinuation?.resume(returning: harness.summary)
-        await waitUntil { state.step == .grant }
+        let state = await walkToGrant(harness)
 
         state.next()
         await waitUntil { state.step == .voice }
@@ -351,11 +368,7 @@ final class SetupStateTests: XCTestCase {
 
     func testGrantWaitsUntilTheHotkeyArms() async {
         let harness = Harness()
-        harness.summary = Self.summary(grant: .waiting)
-        let state = await walkToApplying(harness)
-
-        harness.applyContinuation?.resume(returning: harness.summary)
-        await waitUntil { state.step == .grant }
+        let state = await walkToGrant(harness)
         XCTAssertFalse(state.isHotkeyReady)
 
         harness.ariaKey = .armed
@@ -407,7 +420,8 @@ final class SetupStateTests: XCTestCase {
         XCTAssertNil(state.missingSummary, "nothing to say before the Mac is looked at")
         state.start()
         await waitUntil { state.step == .welcome }
-        XCTAssertEqual(state.missingSummary, "Everything is in place.")
+        XCTAssertNil(state.missingSummary, "a Mac with nothing missing needs no line saying so")
+        XCTAssertNil(state.expressTotal, "a Mac with everything in place has nothing to download")
         state.express()
         XCTAssertEqual(state.step, .welcome, "an engine this Mac cannot run blocks Express too")
         state.next()
@@ -562,18 +576,21 @@ final class SetupStateTests: XCTestCase {
         return event
     }
 
-    func testOnlyAnAriaKeyDictationThatTypedWordsFinishesTryIt() async {
+    func testOnlyAnAriaKeyDictationThatTypedWordsCountsAsATry() async {
         let harness = Harness()
         let state = await walkToVoice(harness)
         state.dictationEvent(Self.delivered(words: 2))
-        XCTAssertEqual(state.step, .voice, "a dictation before Try It is no try")
+        XCTAssertNil(state.typedWordCount, "a dictation before Try It is no try")
         state.next()
 
         state.dictationEvent(Self.delivered(words: 0))
         state.dictationEvent(Self.delivered(words: 2, outcome: .copied))
-        XCTAssertEqual(state.step, .tryOut, "a dictation that typed nothing is no try")
+        XCTAssertNil(state.typedWordCount, "a dictation that typed nothing is no try")
 
-        state.dictationEvent(Self.delivered(words: 2))
+        state.dictationEvent(Self.delivered(words: 13))
+        XCTAssertEqual(state.typedWordCount, 13)
+        XCTAssertEqual(state.step, .tryOut, "the words stay in view until the person moves on")
+        state.next()
         XCTAssertEqual(state.step, .openAria)
     }
 
@@ -594,10 +611,7 @@ final class SetupStateTests: XCTestCase {
 
     func testAccessGrantedAfterSkipReachesTryIt() async {
         let harness = Harness()
-        harness.summary = Self.summary(grant: .waiting)
-        let state = await walkToApplying(harness)
-        harness.applyContinuation?.resume(returning: harness.summary)
-        await waitUntil { state.step == .grant }
+        let state = await walkToGrant(harness)
         state.next()
         await waitUntil { state.step == .voice }
         state.next()
@@ -621,16 +635,6 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.step, .inspecting, "reopening starts a new walk")
     }
 
-    func testDoneEndsSetupWithoutTheShortcut() async {
-        let harness = Harness()
-        let state = await walkToVoice(harness)
-        state.next()
-        state.next()
-        XCTAssertEqual(state.step, .openAria)
-        state.next()
-        XCTAssertEqual(state.step, .done)
-    }
-
     func testASecondWalkStartsWithoutTheFirstOnesResults() async {
         let harness = Harness()
         let state = await walkToVoice(harness)
@@ -640,11 +644,13 @@ final class SetupStateTests: XCTestCase {
         state.typed = "hello there"
         state.dictationEvent(Self.delivered(words: 2))
         state.next()
+        state.next()
         XCTAssertEqual(state.step, .done)
 
         state.start()
 
         XCTAssertEqual(state.typed, "")
+        XCTAssertNil(state.typedWordCount)
         XCTAssertNil(state.enrolled)
         XCTAssertEqual(state.voiceName, "")
     }

@@ -13,9 +13,14 @@ struct InstallingPage: View {
                         Text(row.title).foregroundStyle(row.progress == .pending ? .secondary : .primary)
                     }
                     .accessibilityValue(spoken(row.progress))
-                    if row.step == .models {
-                        ForEach(state.downloadProgress.keys.sorted(), id: \.self) { model in
-                            if let progress = state.downloadProgress[model] { bar(model, progress) }
+                    if row.step == .models, let transfer = state.runningDownload {
+                        total(transfer)
+                        if state.downloadProgress.count > 1 {
+                            DisclosureGroup("Details") {
+                                ForEach(state.downloadProgress.keys.sorted(), id: \.self) { model in
+                                    if let progress = state.downloadProgress[model] { bar(model, progress) }
+                                }
+                            }
                         }
                     }
                 }
@@ -40,6 +45,18 @@ struct InstallingPage: View {
         case .pending: "Not started"
         case .running: "In progress"
         case .done: "Done"
+        }
+    }
+
+    /// The one wait people ask about, in Software Update's form.
+    private func total(_ transfer: ModelTransfer) -> some View {
+        ProgressView(value: transfer.fraction) {
+            Text("\(SetupState.size(transfer.received)) of \(SetupState.size(transfer.total))")
+                .monospacedDigit()
+        } currentValueLabel: {
+            if transfer.fraction < 1 {
+                Text(state.downloadTimeLeft ?? "Estimating time remaining…")
+            }
         }
     }
 

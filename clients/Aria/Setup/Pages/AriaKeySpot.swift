@@ -1,13 +1,16 @@
 import SwiftUI
 
 /// The Aria key in its place on the keyboard, among neighbors that fade with
-/// distance, so the person finds it without reading a key name.
+/// distance, so the person finds it without reading a key name. Its name
+/// sits underneath for anyone who reads it anyway.
 struct AriaKeySpot: View {
     let key: AriaKey
     /// The key held with the Aria key, lit beside it.
     var combo: ShortcutCombo?
     /// One key width. The drawing is laid out in key widths, so it grows with the text size.
     @ScaledMetric(relativeTo: .body) private var unit: CGFloat = 44
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var press = Press.up
 
     var body: some View {
         let caps = Cap.layout(for: key, combo: combo)
@@ -15,10 +18,25 @@ struct AriaKeySpot: View {
         // The lit keys sit on the center line, so the name below lines up with them.
         let litMidX = Cap.bounds(of: caps.filter { $0.isLit(for: combo) }).midX
         let halfWidth = max(litMidX - bounds.minX, bounds.maxX - litMidX)
+        VStack(spacing: SetupMetrics.captionSpacing) {
+            keys(caps, litMidX: litMidX, bounds: bounds)
+                .frame(width: unit * halfWidth * 2, height: unit * bounds.height)
+            Text(name)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement()
+        .accessibilityLabel(combo == nil ? "Aria key, \(name)" : "Shortcut, \(name)")
+        // Turning on Reduce Motion stops a press already under way.
+        .task(id: PressCue(combo: combo, isStill: reduceMotion)) { await showPress() }
+    }
+
+    private func keys(_ caps: [Cap], litMidX: CGFloat, bounds: CGRect) -> some View {
         ZStack {
             ForEach(caps) { cap in
                 let isLit = cap.isLit(for: combo)
-                KeyCap(cap: cap, isLit: isLit, unit: unit)
+                KeyCap(cap: cap, isLit: isLit, isDown: press.holds(cap, isLit: isLit), unit: unit)
                     .frame(width: unit * cap.width, height: unit * cap.height)
                     .opacity(isLit ? 1 : cap.opacity)
                     .offset(
@@ -26,10 +44,65 @@ struct AriaKeySpot: View {
                         y: unit * (cap.y + cap.height / 2 - bounds.midY))
             }
         }
-        .frame(width: unit * halfWidth * 2, height: unit * bounds.height)
-        .frame(maxWidth: .infinity)
-        .accessibilityElement()
-        .accessibilityLabel(combo.map { "Shortcut, \(key.gesture(for: $0))" } ?? "Aria key, \(key.title)")
+    }
+
+    private var name: String {
+        combo.map(key.gesture(for:)) ?? key.title
+    }
+
+    /// A still drawing doesn't show the gesture: the Aria key taps alone, or
+    /// goes down first and its partner joins it, a few times over.
+    private func showPress() async {
+        guard !reduceMotion else { return }
+        for _ in 0..<Press.runs {
+            do {
+                try await Task.sleep(for: Press.rest)
+                withAnimation(Press.sink) { press = .ariaKeyDown }
+                if combo != nil {
+                    try await Task.sleep(for: Press.lead)
+                    withAnimation(Press.sink) { press = .bothDown }
+                }
+                try await Task.sleep(for: combo == nil ? Press.tap : Press.hold)
+                withAnimation(Press.lift) { press = .up }
+            } catch {
+                press = .up
+                return
+            }
+        }
+    }
+}
+
+private struct PressCue: Equatable {
+    let combo: ShortcutCombo?
+    let isStill: Bool
+}
+
+private enum Press {
+    case up
+    case ariaKeyDown
+    case bothDown
+
+    /// Enough to show the gesture, then the drawing rests.
+    static let runs = 3
+    /// Before each press, so one press reads apart from the next.
+    static let rest = Duration.milliseconds(1_400)
+    /// How long the Aria key leads, the way a person holds it first.
+    static let lead = Duration.milliseconds(500)
+    static let hold = Duration.milliseconds(900)
+    static let tap = Duration.milliseconds(450)
+    /// Springs without bounce settle like a real key, with no snap.
+    static let sink = Animation.smooth(duration: 0.35)
+    static let lift = Animation.smooth(duration: 0.55)
+    /// A held key sinks a little and takes a little more of the tint.
+    static let heldScale: CGFloat = 0.96
+    static let heldOpacity = 0.28
+
+    func holds(_ cap: Cap, isLit: Bool) -> Bool {
+        switch self {
+        case .up: false
+        case .ariaKeyDown: cap.isAriaKey
+        case .bothDown: isLit
+        }
     }
 }
 
@@ -130,8 +203,11 @@ private struct Cap: Identifiable {
 }
 
 private struct KeyCap: View {
+    private static let litStroke: CGFloat = 1.5
+
     let cap: Cap
     let isLit: Bool
+    let isDown: Bool
     let unit: CGFloat
 
     var body: some View {
@@ -143,14 +219,15 @@ private struct KeyCap: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
                 if isLit {
-                    shape.fill(.tint.opacity(0.15))
+                    shape.fill(.tint.opacity(isDown ? Press.heldOpacity : SetupMetrics.highlightOpacity))
                 } else {
                     shape.fill(.quaternary)
                 }
             }
             .overlay {
-                if isLit { shape.strokeBorder(.tint, lineWidth: 1.5) }
+                if isLit { shape.strokeBorder(.tint, lineWidth: Self.litStroke) }
             }
+            .scaleEffect(isDown ? Press.heldScale : 1)
     }
 
     @ViewBuilder private var face: some View {

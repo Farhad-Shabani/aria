@@ -1,5 +1,7 @@
 struct SetupProgress {
-    /// The rows of the setup rail. Done and failure sit outside them.
+    /// The rows of the setup rail, one noun each, as Installer names its
+    /// steps. Each page's title says what the person does there. Done and
+    /// failure sit outside them.
     enum Stage: Int, CaseIterable {
         case welcome
         case engines
@@ -13,11 +15,11 @@ struct SetupProgress {
             switch self {
             case .welcome: "Welcome"
             case .engines: "Engines"
-            case .install: "Install"
-            case .hotkey: "Permission"
-            case .voice: "Your Voice"
-            case .tryOut: "Try It"
-            case .openAria: "Open Aria"
+            case .install: "Installation"
+            case .hotkey: "Access"
+            case .voice: "Voice"
+            case .tryOut: "Dictation"
+            case .openAria: "Shortcut"
             }
         }
     }
@@ -52,13 +54,6 @@ struct SetupProgress {
         default:
             return stage == step.stage ? .current : passed(stage, before: step.stage)
         }
-    }
-
-    /// The share of stages behind the walk. A failure stops it where it failed.
-    var fraction: Double {
-        if step == .done { return 1 }
-        let reachedSoFar = (step.stage ?? last)?.rawValue ?? 0
-        return Double(reachedSoFar) / Double(Stage.allCases.count)
     }
 
     private func passed(_ stage: Stage, before mark: Stage?) -> Status {

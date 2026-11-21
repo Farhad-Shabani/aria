@@ -3,7 +3,7 @@ import SwiftUI
 struct SettingsIcon: View {
     let symbol: String
     var isWarning = false
-    var side = SettingsMetrics.iconSide
+    var side = IconMetrics.rowSide
 
     var body: some View {
         Image(systemName: symbol)
@@ -15,7 +15,7 @@ struct SettingsIcon: View {
 }
 
 extension SettingsIcon {
-    init(pane: SettingsPane, side: CGFloat = SettingsMetrics.iconSide) {
+    init(pane: SettingsPane, side: CGFloat = IconMetrics.rowSide) {
         self.init(symbol: pane.symbol, side: side)
     }
 }

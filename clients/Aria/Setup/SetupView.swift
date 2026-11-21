@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct SetupView: View {
+    /// The rail's steps are one word each, so it needs less room than Settings' sidebar.
+    private static let railWidth: CGFloat = 170
     /// Where the grouped form draws its boxes, so the buttons line up with them.
     private static let boxInset: CGFloat = 20
     /// Where the form's rows and section headers start, so the title lines up with them.
@@ -15,8 +17,8 @@ struct SetupView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        SidebarWindow {
-            SetupRail(progress: state.progress)
+        SidebarWindow(sidebarWidth: Self.railWidth) {
+            SetupRail(progress: state.progress, installFraction: state.runningDownload?.fraction)
         } detail: {
             detail
         }
@@ -54,7 +56,12 @@ struct SetupView: View {
         .clipShape(SidesOnly())
     }
 
-    private var header: some View {
+    /// Welcome draws its own title, centered over what Aria does.
+    @ViewBuilder private var header: some View {
+        if state.step.stage != .welcome { pageTitle }
+    }
+
+    private var pageTitle: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(state.step.title).font(.title2.bold())
             if let caption = state.step.caption {
@@ -109,8 +116,7 @@ struct SetupView: View {
         switch state.step {
         case .inspecting, .welcome:
             if state.step == .inspecting {
-                ProgressView().controlSize(.small)
-                Text("Checking your Mac…").foregroundStyle(.secondary)
+                ProgressLabel("Checking your Mac…")
             }
             Button("Customize…") { state.next() }
                 .disabled(state.step == .inspecting)
@@ -137,7 +143,12 @@ struct SetupView: View {
                 .primaryAction()
                 .disabled(state.isBusy || state.voiceName.trimmingCharacters(in: .whitespaces).isEmpty)
         case .tryOut:
-            Button(state.typed.isEmpty ? "Skip" : "Continue") { state.next() }.disabled(state.isBusy)
+            if state.typedWordCount == nil {
+                Button("Skip") { state.next() }
+            } else {
+                Button("Continue") { state.next() }
+                    .primaryAction()
+            }
         case .openAria, .done:
             Button("Done") { state.next() }
                 .primaryAction()

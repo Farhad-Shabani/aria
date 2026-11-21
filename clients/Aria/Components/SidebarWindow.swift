@@ -9,6 +9,7 @@ private enum Layout {
 /// Its scene needs `sidebarWindowScene()`, or the sidebar stops short of
 /// the top of the window.
 struct SidebarWindow<Sidebar: View, Detail: View>: View {
+    var sidebarWidth = Layout.sidebarWidth
     @ViewBuilder let sidebar: Sidebar
     @ViewBuilder let detail: Detail
 
@@ -16,7 +17,7 @@ struct SidebarWindow<Sidebar: View, Detail: View>: View {
         // Always both columns, as System Settings shows them.
         NavigationSplitView(columnVisibility: .constant(.all)) {
             sidebar
-                .frame(minWidth: Layout.sidebarWidth)
+                .frame(minWidth: sidebarWidth)
                 .toolbar(removing: .sidebarToggle)
         } detail: {
             detail

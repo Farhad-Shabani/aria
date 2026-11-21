@@ -1,11 +1,9 @@
 import CoreGraphics
 
-/// Sizes every Settings view shares: one icon scale for rows, headers, and
-/// the About hero, and one layout for sheets.
+/// Sizes every Settings view shares: header icons and one layout for sheets.
+/// Row and hero icons are in `IconMetrics`.
 enum SettingsMetrics {
-    static let iconSide: CGFloat = 20
     static let headerIconSide: CGFloat = 32
-    static let heroIconSide: CGFloat = 64
     static let sheetPadding: CGFloat = 24
     static let sheetSpacing: CGFloat = 14
     static let sheetGlyphSide: CGFloat = 56

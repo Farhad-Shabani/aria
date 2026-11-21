@@ -53,10 +53,7 @@ struct AssistantModelSection: View {
                     .disabled(!canUseCustomModel)
             }
             if models.isLoading {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text("Loading models…").foregroundStyle(.secondary)
-                }
+                ProgressLabel("Loading models…")
             }
             // The status row above says why an assistant that doesn't
             // answer can't list its models.

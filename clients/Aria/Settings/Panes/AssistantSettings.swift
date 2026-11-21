@@ -32,10 +32,7 @@ struct AssistantSettings: View {
                         }
                     }
                     if catalog.isLoading && catalog.choices.isEmpty {
-                        HStack {
-                            ProgressView().controlSize(.small)
-                            Text("Loading assistants…").foregroundStyle(.secondary)
-                        }
+                        ProgressLabel("Loading assistants…")
                     }
                     if catalog.failure != nil {
                         NoticeText(notice: catalog.failure)
