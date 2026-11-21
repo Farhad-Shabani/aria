@@ -6,7 +6,7 @@ struct DownloadFooter: View {
     let notes: [String]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: SetupMetrics.footerSpacing) {
             Text(total).fontWeight(.medium)
             ForEach(notes, id: \.self) { Text($0) }
         }

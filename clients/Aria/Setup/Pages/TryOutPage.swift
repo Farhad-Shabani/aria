@@ -8,14 +8,7 @@ struct TryOutPage: View {
     var body: some View {
         Form {
             Section {
-                VStack(spacing: 8) {
-                    AriaKeySpot(key: ariaKey)
-                    Text(ariaKey.title)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                }
-                .padding(.vertical, 8)
+                AriaKeySpot(key: ariaKey).setupPicture()
                 if state.isHotkeyReady {
                     TextField(
                         "Dictation", text: $state.typed, prompt: Text("What you say shows up here."), axis: .vertical

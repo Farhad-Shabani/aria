@@ -13,22 +13,14 @@ struct OpenAriaPage: View {
             Section {
                 switch shortcut?.storedBinding {
                 case .combo(let combo):
-                    VStack(spacing: 8) {
-                        AriaKeySpot(key: ariaKey, combo: combo)
-                        Text(ariaKey.gesture(for: combo))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                    }
-                    .padding(.vertical, 8)
+                    AriaKeySpot(key: ariaKey, combo: combo).setupPicture()
                     if !state.isHotkeyReady {
                         AriaKeyAccessNote(keyState: state.ariaKeyState)
                     }
                 case .chord(let chord):
                     ChordLabel(chord: chord)
                         .font(.title)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .setupPicture()
                 case nil:
                     Text(
                         isOff

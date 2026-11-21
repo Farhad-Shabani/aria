@@ -114,8 +114,7 @@ struct SetupView: View {
         switch state.step {
         case .inspecting, .welcome:
             if state.step == .inspecting {
-                ProgressView().controlSize(.small)
-                Text("Checking your Mac…").foregroundStyle(.secondary)
+                ProgressLabel("Checking your Mac…")
             }
             Button("Customize…") { state.next() }
                 .disabled(state.step == .inspecting)

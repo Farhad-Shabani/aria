@@ -26,10 +26,7 @@ struct SentenceReading: View {
                 if sampling.isListening {
                     Text("Read it aloud, then pause.")
                 } else {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("One moment…")
-                    }
+                    ProgressLabel("One moment…")
                 }
             }
             .foregroundStyle(.secondary)

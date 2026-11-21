@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// The Aria key in its place on the keyboard, among neighbors that fade with
-/// distance, so the person finds it without reading a key name.
+/// distance, so the person finds it without reading a key name. Its name
+/// sits underneath for anyone who reads it anyway.
 struct AriaKeySpot: View {
     let key: AriaKey
     /// The key held with the Aria key, lit beside it.
@@ -17,6 +18,24 @@ struct AriaKeySpot: View {
         // The lit keys sit on the center line, so the name below lines up with them.
         let litMidX = Cap.bounds(of: caps.filter { $0.isLit(for: combo) }).midX
         let halfWidth = max(litMidX - bounds.minX, bounds.maxX - litMidX)
+        VStack(spacing: SetupMetrics.captionSpacing) {
+            keys(caps, litMidX: litMidX, bounds: bounds)
+                .frame(width: unit * halfWidth * 2, height: unit * bounds.height)
+            Text(name)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement()
+        .accessibilityLabel(combo == nil ? "Aria key, \(name)" : "Shortcut, \(name)")
+        .task(id: combo) { await showPress() }
+    }
+
+    private var name: String {
+        combo.map(key.gesture(for:)) ?? key.title
+    }
+
+    private func keys(_ caps: [Cap], litMidX: CGFloat, bounds: CGRect) -> some View {
         ZStack {
             ForEach(caps) { cap in
                 let isLit = cap.isLit(for: combo)
@@ -28,25 +47,20 @@ struct AriaKeySpot: View {
                         y: unit * (cap.y + cap.height / 2 - bounds.midY))
             }
         }
-        .frame(width: unit * halfWidth * 2, height: unit * bounds.height)
-        .frame(maxWidth: .infinity)
-        .accessibilityElement()
-        .accessibilityLabel(combo.map { "Shortcut, \(key.gesture(for: $0))" } ?? "Aria key, \(key.title)")
-        .task(id: combo) { await showPress() }
     }
 
     /// A still drawing doesn't say "hold, then press": the Aria key goes
     /// down, then its partner, then both lift, a few times over.
     private func showPress() async {
         guard combo != nil, !reduceMotion else { return }
-        for _ in 0..<3 {
+        for _ in 0..<Press.runs {
             do {
-                try await Task.sleep(for: .milliseconds(800))
-                withAnimation(.easeOut(duration: 0.12)) { press = .ariaKeyDown }
-                try await Task.sleep(for: .milliseconds(350))
-                withAnimation(.easeOut(duration: 0.12)) { press = .bothDown }
-                try await Task.sleep(for: .milliseconds(700))
-                withAnimation(.easeOut(duration: 0.2)) { press = .up }
+                try await Task.sleep(for: Press.rest)
+                withAnimation(Press.sink) { press = .ariaKeyDown }
+                try await Task.sleep(for: Press.lead)
+                withAnimation(Press.sink) { press = .bothDown }
+                try await Task.sleep(for: Press.hold)
+                withAnimation(Press.lift) { press = .up }
             } catch {
                 press = .up
                 return
@@ -59,6 +73,19 @@ private enum Press {
     case up
     case ariaKeyDown
     case bothDown
+
+    /// Enough to show the gesture, then the drawing rests.
+    static let runs = 3
+    /// Before each press, so one press reads apart from the next.
+    static let rest = Duration.milliseconds(800)
+    /// How long the Aria key leads, the way a person holds it first.
+    static let lead = Duration.milliseconds(350)
+    static let hold = Duration.milliseconds(700)
+    static let sink = Animation.easeOut(duration: 0.12)
+    static let lift = Animation.easeOut(duration: 0.2)
+    /// A held key sinks and takes more of the tint.
+    static let heldScale: CGFloat = 0.92
+    static let heldOpacity = 0.35
 
     func holds(_ cap: Cap, isLit: Bool) -> Bool {
         switch self {
@@ -180,15 +207,15 @@ private struct KeyCap: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
                 if isLit {
-                    shape.fill(.tint.opacity(isDown ? 0.35 : 0.15))
+                    shape.fill(.tint.opacity(isDown ? Press.heldOpacity : SetupMetrics.highlightOpacity))
                 } else {
                     shape.fill(.quaternary)
                 }
             }
             .overlay {
-                if isLit { shape.strokeBorder(.tint, lineWidth: 1.5) }
+                if isLit { shape.strokeBorder(.tint, lineWidth: SetupMetrics.highlightStroke) }
             }
-            .scaleEffect(isDown ? 0.92 : 1)
+            .scaleEffect(isDown ? Press.heldScale : 1)
     }
 
     @ViewBuilder private var face: some View {

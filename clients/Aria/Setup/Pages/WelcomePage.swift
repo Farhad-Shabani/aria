@@ -17,7 +17,7 @@ struct WelcomePage: View {
             } header: {
                 hero
             } footer: {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: SetupMetrics.footerSpacing) {
                     if state.step == .welcome {
                         let plan = SetupState.expressPlan(state.inspection, state.selections)
                         DownloadFooter(total: SetupState.total(plan), notes: state.selfFetchingNotes)
@@ -32,8 +32,8 @@ struct WelcomePage: View {
     }
 
     private var hero: some View {
-        VStack(spacing: 8) {
-            AppIcon(side: 72)
+        VStack(spacing: SetupMetrics.captionSpacing) {
+            AppIcon(side: SettingsMetrics.heroIconSide)
             Text(state.step.title)
                 .font(.largeTitle.bold())
                 .foregroundStyle(.primary)
@@ -46,7 +46,7 @@ struct WelcomePage: View {
         }
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
-        .padding(.bottom, 12)
+        .padding(.bottom, SetupMetrics.pictureInset)
     }
 
     private func benefit(_ symbol: String, _ title: String, _ detail: String) -> some View {

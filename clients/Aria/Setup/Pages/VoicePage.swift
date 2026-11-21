@@ -17,8 +17,7 @@ struct VoicePage: View {
             }
             if let sampling = state.voiceSampling {
                 Section {
-                    SentenceReading(sampling: sampling)
-                        .padding(.vertical, 8)
+                    SentenceReading(sampling: sampling).setupPicture()
                 }
             }
         }

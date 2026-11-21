@@ -94,10 +94,7 @@ struct ServerSttSection: View {
                 }
             }
         } else if server.isBusy {
-            HStack {
-                ProgressView().controlSize(.small)
-                Text("Updating Aria…")
-            }
+            ProgressLabel("Updating Aria…")
         } else if let failure = server.failure {
             Text(failure).foregroundStyle(.failure)
         } else {

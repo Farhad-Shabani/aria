@@ -13,15 +13,11 @@ struct GrantPage: View {
                 }
             } else {
                 Section {
-                    AccessPicture(pane: ariaKey.privacyPane)
-                        .padding(.vertical, 8)
+                    AccessPicture(pane: ariaKey.privacyPane).setupPicture()
                 }
                 Section {
                     LabeledContent {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Waiting").foregroundStyle(.secondary)
-                        }
+                        ProgressLabel("Waiting")
                     } label: {
                         Text("Privacy & Security > \(ariaKey.privacyPane)")
                         Text(detail)
