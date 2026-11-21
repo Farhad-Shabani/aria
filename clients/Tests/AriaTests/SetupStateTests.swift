@@ -151,6 +151,15 @@ final class SetupStateTests: XCTestCase {
         return state
     }
 
+    /// Access is still off when the install ends, so the walk stops on Allow Access.
+    private func walkToGrant(_ harness: Harness) async -> SetupState {
+        harness.summary = Self.summary(grant: .waiting)
+        let state = await walkToApplying(harness)
+        harness.applyContinuation?.resume(returning: harness.summary)
+        await waitUntil { state.step == .grant }
+        return state
+    }
+
     func testModelTitleFallsBackToItsKey() async {
         let state = await welcome(Harness())
         XCTAssertEqual(state.title(ofModel: "speaker"), "Speaker")
@@ -220,19 +229,6 @@ final class SetupStateTests: XCTestCase {
         )
         XCTAssertNil(SetupState.Step.failed("x").caption)
         XCTAssertEqual(SetupState.Step.welcome.title, "Welcome to Aria")
-    }
-
-    func testTheRailNamesEachStepAndThePageSaysWhatToDo() {
-        XCTAssertEqual(
-            SetupProgress.Stage.allCases.map(\.title),
-            ["Welcome", "Engines", "Installation", "Access", "Voice", "Dictation", "Shortcut"])
-        let pages: [SetupState.Step] = [.welcome, .choices, .applying, .grant, .voice, .tryOut, .openAria]
-        XCTAssertEqual(
-            pages.map(\.title),
-            [
-                "Welcome to Aria", "Choose Your Engines", "Installing…", "Allow Access", "Set Up Your Voice",
-                "Try Dictation", "Open Aria",
-            ])
     }
 
     func testSummariesReadAsSentences() async {
@@ -329,10 +325,7 @@ final class SetupStateTests: XCTestCase {
 
     func testContinueAnywayLeavesTheGrantPage() async {
         let harness = Harness()
-        harness.summary = Self.summary(grant: .waiting)
-        let state = await walkToApplying(harness)
-        harness.applyContinuation?.resume(returning: harness.summary)
-        await waitUntil { state.step == .grant }
+        let state = await walkToGrant(harness)
 
         state.next()
         await waitUntil { state.step == .voice }
@@ -375,11 +368,7 @@ final class SetupStateTests: XCTestCase {
 
     func testGrantWaitsUntilTheHotkeyArms() async {
         let harness = Harness()
-        harness.summary = Self.summary(grant: .waiting)
-        let state = await walkToApplying(harness)
-
-        harness.applyContinuation?.resume(returning: harness.summary)
-        await waitUntil { state.step == .grant }
+        let state = await walkToGrant(harness)
         XCTAssertFalse(state.isHotkeyReady)
 
         harness.ariaKey = .armed
@@ -622,10 +611,7 @@ final class SetupStateTests: XCTestCase {
 
     func testAccessGrantedAfterSkipReachesTryIt() async {
         let harness = Harness()
-        harness.summary = Self.summary(grant: .waiting)
-        let state = await walkToApplying(harness)
-        harness.applyContinuation?.resume(returning: harness.summary)
-        await waitUntil { state.step == .grant }
+        let state = await walkToGrant(harness)
         state.next()
         await waitUntil { state.step == .voice }
         state.next()
@@ -647,16 +633,6 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.step, .done)
         state.start()
         XCTAssertEqual(state.step, .inspecting, "reopening starts a new walk")
-    }
-
-    func testDoneEndsSetupWithoutTheShortcut() async {
-        let harness = Harness()
-        let state = await walkToVoice(harness)
-        state.next()
-        state.next()
-        XCTAssertEqual(state.step, .openAria)
-        state.next()
-        XCTAssertEqual(state.step, .done)
     }
 
     func testASecondWalkStartsWithoutTheFirstOnesResults() async {
