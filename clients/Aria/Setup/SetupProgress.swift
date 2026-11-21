@@ -56,11 +56,12 @@ struct SetupProgress {
         }
     }
 
-    /// The share of stages behind the walk. A failure stops it where it failed.
-    var fraction: Double {
-        if step == .done { return 1 }
-        let reachedSoFar = (step.stage ?? last)?.rawValue ?? 0
-        return Double(reachedSoFar) / Double(Stage.allCases.count)
+    /// Where the walk stands, counted as Installer counts its steps. A
+    /// failure stays on the step that failed.
+    var caption: String {
+        if step == .done { return "Done" }
+        let stage = step.stage ?? last ?? .welcome
+        return "Step \(stage.rawValue + 1) of \(Stage.allCases.count)"
     }
 
     private func passed(_ stage: Stage, before mark: Stage?) -> Status {

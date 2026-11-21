@@ -15,8 +15,8 @@ struct SetupView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        SidebarWindow {
-            SetupRail(progress: state.progress)
+        SidebarWindow(sidebarWidth: SetupMetrics.railWidth) {
+            SetupRail(progress: state.progress, installFraction: installFraction)
         } detail: {
             detail
         }
@@ -82,6 +82,10 @@ struct SetupView: View {
             OpenAriaPage(state: state, ariaKey: ariaKey, shortcut: openAriaShortcut, askCombo: askCombo)
         case .failed(let message): FailedPage(message: message)
         }
+    }
+
+    private var installFraction: Double? {
+        state.applying == .models && state.step == .applying ? state.downloadTransfer?.fraction : nil
     }
 
     /// The daemon's default until it answers.
