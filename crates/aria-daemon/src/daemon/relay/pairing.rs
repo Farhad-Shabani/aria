@@ -1,22 +1,26 @@
 //! This Mac's certificate, which phones pin, and the phones it pins in turn.
-//! One private file holds both. A second one keeps a record of each phone,
-//! so the Mac can list them. It decides nothing.
+//! One private file holds both. The certificate's key is a secret apart from
+//! it. A second file keeps a record of each phone, so the Mac can list them.
+//! It decides nothing.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rustls_pki_types::CertificateDer;
 use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Status};
 
+use aria_platform::secret::{Secret, SecretError};
 use aria_primitives::error_chain;
 use aria_primitives::private_document::{DocumentError, PrivateDocument};
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
+use tokio_rustls::rustls::crypto::ring;
+use tokio_rustls::rustls::sign::CertifiedKey;
 
 use super::code::{PairingCode, PairingCodes};
 
@@ -25,6 +29,11 @@ pub(crate) const RELATIVE_PATH: &str = ".aria/phone/pairing.json";
 /// records refuses a pairing file with fields it doesn't know, and mints new
 /// material over it.
 const RECORDS_FILE_NAME: &str = "phones.json";
+// As Apple names the key AirPlay pairs with: "AirPlay Server Identity".
+const KEY_SERVICE: &str = "Aria Phone Pairing Identity";
+const KEY_ACCOUNT: &str = "Aria";
+/// Where the key is kept where there's no Keychain.
+const KEY_FILE_NAME: &str = "pairing.key";
 const MAX_FILE_BYTES: u64 = 16 * 1024;
 const MAX_PHONES: usize = 16;
 const MAX_HARDWARE_MODEL_BYTES: usize = 32;
@@ -336,8 +345,13 @@ impl Phones {
 struct StoredPairing {
     instance: String,
     certificate_pem: String,
-    key_pem: String,
     phones: Vec<[u8; 32]>,
+}
+
+struct Material {
+    stored: StoredPairing,
+    key_pem: String,
+    fingerprint: [u8; 32],
 }
 
 #[derive(Serialize, Deserialize)]
@@ -390,32 +404,37 @@ pub(in crate::daemon) fn load_or_create(
     instance: &str,
 ) -> Result<Pairing, PairingError> {
     let document = PrivateDocument::new(path, MAX_FILE_BYTES);
-    let (stored, fingerprint) = match read_usable(&document)? {
-        Some((stored, fingerprint)) if stored.instance == instance => (stored, fingerprint),
-        Some((mut stored, fingerprint)) => {
-            stored.instance = instance.to_owned();
-            // The material still works; the stored name is only a label.
-            if let Err(error) = write(&document, &stored) {
-                tracing::warn!(
-                    error = %error_chain(&error),
-                    "kept the pairing, but could not record the new hostname"
-                );
+    let secret =
+        crate::daemon::secret::secret(KEY_SERVICE, KEY_ACCOUNT, path.with_file_name(KEY_FILE_NAME));
+    let material = match read_usable(&document, &secret)? {
+        Some(mut material) => {
+            if material.stored.instance != instance {
+                material.stored.instance = instance.to_owned();
+                // The material still works; the stored name is only a label.
+                if let Err(error) = write(&document, &material.stored) {
+                    tracing::warn!(
+                        error = %error_chain(&error),
+                        "kept the pairing, but could not record the new hostname"
+                    );
+                }
             }
-            (stored, fingerprint)
+            material
         }
         None => {
-            let (fresh, fingerprint) = generate(instance)?;
-            write(&document, &fresh)?;
+            let fresh = generate(instance)?;
+            // Before the file, so a file never names a key that isn't kept.
+            secret.write(&fresh.key_pem)?;
+            write(&document, &fresh.stored)?;
             tracing::info!("minted this Mac's pairing material");
-            (fresh, fingerprint)
+            fresh
         }
     };
     let records = path.with_file_name(RECORDS_FILE_NAME);
-    let phones = with_records(stored.phones, &records);
+    let phones = with_records(material.stored.phones, &records);
     Ok(Pairing {
-        certificate_pem: stored.certificate_pem,
-        key_pem: stored.key_pem,
-        certificate_fingerprint: fingerprint,
+        certificate_pem: material.stored.certificate_pem,
+        key_pem: material.key_pem,
+        certificate_fingerprint: material.fingerprint,
         phones: Arc::new(Phones {
             path: path.to_owned(),
             records,
@@ -435,12 +454,14 @@ pub(in crate::daemon) fn fingerprint(der: &[u8]) -> [u8; 32] {
     Sha256::digest(der).into()
 }
 
-/// The stored material and its fingerprint. `None` when there is none or it
-/// is damaged: no phone can use damaged material, so replacing it revokes
-/// nothing. An unreadable file still fails closed.
+/// The stored material. `None` when there is none, it is damaged, or its key
+/// is gone or another certificate's: no phone can use such material, so
+/// replacing it revokes nothing. A file from before the key became a secret
+/// reads as damaged. An unreadable file or secret still fails closed.
 fn read_usable(
     document: &PrivateDocument,
-) -> Result<Option<(StoredPairing, [u8; 32])>, PairingError> {
+    secret: &Secret,
+) -> Result<Option<Material>, PairingError> {
     let stored = match document.read::<StoredPairing>() {
         Ok(Some(stored)) => stored,
         Ok(None) => return Ok(None),
@@ -453,19 +474,41 @@ fn read_usable(
         }
         Err(error) => return Err(error.into()),
     };
-    match CertificateDer::from_pem_slice(stored.certificate_pem.as_bytes()) {
-        Ok(der) => {
-            let fingerprint = fingerprint(&der);
-            Ok(Some((stored, fingerprint)))
-        }
+    let certificate = match CertificateDer::from_pem_slice(stored.certificate_pem.as_bytes()) {
+        Ok(der) => der,
         Err(error) => {
             tracing::warn!(
                 error = %error_chain(&error),
                 "the stored pairing certificate is not PEM; minting new pairing material"
             );
-            Ok(None)
+            return Ok(None);
         }
+    };
+    let Some(key_pem) = secret.read()? else {
+        tracing::warn!("the pairing key is gone; minting new pairing material");
+        return Ok(None);
+    };
+    let fingerprint = fingerprint(&certificate);
+    // A crash between writing the key and the file, or a restored backup,
+    // leaves a key that belongs to another certificate.
+    if !keys_match(certificate, &key_pem) {
+        tracing::warn!("the pairing key is not this certificate's; minting new pairing material");
+        return Ok(None);
     }
+    Ok(Some(Material {
+        stored,
+        key_pem,
+        fingerprint,
+    }))
+}
+
+fn keys_match(certificate: CertificateDer<'static>, key_pem: &str) -> bool {
+    let Ok(key) = PrivateKeyDer::from_pem_slice(key_pem.as_bytes()) else {
+        return false;
+    };
+    CertifiedKey::from_der(vec![certificate], key, &ring::default_provider())
+        .and_then(|certified| certified.keys_match())
+        .is_ok()
 }
 
 fn write(document: &PrivateDocument, stored: &impl Serialize) -> Result<(), PairingError> {
@@ -480,15 +523,17 @@ fn write(document: &PrivateDocument, stored: &impl Serialize) -> Result<(), Pair
     Ok(())
 }
 
-fn generate(instance: &str) -> Result<(StoredPairing, [u8; 32]), PairingError> {
+fn generate(instance: &str) -> Result<Material, PairingError> {
     let minted = mint(CERTIFICATE_NAME, Some(instance))?;
-    let stored = StoredPairing {
-        instance: instance.to_owned(),
-        certificate_pem: minted.certificate_pem,
+    Ok(Material {
+        stored: StoredPairing {
+            instance: instance.to_owned(),
+            certificate_pem: minted.certificate_pem,
+            phones: Vec::new(),
+        },
         key_pem: minted.key_pem,
-        phones: Vec::new(),
-    };
-    Ok((stored, minted.fingerprint))
+        fingerprint: minted.fingerprint,
+    })
 }
 
 pub(in crate::daemon) struct Minted {
@@ -566,6 +611,9 @@ pub enum PairingError {
     #[error("the pairing file is not usable")]
     Document(#[from] DocumentError),
 
+    #[error("the pairing key is not usable")]
+    Key(#[from] SecretError),
+
     #[error("the system random source failed")]
     Random(#[source] getrandom::Error),
 
@@ -598,6 +646,7 @@ impl From<&PairingError> for RpcErrorCode {
             PairingError::RevokeUnconfirmed(_) => Self::DurabilityUnconfirmed,
             PairingError::HardwareModelRefused => Self::InvalidRequest,
             PairingError::Document(_)
+            | PairingError::Key(_)
             | PairingError::Random(_)
             | PairingError::Certificate(_)
             | PairingError::Missing => Self::Internal,
@@ -889,7 +938,7 @@ mod tests {
     #[test]
     fn a_damaged_file_is_replaced_with_fresh_material() {
         type Damage = fn(&Path, &Pairing);
-        let rows: [(&str, Damage); 3] = [
+        let rows: [(&str, Damage); 4] = [
             ("a bearer-era file", |path, before| {
                 let bearer_era = serde_json::json!({
                     "instance": "Aria (studio)",
@@ -898,6 +947,11 @@ mod tests {
                     "key_pem": before.key_pem,
                 });
                 std::fs::write(path, serde_json::to_vec(&bearer_era).unwrap()).unwrap();
+            }),
+            ("a file that still holds its key", |path, before| {
+                let mut held = serde_json::to_value(stored(path)).unwrap();
+                held["key_pem"] = serde_json::json!(before.key_pem);
+                std::fs::write(path, serde_json::to_vec(&held).unwrap()).unwrap();
             }),
             ("a corrupt certificate", |path, _| {
                 let mut corrupt = stored(path);
@@ -1102,8 +1156,7 @@ mod tests {
         );
     }
 
-    /// A daemon that predates records must still read the pairing file, or
-    /// it mints new material and every phone loses its pin.
+    /// The key is a secret apart from the file, so the file holds no key.
     #[test]
     fn the_file_shape_is_stable() {
         let (_directory, path, pairing) = mac();
@@ -1120,6 +1173,53 @@ mod tests {
             .keys()
             .map(String::as_str)
             .collect();
-        assert_eq!(keys, ["certificate_pem", "instance", "key_pem", "phones"]);
+        assert_eq!(keys, ["certificate_pem", "instance", "phones"]);
+    }
+
+    fn key_path(path: &Path) -> std::path::PathBuf {
+        path.with_file_name(KEY_FILE_NAME)
+    }
+
+    #[test]
+    fn a_lost_key_mints_new_material() {
+        let (_directory, path, before) = mac();
+        std::fs::remove_file(key_path(&path)).unwrap();
+
+        let after = load_or_create(&path, "Aria (studio)").unwrap();
+
+        assert_ne!(
+            after.certificate_fingerprint,
+            before.certificate_fingerprint
+        );
+    }
+
+    #[test]
+    fn another_certificates_key_mints_new_material() {
+        let (_directory, path, before) = mac();
+        let other = mint(CERTIFICATE_NAME, None).unwrap();
+        std::fs::write(key_path(&path), serde_json::to_vec(&other.key_pem).unwrap()).unwrap();
+
+        let after = load_or_create(&path, "Aria (studio)").unwrap();
+
+        assert_ne!(
+            after.certificate_fingerprint,
+            before.certificate_fingerprint
+        );
+        assert!(after.key_pem != other.key_pem);
+    }
+
+    #[test]
+    fn an_unreadable_key_fails_closed_and_mints_nothing() {
+        let (_directory, path, before) = mac();
+        before.phones.pair_with(phone(1), None, || true).unwrap();
+        let file = std::fs::read(&path).unwrap();
+        std::fs::remove_file(key_path(&path)).unwrap();
+        std::fs::create_dir(key_path(&path)).unwrap();
+
+        assert!(matches!(
+            load_or_create(&path, "Aria (studio)"),
+            Err(PairingError::Key(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), file);
     }
 }

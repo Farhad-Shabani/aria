@@ -524,7 +524,7 @@ pub(in crate::daemon) mod tests {
                 incoming(listener, tls::server(&access).unwrap(), Arc::clone(&access)),
                 stop.clone().cancelled_owned(),
             ));
-            let channel = tls::invited_endpoint(&client, &invite)
+            let channel = tls::invited_endpoint(&client.credentials().unwrap(), &invite)
                 .unwrap()
                 .connect()
                 .await
@@ -552,17 +552,24 @@ pub(in crate::daemon) mod tests {
             .await
             .unwrap();
             self.client.remember(&self.invite).unwrap();
-            self.channel = tls::endpoint(&self.client, self.client.pinned_server().unwrap())
-                .unwrap()
-                .connect()
-                .await
-                .unwrap();
+            self.channel = tls::endpoint(
+                &self.client.credentials().unwrap(),
+                self.client.pinned_server().unwrap(),
+            )
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
         }
 
         fn pin(&self) -> [u8; 32] {
             fingerprint(
                 &CertificateDer::from_pem_slice(
-                    self.client.credentials().certificate_pem.as_bytes(),
+                    self.client
+                        .credentials()
+                        .unwrap()
+                        .certificate_pem
+                        .as_bytes(),
                 )
                 .unwrap(),
             )
@@ -701,17 +708,21 @@ pub(in crate::daemon) mod tests {
             ClientIdentity::load_or_create(&fixture._directory.path().join("legitimate.json"))
                 .unwrap();
         let invitation = fixture.access.issue(fixture.endpoint()).unwrap();
-        let certificate =
-            CertificateDer::from_pem_slice(legitimate.credentials().certificate_pem.as_bytes())
-                .unwrap();
+        let certificate = CertificateDer::from_pem_slice(
+            legitimate.credentials().unwrap().certificate_pem.as_bytes(),
+        )
+        .unwrap();
         fixture
             .access
             .pair(fingerprint(&certificate), &invitation.code)
             .unwrap();
         legitimate.remember(&invitation).unwrap();
 
-        let endpoint =
-            tls::endpoint(&fixture.client, fixture.client.pinned_server().unwrap()).unwrap();
+        let endpoint = tls::endpoint(
+            &fixture.client.credentials().unwrap(),
+            fixture.client.pinned_server().unwrap(),
+        )
+        .unwrap();
         let mut held = vec![fixture.channel.clone()];
         for _ in 1..connections::MAX_CONNECTIONS_PER_PEER {
             let channel = endpoint.connect().await.unwrap();
@@ -720,7 +731,11 @@ pub(in crate::daemon) mod tests {
         }
         fixture.access.revoke(fixture.pin()).unwrap();
 
-        let endpoint = tls::endpoint(&legitimate, legitimate.pinned_server().unwrap()).unwrap();
+        let endpoint = tls::endpoint(
+            &legitimate.credentials().unwrap(),
+            legitimate.pinned_server().unwrap(),
+        )
+        .unwrap();
         let admitted = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if let Ok(channel) = endpoint.connect().await

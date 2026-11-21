@@ -8,7 +8,7 @@ use aria_kit::cancel::CancelToken;
 use aria_settings::rpc::RpcErrorCode;
 
 use super::client::{ADMIN_TIMEOUT, RemoteClientError, bounded, identity_error, rpc_error, run};
-use super::identity::{ClientIdentity, Invitation, MAX_DOCUMENT_BYTES};
+use super::identity::{ClientIdentity, Invitation, MAX_DOCUMENT_BYTES, client_key};
 use super::{Paths, tls};
 use crate::daemon::relay::to_hex;
 use crate::ipc::wire;
@@ -55,7 +55,8 @@ pub fn pair_server(home: &Path, invitation: &str) -> Result<String, RemoteClient
         .map_err(RemoteClientError::PairingLock)?;
     let mut identity =
         ClientIdentity::load_or_create(&paths.client_identity()).map_err(identity_error)?;
-    let endpoint = tls::invited_endpoint(&identity, &invitation)
+    let credentials = identity.credentials().map_err(identity_error)?;
+    let endpoint = tls::invited_endpoint(&credentials, &invitation)
         .map_err(|error| RemoteClientError::Identity(error.into()))?;
     run(bounded(&CancelToken::never(), ADMIN_TIMEOUT, async {
         let channel = endpoint
@@ -116,6 +117,11 @@ pub fn forget(home: &Path) -> Result<Forgotten, RemoteClientError> {
         }
         Err(_) => Forgotten::Unreadable,
     };
+    // The key first: a failure then leaves the document, and with it the
+    // fingerprint the server needs to revoke, for the next try.
+    client_key(&path)
+        .remove()
+        .map_err(RemoteClientError::storage)?;
     if !PrivateDocument::new(&path, MAX_DOCUMENT_BYTES)
         .remove()
         .map_err(RemoteClientError::storage)?
@@ -260,6 +266,7 @@ mod tests {
             }
         );
         assert!(!paths.client_identity().exists());
+        assert_eq!(client_key(&paths.client_identity()).read().unwrap(), None);
         assert_eq!(forget(home.path()).unwrap(), Forgotten::NothingPaired);
     }
 
@@ -295,6 +302,58 @@ mod tests {
             aria_primitives::error_chain(&error)
                 .starts_with("cannot prepare remote client storage: ")
         );
+    }
+
+    #[test]
+    fn a_key_that_will_not_go_keeps_the_pairing_for_the_next_try() {
+        let (home, paths) = prepared_home();
+        let fingerprint = super::super::pair_server_for_tests(home.path(), "https://box.test:9851");
+        let key = paths.client_identity().with_extension("key");
+        fs::remove_file(&key).unwrap();
+        fs::create_dir(&key).unwrap();
+        fs::write(key.join("pinned"), "").unwrap();
+
+        assert!(matches!(
+            forget(home.path()),
+            Err(RemoteClientError::Storage(_))
+        ));
+        assert!(paths.client_identity().exists());
+
+        fs::remove_dir_all(&key).unwrap();
+        assert_eq!(
+            forget(home.path()).unwrap(),
+            Forgotten::Server {
+                client_fingerprint: fingerprint
+            }
+        );
+    }
+
+    #[test]
+    fn a_client_document_from_before_the_keychain_reads_as_unpaired() {
+        let (home, paths) = prepared_home();
+        super::super::pair_server_for_tests(home.path(), "https://box.test:9851");
+        let mut held: serde_json::Value =
+            serde_json::from_slice(&fs::read(paths.client_identity()).unwrap()).unwrap();
+        held["credentials"]["key_pem"] = serde_json::json!("-----BEGIN PRIVATE KEY-----");
+        fs::write(paths.client_identity(), serde_json::to_vec(&held).unwrap()).unwrap();
+
+        assert!(super::super::paired_server(home.path()).unwrap().is_none());
+        let fresh = ClientIdentity::load_or_create(&paths.client_identity()).unwrap();
+        assert!(fresh.paired_server().is_none());
+    }
+
+    #[test]
+    fn a_pairing_opens_without_its_key_and_only_a_connection_needs_it() {
+        let (_home, paths) = prepared_home();
+        ClientIdentity::load_or_create(&paths.client_identity()).unwrap();
+        fs::remove_file(paths.client_identity().with_extension("key")).unwrap();
+
+        let identity = ClientIdentity::open(&paths.client_identity()).unwrap();
+
+        assert!(matches!(
+            identity.credentials(),
+            Err(super::super::identity::Error::InvalidIdentity)
+        ));
     }
 
     #[test]
