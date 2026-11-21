@@ -18,12 +18,10 @@ use crate::accessibility::Trust;
 
 mod anchor;
 mod caret;
-mod confirmation;
 mod element;
 mod placement;
 
 use anchor::Anchoring;
-use confirmation::Confirmation;
 
 const PLAIN_TEXT_TYPE: &str = "public.utf8-plain-text";
 // The concealed type asks clipboard managers not to record the transcript in
@@ -47,9 +45,7 @@ pub(crate) const RETURN_VIRTUAL_KEY: u16 = 0x24;
 /// Carbon's `noErr`.
 const NO_ERR: i32 = 0;
 
-pub struct MacOsTextDelivery {
-    timeout: Duration,
-}
+pub struct MacOsTextDelivery;
 
 pub enum MacOsDeliveryTarget {
     Application {
@@ -58,8 +54,8 @@ pub enum MacOsDeliveryTarget {
     },
     ApplicationAndSubmit {
         process: u32,
-        confirmation: RefCell<Confirmation>,
-        finished: Cell<bool>,
+        anchoring: RefCell<Anchoring>,
+        submission: Cell<Submission>,
     },
     ApplicationOrClipboard(u32),
     Clipboard,
@@ -72,12 +68,37 @@ impl MacOsDeliveryTarget {
             anchoring: RefCell::new(Anchoring::Pending),
         }
     }
+
+    fn submitting(process: u32, anchoring: Anchoring) -> Self {
+        let submission = if anchoring.is_unavailable() {
+            Submission::Unbound
+        } else {
+            Submission::Owed
+        };
+        Self::ApplicationAndSubmit {
+            process,
+            anchoring: RefCell::new(anchoring),
+            submission: Cell::new(submission),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Submission {
+    Owed,
+    /// The field couldn't be read as the press started. The text still
+    /// types, but no Return follows: nothing shows which field it would reach.
+    Unbound,
+    Spent,
 }
 
 impl MacOsTextDelivery {
+    // Posted events don't wait, and every field check has a compiled budget.
+    // So nothing here waits on the configured timeout. It is still checked,
+    // so one value means the same on every platform.
     pub(super) fn new(timeout: Duration) -> Result<Self, DeliveryError> {
         validate_timeout(timeout)?;
-        Ok(Self { timeout })
+        Ok(Self)
     }
 }
 
@@ -105,15 +126,13 @@ impl TextDelivery for MacOsTextDelivery {
             OutputMode::Insert => {
                 autoreleasepool(|_| Ok(MacOsDeliveryTarget::application(insertable(observe())?)))
             }
+            // Bound as the press starts, so a later read that finds another
+            // field refuses the Return.
             OutputMode::InsertAndSubmit => autoreleasepool(|_| {
                 let process = insertable(observe())?;
-                let confirmation = Confirmation::capture(process, self.timeout)?;
-                guard(process, &should_cancel, observe())?;
-                Ok(MacOsDeliveryTarget::ApplicationAndSubmit {
-                    process,
-                    confirmation: RefCell::new(confirmation),
-                    finished: Cell::new(false),
-                })
+                let mut anchoring = Anchoring::Pending;
+                anchoring.start(caret::read(process).1);
+                Ok(MacOsDeliveryTarget::submitting(process, anchoring))
             }),
             // The same question, but a refusal costs nothing here: the
             // clipboard is still a destination, so the press goes ahead.
@@ -137,48 +156,36 @@ impl TextDelivery for MacOsTextDelivery {
     ) -> Result<Finished, DeliveryError> {
         let MacOsDeliveryTarget::ApplicationAndSubmit {
             process,
-            confirmation,
-            finished,
+            anchoring,
+            submission,
         } = prepared
         else {
             return Ok(Finished::Typed);
         };
-        if finished.replace(true) {
-            return Err(DeliveryError::SubmissionUnconfirmed);
+        match submission.replace(Submission::Spent) {
+            Submission::Spent => Err(DeliveryError::SubmissionSpent),
+            Submission::Unbound => Err(DeliveryError::SubmissionUnverified),
+            Submission::Owed => autoreleasepool(|_| {
+                return_after_text(*process, anchoring, &should_cancel).map(|()| Finished::Submitted)
+            }),
         }
-        autoreleasepool(|_| {
-            confirmation
-                .borrow()
-                .confirm(|| guard(*process, &should_cancel, observe()))?;
-            guard(*process, &should_cancel, observe())?;
-            post_return().map(|()| Finished::Submitted)
-        })
     }
 
-    /// Checks the field the text went to, with the caret after it, where
-    /// the field can be read: another field in the same app may hold a
-    /// command the person never meant to send.
     fn press_return(
         &self,
         prepared: &Self::Prepared,
         should_cancel: impl Fn() -> bool,
     ) -> Result<(), DeliveryError> {
-        autoreleasepool(|_| {
-            let process = match prepared {
-                MacOsDeliveryTarget::Application { process, anchoring } => {
-                    anchoring.borrow_mut().before_return()?;
-                    *process
-                }
-                // Submission presses its own Return, once it confirms the
-                // text; never one without that check.
-                MacOsDeliveryTarget::ApplicationAndSubmit { .. } => {
-                    return Err(DeliveryError::SubmissionUnconfirmed);
-                }
-                MacOsDeliveryTarget::ApplicationOrClipboard(process) => *process,
-                MacOsDeliveryTarget::Clipboard => return Err(DeliveryError::TargetUnavailable),
-            };
-            guard(process, &should_cancel, observe())?;
-            post_return()
+        autoreleasepool(|_| match prepared {
+            MacOsDeliveryTarget::Application { process, anchoring } => {
+                return_after_text(*process, anchoring, &should_cancel)
+            }
+            MacOsDeliveryTarget::ApplicationAndSubmit { .. } => Err(DeliveryError::SubmissionSpent),
+            MacOsDeliveryTarget::ApplicationOrClipboard(process) => {
+                guard(*process, &should_cancel, observe())?;
+                post_return()
+            }
+            MacOsDeliveryTarget::Clipboard => Err(DeliveryError::TargetUnavailable),
         })
     }
 
@@ -194,7 +201,15 @@ impl TextDelivery for MacOsTextDelivery {
         }
 
         autoreleasepool(|_| match prepared {
-            MacOsDeliveryTarget::Application { process, anchoring } => {
+            MacOsDeliveryTarget::ApplicationAndSubmit { submission, .. }
+                if submission.get() == Submission::Spent =>
+            {
+                Err(DeliveryError::SubmissionSpent)
+            }
+            MacOsDeliveryTarget::Application { process, anchoring }
+            | MacOsDeliveryTarget::ApplicationAndSubmit {
+                process, anchoring, ..
+            } => {
                 let mut anchoring = anchoring.borrow_mut();
                 anchoring.before_typing()?;
                 let outcome = insert(*process, text, &should_cancel, observe()).map_err(
@@ -205,22 +220,6 @@ impl TextDelivery for MacOsTextDelivery {
                 )?;
                 anchoring.after_typing(text);
                 Ok(outcome)
-            }
-            MacOsDeliveryTarget::ApplicationAndSubmit {
-                process,
-                confirmation,
-                finished,
-            } => {
-                if finished.get() {
-                    return Err(DeliveryError::SubmissionUnconfirmed);
-                }
-                let result = confirmation
-                    .borrow_mut()
-                    .insert(text, || guard(*process, &should_cancel, observe()));
-                if result.is_err() {
-                    finished.set(true);
-                }
-                result.map(|()| DeliveryOutcome::Inserted)
             }
             MacOsDeliveryTarget::ApplicationOrClipboard(process) => insert_or_copy(
                 *process,
@@ -247,7 +246,10 @@ impl TextDelivery for MacOsTextDelivery {
 
     fn caret(&self, prepared: &Self::Prepared) -> Caret {
         match prepared {
-            MacOsDeliveryTarget::Application { process, anchoring } => autoreleasepool(|_| {
+            MacOsDeliveryTarget::Application { process, anchoring }
+            | MacOsDeliveryTarget::ApplicationAndSubmit {
+                process, anchoring, ..
+            } => autoreleasepool(|_| {
                 let (caret, focus) = caret::read(*process);
                 // Only a read with the target in front binds the field: from
                 // behind, it may see another app's secure input, or a field
@@ -257,8 +259,7 @@ impl TextDelivery for MacOsTextDelivery {
                 }
                 caret
             }),
-            MacOsDeliveryTarget::ApplicationAndSubmit { process, .. }
-            | MacOsDeliveryTarget::ApplicationOrClipboard(process) => {
+            MacOsDeliveryTarget::ApplicationOrClipboard(process) => {
                 autoreleasepool(|_| caret::read(*process).0)
             }
             MacOsDeliveryTarget::Clipboard => Caret::default(),
@@ -266,7 +267,11 @@ impl TextDelivery for MacOsTextDelivery {
     }
 
     fn placement(&self, prepared: &Self::Prepared) -> Option<Placement> {
-        let MacOsDeliveryTarget::Application { process, anchoring } = prepared else {
+        let (MacOsDeliveryTarget::Application { process, anchoring }
+        | MacOsDeliveryTarget::ApplicationAndSubmit {
+            process, anchoring, ..
+        }) = prepared
+        else {
             return None;
         };
         autoreleasepool(|_| {
@@ -278,6 +283,20 @@ impl TextDelivery for MacOsTextDelivery {
             placement::read(&field, caret, deadline)
         })
     }
+}
+
+/// Refuses the Return when the field the text went to lost focus, or its
+/// caret moved off the text. Another field in the same app may hold a command
+/// the person never meant to send. A field that can't be read leaves only the
+/// app check.
+fn return_after_text(
+    process: u32,
+    anchoring: &RefCell<Anchoring>,
+    should_cancel: &impl Fn() -> bool,
+) -> Result<(), DeliveryError> {
+    anchoring.borrow_mut().before_return()?;
+    guard(process, should_cancel, observe())?;
+    post_return()
 }
 
 /// Another app took focus before this text typed. Text may wait for its
@@ -535,9 +554,9 @@ fn post_chunk(units: &[u16]) -> Result<(), DeliveryError> {
 
 fn post_return() -> Result<(), DeliveryError> {
     let down = CGEvent::new_keyboard_event(None, RETURN_VIRTUAL_KEY, true)
-        .ok_or(DeliveryError::SubmissionUnconfirmed)?;
+        .ok_or(DeliveryError::TargetUnavailable)?;
     let up = CGEvent::new_keyboard_event(None, RETURN_VIRTUAL_KEY, false)
-        .ok_or(DeliveryError::SubmissionUnconfirmed)?;
+        .ok_or(DeliveryError::TargetUnavailable)?;
     for event in [down, up] {
         CGEvent::set_flags(Some(&event), CGEventFlags(0));
         CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&event));
@@ -568,6 +587,21 @@ mod tests {
     const TEST_TRANSCRIPT: &str = "private transcript";
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
     const PREPARED_TARGET: u32 = 4321;
+
+    #[test]
+    fn a_field_unread_at_the_start_sends_no_return() {
+        let delivery = MacOsTextDelivery::new(TEST_TIMEOUT).unwrap();
+        let target = MacOsDeliveryTarget::submitting(PREPARED_TARGET, Anchoring::Unavailable);
+
+        assert!(matches!(
+            delivery.finish(&target, || false),
+            Err(DeliveryError::SubmissionUnverified)
+        ));
+        assert!(matches!(
+            delivery.finish(&target, || false),
+            Err(DeliveryError::SubmissionSpent)
+        ));
+    }
 
     /// Facts from a machine that permits insertion, with whatever focus the
     /// test wants.

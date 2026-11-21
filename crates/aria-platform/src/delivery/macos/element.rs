@@ -52,7 +52,7 @@ pub(super) fn field_length(field: &ax::UiElement, deadline: Instant) -> Result<i
 
 /// The range an Accessibility selection attribute holds, or `None` when the
 /// application answered with another type.
-pub(super) fn selection_range(value: &cf::Type) -> Option<cf::Range> {
+fn selection_range(value: &cf::Type) -> Option<cf::Range> {
     ax_value(value)?.cf_range()
 }
 

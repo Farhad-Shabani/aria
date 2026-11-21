@@ -229,7 +229,7 @@ keys! {
     PhoneSubmits: "phone.submits", Live, Mac, [], Kind::Bool, Some("true"),
         "Lets a paired iPhone press Return after its text, only where the text went.";
     DeliveryTimeoutSecs: "delivery.timeout_secs", Restart, Mac, [], Kind::Number, Some("5.0"),
-        "The longest typing or pasting a result may take, for dictation, chats and the phone.";
+        "The longest typing or pasting a result may take on Linux, for dictation, chats and the phone.";
     SttBackend: "stt.backend", Live, Mac, [], Kind::Choice(backend::LOCAL), Some(backend::DEFAULT),
         "whisper, whisper-candle, parakeet, moonshine, nemotron or parakeet-mlx.";
     SttLanguage: "stt.language", Live, Phone, [], Kind::Text, Some("\"en\""),
