@@ -6,7 +6,7 @@ use super::super::subscriptions::Subscriptions;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::assembly::{
     BuiltDictation, DictationInitializationError, EngineSlot, ModelLoading, RetryTarget,
-    RuntimeExecutor, build_dictation, transcribe_retry,
+    RuntimeExecutor, build_dictation, engine_input, transcribe_retry,
 };
 use super::follower::EngineFollower;
 use crate::daemon::DaemonLifetime;
@@ -15,6 +15,7 @@ use crate::daemon::inference::pairing_id;
 use crate::daemon::relay::Showing;
 use aria_kit::audio::{RecordingReader, WakeWordMonitor};
 use aria_kit::cancel::{CancelToken, Deadline};
+use aria_kit::transcription::AudioInputKind;
 use aria_platform::delivery::DeliveryFactory;
 use aria_primitives::lazy::Lazy;
 use aria_settings::config::{ConfigError, backend};
@@ -33,6 +34,7 @@ use aria_voice::dictation::{
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
 use aria_voice::stt::Language;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
@@ -86,6 +88,8 @@ pub(in crate::daemon) struct DictationRuntime {
     history: Arc<HistoryStore>,
     microphone: Arc<Gate>,
     retry: Lazy<RetrySetup, ConfigError>,
+    /// Where a retry's audio goes for an engine that reads files.
+    spool_dir: PathBuf,
 }
 
 pub(super) struct RetrySetup {
@@ -136,6 +140,7 @@ impl DictationRuntime {
         let retry_vocabulary = Arc::clone(&vocabulary);
         let retry_cache = Arc::clone(&cache);
         Self {
+            spool_dir: spool_dir.clone(),
             retry: Lazy::new(move || {
                 let settings = retry_cache.effective();
                 Ok(RetrySetup {
@@ -205,6 +210,7 @@ impl DictationRuntime {
             history: Arc::new(HistoryStore::new()),
             microphone: Gate::new(),
             retry: Lazy::new(|| Err(ConfigError::WakeRequiresMicrophone)),
+            spool_dir: PathBuf::new(),
             settings,
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(|| {
                 Err(DictationInitializationError::Capture(
@@ -282,6 +288,7 @@ impl DictationRuntime {
                     home: retry_home.clone(),
                 })
             }),
+            spool_dir: context.paths.spool_dir().to_path_buf(),
             history,
             microphone: Arc::clone(&microphone),
         };
@@ -515,13 +522,18 @@ impl DictationRuntime {
         cancel: &CancelToken,
     ) -> Result<Transcribed, HistoryError> {
         let running = self.ready().map(|ready| ready.slot.current());
-        if running.as_ref().is_some_and(|engine| {
+        if let Some(engine) = running.as_ref().filter(|engine| {
             engine.name == requested
                 || engine.name == backend::SERVER
                 || !names_an_engine(requested)
         }) {
+            let input = match &engine.backend {
+                SttBackend::Server(_) => AudioInputKind::Samples,
+                SttBackend::Local(config) => engine_input(config).map_err(transcription)?,
+            };
+            let mut spooled = spooled(input, &self.spool_dir, recording)?;
             let transcribed = self
-                .transcribe(recording, settings, cancel)
+                .transcribe(spooled.as_mut().unwrap_or(recording), settings, cancel)
                 .map_err(transcription)?;
             if names_an_engine(requested) && transcribed.engine != requested {
                 return Err(HistoryError::transcription(
@@ -543,6 +555,12 @@ impl DictationRuntime {
             |engine| engine.backend.clone(),
         );
         let target = retry_target(&backend, &setup.home, requested)?;
+        let input = match &target {
+            RetryTarget::Server { .. } => AudioInputKind::Samples,
+            RetryTarget::Local(config) => engine_input(config).map_err(transcription)?,
+        };
+        let mut spooled = spooled(input, &self.spool_dir, recording)?;
+        let recording = spooled.as_mut().unwrap_or(recording);
         transcribe_retry(setup, target, recording, settings, cancel).map_err(transcription)
     }
 
@@ -638,6 +656,25 @@ fn retry_target<'a>(
             .for_backend(engine, home)
             .map(RetryTarget::Local)
             .map_err(|error| HistoryError::transcription(RpcErrorCode::TranscriptionFailed, error)),
+    }
+}
+
+/// Kept audio is decrypted into memory. Only an engine that reads files gets
+/// it as a plaintext spool file, which goes when the retry drops it. A server
+/// takes samples: the client streams them, and the server spools for its own.
+fn spooled(
+    input: AudioInputKind,
+    spool_dir: &Path,
+    recording: &mut RecordingReader,
+) -> Result<Option<RecordingReader>, HistoryError> {
+    match input {
+        AudioInputKind::Samples => Ok(None),
+        AudioInputKind::Wav => {
+            recording.fill().map_err(HistoryError::storage)?;
+            RecordingReader::from_samples_in(spool_dir, recording.samples())
+                .map(Some)
+                .map_err(HistoryError::storage)
+        }
     }
 }
 
@@ -1085,7 +1122,9 @@ mod history_tests {
     use std::sync::Mutex;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    use super::super::assembly::DictationEngine;
     use aria_settings::Settings;
+    use aria_voice::config::SttConfig;
     use aria_voice::dictation::{
         DictationExecutor, DictationPolicy, DictationResult, ExecutionControl,
     };
@@ -1093,8 +1132,12 @@ mod history_tests {
 
     use super::*;
 
+    /// The file each retry's audio was in, if any, and whether it was there.
+    type SeenFiles = Arc<Mutex<Vec<Option<(PathBuf, bool)>>>>;
+
     struct RetrySpy {
         seen: Arc<Mutex<Vec<(String, bool)>>>,
+        files: SeenFiles,
         cancel: Option<CancelToken>,
         silent: bool,
     }
@@ -1120,6 +1163,12 @@ mod history_tests {
         ) -> Result<Transcribed, DictationError> {
             assert!(recording.ended_at().is_some());
             assert!(project.is_none());
+            recording.fill().unwrap();
+            let file = recording.finished_audio().unwrap().path();
+            self.files
+                .lock()
+                .unwrap()
+                .push(file.map(|file| (file.to_path_buf(), file.exists())));
             self.seen
                 .lock()
                 .unwrap()
@@ -1182,22 +1231,24 @@ mod history_tests {
         runtime: DictationRuntime,
         original: HistoryEntry,
         seen: Arc<Mutex<Vec<(String, bool)>>>,
+        files: SeenFiles,
     }
 
     impl Fixture {
         fn new(cancel: Option<CancelToken>) -> Self {
-            Self::build(cancel, false)
+            Self::build(cancel, false, samples_engine())
         }
 
         fn silent() -> Self {
-            Self::build(None, true)
+            Self::build(None, true, samples_engine())
         }
 
-        fn build(cancel: Option<CancelToken>, silent: bool) -> Self {
+        fn build(cancel: Option<CancelToken>, silent: bool, engine: SttConfig) -> Self {
             let directory = tempfile::tempdir().unwrap();
+            let spool_dir = directory.path().join("spool");
+            aria_primitives::private_fs::prepare_directory(&spool_dir).unwrap();
             let history = Arc::new(HistoryStore::open(
                 &directory.path().join("history"),
-                directory.path(),
                 Arc::new(crate::daemon::storage::StorageKey::for_tests()),
             ));
             let audio = aria_kit::audio::canonical_fixture(directory.path());
@@ -1211,12 +1262,18 @@ mod history_tests {
                 Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
             let microphone = Gate::new();
             let seen = Arc::new(Mutex::new(Vec::new()));
+            let files = Arc::new(Mutex::new(Vec::new()));
             let executor: RuntimeExecutor = Box::new(RetrySpy {
                 seen: Arc::clone(&seen),
+                files: Arc::clone(&files),
                 cancel,
                 silent,
             });
-            let slot = EngineSlot::of("test", executor);
+            let slot = EngineSlot::new(DictationEngine::built(
+                "test",
+                SttBackend::Local(engine),
+                executor,
+            ));
             let execution: RuntimeExecutor = Box::new(slot.clone());
             let coordinator = DictationCoordinator::new(
                 DictationPolicy::new(MAX_DICTATION_TIMEOUT).unwrap(),
@@ -1227,6 +1284,7 @@ mod history_tests {
                 _directory: directory,
                 original,
                 seen,
+                files,
                 runtime: DictationRuntime {
                     emitter: EventEmitter::unsubscribed(),
                     settings,
@@ -1234,9 +1292,59 @@ mod history_tests {
                     history,
                     microphone,
                     retry: Lazy::new(|| Err(ConfigError::WakeRequiresMicrophone)),
+                    spool_dir,
                 },
             }
         }
+    }
+
+    fn samples_engine() -> SttConfig {
+        SttConfig::Moonshine {
+            model_directory: PathBuf::from("/models"),
+        }
+    }
+
+    #[test]
+    fn a_retry_keeps_its_audio_in_memory_for_an_engine_that_takes_samples() {
+        let fixture = Fixture::new(None);
+
+        fixture
+            .runtime
+            .retry_history(
+                fixture.original.id,
+                RetryOptions::default(),
+                CancelToken::never(),
+            )
+            .unwrap();
+
+        assert_eq!(*fixture.files.lock().unwrap(), [None]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_retry_spools_its_audio_only_while_an_engine_that_reads_files_runs() {
+        let engine = SttConfig::ParakeetMlx {
+            model: "unused".to_owned(),
+            interpreter: PathBuf::from("/unused"),
+        };
+        let fixture = Fixture::build(None, false, engine);
+
+        fixture
+            .runtime
+            .retry_history(
+                fixture.original.id,
+                RetryOptions::default(),
+                CancelToken::never(),
+            )
+            .unwrap();
+
+        let files = fixture.files.lock().unwrap();
+        let [Some((file, existed))] = files.as_slice() else {
+            panic!("one retry should read one file: {files:?}");
+        };
+        assert!(existed);
+        assert!(file.starts_with(&fixture.runtime.spool_dir));
+        assert!(!file.exists());
     }
 
     #[test]

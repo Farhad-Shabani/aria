@@ -1407,7 +1407,6 @@ pub(super) mod tests {
             cache,
             history: Arc::new(HistoryStore::open(
                 &directory.join(".aria/history"),
-                directory,
                 Arc::new(StorageKey::for_tests()),
             )),
             key: Arc::new(StorageKey::for_tests()),

@@ -147,7 +147,6 @@ fn compose(
     let key = Arc::new(StorageKey::new(context.home.clone(), memory.clone()));
     let history_store = Arc::new(HistoryStore::open(
         &context.home.join(aria_voice::history::DIRECTORY),
-        context.paths.spool_dir(),
         Arc::clone(&key),
     ));
     let microphone = Gate::new();

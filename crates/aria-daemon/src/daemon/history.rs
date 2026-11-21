@@ -21,8 +21,6 @@ use super::storage::StorageKey;
 
 pub(super) struct HistoryStore {
     directory: PathBuf,
-    /// Where a retry's audio is decrypted to.
-    spool_dir: PathBuf,
     key: Arc<StorageKey>,
     storage: Mutex<Option<Arc<Store>>>,
     /// Held across an open, so two callers never race for `history.lock`.
@@ -41,10 +39,9 @@ enum OpenError {
 impl HistoryStore {
     /// Opens the store now if it can, so maintenance runs at startup.
     /// Until it opens, every use tries again.
-    pub(super) fn open(directory: &Path, spool_dir: &Path, key: Arc<StorageKey>) -> Self {
+    pub(super) fn open(directory: &Path, key: Arc<StorageKey>) -> Self {
         let history = Self {
             directory: directory.to_path_buf(),
-            spool_dir: spool_dir.to_path_buf(),
             key,
             storage: Mutex::new(None),
             opening: Mutex::new(()),
@@ -59,11 +56,7 @@ impl HistoryStore {
     /// private.
     #[cfg(test)]
     pub(super) fn new() -> Self {
-        Self::open(
-            Path::new(""),
-            Path::new(""),
-            Arc::new(StorageKey::for_tests()),
-        )
+        Self::open(Path::new(""), Arc::new(StorageKey::for_tests()))
     }
 
     pub(super) fn storage(&self) -> Result<Arc<Store>, HistoryError> {
@@ -99,7 +92,7 @@ impl HistoryStore {
         let parent = self.directory.parent().ok_or(HistoryError::Unavailable)?;
         let at_rest = self.key.load()?;
         aria_primitives::private_fs::prepare_directory(parent).map_err(HistoryError::storage)?;
-        Ok(Store::open(&self.directory, &self.spool_dir, &at_rest)?)
+        Ok(Store::open(&self.directory, &at_rest)?)
     }
 
     pub(super) fn recall(
@@ -427,7 +420,6 @@ mod tests {
     fn store(directory: &Path) -> Arc<HistoryStore> {
         Arc::new(HistoryStore::open(
             &directory.join(".aria/history"),
-            directory,
             Arc::new(StorageKey::for_tests()),
         ))
     }
@@ -469,11 +461,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let blocker = directory.path().join("blocked");
         std::fs::write(&blocker, b"").unwrap();
-        let history = HistoryStore::open(
-            &blocker.join("history"),
-            directory.path(),
-            Arc::new(StorageKey::for_tests()),
-        );
+        let history =
+            HistoryStore::open(&blocker.join("history"), Arc::new(StorageKey::for_tests()));
         assert!(matches!(history.storage(), Err(HistoryError::Unavailable)));
 
         std::fs::remove_file(&blocker).unwrap();

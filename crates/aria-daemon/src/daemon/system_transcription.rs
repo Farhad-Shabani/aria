@@ -337,7 +337,6 @@ mod tests {
         let directory = tempfile::tempdir().expect("a temporary directory");
         let history = Arc::new(HistoryStore::open(
             &directory.path().join("history"),
-            directory.path(),
             Arc::new(crate::daemon::storage::StorageKey::for_tests()),
         ));
         let transcript = directory.path().join("transcript.md");

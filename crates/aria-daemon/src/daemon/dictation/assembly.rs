@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::slot::Slot;
+use aria_kit::transcription::AudioInputKind;
 use aria_kit::voice_activity::SileroVad;
 
 use super::super::capture::{CaptureBackend, PreparedCapture};
@@ -675,6 +676,11 @@ pub(super) fn build_dictation(
 pub(super) enum RetryTarget<'a> {
     Local(SttConfig),
     Server { engine: Option<&'a str> },
+}
+
+/// The input the engine `config` names reads.
+pub(super) fn engine_input(config: &SttConfig) -> Result<AudioInputKind, DictationError> {
+    Ok(EngineConfig::try_from(config.clone())?.input())
 }
 
 pub(super) fn transcribe_retry(
