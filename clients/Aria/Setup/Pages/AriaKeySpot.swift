@@ -10,17 +10,19 @@ struct AriaKeySpot: View {
     var body: some View {
         let caps = Cap.layout(for: key)
         let bounds = Cap.bounds(of: caps)
+        // The Aria key sits on the center line, so its name below lines up with it.
+        let halfWidth = max(Cap.ariaKeyMidX - bounds.minX, bounds.maxX - Cap.ariaKeyMidX)
         ZStack {
             ForEach(caps) { cap in
                 KeyCap(cap: cap, unit: unit)
                     .frame(width: unit * cap.width, height: unit * cap.height)
                     .opacity(cap.opacity)
                     .offset(
-                        x: unit * (cap.x + cap.width / 2 - bounds.midX),
+                        x: unit * (cap.x + cap.width / 2 - Cap.ariaKeyMidX),
                         y: unit * (cap.y + cap.height / 2 - bounds.midY))
             }
         }
-        .frame(width: unit * bounds.width, height: unit * bounds.height)
+        .frame(width: unit * halfWidth * 2, height: unit * bounds.height)
         .frame(maxWidth: .infinity)
         .accessibilityElement()
         .accessibilityLabel("Aria key, \(key.title)")
@@ -46,6 +48,9 @@ private struct Cap: Identifiable {
     var isAriaKey = false
 
     var id: String { "\(x),\(y)" }
+
+    /// Every layout puts the Aria key at the origin, one key wide.
+    static let ariaKeyMidX: CGFloat = 0.5
 
     /// The box around every key, in key widths.
     static func bounds(of caps: [Cap]) -> CGRect {

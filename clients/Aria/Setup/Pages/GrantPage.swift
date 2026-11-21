@@ -19,7 +19,7 @@ struct GrantPage: View {
                             Text("Waiting").foregroundStyle(.secondary)
                         }
                     } label: {
-                        Text(paneName)
+                        Text(ariaKey.privacyPane)
                         Text(detail)
                     }
                 } footer: {
@@ -27,16 +27,6 @@ struct GrantPage: View {
                 }
             }
         }
-    }
-
-    private var paneName: String {
-        if ariaKey == .needsInputMonitoring {
-            return "Input Monitoring"
-        }
-        if #available(macOS 27, *) {
-            return "Device Control and Data Access"
-        }
-        return "Accessibility"
     }
 
     private var detail: String {
