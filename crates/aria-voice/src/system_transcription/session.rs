@@ -24,7 +24,7 @@ use super::event::{
     SystemTranscriptionStage,
 };
 use super::{SystemAudioCapture, SystemTranscriptionError, TranscriptFile};
-use crate::level::Meter;
+use crate::level::{Meter, Scale};
 
 use crate::dictation::Utterance;
 use crate::speaker::{self, Diarizer, Label, VoiceTrack, VoiceprintTracker};
@@ -158,6 +158,7 @@ impl Session<'_> {
         let levels = self.levels.clone();
         Meter::watching(
             recording,
+            Scale::SystemAudio,
             "aria-system-audio-level",
             move || cancel.is_cancelled(),
             move |level| levels.emit(SystemAudioLevel { level }),

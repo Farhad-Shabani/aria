@@ -5,7 +5,7 @@ use std::sync::Arc;
 use aria_kit::audio::RecordingReader;
 
 use super::{DictationEventEmitter, ExecutionControl, RecordingId};
-use crate::level::Meter;
+use crate::level::{Meter, Scale};
 
 /// One press worth of levels. Ends when capture does, or when the press is
 /// cancelled.
@@ -19,6 +19,7 @@ pub(crate) fn meter(
     let events = events.clone();
     Meter::watching(
         recording,
+        Scale::Microphone,
         "aria-dictation-level",
         move || control.is_cancelled(),
         move |level| {
