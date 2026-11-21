@@ -62,6 +62,8 @@ final class PalettePanel {
         panel.hidesOnDeactivate = false
         panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        // The tint keeps the glass dark in either mode, so the text must be light.
+        panel.appearance = NSAppearance(named: .darkAqua)
 
         let blur = NSVisualEffectView(frame: NSRect(origin: .zero, size: Self.size))
         blur.material = .hudWindow
