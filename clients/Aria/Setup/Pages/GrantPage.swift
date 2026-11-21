@@ -13,15 +13,15 @@ struct GrantPage: View {
                 }
             } else {
                 Section {
-                    AccessPicture(pane: ariaKey.privacyPane).setupPicture()
-                }
-                Section {
                     LabeledContent {
                         ProgressLabel("Waiting")
                     } label: {
                         Text("Privacy & Security > \(ariaKey.privacyPane)")
                         Text(detail)
                     }
+                } header: {
+                    // A header has no box, so the window drawing stands on the page like a screenshot.
+                    AccessPicture(pane: ariaKey.privacyPane).setupPicture()
                 } footer: {
                     Text("Setup continues when Aria is turned on.")
                 }

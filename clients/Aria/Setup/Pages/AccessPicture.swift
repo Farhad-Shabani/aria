@@ -1,49 +1,80 @@
 import SwiftUI
 
-/// The System Settings list Aria waits on, drawn small with Aria's switch
-/// picked out, so the person knows what to look for there.
+/// The System Settings window Aria waits on, drawn small: Aria's row among
+/// other apps, with the pointer on its switch, so the person knows what to
+/// look for there.
 struct AccessPicture: View {
-    private static let width: CGFloat = 340
-    private static let cornerRadius: CGFloat = 8
-    /// Between the toolbar and the list, and between the toolbar's parts.
+    private static let width: CGFloat = 380
+    private static let windowRadius: CGFloat = 12
+    private static let boxRadius: CGFloat = 8
+    private static let shadow = Color.black.opacity(0.12)
+    private static let trafficLight: CGFloat = 10
+    private static let inset: CGFloat = 14
     private static let spacing: CGFloat = 10
-    private static let rowInset: CGFloat = 10
     private static let rowSpacing: CGFloat = 8
-    /// The gray bar that stands for a neighbor's name.
-    private static let nameBarHeight: CGFloat = 8
-    private static let listFill = 0.4
-    /// Neighbors fade with distance from Aria's row, as the keyboard drawing's keys do.
-    private static let nearNeighbor: Neighbor = (nameWidth: 0.45, opacity: 0.4)
-    private static let farNeighbor: Neighbor = (nameWidth: 0.3, opacity: 0.25)
+    /// A gray bar stands for text that doesn't matter here.
+    private static let barHeight: CGFloat = 7
     /// An app icon's corner, as a share of its side.
     private static let iconCornerRatio: CGFloat = 0.22
+    /// The list goes on past the drawing, fading as it goes.
+    private static let before: [Neighbor] = [(nameWidth: 0.42, opacity: 0.55)]
+    private static let after: [Neighbor] = [(nameWidth: 0.3, opacity: 0.4), (nameWidth: 0.5, opacity: 0.2)]
 
     private typealias Neighbor = (nameWidth: CGFloat, opacity: Double)
 
     let pane: String
-    @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 32
+    @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 34
     @ScaledMetric(relativeTo: .body) private var iconSide = SettingsMetrics.iconSide
 
     var body: some View {
         VStack(alignment: .leading, spacing: Self.spacing) {
+            toolbar
+            bar(width: 0.55)
+            list
+            HStack(spacing: Self.rowSpacing) {
+                Image(systemName: "plus")
+                Image(systemName: "minus")
+            }
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+        }
+        .font(.body)
+        .padding(Self.inset)
+        .frame(maxWidth: Self.width)
+        .background(.background, in: .rect(cornerRadius: Self.windowRadius))
+        .overlay { RoundedRectangle(cornerRadius: Self.windowRadius).strokeBorder(.separator) }
+        .shadow(color: Self.shadow, radius: 8, y: 3)
+        .accessibilityElement()
+        .accessibilityLabel("In \(pane), turn on Aria.")
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: Self.inset) {
+            HStack(spacing: Self.trafficLight * 0.8) {
+                ForEach(0..<3, id: \.self) { _ in
+                    Circle().fill(.quaternary).frame(width: Self.trafficLight, height: Self.trafficLight)
+                }
+            }
             HStack(spacing: Self.spacing) {
                 Image(systemName: "chevron.left")
                 Image(systemName: "chevron.right")
-                Text(pane).font(.headline).foregroundStyle(.primary).lineLimit(1)
             }
             .foregroundStyle(.tertiary)
-            VStack(spacing: 0) {
-                neighbor(Self.nearNeighbor)
-                Divider()
-                aria
-                Divider()
-                neighbor(Self.farNeighbor)
-            }
-            .background(.quaternary.opacity(Self.listFill), in: .rect(cornerRadius: Self.cornerRadius))
+            Text(pane).font(.headline).lineLimit(1)
         }
-        .frame(maxWidth: Self.width)
-        .accessibilityElement()
-        .accessibilityLabel("In \(pane), turn on Aria.")
+    }
+
+    private var list: some View {
+        VStack(spacing: 0) {
+            ForEach(Self.before.indices, id: \.self) { neighbor(Self.before[$0]) }
+            Divider()
+            aria
+            ForEach(Self.after.indices, id: \.self) { index in
+                Divider()
+                neighbor(Self.after[index])
+            }
+        }
+        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: Self.boxRadius))
     }
 
     private var aria: some View {
@@ -51,7 +82,15 @@ struct AccessPicture: View {
             AppIcon(side: iconSide)
             Text("Aria")
             Spacer()
-            SwitchDrawing(isPickedOut: true)
+            OffSwitch()
+                .overlay {
+                    // The arrow's tip is its top-left corner, so it lands on the switch.
+                    Image(systemName: "cursorarrow")
+                        .font(.title3)
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.primary, .background)
+                        .offset(x: iconSide * 0.4, y: iconSide * 0.5)
+                }
         }
         .background(.tint.opacity(SetupMetrics.highlightOpacity))
     }
@@ -59,47 +98,40 @@ struct AccessPicture: View {
     private func neighbor(_ look: Neighbor) -> some View {
         row {
             RoundedRectangle(cornerRadius: iconSide * Self.iconCornerRatio, style: .continuous)
-                .fill(.quaternary)
+                .fill(.tertiary)
                 .frame(width: iconSide, height: iconSide)
-            GeometryReader { space in
-                Capsule()
-                    .fill(.quaternary)
-                    .frame(width: space.size.width * look.nameWidth, height: Self.nameBarHeight)
-                    .frame(maxHeight: .infinity)
-            }
-            SwitchDrawing(isPickedOut: false)
+            bar(width: look.nameWidth)
+            OffSwitch()
         }
         .opacity(look.opacity)
     }
 
     private func row(@ViewBuilder _ content: () -> some View) -> some View {
         HStack(spacing: Self.rowSpacing, content: content)
-            .padding(.horizontal, Self.rowInset)
+            .padding(.horizontal, Self.spacing)
             .frame(height: rowHeight)
+    }
+
+    private func bar(width share: CGFloat) -> some View {
+        GeometryReader { space in
+            Capsule()
+                .fill(.quaternary)
+                .frame(width: space.size.width * share, height: Self.barHeight)
+                .frame(maxHeight: .infinity)
+        }
+        .frame(height: Self.barHeight)
     }
 }
 
-/// An off switch, drawn: the picture's switches aren't controls.
-private struct SwitchDrawing: View {
-    private static let size = CGSize(width: 26, height: 15)
-    private static let knobInset: CGFloat = 1.5
-    private static let knob = Color.white
-    private static let knobShadow = Color.black.opacity(0.2)
-
-    let isPickedOut: Bool
-
+/// The real switch, off, drawn but never clicked: the person turns on the one
+/// in System Settings.
+private struct OffSwitch: View {
     var body: some View {
-        Capsule()
-            .fill(.quaternary)
-            .overlay {
-                if isPickedOut { Capsule().strokeBorder(.tint, lineWidth: SetupMetrics.highlightStroke) }
-            }
-            .frame(width: Self.size.width, height: Self.size.height)
-            .overlay(alignment: .leading) {
-                Circle()
-                    .fill(Self.knob)
-                    .shadow(color: Self.knobShadow, radius: 0.5, y: 0.5)
-                    .padding(Self.knobInset)
-            }
+        Toggle("Aria", isOn: .constant(false))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .allowsHitTesting(false)
+            .focusable(false)
     }
 }
