@@ -77,7 +77,7 @@ final class SetupState: ObservableObject {
     @Published var downloads = Set<String>()
     @Published private(set) var applying: Aria_Setup_V1_Step = .unspecified
     @Published private(set) var downloadProgress: [String: Aria_Setup_V1_DownloadProgress] = [:]
-    @Published private(set) var summary: Aria_Setup_V1_Summary?
+    private var summary: Aria_Setup_V1_Summary?
     @Published var voiceName = ""
     @Published private(set) var voicePrompt: String?
     @Published private(set) var enrolled: String?
@@ -302,18 +302,20 @@ final class SetupState: ObservableObject {
         case .voice:
             step = .tryOut
         case .tryOut:
-            step = .openAria
+            enterOpenAria()
         case .openAria:
-            finish()
+            step = .done
         default:
             break
         }
     }
 
-    private func finish() {
+    /// Open Aria is the last page, so what setup leaves running starts here,
+    /// and a password prompt never lands over Aria.
+    private func enterOpenAria() {
         let problems = [effects.launchAtLogin(), effects.installCommandLineTool()].compactMap { $0 }
         notice = problems.isEmpty ? nil : problems.joined(separator: " ")
-        step = .done
+        step = .openAria
     }
 
     func back() {
@@ -374,13 +376,13 @@ final class SetupState: ObservableObject {
     func dictationEvent(_ event: Aria_Daemon_V1_DictationEvent) {
         guard step == .tryOut, event.stage == .delivered, event.outcome == .inserted, event.wordCount > 0
         else { return }
-        step = .openAria
+        enterOpenAria()
     }
 
-    /// Open Aria ends once its shortcut opened Aria.
+    /// Setup ends once the shortcut opened Aria.
     func paletteOpened() {
         guard step == .openAria else { return }
-        finish()
+        step = .done
     }
 
     private func inspectNow() async {
@@ -533,11 +535,12 @@ extension SetupState.Step {
     }
 
     /// Where the step sits in the walk, so pages slide the right way.
-    /// Inspecting and welcome share a page, so they share a slot.
+    /// Inspecting and welcome share a page, so they share a slot. Done
+    /// closes the window over the last page, so it keeps that page's slot.
     var order: Int {
         if let stage { return stage.rawValue }
-        let stages = SetupProgress.Stage.allCases.count
-        return self == .done ? stages : stages + 1
+        if self == .done { return SetupProgress.Stage.openAria.rawValue }
+        return SetupProgress.Stage.allCases.count
     }
 
     var title: String {
@@ -548,8 +551,7 @@ extension SetupState.Step {
         case .grant: "Allow Access"
         case .voice: "Your Voice"
         case .tryOut: "Try It"
-        case .openAria: "Open Aria"
-        case .done: "Aria Is Ready"
+        case .openAria, .done: "Open Aria"
         case .failed: "Setup Didn’t Finish"
         }
     }
@@ -562,8 +564,7 @@ extension SetupState.Step {
         case .grant: "Aria uses it to hear the Aria key and type what you say."
         case .voice: "Aria can tell who is speaking once it knows your voice."
         case .tryOut: "Tap the Aria key and say a few words."
-        case .openAria: "Use this shortcut to open Aria from any app."
-        case .done: "Aria runs in the background. Find it in the menu bar."
+        case .openAria, .done: "Use this shortcut to open Aria from any app."
         case .failed: nil
         }
     }

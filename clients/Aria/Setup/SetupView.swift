@@ -22,6 +22,9 @@ struct SetupView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: state.step)
         .onAppear { state.start() }
+        .onChange(of: state.step) {
+            if state.step == .done { dismiss() }
+        }
         .onDisappear { state.stop() }
     }
 
@@ -70,8 +73,8 @@ struct SetupView: View {
         case .grant: GrantPage(ariaKey: state.ariaKeyState)
         case .voice: VoicePage(state: state)
         case .tryOut: TryOutPage(state: state, ariaKey: ariaKey)
-        case .openAria: OpenAriaPage(state: state, ariaKey: ariaKey, shortcut: openAriaShortcut)
-        case .done: DonePage(state: state, ariaKey: ariaKey, askCombo: askCombo)
+        case .openAria, .done:
+            OpenAriaPage(state: state, ariaKey: ariaKey, shortcut: openAriaShortcut, askCombo: askCombo)
         case .failed(let message): FailedPage(message: message)
         }
     }
@@ -135,10 +138,8 @@ struct SetupView: View {
                 .disabled(state.isBusy || state.voiceName.trimmingCharacters(in: .whitespaces).isEmpty)
         case .tryOut:
             Button(state.typed.isEmpty ? "Skip" : "Continue") { state.next() }.disabled(state.isBusy)
-        case .openAria:
-            Button("Skip") { state.next() }
-        case .done:
-            Button("Close") { dismiss() }
+        case .openAria, .done:
+            Button("Done") { state.next() }
                 .primaryAction()
         case .failed:
             Button("Close") { dismiss() }

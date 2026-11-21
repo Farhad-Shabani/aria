@@ -1,10 +1,14 @@
 import SwiftUI
 
+/// The last page: the shortcut that opens Aria, then the other two gestures
+/// to keep. Pressing the shortcut ends setup in Aria itself.
 struct OpenAriaPage: View {
     @ObservedObject var state: SetupState
     let ariaKey: AriaKey
     /// Nil when the shortcut is off.
     let shortcut: ShortcutBinding?
+    /// Nil when the Ask shortcut holds a chord or nothing.
+    let askCombo: ShortcutCombo?
 
     var body: some View {
         Form {
@@ -33,6 +37,14 @@ struct OpenAriaPage: View {
                 }
             } footer: {
                 Text("Search commands, prompts, and history.")
+            }
+            Section {
+                LabeledContent("Dictate", value: state.isHotkeyReady ? "Tap \(ariaKey.title)" : "Needs permission")
+                if state.isHotkeyReady, let askCombo {
+                    LabeledContent("Ask your assistant", value: ariaKey.gesture(for: askCombo))
+                }
+            } footer: {
+                NoticeText(notice: state.notice)
             }
         }
     }

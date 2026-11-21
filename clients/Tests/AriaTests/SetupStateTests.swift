@@ -210,7 +210,9 @@ final class SetupStateTests: XCTestCase {
         let walk: [SetupState.Step] = [
             .inspecting, .welcome, .choices, .applying, .grant, .voice, .tryOut, .openAria, .done, .failed("x"),
         ]
-        XCTAssertEqual(walk.map(\.order), [0, 0, 1, 2, 3, 4, 5, 6, 7, 8], "inspecting and welcome share a page")
+        XCTAssertEqual(
+            walk.map(\.order), [0, 0, 1, 2, 3, 4, 5, 6, 6, 7],
+            "inspecting and welcome share a page, as do Open Aria and done")
         XCTAssertEqual(
             walk.map(\.stage),
             [.welcome, .welcome, .engines, .install, .hotkey, .voice, .tryOut, .openAria, nil, nil]
@@ -271,12 +273,13 @@ final class SetupStateTests: XCTestCase {
 
         state.dictationEvent(Self.delivered(words: 2))
         XCTAssertEqual(state.step, .openAria)
-        XCTAssertEqual(harness.launchAtLogin, 0, "login starts only once setup finishes")
+        XCTAssertEqual(harness.launchAtLogin, 1, "login starts on the last page")
+        XCTAssertEqual(harness.installedCommandLineTool, 1)
+        XCTAssertEqual(state.notice, "The aria command was not installed.", "the last page says what did not land")
+
         state.paletteOpened()
         XCTAssertEqual(state.step, .done)
-        XCTAssertEqual(harness.launchAtLogin, 1)
-        XCTAssertEqual(harness.installedCommandLineTool, 1)
-        XCTAssertEqual(state.notice, "The aria command was not installed.", "the Done page says what did not land")
+        XCTAssertEqual(harness.launchAtLogin, 1, "ending setup starts nothing more")
     }
 
     func testApplyEventsDriveTheStepAndTheProgress() async {
@@ -584,7 +587,16 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.step, .openAria, "skipping Try It still teaches Open Aria")
         state.paletteOpened()
         XCTAssertEqual(state.step, .done)
-        XCTAssertEqual(harness.launchAtLogin, 1)
+    }
+
+    func testDoneEndsSetupWithoutTheShortcut() async {
+        let harness = Harness()
+        let state = await walkToVoice(harness)
+        state.next()
+        state.next()
+        XCTAssertEqual(state.step, .openAria)
+        state.next()
+        XCTAssertEqual(state.step, .done)
     }
 
     func testASecondWalkStartsWithoutTheFirstOnesResults() async {
@@ -603,6 +615,5 @@ final class SetupStateTests: XCTestCase {
         XCTAssertEqual(state.typed, "")
         XCTAssertNil(state.enrolled)
         XCTAssertEqual(state.voiceName, "")
-        XCTAssertNil(state.summary)
     }
 }
