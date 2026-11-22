@@ -157,9 +157,9 @@ Call `stop()` on the `Stopper` to end it sooner.
 ## Recording lifetime
 
 `Microphone::open` keeps capture open while the microphone object lives.
-A recording uses a private temporary WAV that can contain background speech.
+A recording stays in memory and can contain background speech.
 It starts with up to about one second of audio from before `record()`.
-The file is removed when the recording objects holding it are dropped.
+Dropping the recording objects frees it.
 
 For how to reuse the model and manage sessions, read
 [Engines and sessions](./architecture.md).

@@ -1,4 +1,4 @@
-{{#title Speech library privacy and temporary recordings - Using Aria Libraries}}
+{{#title Speech library privacy and recordings - Using Aria Libraries}}
 
 # Privacy
 
@@ -7,17 +7,12 @@ requests. Only builds and model downloads use the network. Your code decides
 what to save or send. The Aria app can also run recognition on a server
 you pair; the user guide's privacy page covers that.
 
-## Temporary recordings
+## Recordings
 
-Microphone capture writes each recording to a private WAV in `aria-<uid>/`
-under the system temporary folder (`$TMPDIR`, or `/tmp`). The folder is `0700`
-and the file `0600`. It holds everything the microphone heard, including
-background voices and about one second from before `record()`. It grows up
-to the microphone's maximum duration, about 115 MB per hour.
-
-Dropping the recording deletes the file. If your process crashes or is
-killed, the file stays until you or the system remove it. Deletion is not
-secure erasure and cannot remove snapshots or backups.
+Capture keeps each recording in memory and writes no file. A recording holds
+everything the microphone heard, including background voices and about one
+second from before `record()`. Each reader holds the audio it hasn't
+released, about 230 MB per hour. Dropping the recording frees it.
 
 ## Your files and output
 
