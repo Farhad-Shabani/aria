@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// The lines of a system transcription, following the newest one while the
-/// reader stays at the end.
+/// reader stays at the end. The newest line rests above the bottom edge, so
+/// the reader's eyes stay off the edge of the page.
 struct SystemTranscriptView: View {
     private struct ScrollPosition: Equatable {
         let offset: CGFloat
@@ -11,10 +12,14 @@ struct SystemTranscriptView: View {
     private static let stampWidth: CGFloat = 64
     /// How near the end still counts as at the end.
     private static let endSlack: CGFloat = 8
+    /// How much of the visible height stays empty below the newest line.
+    private static let roomBelow: CGFloat = 0.4
+    private static let endID = "end"
 
     let transcript: SystemTranscript
     let isRunning: Bool
     @State private var isPinnedToEnd = true
+    @State private var visibleHeight: CGFloat = 0
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -23,6 +28,9 @@ struct SystemTranscriptView: View {
                     ForEach(transcript.lines) { line in
                         row(line).id(line.id)
                     }
+                    Color.clear
+                        .frame(height: visibleHeight * Self.roomBelow)
+                        .id(Self.endID)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, PageLayout.textInset)
@@ -42,6 +50,11 @@ struct SystemTranscriptView: View {
                 // Only the reader's own scrolling moves the pin. Lines arriving
                 // under a still view leave it where it was.
                 if new.offset != old.offset { isPinnedToEnd = new.isAtEnd }
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.containerSize.height - geometry.contentInsets.top - geometry.contentInsets.bottom
+            } action: { _, height in
+                visibleHeight = height
             }
             .onAppear { scrollToEnd(proxy) }
             // The last line also grows as words join it.
@@ -71,7 +84,7 @@ struct SystemTranscriptView: View {
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
-        guard let last = transcript.lines.last?.id else { return }
-        proxy.scrollTo(last, anchor: .bottom)
+        guard !transcript.lines.isEmpty else { return }
+        proxy.scrollTo(Self.endID, anchor: .bottom)
     }
 }
