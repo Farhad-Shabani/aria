@@ -15,9 +15,9 @@ use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::config::{SpeakerConfig, SystemTranscriptionConfig};
 use aria_voice::system_transcription::{
-    SystemAudioCapture, SystemAudioLevelEmitter, SystemTranscriptionError,
-    SystemTranscriptionEventEmitter, SystemTranscriptionSnapshot, SystemTranscriptionStage,
-    SystemTranscriptionStarted, SystemTranscriptionStopped, TranscriptFile, run_session,
+    SystemAudioCapture, SystemTranscriptionError, SystemTranscriptionEventEmitter,
+    SystemTranscriptionSnapshot, SystemTranscriptionStage, SystemTranscriptionStarted,
+    SystemTranscriptionStopped, TranscriptFile, run_session,
 };
 
 use super::history::HistoryStore;
@@ -29,7 +29,6 @@ pub(super) struct SystemTranscriptionState {
     cache: Arc<aria_settings::SettingsCache>,
     settings: Arc<aria_settings::SettingsStore>,
     events: SystemTranscriptionEventEmitter,
-    levels: SystemAudioLevelEmitter,
     vocabulary: Arc<super::vocabulary::Runtime>,
     history: Arc<HistoryStore>,
     active: Mutex<Slot>,
@@ -56,17 +55,12 @@ struct ActiveSystemTranscription {
 }
 
 impl SystemTranscriptionState {
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the composition root hands over each part a session needs"
-    )]
     pub(super) fn new(
         lifetime: DaemonLifetime,
         home: PathBuf,
         cache: Arc<aria_settings::SettingsCache>,
         settings: Arc<aria_settings::SettingsStore>,
         events: SystemTranscriptionEventEmitter,
-        levels: SystemAudioLevelEmitter,
         vocabulary: Arc<super::vocabulary::Runtime>,
         history: Arc<HistoryStore>,
     ) -> Self {
@@ -76,7 +70,6 @@ impl SystemTranscriptionState {
             cache,
             settings,
             events,
-            levels,
             vocabulary,
             history,
             active: Mutex::new(Slot::Idle),
@@ -139,7 +132,6 @@ impl SystemTranscriptionState {
             .name("aria-transcribe".into())
             .spawn({
                 let events = self.events.clone();
-                let levels = self.levels.clone();
                 let cancel = cancel.clone();
                 move || {
                     let result = run_session(
@@ -147,7 +139,6 @@ impl SystemTranscriptionState {
                         &speaker,
                         &vocabulary,
                         &events,
-                        &levels,
                         capture,
                         recording,
                         sink,
@@ -354,8 +345,8 @@ mod tests {
         let events = SystemTranscriptionEventEmitter::forwarded_by({
             let history = Arc::clone(&history);
             let listed_at_stop = Arc::clone(&listed_at_stop);
-            move |stage| {
-                if stage == SystemTranscriptionStage::Stopped {
+            move |event| {
+                if event == SystemTranscriptionStage::Stopped.into() {
                     let page = history
                         .list(HistoryQuery {
                             section: None,

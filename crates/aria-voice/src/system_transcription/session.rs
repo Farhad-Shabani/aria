@@ -19,10 +19,7 @@ use crate::stt::{Language, Recognizer, Stream, Streaming, Transcription, Transcr
 use crate::vocabulary::Vocabulary;
 use aria_kit::audio::RecordingReader;
 
-use super::event::{
-    SystemAudioLevel, SystemAudioLevelEmitter, SystemTranscriptionEventEmitter,
-    SystemTranscriptionStage,
-};
+use super::event::{SystemAudioLevel, SystemTranscriptionEventEmitter, SystemTranscriptionStage};
 use super::{SystemAudioCapture, SystemTranscriptionError, TranscriptFile};
 use crate::level::{Meter, Scale};
 
@@ -44,18 +41,13 @@ pub fn run_session(
     speaker_config: &SpeakerConfig,
     vocabulary: &Vocabulary,
     events: &SystemTranscriptionEventEmitter,
-    levels: &SystemAudioLevelEmitter,
     capture: SystemAudioCapture,
     recording: RecordingReader,
     sink: TranscriptFile,
     cancel: &CancelToken,
 ) -> Result<(), SystemTranscriptionError> {
     events.emit(SystemTranscriptionStage::Started);
-    let session = Session {
-        vocabulary,
-        events,
-        levels,
-    };
+    let session = Session { vocabulary, events };
     session.run(
         &config.engine,
         cancel,
@@ -69,7 +61,6 @@ pub fn run_session(
 struct Session<'a> {
     vocabulary: &'a Vocabulary,
     events: &'a SystemTranscriptionEventEmitter,
-    levels: &'a SystemAudioLevelEmitter,
 }
 
 /// The models that system transcription tells speech and voices apart with: VAD, the diarizer
@@ -155,13 +146,13 @@ impl Session<'_> {
     /// model loads and never wait on transcription.
     fn meter(&self, recording: &RecordingReader, cancel: &CancelToken) -> Meter {
         let cancel = cancel.clone();
-        let levels = self.levels.clone();
+        let events = self.events.clone();
         Meter::watching(
             recording,
             Scale::SystemAudio,
             "aria-system-audio-level",
             move || cancel.is_cancelled(),
-            move |level| levels.emit(SystemAudioLevel { level }),
+            move |level| events.emit(SystemAudioLevel { level }),
         )
     }
 
@@ -428,11 +419,9 @@ mod tests {
         };
         let vocabulary = Vocabulary::default();
         let events = SystemTranscriptionEventEmitter::unsubscribed();
-        let levels = SystemAudioLevelEmitter::unsubscribed();
         let session = Session {
             vocabulary: &vocabulary,
             events: &events,
-            levels: &levels,
         };
         let parakeet = SystemTranscriptionEngine::new(SttConfig::Parakeet {
             model_directory: directory.path().to_path_buf(),
@@ -496,7 +485,6 @@ mod tests {
         let session = Session {
             vocabulary,
             events: &SystemTranscriptionEventEmitter::unsubscribed(),
-            levels: &SystemAudioLevelEmitter::unsubscribed(),
         };
         let listening = Listening {
             vad,

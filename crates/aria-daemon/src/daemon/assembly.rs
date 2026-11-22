@@ -6,11 +6,16 @@ use aria_platform::runtime::PreparedRuntimePaths;
 use aria_primitives::error_chain;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
 use aria_settings::config::{ConfigError, memory_directory};
+use aria_settings::event::EventEmitter;
 use aria_settings::{CheckedSettings, SettingsCache, SettingsError};
 use aria_settings::{SettingsStore, StoreError};
 use aria_voice::config::SpeakerConfig;
 use aria_voice::enrollment::{Enroller, EnrollmentEventEmitter, Speakers};
 use aria_voice::microphone::Gate;
+use aria_voice::system_transcription::{
+    EVENT_THREAD, SystemTranscriptionEvent, SystemTranscriptionEventEmitter,
+    SystemTranscriptionStage,
+};
 use aria_voice::vocabulary::dictionary::{self, Dictionary};
 
 use std::sync::Arc;
@@ -286,7 +291,6 @@ fn compose(
             Arc::clone(&cache),
             Arc::clone(&settings),
             system_transcription_event_emitter(Arc::clone(&subscriptions)),
-            system_audio_level_emitter(Arc::clone(&subscriptions)),
             Arc::clone(&vocabulary),
             Arc::clone(&history_store),
         ))),
@@ -389,24 +393,20 @@ fn speech_event_emitter(
     )
 }
 
-fn system_transcription_event_emitter(
-    subscriptions: Arc<Subscriptions>,
-) -> aria_voice::system_transcription::SystemTranscriptionEventEmitter {
-    aria_voice::system_transcription::SystemTranscriptionEventEmitter::subscribed_by(
-        aria_voice::system_transcription::EVENT_THREAD,
-        move |stage| {
-            subscriptions.broadcast(stage);
-        },
-    )
-}
-
 /// Levels skip the event thread and drop on a full queue, as dictation's do:
 /// a late level is worth less than none.
-fn system_audio_level_emitter(
+fn system_transcription_event_emitter(
     subscriptions: Arc<Subscriptions>,
-) -> aria_voice::system_transcription::SystemAudioLevelEmitter {
-    aria_voice::system_transcription::SystemAudioLevelEmitter::forwarded_by(move |level| {
-        subscriptions.broadcast_lossy(level);
+) -> SystemTranscriptionEventEmitter {
+    let stages = EventEmitter::subscribed_by(EVENT_THREAD, {
+        let subscriptions = Arc::clone(&subscriptions);
+        move |stage: SystemTranscriptionStage| {
+            subscriptions.broadcast(stage);
+        }
+    });
+    EventEmitter::forwarded_by(move |event| match event {
+        SystemTranscriptionEvent::Stage(stage) => stages.emit(stage),
+        SystemTranscriptionEvent::Level(level) => subscriptions.broadcast_lossy(level),
     })
 }
 
@@ -632,5 +632,38 @@ mod tests {
         assert!(matches!(error, DaemonError::Settings(_)), "{error}");
         let message = error_chain(&error);
         assert!(message.contains("line 2, column 1: tts.rate"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn a_full_queue_drops_levels_but_not_the_session() {
+        use crate::daemon::subscriptions::EVENT_BUFFER;
+        use crate::ipc::wire;
+        use aria_voice::system_transcription::SystemAudioLevel;
+        use std::time::Duration;
+        use tokio_stream::StreamExt;
+
+        let subscriptions = Arc::new(Subscriptions::new());
+        let mut stream = subscriptions.subscribe().expect("a subscription");
+        let events = system_transcription_event_emitter(Arc::clone(&subscriptions));
+        for _level in 0..=EVENT_BUFFER {
+            events.emit(SystemAudioLevel { level: 0.5 });
+        }
+        for _level in 0..EVENT_BUFFER {
+            let event = stream.next().await.expect("a level").expect("no error");
+            assert!(matches!(
+                event.payload,
+                Some(wire::event::Payload::SystemAudioLevel(_))
+            ));
+        }
+        events.emit(SystemTranscriptionStage::Stopped);
+        let next = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("the stage arrives")
+            .expect("the subscription is still open")
+            .expect("no error");
+        assert!(matches!(
+            next.payload,
+            Some(wire::event::Payload::SystemTranscription(_))
+        ));
     }
 }
