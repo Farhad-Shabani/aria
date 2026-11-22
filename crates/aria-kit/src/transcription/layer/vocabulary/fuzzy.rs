@@ -167,8 +167,8 @@ fn merged_term<E>(
     if !may_merge(first, second) {
         return Ok(None);
     }
-    // A word the list already knows keeps its own fix: "kubernets is" keeps
-    // its "is".
+    // A word the list already knows keeps its own fix: with `kuber` listed,
+    // "kuber netes" keeps its "kuber".
     if !listed(first, terms, known, check)?.is_empty()
         || !listed(second, terms, known, check)?.is_empty()
         || best_term(second, terms, known, check)?.is_some()

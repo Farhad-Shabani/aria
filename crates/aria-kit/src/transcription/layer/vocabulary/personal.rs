@@ -1054,6 +1054,19 @@ mod tests {
     }
 
     #[test]
+    fn a_word_the_list_knows_stays_out_of_a_merge() {
+        let cases = [
+            (["kuber", "kubernetes"], "deploy kuber netes"),
+            (["netes", "kubernetes"], "deploy kuber netes"),
+            (["Nettes", "kubernetes"], "deploy kuber Nettes"),
+        ];
+        for (listed, expected) in cases {
+            let rules = PersonalRules::new(strings(&listed), vec![]);
+            assert_eq!(rules.apply("deploy kuber netes").0, expected, "{listed:?}");
+        }
+    }
+
+    #[test]
     fn a_listed_capital_types_as_listed() {
         let rules = PersonalRules::new(strings(&["Aria", "kubernetes"]), vec![]);
         let cases = [
