@@ -14,7 +14,6 @@ pub const RUNTIME_DIR_ENV: &str = "ARIA_RUNTIME_DIR";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimePaths {
     directory: PathBuf,
-    spool_dir: PathBuf,
     socket: PathBuf,
     lock: PathBuf,
     log: PathBuf,
@@ -59,19 +58,16 @@ impl RuntimePaths {
                 })?;
         }
         prepare_private_directory(&self.directory)?;
-        prepare_private_directory(&self.spool_dir)?;
         Ok(PreparedRuntimePaths { paths: self })
     }
 
     pub fn in_directory(directory: PathBuf) -> Self {
-        let spool_dir = directory.join("recordings");
         let socket = directory.join("daemon.sock");
         let lock = directory.join("daemon.lock");
         let log = directory.join("daemon.log");
         let status = directory.join("status");
         Self {
             directory,
-            spool_dir,
             socket,
             lock,
             log,
@@ -87,11 +83,6 @@ impl PreparedRuntimePaths {
 
     pub fn directory(&self) -> &Path {
         &self.paths.directory
-    }
-
-    /// Directory for temporary recordings owned by the daemon.
-    pub fn spool_dir(&self) -> &Path {
-        &self.paths.spool_dir
     }
 
     /// Local RPC socket shared by the daemon and its clients.

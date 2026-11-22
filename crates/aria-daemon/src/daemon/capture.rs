@@ -1,6 +1,5 @@
 //! The capture source the daemon's settings select.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -90,14 +89,13 @@ fn first_audio(feed: &Receiver<Vec<i16>>, stop: &StopSignal) -> FirstAudio {
 impl PhoneInput {
     fn load(
         phones: Arc<PhoneMicrophone>,
-        spool_dir: &Path,
         recording_timeout: Duration,
     ) -> Result<Self, CaptureError> {
         let vad = SileroVad::load().map_err(MicrophoneError::VoiceActivity)?;
         Ok(Self {
             phones,
             available: is_available,
-            capture: PushedCapture::new(spool_dir, recording_timeout, vad),
+            capture: PushedCapture::new(recording_timeout, vad),
         })
     }
 
@@ -356,7 +354,6 @@ impl PreparedCapture {
         preference: watch::Receiver<aria_settings::Microphone>,
         hold: watch::Receiver<bool>,
         phones: Option<Arc<PhoneMicrophone>>,
-        spool_dir: &Path,
         recording_timeout: Duration,
     ) -> Result<Self, DictationInitializationError> {
         match capture {
@@ -366,7 +363,7 @@ impl PreparedCapture {
                         ConfigError::WakeRequiresMicrophone,
                     ));
                 }
-                WavReplayCapture::new(spool_dir, recording_timeout, &path, pace)
+                WavReplayCapture::new(recording_timeout, &path, pace)
                     .map(Self::Replay)
                     .map_err(DictationInitializationError::Capture)
             }
@@ -381,7 +378,6 @@ impl PreparedCapture {
                 };
                 let started = Instant::now();
                 let microphone = Microphone::builder()
-                    .spool_dir(spool_dir)
                     .maximum_duration(recording_timeout)
                     .input(input(&preference.borrow()))
                     .idle(idle(*hold.borrow()))
@@ -392,7 +388,7 @@ impl PreparedCapture {
                     "silero speech detector loaded"
                 );
                 let phone = phones
-                    .map(|phones| PhoneInput::load(phones, spool_dir, recording_timeout))
+                    .map(|phones| PhoneInput::load(phones, recording_timeout))
                     .transpose()
                     .map_err(DictationInitializationError::Capture)?;
                 Ok(Self::Microphone {
@@ -453,7 +449,6 @@ mod tests {
     }
 
     struct Phone {
-        _directory: tempfile::TempDir,
         input: Arc<PhoneInput>,
         phones: Arc<PhoneMicrophone>,
         setting: watch::Sender<Preference>,
@@ -466,18 +461,12 @@ mod tests {
 
         /// `available` stands in for the Mac's devices.
         fn with_devices(available: fn(&InputDeviceId) -> bool) -> Self {
-            let directory = tempfile::tempdir().expect("a temp dir");
             let phones = PhoneMicrophone::new();
             let (setting, _) = watch::channel(Preference::Automatic);
-            let mut input = PhoneInput::load(
-                Arc::clone(&phones),
-                directory.path(),
-                Duration::from_secs(60),
-            )
-            .expect("silero loads");
+            let mut input = PhoneInput::load(Arc::clone(&phones), Duration::from_secs(60))
+                .expect("silero loads");
             input.available = available;
             Self {
-                _directory: directory,
                 input: Arc::new(input),
                 phones,
                 setting,
@@ -522,7 +511,7 @@ mod tests {
         stopper.stop();
         let audio = tokio::task::spawn_blocking(move || {
             recording.fill().expect("the recording finishes");
-            recording.finished_audio().expect("audio").duration()
+            recording.duration()
         })
         .await
         .unwrap();
@@ -639,7 +628,6 @@ mod tests {
             watch::channel(Preference::Automatic).1,
             watch::channel(true).1,
             None,
-            home.path(),
             Duration::from_secs(60),
         );
 

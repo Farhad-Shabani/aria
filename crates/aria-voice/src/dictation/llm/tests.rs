@@ -334,9 +334,13 @@ fn a_model_that_answers_within_a_second_cleans_the_text() {
 
 #[test]
 fn a_valid_response_after_the_callers_deadline_is_rejected() {
+    // Long enough for the request to reach the server on a loaded runner.
+    let deadline = Instant::now() + Duration::from_millis(250);
     let (endpoint, worker) = serve(move |mut stream| {
         read_request(&mut stream);
-        thread::sleep(Duration::from_millis(30));
+        thread::sleep(
+            (deadline + Duration::from_millis(50)).saturating_duration_since(Instant::now()),
+        );
         let body = completion(r#"{"text":"Meet Alice at 3."}"#).to_string();
         // The client gave up and hung up, so this write may fail.
         let _ = write!(
@@ -346,7 +350,6 @@ fn a_valid_response_after_the_callers_deadline_is_rejected() {
         );
     });
     let (_home, cleanup) = cleanup_for(&endpoint);
-    let deadline = Instant::now() + Duration::from_millis(10);
     assert_eq!(
         category(
             cleanup

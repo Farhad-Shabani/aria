@@ -24,7 +24,7 @@ parakeet   = [ "dep:parakeet-rs" ]
 # a binary then loads at launch: it must ship beside the executable and be
 # found through an rpath such as `@executable_path`.
 parakeet-gpu   = [ "parakeet", "parakeet-rs/webgpu" ]
-parakeet-mlx   = [ "dep:serde", "dep:serde_json", "dep:tracing" ]
+parakeet-mlx   = [ "dep:base64", "dep:serde", "dep:serde_json", "dep:tracing" ]
 whisper        = [ "dep:tracing", "dep:whisper-rs" ]
 whisper-candle = [ "dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:serde_json", "dep:thiserror", "dep:tokenizers" ]
 
@@ -39,6 +39,7 @@ thiserror           = { workspace = true, optional = true }
 tokenizers = { version = "0.23", default-features = false, features = [ "unstable_wasm" ], optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+base64      = { version = "0.22", optional = true }
 ort         = { workspace = true, optional = true }
 parakeet-rs = { version = "0.3.8", optional = true }
 serde       = { workspace = true, optional = true }

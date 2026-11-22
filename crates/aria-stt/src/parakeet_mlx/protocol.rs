@@ -3,8 +3,11 @@
 
 use std::path::Path;
 
-use serde::Deserialize;
+use base64::display::Base64Display;
+use base64::engine::general_purpose::STANDARD;
+use serde::{Deserialize, Serialize, Serializer};
 
+use aria_kit::audio::pcm16_from_f32;
 use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{Script, Sidecar, SidecarError};
@@ -76,14 +79,14 @@ fn handshake(
 
 pub(super) fn recognize(
     sidecar: &mut Sidecar,
-    audio_path: &str,
+    samples: &[f32],
     chunk_samples: Option<usize>,
     cancel: &CancelToken,
 ) -> Result<String, TranscriptionError> {
     let phase = Phase::Inference;
     let request = Request {
         op: "recognize",
-        audio_path,
+        audio: Pcm16::from_samples(samples),
         chunk_samples,
     };
     sidecar
@@ -165,8 +168,6 @@ pub(super) fn still_serving(
             | TranscriptionError::Capture(_)
             | TranscriptionError::Inference { .. }
             | TranscriptionError::UnsupportedLanguage { .. }
-            | TranscriptionError::UnsupportedAudioInput { .. }
-            | TranscriptionError::UnsupportedAudioPath { .. }
             | TranscriptionError::UnsupportedBackend { .. }
             | TranscriptionError::UnsupportedDevice { .. }
             | TranscriptionError::NoNativeStream
@@ -179,14 +180,36 @@ pub(super) fn still_serving(
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct Request<'a> {
     op: &'a str,
-    audio_path: &'a str,
+    audio: Pcm16,
     /// Feed the recording to the model's streaming path in chunks of this
     /// many samples; absent means one whole-recording decode.
     #[serde(skip_serializing_if = "Option::is_none")]
     chunk_samples: Option<usize>,
+}
+
+/// A recording as the sidecar reads it: little-endian 16-bit PCM, sent as
+/// base64 inside the request line, so it never touches disk.
+struct Pcm16(Vec<u8>);
+
+impl Pcm16 {
+    fn from_samples(samples: &[f32]) -> Self {
+        Self(
+            samples
+                .iter()
+                .flat_map(|&sample| pcm16_from_f32(sample).to_le_bytes())
+                .collect(),
+        )
+    }
+}
+
+impl Serialize for Pcm16 {
+    // Encodes straight into the request line, never building the base64 text.
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&Base64Display::new(&self.0, &STANDARD))
+    }
 }
 
 /// What the sidecar can say. `ok` discriminates, so a reply cannot claim both
@@ -268,32 +291,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_request_carries_the_operation_and_the_audio_path() {
+    fn a_request_carries_its_samples_as_base64_little_endian_pcm() {
         let line = serde_json::to_string(&Request {
             op: "recognize",
-            audio_path: "/tmp/recording.wav",
+            audio: Pcm16::from_samples(&[-1.0, 1.0 / 32_768.0]),
             chunk_samples: None,
         })
         .expect("a request should encode");
 
-        assert_eq!(
-            line,
-            r#"{"op":"recognize","audio_path":"/tmp/recording.wav"}"#
-        );
+        // -32768 is 00 80 and 1 is 01 00, little-endian.
+        assert_eq!(line, r#"{"op":"recognize","audio":"AIABAA=="}"#);
     }
 
     #[test]
     fn a_streaming_request_names_its_chunk() {
         let line = serde_json::to_string(&Request {
             op: "recognize",
-            audio_path: "/tmp/recording.wav",
+            audio: Pcm16::from_samples(&[]),
             chunk_samples: Some(12000),
         })
         .expect("a request should encode");
 
         assert_eq!(
             line,
-            r#"{"op":"recognize","audio_path":"/tmp/recording.wav","chunk_samples":12000}"#
+            r#"{"op":"recognize","audio":"","chunk_samples":12000}"#
         );
     }
 
@@ -410,13 +431,8 @@ mod tests {
     fn a_transcript_is_read_back_from_the_sidecar() {
         let mut sidecar = stub(r#"read line; echo '{"ok":true,"text":"hello there"}'"#);
 
-        let text = recognize(
-            &mut sidecar,
-            "/tmp/recording.wav",
-            None,
-            &CancelToken::never(),
-        )
-        .expect("the stub should answer");
+        let text = recognize(&mut sidecar, &[0.0], None, &CancelToken::never())
+            .expect("the stub should answer");
 
         assert_eq!(text, "hello there");
     }
@@ -425,12 +441,7 @@ mod tests {
     fn a_sidecar_that_reports_a_failure_keeps_serving() {
         let mut sidecar = stub(r#"while read line; do echo '{"ok":false,"error":"boom"}'; done"#);
 
-        let outcome = recognize(
-            &mut sidecar,
-            "/tmp/recording.wav",
-            None,
-            &CancelToken::never(),
-        );
+        let outcome = recognize(&mut sidecar, &[0.0], None, &CancelToken::never());
 
         assert!(matches!(
             &outcome,
@@ -449,7 +460,7 @@ mod tests {
     fn a_cancelled_press_stops_the_sidecar_instead_of_waiting() {
         let mut sidecar = stub("sleep 600");
 
-        let outcome = recognize(&mut sidecar, "/tmp/recording.wav", None, &{
+        let outcome = recognize(&mut sidecar, &[0.0], None, &{
             let token = CancelToken::new();
             token.cancel();
             token
@@ -466,12 +477,7 @@ mod tests {
     fn a_second_readiness_report_is_refused() {
         let mut sidecar = stub(&format!("read line; {READY}"));
 
-        let outcome = recognize(
-            &mut sidecar,
-            "/tmp/recording.wav",
-            None,
-            &CancelToken::never(),
-        );
+        let outcome = recognize(&mut sidecar, &[0.0], None, &CancelToken::never());
 
         assert!(matches!(
             outcome,
@@ -486,12 +492,7 @@ mod tests {
     fn a_child_that_dies_mid_request_is_not_reused() {
         let mut sidecar = stub("read line; exit 1");
 
-        let outcome = recognize(
-            &mut sidecar,
-            "/tmp/recording.wav",
-            None,
-            &CancelToken::never(),
-        );
+        let outcome = recognize(&mut sidecar, &[0.0], None, &CancelToken::never());
 
         assert!(matches!(
             &outcome,

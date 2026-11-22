@@ -9,9 +9,7 @@ use std::time::{Duration, Instant};
 use aria_bench::stt::{reference_matches, word_errors, words};
 use aria_kit::audio::{CANONICAL_SAMPLE_RATE, canonical_samples, read_wav};
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{
-    Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError,
-};
+use aria_kit::transcription::{Hypothesis, Language, Recognizer, TranscriptionError};
 use aria_stt::parakeet::{Device, Parakeet};
 use serde::Deserialize;
 use serde_json::json;
@@ -176,7 +174,7 @@ fn evaluate(
         let decoded = cache.entry((start, end)).or_insert_with(|| {
             let started = Instant::now();
             let hypothesis = engine.recognize_with(
-                RecognitionAudio::Samples(&samples[start..end]),
+                &samples[start..end],
                 &Language::Automatic,
                 &CancelToken::never(),
             );
@@ -350,14 +348,11 @@ mod tests {
 
         fn recognize_with(
             &self,
-            audio: RecognitionAudio<'_>,
+            samples: &[f32],
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
             let decode = self.0.lock().unwrap().pop_front().unwrap();
-            let RecognitionAudio::Samples(samples) = audio else {
-                panic!("corrections decode sample slices");
-            };
             assert_eq!(samples.len(), decode.samples.len());
             for (sample, expected) in samples.iter().zip(decode.samples) {
                 assert_eq!(*sample, expected as f32);

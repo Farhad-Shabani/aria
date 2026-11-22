@@ -5,9 +5,7 @@ use std::sync::Arc;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::slot::Slot;
-use aria_kit::transcription::{
-    ChunkStream, Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError,
-};
+use aria_kit::transcription::{ChunkStream, Hypothesis, Language, Recognizer, TranscriptionError};
 
 type Build<E> = dyn Fn(&CancelToken) -> Result<E, TranscriptionError> + Send + Sync;
 
@@ -93,11 +91,11 @@ impl<E: Recognizer> Recognizer for ModelLoad<E> {
 
     fn recognize_with(
         &self,
-        audio: RecognitionAudio<'_>,
+        samples: &[f32],
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
-        self.get(cancel)?.recognize_with(audio, language, cancel)
+        self.get(cancel)?.recognize_with(samples, language, cancel)
     }
 
     fn open_stream(

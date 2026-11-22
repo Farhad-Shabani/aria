@@ -27,7 +27,6 @@ use crate::daemon::service::{
 };
 use crate::daemon::shutdown::{ShutdownError, ShutdownSignal};
 use crate::ipc::wire;
-use aria_kit::audio::remove_all_spools;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_primitives::cancel::CancelToken;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
@@ -116,8 +115,8 @@ async fn warn_on_drift(cache: Arc<SettingsCache>, serving: SttBackend, home: Pat
 
 /// The LAN and same-user listeners and the pairing state, ready to load the model.
 struct Host {
-    ownership: Arc<ExclusiveListener>,
-    spool: PathBuf,
+    // Held for the host's life, so no second host binds its socket.
+    _ownership: ExclusiveListener,
     access: Arc<ServerAccess>,
     acceptor: TlsAcceptor,
     public: TcpListener,
@@ -132,12 +131,7 @@ impl Host {
         state: &Paths,
         runtime: &PreparedRuntimePaths,
     ) -> Result<Self, HostFailure> {
-        let ownership = Arc::new(ExclusiveListener::bind(
-            runtime.socket_path(),
-            runtime.lock_path(),
-        )?);
-        let spool = runtime.spool_dir().to_owned();
-        remove_all_spools(&spool);
+        let ownership = ExclusiveListener::bind(runtime.socket_path(), runtime.lock_path())?;
         let access = ServerAccess::load_or_create(&state.server_identity())?;
         let acceptor = tls::server(&access)?;
         let public = std::net::TcpListener::bind(address).map_err(HostFailure::Io)?;
@@ -147,8 +141,7 @@ impl Host {
             UnixListener::from_std(ownership.listener().try_clone().map_err(HostFailure::Io)?)
                 .map_err(HostFailure::Io)?;
         Ok(Self {
-            ownership,
-            spool,
+            _ownership: ownership,
             access,
             acceptor,
             public,
@@ -229,11 +222,9 @@ impl Host {
     ) -> Result<Option<Engine>, HostFailure> {
         let cancel = CancelToken::new();
         let loading_cancel = cancel.clone();
-        let ownership = Arc::clone(&self.ownership);
-        let spool = self.spool.clone();
         let mut loading = self
             .jobs
-            .spawn_blocking(move || Engine::load(config, spool, ownership, &loading_cancel));
+            .spawn_blocking(move || Engine::load(config, &loading_cancel));
         tokio::select! {
             result = &mut loading => {
                 let engine = result.map_err(|_| HostFailure::Worker)?;
@@ -372,8 +363,8 @@ pub(in crate::daemon) mod tests {
     use aria_kit::audio::RecordingReader;
     use aria_settings::config::ServerEndpoint;
     use aria_voice::stt::{
-        AudioInputKind, ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Recognizer,
-        Stream as RecognitionStream, Transcription, Whole,
+        ChunkStream, Emitted, Hypothesis, Language, Recognizer, Stream as RecognitionStream,
+        Transcription, Whole,
     };
 
     #[derive(Default)]
@@ -407,16 +398,12 @@ pub(in crate::daemon) mod tests {
         }
         fn recognize_with(
             &self,
-            audio: RecognitionAudio<'_>,
+            samples: &[f32],
             language: &Language,
             cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
-            assert!(matches!(audio, RecognitionAudio::Samples(samples) if !samples.is_empty()));
-            self.0
-                .samples
-                .lock()
-                .unwrap()
-                .push(audio.require_samples("whisper")?.to_vec());
+            assert!(!samples.is_empty());
+            self.0.samples.lock().unwrap().push(samples.to_vec());
             self.0
                 .languages
                 .lock()
@@ -475,7 +462,6 @@ pub(in crate::daemon) mod tests {
             let observed = Arc::new(Observed::default());
             Self::with_model(
                 "whisper",
-                AudioInputKind::Samples,
                 Some(RecognitionStream::Native),
                 Box::new(Fake(Arc::clone(&observed))),
                 observed,
@@ -485,19 +471,11 @@ pub(in crate::daemon) mod tests {
 
         pub(in crate::daemon) async fn with_model(
             name: &'static str,
-            input: AudioInputKind,
             stream: Option<RecognitionStream>,
             recognizer: Box<dyn Recognizer>,
             observed: Arc<Observed>,
         ) -> Self {
             let directory = tempfile::tempdir().unwrap();
-            let paths = aria_platform::runtime::RuntimePaths::in_directory(
-                directory.path().join("runtime"),
-            )
-            .prepare()
-            .unwrap();
-            let ownership =
-                Arc::new(ExclusiveListener::bind(paths.socket_path(), paths.lock_path()).unwrap());
             let access =
                 ServerAccess::load_or_create(&directory.path().join("server.json")).unwrap();
             let client =
@@ -509,14 +487,7 @@ pub(in crate::daemon) mod tests {
                         .unwrap(),
                 )
                 .unwrap();
-            let engine = Arc::new(Engine::new(
-                name,
-                input,
-                stream,
-                recognizer,
-                paths.spool_dir().to_owned(),
-                ownership,
-            ));
+            let engine = Arc::new(Engine::new(name, stream, recognizer));
             let jobs = TaskTracker::new();
             let router = public_router(engine, Arc::clone(&access), jobs.clone()).await;
             let stop = CancellationToken::new();
@@ -826,7 +797,6 @@ pub(in crate::daemon) mod tests {
         let observed = Arc::new(Observed::default());
         let mut fixture = Fixture::with_model(
             "whisper",
-            AudioInputKind::Samples,
             None,
             Box::new(Fake(Arc::clone(&observed))),
             observed,
@@ -1030,7 +1000,6 @@ pub(in crate::daemon) mod tests {
             .expect("set ARIA_TEST_WHISPER_MODEL to the test model");
         let config = EngineConfig::Whisper(aria_stt::whisper::WhisperConfig::new(model_path));
         let name = config.name();
-        let input = config.input();
         let stream = config.stream();
         let (model, load_time) = tokio::task::spawn_blocking(move || {
             let began = Instant::now();
@@ -1043,7 +1012,6 @@ pub(in crate::daemon) mod tests {
         .unwrap();
         let fixture = Fixture::with_model(
             name,
-            input,
             stream,
             Box::new(Arc::clone(&model)),
             Arc::new(Observed::default()),
@@ -1058,7 +1026,7 @@ pub(in crate::daemon) mod tests {
             recording.fill().unwrap();
             let samples = recording.samples().to_vec();
             let began = Instant::now();
-            let expected = Transcription::complete(input, model)
+            let expected = Transcription::complete(model)
                 .transcribe_with(&mut recording, &Language::Automatic, &CancelToken::never())
                 .unwrap();
             let local_time = began.elapsed();

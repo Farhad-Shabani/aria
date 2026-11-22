@@ -165,10 +165,8 @@ fn first_text_ms<T: Recognizer>(
     wav: &Path,
     now: impl FnOnce() -> Instant,
 ) -> anyhow::Result<u64> {
-    let spool = tempfile::TempDir::new().context("cannot create replay spool")?;
     let stopper = Stopper::new();
-    let capture =
-        WavReplayCapture::new(spool.path(), MAXIMUM_UTTERANCE, wav, ReplayPace::Realtime)?;
+    let capture = WavReplayCapture::new(MAXIMUM_UTTERANCE, wav, ReplayPace::Realtime)?;
     let started = now();
     let mut recording = capture.start(
         RecordingMode::UntilStopped,
@@ -206,7 +204,7 @@ mod tests {
     use super::*;
     use aria_kit::cancel::CancelToken;
     use aria_settings::config::backend;
-    use aria_voice::stt::{Hypothesis, RecognitionAudio, TranscriptionError};
+    use aria_voice::stt::{Hypothesis, TranscriptionError};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -229,7 +227,7 @@ mod tests {
 
         fn recognize_with(
             &self,
-            _: RecognitionAudio<'_>,
+            _: &[f32],
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {

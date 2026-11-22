@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, Read};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::primitives::private_fs;
 use aria_platform::sqlite::{AtRest, Database, DriftedMode, Ownership, Policy};
 use rusqlite::{OptionalExtension, params};
 use rustix::fs::{Mode, OFlags};
@@ -19,7 +18,7 @@ use super::{
     HistoryEntry, HistoryError, HistoryPage, HistoryQuery, HistorySection, HistorySource,
     HistoryStatus, PromptResult, Title, TranscriptRead,
 };
-use aria_kit::audio::{CaptureError, RecordingReader};
+use aria_kit::audio::{CaptureError, RecordingReader, encode_wav};
 use aria_platform::delivery::Application;
 use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
@@ -31,6 +30,8 @@ const MAX_ERROR_MESSAGE_BYTES: usize = 256;
 const MAX_STORED_ERROR_BYTES: usize = 2 * 1024;
 pub const MAX_ENTRY_BYTES: usize = 128 * 1024;
 const MAX_AUDIO_BYTES: u64 = 128 * 1024 * 1024;
+/// A 16-bit PCM WAV's RIFF, format and data headers.
+const WAV_HEADER_BYTES: u64 = 44;
 /// Text and chats, plus every recording audio keeps.
 const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024 + MAX_AUDIO_BYTES;
 const DATABASE_POLICY: Policy = Policy {
@@ -209,7 +210,7 @@ impl Store {
     pub fn insert(
         &self,
         entry: HistoryEntry,
-        audio: Option<&Path>,
+        audio: Option<&[f32]>,
     ) -> Result<HistoryEntry, HistoryError> {
         self.insert_into(entry, audio, None, None)
     }
@@ -218,7 +219,7 @@ impl Store {
     fn insert_into(
         &self,
         mut entry: HistoryEntry,
-        audio: Option<&Path>,
+        audio: Option<&[f32]>,
         resume: Option<&str>,
         quote: Option<&Quote>,
     ) -> Result<HistoryEntry, HistoryError> {
@@ -227,8 +228,8 @@ impl Store {
         self.maintain(&mut state)?;
         let mut copied = match audio {
             None => None,
-            Some(path) => match state.warning.is_none().then(|| validated_audio(path)) {
-                Some(Ok(copy)) => Some(copy),
+            Some(samples) => match state.warning.is_none().then(|| encoded_audio(samples)) {
+                Some(Ok(wav)) => Some(wav),
                 Some(Err(error)) => {
                     tracing::warn!(error = %error_chain(&error), "dictation history audio could not be saved");
                     state.warning = Some(AUDIO_WARNING.to_owned());
@@ -254,7 +255,7 @@ impl Store {
             &mut state,
             entry.content.section(),
             added,
-            copied.as_ref().map_or(0, |(_, size)| *size),
+            copied.as_ref().map_or(0, |wav| wav.len() as u64),
             true,
             joining.as_ref(),
         ) {
@@ -309,8 +310,8 @@ impl Store {
         let id = unsigned(transaction.last_insert_rowid(), 0)?;
         transaction.commit()?;
         // Its own transaction: an entry whose audio fails is still saved.
-        if let Some((source, size)) = copied
-            && let Err(error) = save_audio(&state, id, source, size)
+        if let Some(wav) = copied
+            && let Err(error) = save_audio(&state, id, &wav)
         {
             {
                 tracing::warn!(error = %error_chain(&error), "dictation history audio could not be saved");
@@ -1217,40 +1218,26 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Opens and checks the recording an insert saves, which stays open so the
-/// bytes copied are the bytes checked.
-fn validated_audio(source: &Path) -> Result<(File, u64), HistoryError> {
-    let descriptor = rustix::fs::open(
-        source,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|_| HistoryError::AudioUnavailable)?;
-    let mut file = File::from(descriptor);
-    let metadata = private_fs::verify_file(&file).map_err(|_| HistoryError::AudioUnavailable)?;
-    if metadata.nlink() != 1 || metadata.len() > MAX_AUDIO_BYTES {
+/// The WAV an insert saves, refused past the audio budget. Encoded in
+/// memory, so the recording never reaches a file.
+fn encoded_audio(samples: &[f32]) -> Result<Vec<u8>, HistoryError> {
+    if encoded_bytes(samples.len()) > MAX_AUDIO_BYTES {
         return Err(HistoryError::AudioUnavailable);
     }
-    let checked = file.try_clone().map_err(HistoryError::storage)?;
-    RecordingReader::from_open_wav(checked, source).map_err(|_| HistoryError::AudioUnavailable)?;
-    file.seek(SeekFrom::Start(0))
-        .map_err(HistoryError::storage)?;
-    Ok((file, metadata.len()))
+    encode_wav(samples).map_err(|_| HistoryError::AudioUnavailable)
 }
 
-fn save_audio(state: &State, id: u64, source: File, size: u64) -> Result<(), HistoryError> {
+/// The size of the WAV `encoded_audio` makes from `samples` samples.
+fn encoded_bytes(samples: usize) -> u64 {
+    WAV_HEADER_BYTES + 2 * samples as u64
+}
+
+fn save_audio(state: &State, id: u64, wav: &[u8]) -> Result<(), HistoryError> {
     let transaction = state.connection.unchecked_transaction()?;
     transaction.execute(
-        "INSERT INTO audio(entry,wav) VALUES(?1,zeroblob(?2))",
-        params![sql_integer(id)?, sql_integer(size)?],
+        "INSERT INTO audio(entry,wav) VALUES(?1,?2)",
+        params![sql_integer(id)?, wav],
     )?;
-    let mut blob =
-        transaction.blob_open(rusqlite::MAIN_DB, c"audio", c"wav", sql_integer(id)?, false)?;
-    let copied = io::copy(&mut source.take(size), &mut blob).map_err(HistoryError::storage)?;
-    drop(blob);
-    if copied != size {
-        return Err(HistoryError::AudioUnavailable);
-    }
     let expires = now_ms().saturating_add(AUDIO_TTL_MS);
     transaction.execute(
         "UPDATE entries SET expires=?1,audio_present=1 WHERE id=?2",
@@ -1395,7 +1382,7 @@ fn entries_schema(table: &str) -> String {
     )
 }
 
-/// A saved recording, whole, as the WAV capture wrote it.
+/// A saved recording, whole, as a 16 kHz mono 16-bit WAV.
 fn audio_schema() -> String {
     format!(
         "CREATE TABLE audio (
@@ -1950,6 +1937,7 @@ fn all(state: &State) -> Result<(Vec<HistoryEntry>, Vec<u64>), HistoryError> {
 
 #[cfg(test)]
 mod tests {
+    use aria_kit::primitives::private_fs;
     use rusqlite::Connection;
     use std::os::unix::fs::{PermissionsExt, symlink};
 
@@ -1991,10 +1979,9 @@ mod tests {
         }
     }
 
-    fn audio(directory: &Path) -> PathBuf {
-        let path = aria_kit::audio::canonical_fixture(directory);
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        path
+    /// One second of a recording.
+    fn audio() -> &'static [f32] {
+        &[0.25; 16_000]
     }
 
     fn query(text: &str, before_id: Option<u64>, limit: usize) -> HistoryQuery {
@@ -2022,7 +2009,7 @@ mod tests {
         store: &Store,
         text: &str,
         status: HistoryStatus,
-        audio: Option<&Path>,
+        audio: Option<&[f32]>,
     ) -> HistoryEntry {
         store.insert(entry(text, status), audio).unwrap()
     }
@@ -2882,11 +2869,11 @@ mod tests {
 
     #[test]
     fn a_rename_during_a_regeneration_survives_its_recovery() {
-        let (directory, store) = opened();
+        let (_directory, store) = opened();
         let saved = store
             .insert(
                 entry("old", HistoryStatus::TranscriptionFailed),
-                Some(&audio(directory.path())),
+                Some(audio()),
             )
             .unwrap();
         let lease = store.begin_retry(saved.id).unwrap();
@@ -3411,7 +3398,7 @@ mod tests {
     #[test]
     fn history_clear_removes_every_status_and_audio() {
         let directory = tempfile::tempdir().unwrap();
-        let source = audio(directory.path());
+        let source = audio();
         let history = directory.path().join("history");
         let store = Store::open(&history, &AtRest::for_tests()).unwrap();
         let mut last_id = 0;
@@ -3424,7 +3411,7 @@ mod tests {
             for origin in [HistorySource::Local, HistorySource::Relay] {
                 let mut saved = entry("private words", status);
                 saved.source = origin;
-                last_id = store.insert(saved, Some(&source)).unwrap().id;
+                last_id = store.insert(saved, Some(source)).unwrap().id;
             }
         }
         store.mark_delete(&mut store.lock(), last_id).unwrap();
@@ -3442,7 +3429,6 @@ mod tests {
             .query_row("SELECT count(*) FROM audio", [], |row| row.get(0))
             .unwrap();
         assert_eq!(recordings, 0);
-        assert!(source.exists());
         assert_eq!(store.clear(None).unwrap().deleted_entries, 0);
     }
 
@@ -3462,9 +3448,9 @@ mod tests {
 
     #[test]
     fn history_clear_busy_and_database_failure_leave_entries_intact() {
-        let (directory, store) = opened();
-        let source = audio(directory.path());
-        let saved = save(&store, "retry", HistoryStatus::Success, Some(&source));
+        let (_directory, store) = opened();
+        let source = audio();
+        let saved = save(&store, "retry", HistoryStatus::Success, Some(source));
         let other = save(&store, "other", HistoryStatus::Success, None);
         let lease = store.begin_retry(saved.id).unwrap();
         assert!(matches!(store.clear(None), Err(HistoryError::Busy)));
@@ -3495,14 +3481,14 @@ mod tests {
     #[test]
     fn history_ownership_outlives_the_store_handle_until_retry_releases() {
         let directory = tempfile::tempdir().unwrap();
-        let source = audio(directory.path());
+        let source = audio();
         let history = directory.path().join("history");
         let store = Store::open(&history, &AtRest::for_tests()).unwrap();
         let failed = save(
             &store,
             "partial",
             HistoryStatus::TranscriptionFailed,
-            Some(&source),
+            Some(source),
         );
         let lease = store.begin_retry(failed.id).unwrap();
         assert!(matches!(
@@ -3530,13 +3516,13 @@ mod tests {
 
     #[test]
     fn failed_attempt_stores_the_top_line_of_a_long_cause_chain() {
-        let (directory, store) = opened();
-        let source = audio(directory.path());
+        let (_directory, store) = opened();
+        let source = audio();
         let failed = save(
             &store,
             "partial",
             HistoryStatus::TranscriptionFailed,
-            Some(&source),
+            Some(source),
         );
         let _lease = store.begin_retry(failed.id).unwrap();
         let error = HistoryError::transcription(
@@ -3556,15 +3542,14 @@ mod tests {
 
     #[test]
     fn retry_pins_original_audio_and_recovers_the_same_entry() {
-        let (directory, store) = opened();
-        let source = audio(directory.path());
+        let (_directory, store) = opened();
+        let source = audio();
         let failed = save(
             &store,
             "partial",
             HistoryStatus::TranscriptionFailed,
-            Some(&source),
+            Some(source),
         );
-        assert!(source.exists());
         assert!(matches!(
             failed.audio(),
             AudioAvailability::Available { .. }
@@ -3598,16 +3583,15 @@ mod tests {
             store.begin_retry(failed.id),
             Err(HistoryError::AudioUnavailable)
         ));
-        assert!(source.exists());
     }
 
     #[test]
     fn regeneration_retains_audio_and_original_expiry_until_disabled() {
         let directory = tempfile::tempdir().unwrap();
-        let source = audio(directory.path());
+        let source = audio();
         let history = directory.path().join("history");
         let store = Store::open(&history, &AtRest::for_tests()).unwrap();
-        let original = save(&store, "first", HistoryStatus::Success, Some(&source));
+        let original = save(&store, "first", HistoryStatus::Success, Some(source));
         for (text, engine, language) in [("second", "whisper", "fr"), ("third", "moonshine", "en")]
         {
             let lease = store.begin_retry(original.id).unwrap();
@@ -3638,9 +3622,9 @@ mod tests {
 
     #[test]
     fn expiration_keeps_text_and_defers_pinned_audio_cleanup() {
-        let (directory, store) = opened();
-        let source = audio(directory.path());
-        let failed = save(&store, "partial", HistoryStatus::Success, Some(&source));
+        let (_directory, store) = opened();
+        let source = audio();
+        let failed = save(&store, "partial", HistoryStatus::Success, Some(source));
         let lease = store.begin_retry(failed.id).unwrap();
         tamper(
             &store,
@@ -3663,16 +3647,47 @@ mod tests {
     }
 
     #[test]
+    fn the_audio_budget_counts_the_bytes_the_wav_takes() {
+        let wav = encode_wav(&[0.25; 3]).unwrap();
+
+        assert_eq!(encoded_bytes(3), wav.len() as u64);
+    }
+
+    #[test]
+    fn audio_an_older_build_saved_still_plays_back() {
+        let (directory, store) = opened();
+        let saved = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(audio()),
+        );
+        let fixture = aria_kit::audio::canonical_fixture(directory.path());
+        tamper(
+            &store,
+            "UPDATE audio SET wav=?1 WHERE entry=?2",
+            params![fs::read(&fixture).unwrap(), sql_integer(saved.id).unwrap()],
+        );
+        let mut expected = RecordingReader::from_wav_file(&fixture).unwrap();
+        expected.fill().unwrap();
+
+        let mut lease = store.begin_retry(saved.id).unwrap();
+        lease.recording.fill().unwrap();
+
+        assert_eq!(lease.recording.samples(), expected.samples());
+    }
+
+    #[test]
     fn saved_audio_lives_in_the_database_and_a_retry_reads_it_into_memory() {
         let directory = tempfile::tempdir().unwrap();
-        let source = audio(directory.path());
+        let source = audio();
         let history = directory.path().join("history");
         let store = Store::open(&history, &AtRest::for_tests()).unwrap();
         let saved = save(
             &store,
             "partial",
             HistoryStatus::TranscriptionFailed,
-            Some(&source),
+            Some(source),
         );
         let mut kept: Vec<_> = fs::read_dir(&history)
             .unwrap()
@@ -3683,12 +3698,8 @@ mod tests {
 
         let mut lease = store.begin_retry(saved.id).unwrap();
 
-        let mut original = RecordingReader::from_wav_file(&source).unwrap();
-        original.fill().unwrap();
         lease.recording.fill().unwrap();
-        assert!(!original.samples().is_empty());
-        assert_eq!(lease.recording.samples(), original.samples());
-        assert_eq!(lease.recording.finished_audio().unwrap().path(), None);
+        assert_eq!(lease.recording.samples(), source);
     }
 
     #[test]
@@ -3707,13 +3718,13 @@ mod tests {
 
     #[test]
     fn deleting_an_entry_deletes_its_audio() {
-        let (directory, store) = opened();
-        let source = audio(directory.path());
+        let (_directory, store) = opened();
+        let source = audio();
         let failed = save(
             &store,
             "partial",
             HistoryStatus::TranscriptionFailed,
-            Some(&source),
+            Some(source),
         );
         let later = save(&store, "later text", HistoryStatus::Success, None);
         assert!(has_audio(&store, failed.id));
@@ -3734,38 +3745,14 @@ mod tests {
     }
 
     #[test]
-    fn missing_corrupt_and_oversized_audio_never_become_retryable() {
-        let (directory, store) = opened();
-        let missing = directory.path().join("missing.wav");
-        let corrupt = directory.path().join("corrupt.wav");
-        fs::write(&corrupt, "not wav").unwrap();
-        fs::set_permissions(&corrupt, fs::Permissions::from_mode(0o600)).unwrap();
-        let oversized = directory.path().join("large.wav");
-        let large = File::create(&oversized).unwrap();
-        large
-            .set_permissions(fs::Permissions::from_mode(0o600))
-            .unwrap();
-        large.set_len(MAX_AUDIO_BYTES + 1).unwrap();
-        for path in [missing, corrupt, oversized] {
-            let saved = save(
-                &store,
-                "partial",
-                HistoryStatus::TranscriptionFailed,
-                Some(&path),
-            );
-            assert_eq!(saved.audio(), AudioAvailability::Unavailable);
-            assert!(saved.warning.is_some());
-            assert!(matches!(
-                store.begin_retry(saved.id),
-                Err(HistoryError::AudioUnavailable)
-            ));
-        }
-        let source = audio(directory.path());
+    fn audio_deleted_behind_the_store_is_never_retryable() {
+        let (_directory, store) = opened();
+        let source = audio();
         let failed = save(
             &store,
             "partial",
             HistoryStatus::TranscriptionFailed,
-            Some(&source),
+            Some(source),
         );
         tamper(
             &store,
@@ -3780,13 +3767,13 @@ mod tests {
 
     #[test]
     fn invalid_retained_audio_stays_unavailable_until_cleanup_finishes() {
-        let (directory, store) = opened();
-        let source = audio(directory.path());
+        let (_directory, store) = opened();
+        let source = audio();
         let corrupt = save(
             &store,
             "partial",
             HistoryStatus::TranscriptionFailed,
-            Some(&source),
+            Some(source),
         );
         tamper(
             &store,
@@ -3975,11 +3962,11 @@ mod tests {
 
     #[test]
     fn audio_budget_evicts_oldest_recording_without_losing_its_text() {
-        let (directory, store) = opened();
-        let source = audio(directory.path());
+        let (_directory, store) = opened();
+        let source = audio();
         let mut ids = Vec::new();
         for _ in 0..3 {
-            ids.push(save(&store, "partial", HistoryStatus::Success, Some(&source)).id);
+            ids.push(save(&store, "partial", HistoryStatus::Success, Some(source)).id);
         }
         let lease = store.begin_retry(ids[0]).unwrap();
         for id in &ids {

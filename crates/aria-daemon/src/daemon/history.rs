@@ -233,7 +233,7 @@ impl HistoryStore {
         }
     }
 
-    pub(super) fn save(&self, entry: HistoryEntry, audio: Option<&Path>) {
+    pub(super) fn save(&self, entry: HistoryEntry, audio: Option<&[f32]>) {
         let warning = match self.storage().and_then(|store| store.insert(entry, audio)) {
             Ok(entry) => entry.warning,
             Err(error) => {
@@ -308,17 +308,11 @@ impl History {
     }
     fn save_recording(&self, recording: &mut RecordingReader, mut entry: HistoryEntry) {
         let retain_audio = self.retain_audio || entry.status == HistoryStatus::TranscriptionFailed;
-        // A failed decoder may stop before capture publishes its finalized file.
+        // A failed decoder may stop before capture does.
         let ended = retain_audio && recording.wait_for_end(Duration::from_secs(2));
         entry.duration_ms = Some(recording.duration().as_millis() as u64);
-        let audio = if ended {
-            recording
-                .finished_audio()
-                .ok()
-                .and_then(|audio| audio.path())
-        } else {
-            None
-        };
+        // A capture that failed has no recording worth keeping.
+        let audio = (ended && recording.fill().is_ok()).then(|| recording.samples());
         self.store.save(entry, audio);
     }
 }
@@ -431,7 +425,7 @@ mod tests {
     ) -> (Arc<HistoryStore>, History, RecordingReader) {
         let saved = store(directory);
         let sink = History::new(Arc::clone(&saved), served_by);
-        let recording = RecordingReader::from_samples_in(directory, &vec![0.25; samples]).unwrap();
+        let recording = RecordingReader::from_samples(&vec![0.25; samples]);
         (saved, sink, recording)
     }
 
@@ -480,12 +474,6 @@ mod tests {
         ] {
             let directory = tempfile::tempdir().unwrap();
             let (saved, mut sink, mut recording) = sink(directory.path(), "test", 16_000);
-            let original = recording
-                .finished_audio()
-                .unwrap()
-                .path()
-                .unwrap()
-                .to_owned();
             let mut settings = settings();
             settings.history_keep_audio = retain_audio;
             sink.dictation_started(&settings, &ExecutionControl::for_test(StopMode::Manual))
@@ -517,8 +505,6 @@ mod tests {
             );
             assert_eq!(found[0].duration_ms, Some(1_000));
             let id = found[0].id;
-            drop(recording);
-            assert!(!original.exists());
             drop(sink);
             drop(saved);
             let reopened = store(directory.path());
@@ -532,15 +518,9 @@ mod tests {
     }
 
     #[test]
-    fn transcription_failure_keeps_partial_text_and_owns_a_copy_of_finalized_audio() {
+    fn transcription_failure_keeps_partial_text_and_its_audio() {
         let directory = tempfile::tempdir().unwrap();
         let (saved, mut sink, mut recording) = sink(directory.path(), "test", 16_000);
-        let original = recording
-            .finished_audio()
-            .unwrap()
-            .path()
-            .unwrap()
-            .to_owned();
         let mut settings = settings();
         settings.own_voice_only = true;
         sink.dictation_started(&settings, &ExecutionControl::for_test(StopMode::Manual))
@@ -554,8 +534,6 @@ mod tests {
             )),
         );
         sink.dictation_finished(Ok(()));
-        drop(recording);
-        assert!(!original.exists());
         let found = entries(&saved);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].text, "accepted partial");
@@ -567,8 +545,8 @@ mod tests {
             AudioAvailability::Available { .. }
         ));
         let mut lease = saved.storage().unwrap().begin_retry(found[0].id).unwrap();
-        let audio = lease.recording.finished_audio().unwrap();
-        assert_eq!(audio.path(), None);
+        lease.recording.fill().unwrap();
+        assert_eq!(lease.recording.samples(), [0.25; 16_000]);
     }
 
     #[test]
@@ -629,8 +607,7 @@ mod tests {
             } else {
                 TranscriptRoute::Deliver
             };
-            let mut recording =
-                RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
+            let mut recording = RecordingReader::from_samples(&[0.25; 1_600]);
             sink.dictation_started(&settings, &ExecutionControl::for_test(StopMode::Manual))
                 .unwrap();
             sink.segment(Utterance::anonymous("partial")).unwrap();

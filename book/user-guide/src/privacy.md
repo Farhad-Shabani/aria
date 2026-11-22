@@ -13,9 +13,10 @@ saving off affects future dictations, not existing entries. Retained original
 audio can include background voices, even when a voice filter excludes them
 from the text.
 
-Recording also uses temporary plaintext audio files. Aria deletes them when
-it no longer needs them. File deletion is not secure erasure and
-cannot remove backups or snapshots.
+On your computer, Aria keeps a recording in memory while it transcribes it.
+Only history saves audio to disk. The iPhone and Apple Watch apps record to a
+temporary file, and delete it once they're done with it. Swap or a crash
+dump can still put audio on disk, and deletion isn't secure erasure.
 
 On a Mac, **Mute while recording** asks macOS to silence other apps. Aria
 doesn't record, save, or send their sound.
@@ -48,8 +49,8 @@ stops** and when you retry from history. With **While speaking**,
 audio leaves before Aria knows who spoke. The check helps recognition; it
 cannot promise that other voices are left out.
 
-The server keeps no history. It deletes its working copies when each
-recognition ends, though crashes and backups can keep them. Encryption
+The server keeps no history. It holds your audio in memory only while it
+recognizes it, though swap or a crash dump can keep a copy. Encryption
 protects audio on the way, not from the person running the server.
 [Files and folders](#files-and-folders) says where pairing keys live.
 
@@ -153,8 +154,7 @@ version. Turn it off in **Settings → About** with
 ## Files and folders
 
 On a Mac, Aria encrypts history, including its saved audio, memory, and the
-project vocabulary cache. Transcribing saved audio again makes a temporary
-unencrypted copy. Transcript files aren't encrypted. On Linux, Aria doesn't
+project vocabulary cache. Transcript files aren't encrypted. On Linux, Aria doesn't
 encrypt these files.
 
 The key is **Aria Safe Storage** in your default Keychain, usually **login**.

@@ -13,15 +13,14 @@
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel, sync_channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::audio::capture::RecordingMode;
+use crate::audio::limit::LimitedWriter;
 use crate::audio::recording::RecordingWriter;
-use crate::audio::spool::WavSpool;
-use crate::audio::{CaptureError, RecordedAudio, ResampleError, StopSignal};
+use crate::audio::{CaptureError, ResampleError, StopSignal};
 use crate::primitives::thread::raise_scheduling_class;
 use crate::voice_activity::VoiceActivityDetector;
 use crate::wake_word::WakeWordDetector;
@@ -58,20 +57,18 @@ pub(super) struct RecordCommand {
 }
 
 pub(super) fn spawn<V: VoiceActivityDetector + Send + 'static>(
-    spool_dir: PathBuf,
     maximum_duration: Duration,
     input: Option<InputDeviceId>,
     idle: IdleStream,
     vad: V,
 ) -> Result<Sender<Command>> {
-    spawn_worker(spool_dir, maximum_duration, input, idle, vad, Disabled)
+    spawn_worker(maximum_duration, input, idle, vad, Disabled)
 }
 
 pub(super) fn spawn_with_wake_word<
     V: VoiceActivityDetector + Send + 'static,
     W: WakeWordDetector + Send + 'static,
 >(
-    spool_dir: PathBuf,
     maximum_duration: Duration,
     input: Option<InputDeviceId>,
     idle: IdleStream,
@@ -80,7 +77,6 @@ pub(super) fn spawn_with_wake_word<
 ) -> Result<(Sender<Command>, Receiver<WakeWordEvent>)> {
     let (events, detections) = sync_channel(1);
     let commands = spawn_worker(
-        spool_dir,
         maximum_duration,
         input,
         idle,
@@ -91,7 +87,6 @@ pub(super) fn spawn_with_wake_word<
 }
 
 fn spawn_worker<V, I>(
-    spool_dir: PathBuf,
     maximum_duration: Duration,
     input: Option<InputDeviceId>,
     idle: IdleStream,
@@ -105,7 +100,6 @@ where
     let (commands, requests) = channel();
     let now = Instant::now();
     let worker = Worker {
-        spool_dir,
         maximum_duration,
         input,
         idle,
@@ -128,7 +122,6 @@ where
 }
 
 struct Worker<V, I> {
-    spool_dir: PathBuf,
     maximum_duration: Duration,
     /// The chosen device. `None` follows the fallback.
     input: Option<InputDeviceId>,
@@ -213,10 +206,10 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
         mode: RecordingMode,
         writer: &RecordingWriter,
         stop: &StopSignal,
-    ) -> Result<RecordedAudio> {
-        let spool = WavSpool::create(&self.spool_dir, self.maximum_duration, writer)?;
+    ) -> Result<()> {
+        let limited = LimitedWriter::new(self.maximum_duration, writer)?;
         self.follow_input();
-        let recording = CaptureRecording::new(spool, mode, &mut self.vad);
+        let recording = CaptureRecording::new(limited, mode, &mut self.vad);
         let live = ensure_live(&mut self.live, self.input.as_ref())?;
         live.play()?;
         writer.begin(RecordingSource::Device(live.device().clone()));
@@ -437,7 +430,6 @@ mod tests {
     fn releasing_the_stream_drops_the_audio_it_held() {
         let now = Instant::now();
         let mut worker = Worker {
-            spool_dir: PathBuf::new(),
             maximum_duration: Duration::from_secs(1),
             input: None,
             idle: IdleStream::Held,

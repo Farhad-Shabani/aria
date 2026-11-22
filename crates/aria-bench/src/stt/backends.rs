@@ -17,8 +17,8 @@ use aria_settings::config::backend;
 use aria_stt::{EngineConfig, moonshine, nemotron, parakeet, parakeet_mlx, whisper};
 use aria_voice::config::{SttConfig, SttDevice};
 use aria_voice::stt::{
-    Cadence, ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Recognizer, Stream,
-    Streaming, Transcription, TranscriptionError, Whole, check_model,
+    Cadence, ChunkStream, Emitted, Hypothesis, Language, Recognizer, Stream, Streaming,
+    Transcription, TranscriptionError, Whole, check_model,
 };
 
 use super::Mode;
@@ -98,14 +98,12 @@ impl Selection {
         let timing = Timing::default();
         let step = Step::default();
         let config = EngineConfig::try_from(self.config.clone())?;
-        let input = config.input();
         let engine = Timed {
             inner: Stepped::new(load_recognizer(config, self.cadence)?, step.clone()),
             timing: timing.clone(),
         };
         let decoding = self.decoding();
         let transcription = match decoding {
-            Decoding::ChunkedFile { .. } => Composed::Whole(Transcription::complete_wav(engine)),
             Decoding::Native { .. } => {
                 Composed::Streaming(Transcription::stream(Stream::Native, engine))
             }
@@ -113,7 +111,9 @@ impl Selection {
                 self.cadence.expect("agreement cadence"),
                 engine,
             )),
-            Decoding::Whole => Composed::Whole(Transcription::complete(input, engine)),
+            Decoding::Whole | Decoding::ChunkedFile { .. } => {
+                Composed::Whole(Transcription::complete(engine))
+            }
         };
         Ok(Loaded {
             transcription,
@@ -226,12 +226,12 @@ impl Recognizer for Timed {
 
     fn recognize_with(
         &self,
-        audio: RecognitionAudio<'_>,
+        samples: &[f32],
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
         let started = Instant::now();
-        let heard = self.inner.recognize_with(audio, language, cancel);
+        let heard = self.inner.recognize_with(samples, language, cancel);
         self.timing.decoded(started);
         heard
     }
@@ -570,7 +570,7 @@ mod tests {
 
         fn recognize_with(
             &self,
-            _: RecognitionAudio<'_>,
+            _: &[f32],
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -628,7 +628,6 @@ mod tests {
 
     #[test]
     fn attempts_reset_metrics_and_disconnect_replay_on_failure_and_unwind() {
-        let directory = tempfile::tempdir().unwrap();
         let step = Step::default();
         let engine = stepped_trace_engine(true, step.clone());
         let loaded = Loaded {
@@ -639,9 +638,7 @@ mod tests {
         };
 
         for unwind in [false, true] {
-            let mut recording =
-                aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4])
-                    .unwrap();
+            let mut recording = aria_kit::audio::RecordingReader::from_samples(&[0.5; 4]);
             let (advance, gate) = mpsc::channel();
             loaded.timing.decode_busy.store(9_000, Ordering::Relaxed);
             loaded.timing.decode_calls.store(7, Ordering::Relaxed);
@@ -674,9 +671,7 @@ mod tests {
 
     #[test]
     fn streaming_trace_preserves_order_without_inventing_word_spans() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut recording =
-            aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4]).unwrap();
+        let mut recording = aria_kit::audio::RecordingReader::from_samples(&[0.5; 4]);
         let composed =
             Composed::Streaming(Transcription::stream(Stream::Native, trace_engine(false)));
         let started = Instant::now();
@@ -799,9 +794,7 @@ mod tests {
 
     #[test]
     fn a_later_failure_keeps_the_already_emitted_trace() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut recording =
-            aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4]).unwrap();
+        let mut recording = aria_kit::audio::RecordingReader::from_samples(&[0.5; 4]);
         let composed =
             Composed::Streaming(Transcription::stream(Stream::Native, trace_engine(true)));
         let mut segments = Vec::new();
@@ -823,10 +816,8 @@ mod tests {
 
     #[test]
     fn whole_transcription_has_no_streaming_trace() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut recording =
-            aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4]).unwrap();
-        let composed = Composed::Whole(Transcription::complete_samples(trace_engine(false)));
+        let mut recording = aria_kit::audio::RecordingReader::from_samples(&[0.5; 4]);
+        let composed = Composed::Whole(Transcription::complete(trace_engine(false)));
         let mut segments = Vec::new();
 
         let transcript = composed

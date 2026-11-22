@@ -123,7 +123,7 @@ mod tests {
     use crate::audio::CANONICAL_SAMPLE_RATE;
     use crate::audio::testing::{Pace, paced, recorded};
     use crate::cancel::CancelToken;
-    use crate::transcription::{Cadence, Hypothesis, RecognitionAudio};
+    use crate::transcription::{Cadence, Hypothesis};
 
     const STRIDE_MS: usize = 100;
     const STRIDE: usize = STRIDE_MS * CANONICAL_SAMPLE_RATE as usize / 1000;
@@ -162,7 +162,7 @@ mod tests {
 
         fn recognize_with(
             &self,
-            _audio: RecognitionAudio<'_>,
+            _samples: &[f32],
             _language: &Language,
             _cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn a_streaming_session_commits_words_as_their_agreement_holds() {
-        let (_directory, recording, pace) = paced(vec![stride_batch(); 4]);
+        let (recording, pace) = paced(vec![stride_batch(); 4]);
         let cadence = Cadence::from_millis(STRIDE_MS, 20_000);
         let transcription = Transcription::agreement(
             cadence,
@@ -207,8 +207,8 @@ mod tests {
 
     #[test]
     fn a_whole_session_has_only_its_end() {
-        let (_directory, recording) = recorded(&[0; 64]);
-        let transcription = Transcription::complete_samples(Scripted::new(&["hello world"]));
+        let recording = recorded(&[0; 64]);
+        let transcription = Transcription::complete(Scripted::new(&["hello world"]));
         let language = Language::Automatic;
 
         let transcript = Session::over(&transcription, &language, recording)

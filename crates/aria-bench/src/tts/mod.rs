@@ -16,7 +16,6 @@ use std::time::{Duration, Instant};
 
 use aria_kit::synthesis::{SpeakingRate, SynthesisError, Voice};
 use aria_voice::stt::TranscriptionError;
-use tempfile::TempDir;
 
 pub use backends::{EngineRequest, Skipped};
 pub use corpus::CorpusError;
@@ -94,9 +93,6 @@ pub enum BenchError {
 
     #[error("a run needs at least one attempt per utterance")]
     NoRuns,
-
-    #[error("failed to create a directory for judged recordings")]
-    Recordings(#[source] std::io::Error),
 }
 
 /// Measures every usable backend over the corpus, one model resident at a
@@ -110,8 +106,6 @@ pub fn run(request: &Request) -> Result<Report, BenchError> {
     if selections.is_empty() {
         return Err(BenchError::NoBackend);
     }
-    let recordings = TempDir::new().map_err(BenchError::Recordings)?;
-
     let mut writer = RowWriter::create(&request.results)?;
 
     // Latency runs before the judge exists: an ASR model resident during
@@ -137,7 +131,6 @@ pub fn run(request: &Request) -> Result<Report, BenchError> {
                     source,
                 })?,
                 judge,
-                recordings.path(),
                 &spoken,
                 request,
                 &mut writer,
@@ -297,7 +290,6 @@ fn write_latency(
 fn round_trip(
     engine: &Loaded,
     judge: &Judge,
-    recordings: &std::path::Path,
     spoken: &Corpus,
     request: &Request,
     writer: &mut RowWriter,
@@ -308,7 +300,6 @@ fn round_trip(
         let heard = quality::hear_back(
             engine,
             judge,
-            recordings,
             &utterance.text,
             request.voice.as_ref(),
             request.rate,

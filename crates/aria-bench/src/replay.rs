@@ -11,9 +11,7 @@ use aria_kit::audio::{
     CaptureError, Recording, RecordingReader, ResampleError, WavError, read_wav,
 };
 use aria_kit::cancel::CancelToken;
-use aria_voice::stt::{
-    ChunkStream, Emitted, Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError,
-};
+use aria_voice::stt::{ChunkStream, Emitted, Hypothesis, Language, Recognizer, TranscriptionError};
 
 /// Where finished decodes send the permits that release a stepped replay's
 /// strides. Clones share one slot.
@@ -90,11 +88,11 @@ impl<R: Recognizer> Recognizer for Stepped<R> {
 
     fn recognize_with(
         &self,
-        audio: RecognitionAudio<'_>,
+        samples: &[f32],
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
-        let heard = self.inner.recognize_with(audio, language, cancel);
+        let heard = self.inner.recognize_with(samples, language, cancel);
         self.step.release();
         heard
     }
@@ -206,7 +204,7 @@ mod tests {
 
         fn recognize_with(
             &self,
-            _audio: RecognitionAudio<'_>,
+            _samples: &[f32],
             _language: &Language,
             _cancel: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -220,11 +218,7 @@ mod tests {
         let stepped = Stepped::new(Silent, step.clone());
         let decode = || {
             stepped
-                .recognize_with(
-                    RecognitionAudio::Samples(&[]),
-                    &Language::Automatic,
-                    &CancelToken::never(),
-                )
+                .recognize_with(&[], &Language::Automatic, &CancelToken::never())
                 .expect("silence decodes")
         };
         let (permits, waiting) = mpsc::channel();

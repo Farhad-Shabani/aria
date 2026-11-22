@@ -4,11 +4,11 @@
 //! utterance is spoken once more, written as canonical audio, transcribed,
 //! and scored against its own text with the corpus scorer.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::stt::{Alignment, word_errors, words};
-use aria_kit::audio::{CaptureError, Clip, ClipError, RecordingReader, ResampleError};
+use aria_kit::audio::{Clip, ClipError, RecordingReader, ResampleError, pcm16_from_f32};
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::error_chain;
 use aria_kit::synthesis::{SpeakingRate, SpeechText, Voice};
@@ -56,11 +56,11 @@ impl Judge {
         Ok(Self {
             // A whole-buffer decode: the recording is already complete, so
             // streaming would add nothing but pacing.
-            transcription: Transcription::complete_samples(backend),
+            transcription: Transcription::complete(backend),
         })
     }
 
-    /// What the judge hears in a finished WAV file.
+    /// What the judge hears in a finished recording.
     fn hear(&self, mut recording: RecordingReader) -> Result<String, TranscriptionError> {
         let language = Language::Specific(LanguageCode::english());
         let cancel = CancelToken::from_fn({
@@ -98,9 +98,6 @@ enum RecordingFailure {
 
     #[error("cannot convert the speech to 16 kHz")]
     Resample(#[from] ResampleError),
-
-    #[error("cannot spool the judged recording")]
-    Spool(#[from] CaptureError),
 }
 
 /// Speaks one utterance, judges what came back, and scores it against the
@@ -108,7 +105,6 @@ enum RecordingFailure {
 pub(super) fn hear_back(
     engine: &Loaded,
     judge: &Judge,
-    recordings: &Path,
     text: &SpeechText,
     voice: Option<&Voice>,
     rate: SpeakingRate,
@@ -125,11 +121,11 @@ pub(super) fn hear_back(
         return Heard::failed(reference_words, error);
     }
 
-    let recording = match judged_recording(recordings, engine.sample_rate(), synthesized.samples) {
+    let recording = match judged_recording(engine.sample_rate(), synthesized.samples) {
         Ok(recording) => recording,
         Err(failure) => {
             let detail = error_chain(&failure);
-            tracing::warn!(%detail, "cannot spool the judged recording");
+            tracing::warn!(%detail, "cannot prepare the judged recording");
             return Heard::failed(reference_words, "recording failed".to_owned());
         }
     };
@@ -155,16 +151,17 @@ pub(super) fn hear_back(
     }
 }
 
-/// Canonical audio for the judge, spooled as 16-bit PCM the way capture
-/// spools it. The spool deletes itself when the judge drops it.
+/// Canonical audio for the judge, rounded to 16-bit PCM as capture's samples are.
 fn judged_recording(
-    recordings: &Path,
     sample_rate: u32,
     speech: Vec<f32>,
 ) -> Result<RecordingReader, RecordingFailure> {
     let canonical = Clip::new(sample_rate, speech)?.into_canonical()?;
-    Ok(RecordingReader::from_samples_in(
-        recordings,
-        canonical.samples(),
-    )?)
+    let pcm16: Vec<i16> = canonical
+        .samples()
+        .iter()
+        .copied()
+        .map(pcm16_from_f32)
+        .collect();
+    Ok(RecordingReader::from_pcm16(&pcm16))
 }

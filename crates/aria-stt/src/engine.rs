@@ -3,9 +3,7 @@
 use std::path::PathBuf;
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{
-    AudioInputKind, Engine, Recognizer, Stream, StreamingEngine, TranscriptionError,
-};
+use aria_kit::transcription::{Engine, Recognizer, Stream, StreamingEngine, TranscriptionError};
 
 /// One engine's configuration, for a caller that picks the engine at run time.
 ///
@@ -59,24 +57,6 @@ impl EngineConfig {
             Self::Whisper(_) => crate::whisper::NAME,
             #[cfg(feature = "whisper-candle")]
             Self::WhisperCandle(_) => crate::whisper_candle::NAME,
-        }
-    }
-
-    /// The engine's [`Engine::INPUT`].
-    pub fn input(&self) -> AudioInputKind {
-        match self {
-            #[cfg(feature = "moonshine")]
-            Self::Moonshine(_) => crate::moonshine::Moonshine::INPUT,
-            #[cfg(feature = "nemotron")]
-            Self::Nemotron(_) => crate::nemotron::Nemotron::INPUT,
-            #[cfg(feature = "parakeet")]
-            Self::Parakeet(_) => crate::parakeet::Parakeet::INPUT,
-            #[cfg(all(feature = "parakeet-mlx", not(target_os = "ios")))]
-            Self::ParakeetMlx(_) => crate::parakeet_mlx::ParakeetMlx::INPUT,
-            #[cfg(feature = "whisper")]
-            Self::Whisper(_) => crate::whisper::Whisper::INPUT,
-            #[cfg(feature = "whisper-candle")]
-            Self::WhisperCandle(_) => crate::whisper_candle::WhisperCandle::INPUT,
         }
     }
 

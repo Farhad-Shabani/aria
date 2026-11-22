@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 use super::wav::wav_spec;
 
 #[cfg(test)]
-pub(in crate::audio) use recordings::spooled;
-#[cfg(test)]
-pub(in crate::audio) use recordings::wav_samples;
+pub(in crate::audio) use recordings::limited;
 #[cfg(test)]
 pub(crate) use recordings::{Pace, paced, recorded};
 #[cfg(all(test, feature = "microphone"))]
@@ -70,30 +68,23 @@ mod recordings {
     use std::sync::Mutex;
     use std::time::Duration;
 
+    use super::super::limit::LimitedWriter;
     use super::super::recording::ends;
-    use super::super::spool::WavSpool;
     use super::super::{CaptureError, RecordingReader, RecordingWriter};
 
-    pub(in crate::audio) fn wav_samples(path: &std::path::Path) -> Vec<i16> {
-        hound::WavReader::open(path)
-            .expect("the wav should open")
-            .into_samples::<i16>()
-            .collect::<Result<_, _>>()
-            .expect("the wav should decode")
-    }
-
     /// One recording written the way capture writes it, closed before it returns.
-    pub(crate) fn recorded(samples: &[i16]) -> (tempfile::TempDir, RecordingReader) {
-        let directory = tempfile::TempDir::new().expect("test directory should be created");
-        let recording = RecordingReader::from_pcm16_in(directory.path(), samples)
-            .expect("samples are writable");
-        (directory, recording)
+    pub(crate) fn recorded(samples: &[i16]) -> RecordingReader {
+        let (writer, mut limited, recording) = limited();
+        writer.begin(super::super::RecordingSource::Prerecorded);
+        limited.push(samples).expect("samples are writable");
+        writer.close(limited.finish().map_err(CaptureError::from));
+        recording
     }
 
     /// One recording whose writing thread waits for [`Pace::advance`] before
     /// each batch, so a reader observes exactly one batch per permit.
-    pub(crate) fn paced(batches: Vec<Vec<i16>>) -> (tempfile::TempDir, RecordingReader, Pace) {
-        let (directory, writer, mut spool, recording) = spooled();
+    pub(crate) fn paced(batches: Vec<Vec<i16>>) -> (RecordingReader, Pace) {
+        let (writer, mut limited, recording) = limited();
         let (advance, wait) = std::sync::mpsc::channel();
         let (acknowledge, written) = std::sync::mpsc::channel();
         advance.send(()).expect("the first permit is delivered");
@@ -103,18 +94,17 @@ mod recordings {
                 if wait.recv().is_err() {
                     break;
                 }
-                spool.write_samples(&batch).expect("samples are writable");
+                limited.push(&batch).expect("samples are writable");
                 if index + 1 < count {
                     let _ = acknowledge.send(());
                 }
             }
-            writer.close(spool.finish().map_err(CaptureError::from));
+            writer.close(limited.finish().map_err(CaptureError::from));
             // The final permit includes EOF, so decoding cannot race closure.
             let _ = acknowledge.send(());
         });
         written.recv().expect("the first batch is written");
         (
-            directory,
             recording,
             Pace {
                 advance,
@@ -137,16 +127,10 @@ mod recordings {
         }
     }
 
-    pub(in crate::audio) fn spooled() -> (
-        tempfile::TempDir,
-        RecordingWriter,
-        WavSpool,
-        RecordingReader,
-    ) {
-        let directory = tempfile::TempDir::new().expect("test directory should be created");
+    pub(in crate::audio) fn limited() -> (RecordingWriter, LimitedWriter, RecordingReader) {
         let (recording, writer) = ends();
-        let spool = WavSpool::create(directory.path(), Duration::from_secs(15 * 60), &writer)
-            .expect("the recording should be creatable");
-        (directory, writer, spool, recording)
+        let limited =
+            LimitedWriter::new(Duration::from_secs(15 * 60), &writer).expect("the limit is valid");
+        (writer, limited, recording)
     }
 }

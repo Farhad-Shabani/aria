@@ -8,7 +8,7 @@
 //! use aria_stt::{whisper_candle::WhisperCandle, prelude::*};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let transcription = Transcription::complete_samples(WhisperCandle::load("model")?)
+//! let transcription = Transcription::complete(WhisperCandle::load("model")?)
 //!     .with(RemoveHesitations)
 //!     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
 //! let session = Session::microphone(&transcription, &Language::Automatic)?;
@@ -36,7 +36,7 @@ use tokenizers::Tokenizer;
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
-    Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError, check_cancelled,
+    Hypothesis, Language, Recognizer, TranscriptionError, check_cancelled,
 };
 
 #[cfg(not(target_family = "wasm"))]
@@ -140,12 +140,11 @@ impl Recognizer for WhisperCandle {
 
     fn recognize_with(
         &self,
-        audio: RecognitionAudio<'_>,
+        samples: &[f32],
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
         check_cancelled(cancel)?;
-        let samples = audio.require_samples(BACKEND)?;
         let prompt = decode::Prompt::new(&self.tokenizer, &self.config, language)?;
         let mel = mel::spectrogram(samples, &self.mel_filters, MEL_BANDS);
         let spoken = mel::spoken_frames(samples.len());

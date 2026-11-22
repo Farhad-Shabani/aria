@@ -7,14 +7,12 @@ mod transfer;
 mod wake_word;
 mod worker;
 
-use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
+use crate::audio::limit;
 use crate::audio::recording;
-use crate::audio::spool;
 use crate::audio::{CaptureError, RecordingReader, StopSignal, Stopper};
-use crate::primitives::private_fs;
 use crate::voice_activity::{SileroVad, VoiceActivityDetector};
 use crate::wake_word::WakeWordDetector;
 
@@ -44,8 +42,8 @@ const DEFAULT_MAXIMUM_DURATION: Duration = Duration::from_secs(60);
 type Result<T> = std::result::Result<T, CaptureError>;
 
 /// A microphone, ready to record. `open()` records on the system default,
-/// in a private per-user spool directory, for at most 60 seconds, and holds
-/// the stream between recordings. The builder overrides each.
+/// for at most 60 seconds, and holds the stream between recordings. The
+/// builder overrides each. Recordings stay in memory.
 pub struct Microphone {
     commands: Sender<worker::Command>,
 }
@@ -57,7 +55,6 @@ impl Microphone {
 
     pub fn builder() -> MicrophoneBuilder {
         MicrophoneBuilder {
-            spool_dir: None,
             maximum_duration: DEFAULT_MAXIMUM_DURATION,
             input: None,
             idle: IdleStream::Held,
@@ -93,24 +90,14 @@ impl Microphone {
 }
 
 pub struct MicrophoneBuilder {
-    spool_dir: Option<PathBuf>,
     maximum_duration: Duration,
     input: Option<InputDeviceId>,
     idle: IdleStream,
 }
 
 impl MicrophoneBuilder {
-    /// Where the bounded temporary WAV lives while recording. It holds
-    /// everything the microphone hears, so use a directory only your user
-    /// can read. Without one, loading creates a private per-user directory.
-    pub fn spool_dir(mut self, directory: impl Into<PathBuf>) -> Self {
-        self.spool_dir = Some(directory.into());
-        self
-    }
-
-    /// The most a single recording may hold, up to about 37 hours. The spool
-    /// grows with it, about 115 MB per hour, and each reader holds what it
-    /// has not released, about 230 MB per hour.
+    /// The most a single recording may hold, up to about 37 hours. Each
+    /// reader holds what it has not released, about 230 MB per hour.
     pub fn maximum_duration(mut self, maximum_duration: Duration) -> Self {
         self.maximum_duration = maximum_duration;
         self
@@ -151,15 +138,8 @@ impl MicrophoneBuilder {
 
     /// Cheap checks first, so a model loads only once they pass.
     fn prepare<V>(self, vad: impl FnOnce() -> Result<V>) -> Result<PreparedMicrophone<V>> {
-        spool::maximum_samples(self.maximum_duration)?;
-        let spool_dir = match self.spool_dir {
-            // A caller-chosen directory is theirs: no ownership or mode
-            // enforcement on a layout this crate does not own.
-            Some(directory) => directory,
-            None => private_spool_dir()?,
-        };
+        limit::maximum_samples(self.maximum_duration)?;
         Ok(PreparedMicrophone {
-            spool_dir,
             maximum_duration: self.maximum_duration,
             input: self.input,
             idle: self.idle,
@@ -171,7 +151,6 @@ impl MicrophoneBuilder {
 /// A microphone whose fallible setup is done. Opening it starts the worker
 /// thread, which opens the input device.
 pub struct PreparedMicrophone<V = SileroVad> {
-    spool_dir: PathBuf,
     maximum_duration: Duration,
     input: Option<InputDeviceId>,
     idle: IdleStream,
@@ -180,13 +159,7 @@ pub struct PreparedMicrophone<V = SileroVad> {
 
 impl<V: VoiceActivityDetector + Send + 'static> PreparedMicrophone<V> {
     pub fn open(self) -> Result<Microphone> {
-        let commands = worker::spawn(
-            self.spool_dir,
-            self.maximum_duration,
-            self.input,
-            self.idle,
-            self.vad,
-        )?;
+        let commands = worker::spawn(self.maximum_duration, self.input, self.idle, self.vad)?;
         Ok(Microphone { commands })
     }
 
@@ -195,7 +168,6 @@ impl<V: VoiceActivityDetector + Send + 'static> PreparedMicrophone<V> {
         W: WakeWordDetector + Send + 'static,
     {
         let (commands, events) = worker::spawn_with_wake_word(
-            self.spool_dir,
             self.maximum_duration,
             self.input,
             self.idle,
@@ -205,13 +177,6 @@ impl<V: VoiceActivityDetector + Send + 'static> PreparedMicrophone<V> {
         let monitor = WakeWordMonitor::new(commands.clone(), events);
         Ok((Microphone { commands }, monitor))
     }
-}
-
-fn private_spool_dir() -> Result<PathBuf> {
-    let directory =
-        std::env::temp_dir().join(format!("aria-{}", rustix::process::getuid().as_raw()));
-    private_fs::prepare_directory(&directory).map_err(MicrophoneError::SpoolDirectory)?;
-    Ok(directory)
 }
 
 impl AudioCapture for Microphone {
@@ -240,7 +205,7 @@ impl AudioCapture for Microphone {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::SpoolError;
+    use crate::audio::LengthError;
 
     #[test]
     fn a_maximum_duration_over_the_limit_is_refused_before_opening() {
@@ -250,7 +215,7 @@ mod tests {
 
         assert!(matches!(
             outcome,
-            Err(CaptureError::Spool(SpoolError::InvalidDuration { .. }))
+            Err(CaptureError::Length(LengthError::InvalidDuration { .. }))
         ));
     }
 }

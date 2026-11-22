@@ -1,37 +1,26 @@
 //! The model an inference host serves, and one request run against it.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aria_stt::EngineConfig;
 use tokio::sync::mpsc;
 
-use aria_kit::audio::{
-    Recording, RecordingReader, RecordingWriter, SpooledRecordingWriter, f32_from_pcm16,
-};
+use aria_kit::audio::{Recording, RecordingReader, RecordingWriter};
 use aria_kit::transcription::check_cancelled;
 use aria_primitives::cancel::CancelToken;
-use aria_primitives::local_socket::ExclusiveListener;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::stt::{
-    AudioInputKind, Recognizer, Stream, TranscriptSegment, TranscriptUpdate, Transcription,
-    TranscriptionError,
+    Recognizer, Stream, TranscriptSegment, TranscriptUpdate, Transcription, TranscriptionError,
 };
 
 use super::{OUTPUT_POLL, OUTPUT_STALL_TIMEOUT};
-use crate::inference::{
-    Completion, Event, Info, MAX_AUDIO_SECONDS, MAX_TEXT_BYTES, Start, Strategy,
-};
+use crate::inference::{Completion, Event, Info, MAX_TEXT_BYTES, Start, Strategy};
 
 pub(in crate::daemon) struct Engine {
     name: &'static str,
-    input: AudioInputKind,
     stream: Option<Stream>,
     recognizer: Arc<Box<dyn Recognizer>>,
-    spool: PathBuf,
-    // A cancelled native call may outlive its waiter and must retain the spool namespace.
-    _ownership: Arc<ExclusiveListener>,
 }
 
 /// A request this engine accepted, and the reader its upload fills.
@@ -43,30 +32,22 @@ pub(in crate::daemon) struct Prepared {
 impl Engine {
     pub(super) fn load(
         config: EngineConfig,
-        spool: PathBuf,
-        ownership: Arc<ExclusiveListener>,
         cancel: &CancelToken,
     ) -> Result<Self, TranscriptionError> {
-        let (name, input, stream) = (config.name(), config.input(), config.stream());
+        let (name, stream) = (config.name(), config.stream());
         let recognizer = config.load(cancel)?;
-        Ok(Self::new(name, input, stream, recognizer, spool, ownership))
+        Ok(Self::new(name, stream, recognizer))
     }
 
     pub(super) fn new(
         name: &'static str,
-        input: AudioInputKind,
         stream: Option<Stream>,
         recognizer: Box<dyn Recognizer>,
-        spool: PathBuf,
-        ownership: Arc<ExclusiveListener>,
     ) -> Self {
         Self {
             name,
-            input,
             stream,
             recognizer: Arc::new(recognizer),
-            spool,
-            _ownership: ownership,
         }
     }
 
@@ -86,7 +67,10 @@ impl Engine {
     }
 
     /// Refuses a request this engine cannot serve before any audio arrives.
-    pub(in crate::daemon) fn prepare(&self, start: Start) -> Result<(Prepared, Input), RpcFailure> {
+    pub(in crate::daemon) fn prepare(
+        &self,
+        start: Start,
+    ) -> Result<(Prepared, RecordingWriter), RpcFailure> {
         if start.engine != self.name {
             return Err(RpcFailure::new(
                 RpcErrorCode::Unsupported,
@@ -99,20 +83,8 @@ impl Engine {
                 "the server engine does not support streaming",
             ));
         }
-        let (recording, input) = self.recording()?;
-        Ok((Prepared { start, recording }, input))
-    }
-
-    fn recording(&self) -> Result<(RecordingReader, Input), RpcFailure> {
-        if self.input == AudioInputKind::Wav {
-            let (reader, writer) =
-                Recording::open_spooled(&self.spool, Duration::from_secs(MAX_AUDIO_SECONDS))
-                    .map_err(|_| preparation_failure())?;
-            Ok((reader, Input::Wav(writer)))
-        } else {
-            let (reader, writer) = Recording::open();
-            Ok((reader, Input::Samples(writer)))
-        }
+        let (recording, writer) = Recording::open();
+        Ok((Prepared { start, recording }, writer))
     }
 
     pub(in crate::daemon) fn recognize(
@@ -134,7 +106,7 @@ impl Engine {
             }
             // `prepare` refuses streaming from an engine without a stream.
             (Strategy::Whole, _) | (Strategy::Streaming, None) => {
-                whole = Transcription::complete(self.input, Arc::clone(&self.recognizer));
+                whole = Transcription::complete(Arc::clone(&self.recognizer));
                 whole.start_with(&start.language, cancel)
             }
         }
@@ -228,33 +200,6 @@ fn within_limit(bytes: usize) -> Result<(), RpcFailure> {
     }
 }
 
-/// Uploaded PCM goes to memory for an engine that reads samples, or to a
-/// private WAV spool for one that reads a file.
-pub(in crate::daemon) enum Input {
-    Samples(RecordingWriter),
-    Wav(SpooledRecordingWriter),
-}
-
-impl Input {
-    pub(in crate::daemon) fn push(&mut self, samples: &[i16]) -> Result<(), RpcFailure> {
-        match self {
-            Self::Samples(writer) => {
-                let samples: Vec<_> = samples.iter().copied().map(f32_from_pcm16).collect();
-                writer.push(&samples);
-                Ok(())
-            }
-            Self::Wav(writer) => writer.push(samples).map_err(|_| preparation_failure()),
-        }
-    }
-
-    pub(in crate::daemon) fn finish(self) {
-        match self {
-            Self::Samples(writer) => writer.finish(),
-            Self::Wav(writer) => writer.finish(),
-        }
-    }
-}
-
 /// Waits for room in a full queue until `timeout`, then fails Busy.
 fn emit(
     mut event: Event,
@@ -296,13 +241,6 @@ fn bounded_segment(
     })
 }
 
-fn preparation_failure() -> RpcFailure {
-    RpcFailure::new(
-        RpcErrorCode::TranscriptionFailed,
-        "preparing inference audio failed",
-    )
-}
-
 pub(super) fn recognition_failure(error: TranscriptionError) -> RpcFailure {
     let (code, message) = match error {
         TranscriptionError::Cancelled => (RpcErrorCode::Cancelled, "inference was cancelled"),
@@ -315,8 +253,6 @@ pub(super) fn recognition_failure(error: TranscriptionError) -> RpcFailure {
         | TranscriptionError::Load { .. }
         | TranscriptionError::Capture(_)
         | TranscriptionError::Inference { .. }
-        | TranscriptionError::UnsupportedAudioPath { .. }
-        | TranscriptionError::UnsupportedAudioInput { .. }
         | TranscriptionError::UnsupportedBackend { .. }
         | TranscriptionError::UnsupportedDevice { .. }
         | TranscriptionError::NoNativeStream

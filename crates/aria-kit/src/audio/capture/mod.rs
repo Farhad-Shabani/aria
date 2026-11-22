@@ -170,9 +170,6 @@ pub enum AutoStopError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum MicrophoneError {
-    #[error("failed to prepare the recording spool directory")]
-    SpoolDirectory(#[source] crate::primitives::private_fs::PrivateDirectoryError),
-
     #[error("no microphone is available")]
     NoInputDevice,
 

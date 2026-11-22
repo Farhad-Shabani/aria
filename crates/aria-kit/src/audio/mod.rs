@@ -13,9 +13,9 @@ mod stop;
 #[cfg(not(target_family = "wasm"))]
 mod capture;
 #[cfg(not(target_family = "wasm"))]
-mod resample;
+mod limit;
 #[cfg(not(target_family = "wasm"))]
-mod spool;
+mod resample;
 #[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 pub(crate) mod testing;
 #[cfg(not(target_family = "wasm"))]
@@ -26,9 +26,7 @@ use std::time::Duration;
 pub use clip::{Clip, ClipError};
 #[cfg(all(feature = "silero", not(target_family = "wasm")))]
 pub use recording::RecordingWaker;
-#[cfg(not(target_family = "wasm"))]
-pub use recording::SpooledRecordingWriter;
-pub use recording::{CaptureError, RecordedAudio, Recording, RecordingReader, RecordingWriter};
+pub use recording::{CaptureError, Recording, RecordingReader, RecordingWriter};
 #[cfg(not(target_family = "wasm"))]
 pub use resample::{ResampleError, Resampler};
 pub use source::{InputDeviceId, RecordingSource};
@@ -46,17 +44,18 @@ pub use capture::{
     check_fallback_input_device, input_devices, is_available, resolve_input,
 };
 #[cfg(not(target_family = "wasm"))]
-pub use spool::{SpoolError, remove_all_spools};
+pub use limit::LengthError;
 #[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 pub use testing::{canonical_fixture, fixture_of};
 #[cfg(not(target_family = "wasm"))]
-pub use wav::{WavError, read_wav, write_wav};
+pub use wav::{WavError, encode_wav, read_wav, write_wav};
 
 pub const CANONICAL_SAMPLE_RATE: u32 = 16_000;
 
-/// The longest audio a spool writes or `from_wav_file` reads. hound sums a
-/// 16-bit mono WAV's RIFF size as data bytes plus 36 in a `u32`, so one more
-/// sample wraps it. That is about 37 hours.
+/// The most audio capture keeps in one recording, or `from_wav_file` reads,
+/// so any recording fits a WAV. hound sums a 16-bit mono WAV's RIFF size as data
+/// bytes plus 36 in a `u32`, so one more sample wraps it. That is about 37
+/// hours.
 #[cfg(not(target_family = "wasm"))]
 pub(crate) const MAX_RECORDING_SAMPLES: u64 = (u32::MAX as u64 - 36) / 2;
 #[cfg(not(target_family = "wasm"))]

@@ -5,8 +5,8 @@ use super::super::history::HistoryStore;
 use super::super::subscriptions::Subscriptions;
 use super::super::vocabulary::Runtime as VocabularyRuntime;
 use super::assembly::{
-    BuiltDictation, DictationInitializationError, EngineSlot, ModelLoading, RetryError,
-    RetryTarget, RuntimeExecutor, build_dictation, transcribe_retry,
+    BuiltDictation, DictationInitializationError, EngineSlot, ModelLoading, RetryTarget,
+    RuntimeExecutor, build_dictation, transcribe_retry,
 };
 use super::follower::EngineFollower;
 use crate::daemon::DaemonLifetime;
@@ -33,7 +33,6 @@ use aria_voice::dictation::{
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
 use aria_voice::stt::Language;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 const CALL_EVENT_THREAD: &str = "aria-dictation-call";
@@ -87,8 +86,6 @@ pub(in crate::daemon) struct DictationRuntime {
     history: Arc<HistoryStore>,
     microphone: Arc<Gate>,
     retry: Lazy<RetrySetup, ConfigError>,
-    /// Where a retry's audio goes for an engine that reads files.
-    spool_dir: PathBuf,
 }
 
 pub(super) struct RetrySetup {
@@ -132,14 +129,12 @@ impl DictationRuntime {
         vocabulary: Arc<VocabularyRuntime>,
     ) -> Self {
         let delivery = context.delivery.clone();
-        let spool_dir = context.paths.spool_dir().to_path_buf();
         let home = context.home.clone();
         let sound_muting = context.sound_muting();
         let retry_home = home.clone();
         let retry_vocabulary = Arc::clone(&vocabulary);
         let retry_cache = Arc::clone(&cache);
         Self {
-            spool_dir: spool_dir.clone(),
             retry: Lazy::new(move || {
                 let settings = retry_cache.effective();
                 Ok(RetrySetup {
@@ -184,7 +179,6 @@ impl DictationRuntime {
                             // A daemon that defers its build serves one press and no relay.
                             phones: None,
                         },
-                        &spool_dir,
                         &home,
                         Arc::clone(&history),
                         ModelLoading::OnFirstUse,
@@ -209,7 +203,6 @@ impl DictationRuntime {
             history: Arc::new(HistoryStore::new()),
             microphone: Gate::new(),
             retry: Lazy::new(|| Err(ConfigError::WakeRequiresMicrophone)),
-            spool_dir: PathBuf::new(),
             settings,
             coordinator: CoordinatorState::Deferred(Box::new(DeferredCoordinator::new(|| {
                 Err(DictationInitializationError::Capture(
@@ -265,7 +258,6 @@ impl DictationRuntime {
             wake_control,
         } = build_dictation(
             setup,
-            context.paths.spool_dir(),
             &context.home,
             Arc::clone(&history),
             ModelLoading::Eager,
@@ -287,7 +279,6 @@ impl DictationRuntime {
                     home: retry_home.clone(),
                 })
             }),
-            spool_dir: context.paths.spool_dir().to_path_buf(),
             history,
             microphone: Arc::clone(&microphone),
         };
@@ -505,8 +496,8 @@ impl DictationRuntime {
                 || !names_an_engine(requested)
         }) {
             let transcribed = engine
-                .transcribe_kept(recording, settings, &self.spool_dir, cancel)
-                .map_err(retry_error)?;
+                .transcribe_kept(recording, settings, cancel)
+                .map_err(transcription)?;
             if names_an_engine(requested) && transcribed.engine != requested {
                 return Err(HistoryError::transcription(
                     RpcErrorCode::TranscriptionFailed,
@@ -527,8 +518,7 @@ impl DictationRuntime {
             |engine| engine.backend.clone(),
         );
         let target = retry_target(&backend, &setup.home, requested)?;
-        transcribe_retry(setup, target, recording, settings, &self.spool_dir, cancel)
-            .map_err(retry_error)
+        transcribe_retry(setup, target, recording, settings, cancel).map_err(transcription)
     }
 
     pub(in crate::daemon) fn execute(
@@ -623,13 +613,6 @@ fn retry_target<'a>(
             .for_backend(engine, home)
             .map(RetryTarget::Local)
             .map_err(|error| HistoryError::transcription(RpcErrorCode::TranscriptionFailed, error)),
-    }
-}
-
-fn retry_error(error: RetryError) -> HistoryError {
-    match error {
-        RetryError::Spool(error) => HistoryError::storage(error),
-        RetryError::Transcription(error) => transcription(error),
     }
 }
 
@@ -1073,13 +1056,10 @@ mod error_tests {
 
 #[cfg(test)]
 mod history_tests {
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use super::super::assembly::DictationEngine;
     use aria_settings::Settings;
-    use aria_voice::config::SttConfig;
     use aria_voice::dictation::{
         DictationExecutor, DictationPolicy, DictationResult, ExecutionControl,
     };
@@ -1087,12 +1067,8 @@ mod history_tests {
 
     use super::*;
 
-    /// The file each retry's audio was in, if any, and whether it was there.
-    type SeenFiles = Arc<Mutex<Vec<Option<(PathBuf, bool)>>>>;
-
     struct RetrySpy {
         seen: Arc<Mutex<Vec<(String, bool)>>>,
-        files: SeenFiles,
         cancel: Option<CancelToken>,
         silent: bool,
     }
@@ -1118,12 +1094,6 @@ mod history_tests {
         ) -> Result<Transcribed, DictationError> {
             assert!(recording.ended_at().is_some());
             assert!(project.is_none());
-            recording.fill().unwrap();
-            let file = recording.finished_audio().unwrap().path();
-            self.files
-                .lock()
-                .unwrap()
-                .push(file.map(|file| (file.to_path_buf(), file.exists())));
             self.seen
                 .lock()
                 .unwrap()
@@ -1186,49 +1156,38 @@ mod history_tests {
         runtime: DictationRuntime,
         original: HistoryEntry,
         seen: Arc<Mutex<Vec<(String, bool)>>>,
-        files: SeenFiles,
     }
 
     impl Fixture {
         fn new(cancel: Option<CancelToken>) -> Self {
-            Self::build(cancel, false, samples_engine())
+            Self::build(cancel, false)
         }
 
         fn silent() -> Self {
-            Self::build(None, true, samples_engine())
+            Self::build(None, true)
         }
 
-        fn build(cancel: Option<CancelToken>, silent: bool, engine: SttConfig) -> Self {
+        fn build(cancel: Option<CancelToken>, silent: bool) -> Self {
             let directory = tempfile::tempdir().unwrap();
-            let spool_dir = directory.path().join("spool");
-            aria_primitives::private_fs::prepare_directory(&spool_dir).unwrap();
             let history = Arc::new(HistoryStore::open(
                 &directory.path().join("history"),
                 Arc::new(crate::daemon::storage::StorageKey::for_tests()),
             ));
-            let audio = aria_kit::audio::canonical_fixture(directory.path());
-            std::fs::set_permissions(&audio, std::fs::Permissions::from_mode(0o600)).unwrap();
             let original = history
                 .storage()
                 .unwrap()
-                .insert(entry(), Some(&audio))
+                .insert(entry(), Some(&[0.25; 16_000]))
                 .unwrap();
             let settings =
                 Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
             let microphone = Gate::new();
             let seen = Arc::new(Mutex::new(Vec::new()));
-            let files = Arc::new(Mutex::new(Vec::new()));
             let executor: RuntimeExecutor = Box::new(RetrySpy {
                 seen: Arc::clone(&seen),
-                files: Arc::clone(&files),
                 cancel,
                 silent,
             });
-            let slot = EngineSlot::new(DictationEngine::built(
-                "test",
-                SttBackend::Local(engine),
-                executor,
-            ));
+            let slot = EngineSlot::of("test", executor);
             let execution: RuntimeExecutor = Box::new(slot.clone());
             let coordinator = DictationCoordinator::new(
                 DictationPolicy::new(MAX_DICTATION_TIMEOUT).unwrap(),
@@ -1239,7 +1198,6 @@ mod history_tests {
                 _directory: directory,
                 original,
                 seen,
-                files,
                 runtime: DictationRuntime {
                     emitter: EventEmitter::unsubscribed(),
                     settings,
@@ -1247,66 +1205,9 @@ mod history_tests {
                     history,
                     microphone,
                     retry: Lazy::new(|| Err(ConfigError::WakeRequiresMicrophone)),
-                    spool_dir,
                 },
             }
         }
-    }
-
-    #[test]
-    fn a_retry_that_cannot_spool_reports_storage_not_capture() {
-        let error = retry_error(RetryError::Spool(aria_kit::audio::CaptureError::SourceGone));
-
-        assert!(matches!(error, HistoryError::Storage(_)));
-    }
-
-    fn samples_engine() -> SttConfig {
-        SttConfig::Moonshine {
-            model_directory: PathBuf::from("/models"),
-        }
-    }
-
-    #[test]
-    fn a_retry_keeps_its_audio_in_memory_for_an_engine_that_takes_samples() {
-        let fixture = Fixture::new(None);
-
-        fixture
-            .runtime
-            .retry_history(
-                fixture.original.id,
-                RetryOptions::default(),
-                CancelToken::never(),
-            )
-            .unwrap();
-
-        assert_eq!(*fixture.files.lock().unwrap(), [None]);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_retry_spools_its_audio_only_while_an_engine_that_reads_files_runs() {
-        let engine = SttConfig::ParakeetMlx {
-            model: "unused".to_owned(),
-            interpreter: PathBuf::from("/unused"),
-        };
-        let fixture = Fixture::build(None, false, engine);
-
-        fixture
-            .runtime
-            .retry_history(
-                fixture.original.id,
-                RetryOptions::default(),
-                CancelToken::never(),
-            )
-            .unwrap();
-
-        let files = fixture.files.lock().unwrap();
-        let [Some((file, existed))] = files.as_slice() else {
-            panic!("one retry should read one file: {files:?}");
-        };
-        assert!(existed);
-        assert!(file.starts_with(&fixture.runtime.spool_dir));
-        assert!(!file.exists());
     }
 
     #[test]
@@ -1478,14 +1379,10 @@ mod history_tests {
         server.pair_home(home.clone()).await;
         let observed = Arc::clone(&server.observed);
         tokio::task::spawn_blocking(move || {
-            let audio = home.join("speech.wav");
-            std::fs::copy(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../aria-wake/tests/fixtures/negative.wav"),
-                &audio,
-            )
-            .unwrap();
-            std::fs::set_permissions(&audio, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let audio = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../aria-wake/tests/fixtures/negative.wav");
+            let mut speech = RecordingReader::from_wav_file(&audio).unwrap();
+            speech.fill().unwrap();
             let project = home.join("original-project");
             std::fs::create_dir(&project).unwrap();
             let mut original = entry();
@@ -1497,7 +1394,7 @@ mod history_tests {
                 .history
                 .storage()
                 .unwrap()
-                .insert(original, Some(&audio))
+                .insert(original, Some(speech.samples()))
                 .unwrap();
             fixture
                 .runtime
@@ -1542,7 +1439,6 @@ mod history_tests {
                     hold_microphone: tokio::sync::watch::channel(true).1,
                     phones: None,
                 },
-                &home,
                 &home,
                 Arc::clone(&fixture.runtime.history),
                 ModelLoading::Eager,

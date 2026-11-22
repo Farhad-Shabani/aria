@@ -6,9 +6,7 @@ use super::{
     RecordingId, ReturnOffer, StopMode, Transcribed, TranscriptSink, Utterance,
 };
 use crate::history::HistorySource;
-use crate::stt::{
-    Hypothesis, Language, RecognitionAudio, Recognizer, Transcript, TranscriptionError,
-};
+use crate::stt::{Hypothesis, Language, Recognizer, Transcript, TranscriptionError};
 use aria_kit::audio::{AutoStop, RecordingReader, SilenceDuration};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{OperationSource, TimedWord};
@@ -240,11 +238,11 @@ impl VoiceActivityDetector for Loud {
 /// An engine that decodes whole audio by calling its closure.
 pub struct Hypotheses<F>(pub F)
 where
-    F: Fn(RecognitionAudio<'_>) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static;
+    F: Fn(&[f32]) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static;
 
 impl<F> Recognizer for Hypotheses<F>
 where
-    F: Fn(RecognitionAudio<'_>) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static,
+    F: Fn(&[f32]) -> Result<Hypothesis, TranscriptionError> + Send + Sync + 'static,
 {
     fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
         Ok(())
@@ -252,11 +250,11 @@ where
 
     fn recognize_with(
         &self,
-        audio: RecognitionAudio<'_>,
+        samples: &[f32],
         _: &Language,
         _: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
-        (self.0)(audio)
+        (self.0)(samples)
     }
 }
 
@@ -275,7 +273,7 @@ where
 
     fn recognize_with(
         &self,
-        _: RecognitionAudio<'_>,
+        _: &[f32],
         _: &Language,
         _: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {

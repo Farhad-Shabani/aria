@@ -89,9 +89,7 @@ mod tests {
     fn preview_reads_preserve_finalized_segments_and_completion() {
         use crate::audio::testing::{Pace, paced};
         use crate::cancel::CancelToken;
-        use crate::transcription::{
-            Cadence, Hypothesis, Language, RecognitionAudio, TimedWord, Transcription,
-        };
+        use crate::transcription::{Cadence, Hypothesis, Language, TimedWord, Transcription};
         use std::sync::Mutex;
 
         struct Script {
@@ -109,7 +107,7 @@ mod tests {
             }
             fn recognize_with(
                 &self,
-                audio: RecognitionAudio<'_>,
+                samples: &[f32],
                 _: &Language,
                 _: &CancelToken,
             ) -> Result<Hypothesis, TranscriptionError> {
@@ -118,8 +116,7 @@ mod tests {
                 *calls += 1;
                 self.pace.advance();
                 if self.timed {
-                    let duration = audio.require_samples("script")?.len() as f32
-                        / CANONICAL_SAMPLE_RATE as f32;
+                    let duration = samples.len() as f32 / CANONICAL_SAMPLE_RATE as f32;
                     let words = text.split_whitespace().count();
                     Ok(Hypothesis::with_words(
                         text,
@@ -136,7 +133,7 @@ mod tests {
             }
         }
         let run = |previews, timed| {
-            let (_directory, mut recording, pace) = paced(vec![vec![8192_i16; 1600]; 4]);
+            let (mut recording, pace) = paced(vec![vec![8192_i16; 1600]; 4]);
             let transcription = Transcription::agreement(
                 Cadence::from_millis(100, 200),
                 Script {
@@ -183,9 +180,7 @@ mod tests {
     fn delayed_untimed_words_keep_the_entire_decode_window() {
         use crate::audio::testing::{Pace, paced};
         use crate::cancel::CancelToken;
-        use crate::transcription::{
-            Cadence, Hypothesis, Language, RecognitionAudio, Transcription,
-        };
+        use crate::transcription::{Cadence, Hypothesis, Language, Transcription};
         use std::sync::Mutex;
 
         struct Script {
@@ -203,7 +198,7 @@ mod tests {
 
             fn recognize_with(
                 &self,
-                _: RecognitionAudio<'_>,
+                _: &[f32],
                 _: &Language,
                 _: &CancelToken,
             ) -> Result<Hypothesis, TranscriptionError> {
@@ -225,7 +220,7 @@ mod tests {
             }
         }
         let second = CANONICAL_SAMPLE_RATE as usize;
-        let (_directory, mut recording, pace) = paced(vec![vec![8192_i16; second]; 8]);
+        let (mut recording, pace) = paced(vec![vec![8192_i16; second]; 8]);
         let transcription = Transcription::agreement(
             Cadence::from_millis(1_000, 20_000),
             Script {

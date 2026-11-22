@@ -21,7 +21,7 @@ use aria_kit::audio::{
 use aria_kit::cancel::CancelToken;
 use aria_kit::speaker::{ProfileStore, Role};
 use aria_kit::transcription::{
-    Hypothesis, Language, RecognitionAudio, Recognizer, StreamingEngine as _, TranscriptionError,
+    Hypothesis, Language, Recognizer, StreamingEngine as _, TranscriptionError,
 };
 use aria_kit::voice_activity::SileroVad;
 use aria_platform::delivery::{DeliveryError, DeliveryOutcome, Finished, OutputMode, TextDelivery};
@@ -204,11 +204,11 @@ impl Recognizer for ReplayParakeet {
 
     fn recognize_with(
         &self,
-        audio: RecognitionAudio<'_>,
+        samples: &[f32],
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
-        let hypothesis = self.model.recognize_with(audio, language, cancel)?;
+        let hypothesis = self.model.recognize_with(samples, language, cancel)?;
         Ok(if self.timed {
             hypothesis
         } else {
@@ -991,14 +991,8 @@ fn acceptance(truth: &Truth, scores: &[(Press, Score)]) -> Vec<String> {
 }
 
 fn dictate(speaker: &SpeakerConfig, wav: &Path, parakeet: &Arc<Parakeet>, press: Press) -> Typed {
-    let spool = tempfile::tempdir().unwrap();
-    let capture = WavReplayCapture::new(
-        spool.path(),
-        Duration::from_secs(120),
-        wav,
-        ReplayPace::Realtime,
-    )
-    .unwrap();
+    let capture =
+        WavReplayCapture::new(Duration::from_secs(120), wav, ReplayPace::Realtime).unwrap();
     let (diarizer, segmenter) = tracking_models(speaker);
     let typed = Arc::new(Mutex::new(Typed::default()));
     let started = Arc::new(OnceLock::new());

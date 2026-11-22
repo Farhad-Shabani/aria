@@ -1320,7 +1320,7 @@ mod tests {
 
     #[test]
     fn previews_preserve_the_decode_window_after_a_buffer_cut() {
-        let (_directory, mut recording, pace) = paced(vec![loud_batch(); 4]);
+        let (mut recording, pace) = paced(vec![loud_batch(); 4]);
         let mut state = AgreementState::new(cadence(200));
         let mut decode = scripted(&["guest", "guest", "owner", "owner"]);
         let mut previews = Vec::new();
@@ -1352,7 +1352,7 @@ mod tests {
     #[test]
     fn previews_replace_the_accepted_tail_and_drain_after_final_segments() {
         let answers = ["turn lift", "turn left now", "", "turn left now"];
-        let (_directory, mut recording, pace) = paced(vec![loud_batch(); answers.len()]);
+        let (mut recording, pace) = paced(vec![loud_batch(); answers.len()]);
         let mut state = AgreementState::new(cadence(20_000));
         let mut decode = scripted(&answers);
         let mut events = Vec::new();
@@ -1415,7 +1415,7 @@ mod tests {
             ),
         ] {
             let baseline = drive(cap, batches.clone(), &answers);
-            let (_directory, mut recording, pace) = paced(batches);
+            let (mut recording, pace) = paced(batches);
             let mut state = AgreementState::new(cadence(cap));
             let mut decode = scripted(&answers);
             let mut segments = Vec::new();
@@ -1447,7 +1447,7 @@ mod tests {
 
     #[test]
     fn a_repeated_word_tail_is_republished_after_commitment() {
-        let (_directory, mut recording, pace) = paced(vec![loud_batch(); 3]);
+        let (mut recording, pace) = paced(vec![loud_batch(); 3]);
         let mut state = AgreementState::new(cadence(20_000));
         let mut decode = scripted(&["go", "go go", "go go home"]);
         let mut updates = Vec::new();
@@ -1477,7 +1477,7 @@ mod tests {
 
     #[test]
     fn cancellation_does_not_deliver_a_queued_preview() {
-        let (_directory, mut recording, pace) = paced(vec![loud_batch(); 3]);
+        let (mut recording, pace) = paced(vec![loud_batch(); 3]);
         let mut state = AgreementState::new(cadence(20_000));
         let cancel = CancelToken::new();
         let mut decode = scripted(&["one two", "one two three", "one two three"]);
@@ -1508,7 +1508,7 @@ mod tests {
 
     /// A paced run: each decode releases the next batch.
     fn drive(max_buffer_ms: usize, batches: Vec<Vec<i16>>, answers: &[&str]) -> Run {
-        let (_directory, mut recording, pace) = paced(batches);
+        let (mut recording, pace) = paced(batches);
         run(
             AgreementState::new(cadence(max_buffer_ms)),
             &mut recording,
@@ -1522,7 +1522,7 @@ mod tests {
     /// available at once, which is what a decode slower than its producer
     /// sees.
     fn drive_whole(samples: usize, max_buffer_ms: usize, answers: &[&str]) -> Run {
-        let (_directory, mut recording) = recorded(&vec![0; samples]);
+        let mut recording = recorded(&vec![0; samples]);
         run(
             AgreementState::new(cadence(max_buffer_ms)),
             &mut recording,
@@ -2118,7 +2118,7 @@ mod tests {
 
         #[test]
         fn a_silent_recording_finishes_without_a_transcript_instead_of_failing() {
-            let (_directory, mut recording) = recorded(&vec![0; STRIDE * 4]);
+            let mut recording = recorded(&vec![0; STRIDE * 4]);
             let run = run(
                 AgreementState::new(cadence(20_000)),
                 &mut recording,
@@ -2277,7 +2277,7 @@ mod tests {
 
         #[test]
         fn segments_carry_absolute_sample_spans_from_word_timings() {
-            let (_directory, mut recording) = recorded(&vec![0_i16; 16_000]);
+            let mut recording = recorded(&vec![0_i16; 16_000]);
             let mut state = AgreementState::new(cadence(5_000));
             let cancel = CancelToken::new();
             let decode = |_window: &[f32]| {
@@ -2358,7 +2358,7 @@ mod tests {
 
         #[test]
         fn a_hypothesis_without_timings_yields_spanless_segments() {
-            let (_directory, mut recording) = recorded(&vec![0_i16; 2 * STRIDE]);
+            let mut recording = recorded(&vec![0_i16; 2 * STRIDE]);
             let mut state = AgreementState::new(cadence(5_000));
             let cancel = CancelToken::new();
             let decode = |_window: &[f32]| Ok(Hypothesis::new("no timings here"));
@@ -2522,7 +2522,7 @@ mod tests {
             // before the cut are not delivered again.
             const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
             let audio = spoken_audio(&SPOKEN, 3.0);
-            let (_directory, mut recording, pace) = paced(strides(&audio));
+            let (mut recording, pace) = paced(strides(&audio));
             let run = run(
                 AgreementState::new(cadence(20_000)),
                 &mut recording,
@@ -2552,7 +2552,7 @@ mod tests {
             // lost: the buffer decodes alone from then on.
             const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
             let audio = spoken_audio(&SPOKEN, 3.0);
-            let (_directory, mut recording, pace) = paced(strides(&audio));
+            let (mut recording, pace) = paced(strides(&audio));
             let run = run(
                 AgreementState::new(cadence(20_000)),
                 &mut recording,
@@ -2579,7 +2579,7 @@ mod tests {
             let mut batches = vec![loud_batch(); 3];
             batches.extend(vec![vec![pause; STRIDE]; 8]);
             batches.extend(after);
-            let (_directory, mut recording, pace) = paced(batches);
+            let (mut recording, pace) = paced(batches);
             let run = run(
                 AgreementState::new(cadence(max_ms)),
                 &mut recording,
@@ -2599,7 +2599,7 @@ mod tests {
             batches: Vec<Vec<i16>>,
             word: impl Fn(f32) -> &'static str,
         ) -> String {
-            let (_directory, mut recording, pace) = paced(batches);
+            let (mut recording, pace) = paced(batches);
             let run = run(
                 AgreementState::new(cadence(20_000)),
                 &mut recording,
@@ -2773,7 +2773,7 @@ mod tests {
             batches.push(loud_batch());
             batches.extend(vec![soft_stride; 8]);
             batches.extend(vec![quiet_batch(); 20]);
-            let (_directory, mut recording, pace) = paced(batches);
+            let (mut recording, pace) = paced(batches);
             let loud = f32::from(loud_batch()[0]) / crate::audio::PCM_SCALE;
             // The silence after the soft speech is long enough to cut by
             // stride 19.
@@ -2812,7 +2812,7 @@ mod tests {
             const SPOKEN: [Spoken; 2] = [("a", 8_000, 0.0, 0.4), ("b", 7_000, 2.0, 2.4)];
             let mut audio = spoken_audio(&SPOKEN, 8.0);
             audio[sample_at(0.6)..sample_at(1.6)].fill(1_200);
-            let (_directory, mut recording, pace) = paced(strides(&audio));
+            let (mut recording, pace) = paced(strides(&audio));
             let mut b_delivered_at = None;
             run(
                 AgreementState::new(cadence(20_000)),
@@ -2847,7 +2847,7 @@ mod tests {
                 ("c", 7_000, 0.9, 1.6),
             ];
             let audio = spoken_audio(&SPOKEN, 3.0);
-            let (_directory, mut recording, pace) = paced(strides(&audio));
+            let (mut recording, pace) = paced(strides(&audio));
             // Only the first buffer misses the words after "a". The cap
             // bounds its windows; the windows after the cut open on the
             // lookback and are longer.
@@ -2878,7 +2878,7 @@ mod tests {
             const SPOKEN: [Spoken; 2] = [("a", 8_000, 0.0, 0.4), ("b", 7_000, 2.0, 2.4)];
             let mut audio = spoken_audio(&SPOKEN, 8.0);
             audio[sample_at(0.6)..sample_at(1.6)].fill(3_000);
-            let (_directory, mut recording, pace) = paced(strides(&audio));
+            let (mut recording, pace) = paced(strides(&audio));
             let run = run(
                 AgreementState::new(cadence(4_000)),
                 &mut recording,
@@ -3295,15 +3295,12 @@ mod tests {
             let max_window = max_buffer_ms * CANONICAL_SAMPLE_RATE as usize / 1000
                 + 2 * STRIDE
                 + LOOKBACK_SAMPLES as usize;
-            let (_directory, mut recording, pace) = match arrival {
+            let (mut recording, pace) = match arrival {
                 Arrival::Live => {
-                    let (directory, recording, pace) = paced(speech.batches);
-                    (directory, recording, Some(pace))
+                    let (recording, pace) = paced(speech.batches);
+                    (recording, Some(pace))
                 }
-                Arrival::Finished => {
-                    let (directory, recording) = recorded(&speech.batches.concat());
-                    (directory, recording, None)
-                }
+                Arrival::Finished => (recorded(&speech.batches.concat()), None),
             };
             let mut injected = Vec::new();
             let mut last_retained = 0;

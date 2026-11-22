@@ -10,14 +10,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::audio::StopSignal;
+use crate::audio::limit::{LimitedWriter, maximum_samples};
 use crate::audio::recording;
-use crate::audio::spool::{WavSpool, maximum_samples};
 use crate::audio::wav::{
     WavFileReader, check_declared_length, collect_samples, open_canonical_wav,
 };
-use crate::audio::{
-    RecordedAudio, RecordingReader, RecordingSource, canonical_duration, canonical_samples,
-};
+use crate::audio::{RecordingReader, RecordingSource, canonical_duration, canonical_samples};
 use crate::primitives::file_inspection::{InspectedFile, InspectionError};
 
 use super::RecordingMode;
@@ -40,24 +38,19 @@ pub enum ReplayPace {
 
 #[derive(Debug)]
 pub struct WavReplayCapture {
-    spool_dir: PathBuf,
     maximum_duration: Duration,
     pace: ReplayPace,
     samples: Arc<Vec<i16>>,
 }
 
 impl WavReplayCapture {
-    /// `spool_dir` should be a directory only your user can read: the
-    /// spool holds the replayed audio.
     pub fn new(
-        spool_dir: impl Into<PathBuf>,
         maximum_duration: Duration,
         wav_path: &Path,
         pace: ReplayPace,
     ) -> std::result::Result<Self, CaptureError> {
         let samples = read_replay_samples(wav_path, maximum_duration)?;
         Ok(Self {
-            spool_dir: spool_dir.into(),
             maximum_duration,
             pace,
             samples: Arc::new(samples),
@@ -76,20 +69,16 @@ impl AudioCapture for WavReplayCapture {
         stop: StopSignal,
     ) -> std::result::Result<RecordingReader, CaptureError> {
         let mut recording = match self.pace {
-            // A failure to spool the fixture fails `start`. It is not handed
-            // to readers as a recording that ended in error.
-            ReplayPace::Immediate => {
-                RecordingReader::from_pcm16_in(&self.spool_dir, &self.samples)?
-            }
+            ReplayPace::Immediate => RecordingReader::from_pcm16(&self.samples),
             ReplayPace::Realtime => {
                 let (recording, writer) = recording::ends();
-                let spool = WavSpool::create(&self.spool_dir, self.maximum_duration, &writer)?;
+                let limited = LimitedWriter::new(self.maximum_duration, &writer)?;
                 let samples = Arc::clone(&self.samples);
                 writer.begin(RecordingSource::Prerecorded);
                 thread::Builder::new()
                     .name("aria-wav-replay".to_owned())
                     .spawn(move || {
-                        let result = replay_paced(spool, &samples, &stop);
+                        let result = replay_paced(limited, &samples, &stop);
                         // Drop `stop` before closing the writer, so state it
                         // owns is released before a reader sees capture end.
                         drop(stop);
@@ -115,16 +104,16 @@ impl WavReplayCapture {
     }
 }
 
-/// Writes the samples to `spool` at recorded speed until they run out or
+/// Writes the samples to `limited` at recorded speed until they run out or
 /// `stop` fires. Each chunk is due at a fixed offset from the start, so one
 /// slow write does not delay every later chunk. That offset is where the
 /// chunk's audio ends: a microphone cannot hand over a sample before it is
 /// spoken.
 fn replay_paced(
-    mut spool: WavSpool,
+    mut limited: LimitedWriter,
     samples: &[i16],
     stop: &StopSignal,
-) -> std::result::Result<RecordedAudio, CaptureError> {
+) -> std::result::Result<(), CaptureError> {
     let started = Instant::now();
     let mut written = 0;
     for batch in samples.chunks(CHUNK_SAMPLES) {
@@ -133,12 +122,12 @@ fn replay_paced(
         if let Some(wait) = due.checked_duration_since(Instant::now()) {
             thread::sleep(wait);
         }
-        spool.write_samples(batch)?;
+        limited.push(batch)?;
         if stop.should_stop() {
             break;
         }
     }
-    Ok(spool.finish()?)
+    Ok(limited.finish()?)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -195,8 +184,8 @@ mod tests {
     fn replays_the_fixture_as_recorded_audio() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
         let fixture = canonical_fixture(directory.path());
-        let capture = WavReplayCapture::new(directory.path(), MAXIMUM_DURATION, &fixture, PACE)
-            .expect("fixture must load");
+        let capture =
+            WavReplayCapture::new(MAXIMUM_DURATION, &fixture, PACE).expect("fixture must load");
         let mut recording = capture
             .start(
                 RecordingMode::UntilStopped,
@@ -205,10 +194,8 @@ mod tests {
             )
             .expect("replay must succeed");
         assert_eq!(recording.source(), Some(RecordingSource::Prerecorded));
-        let audio = recording
-            .finished_audio()
-            .expect("the replay already ended");
-        assert_eq!(audio.duration(), Duration::from_secs(1));
+        recording.fill().expect("the replay already ended");
+        assert_eq!(recording.duration(), Duration::from_secs(1));
     }
 
     /// The point of a paced replay: a reader sees the opening while the rest
@@ -217,13 +204,8 @@ mod tests {
     fn a_paced_replay_arrives_while_the_reader_waits() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
         let fixture = canonical_fixture(directory.path());
-        let capture = WavReplayCapture::new(
-            directory.path(),
-            MAXIMUM_DURATION,
-            &fixture,
-            ReplayPace::Realtime,
-        )
-        .expect("fixture must load");
+        let capture = WavReplayCapture::new(MAXIMUM_DURATION, &fixture, ReplayPace::Realtime)
+            .expect("fixture must load");
 
         let mut recording = capture
             .start(
@@ -246,13 +228,8 @@ mod tests {
     fn a_paced_chunk_arrives_once_its_audio_has_been_spoken() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
         let fixture = canonical_fixture(directory.path());
-        let capture = WavReplayCapture::new(
-            directory.path(),
-            MAXIMUM_DURATION,
-            &fixture,
-            ReplayPace::Realtime,
-        )
-        .expect("fixture must load");
+        let capture = WavReplayCapture::new(MAXIMUM_DURATION, &fixture, ReplayPace::Realtime)
+            .expect("fixture must load");
 
         let started = Instant::now();
         let mut recording = capture
@@ -273,7 +250,7 @@ mod tests {
         let mut spec = wav_spec();
         spec.sample_rate = 44_100;
         let fixture = write_fixture(directory.path(), spec, FIXTURE_SAMPLES);
-        let error = WavReplayCapture::new(directory.path(), MAXIMUM_DURATION, &fixture, PACE)
+        let error = WavReplayCapture::new(MAXIMUM_DURATION, &fixture, PACE)
             .expect_err("a 44.1 kHz fixture must be rejected");
         assert!(matches!(
             error,
@@ -289,7 +266,7 @@ mod tests {
         let fixture = canonical_fixture(directory.path());
         std::fs::set_permissions(&fixture, std::fs::Permissions::from_mode(0o666))
             .expect("fixture permissions must be settable");
-        let error = WavReplayCapture::new(directory.path(), MAXIMUM_DURATION, &fixture, PACE)
+        let error = WavReplayCapture::new(MAXIMUM_DURATION, &fixture, PACE)
             .expect_err("a group/other-writable fixture must be rejected");
         assert!(matches!(
             error,
@@ -301,13 +278,8 @@ mod tests {
 
     #[test]
     fn rejects_a_relative_path() {
-        let error = WavReplayCapture::new(
-            "recordings",
-            MAXIMUM_DURATION,
-            Path::new("fixture.wav"),
-            PACE,
-        )
-        .expect_err("a relative path must be rejected");
+        let error = WavReplayCapture::new(MAXIMUM_DURATION, Path::new("fixture.wav"), PACE)
+            .expect_err("a relative path must be rejected");
         assert!(matches!(
             error,
             CaptureError::WavReplay(WavReplayError::UnusableFile(
@@ -320,7 +292,7 @@ mod tests {
     fn rejects_a_fixture_longer_than_the_recording_timeout() {
         let directory = tempfile::tempdir().expect("tempdir must be creatable");
         let fixture = write_fixture(directory.path(), wav_spec(), 2 * FIXTURE_SAMPLES);
-        let error = WavReplayCapture::new(directory.path(), Duration::from_secs(1), &fixture, PACE)
+        let error = WavReplayCapture::new(Duration::from_secs(1), &fixture, PACE)
             .expect_err("an over-long fixture must be rejected");
         assert!(matches!(error, CaptureError::Wav(WavError::TooLong { .. })));
     }

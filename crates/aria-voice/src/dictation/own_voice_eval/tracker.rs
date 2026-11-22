@@ -60,14 +60,8 @@ fn percent(part: f64, whole: f64) -> String {
 }
 
 pub(super) fn evaluate(speaker: &SpeakerConfig, wav: &Path, truth: &Truth) -> (Value, Admitted) {
-    let spool = tempfile::tempdir().unwrap();
-    let capture = WavReplayCapture::new(
-        spool.path(),
-        Duration::from_secs(120),
-        wav,
-        ReplayPace::Immediate,
-    )
-    .expect("the fixture is canonical PCM16 audio");
+    let capture = WavReplayCapture::new(Duration::from_secs(120), wav, ReplayPace::Immediate)
+        .expect("the fixture is canonical PCM16 audio");
     let mut recording = capture
         .start(
             RecordingMode::UntilStopped,

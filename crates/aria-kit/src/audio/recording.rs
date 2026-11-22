@@ -11,16 +11,12 @@ use std::time::Duration;
 #[cfg(not(target_family = "wasm"))]
 use std::time::Instant;
 
-#[cfg(not(target_family = "wasm"))]
-use super::MAX_RECORDING_DURATION;
 use super::RecordingSource;
 use super::canonical_duration;
 #[cfg(not(target_family = "wasm"))]
-use super::spool::WavSpool;
+use super::f32_from_pcm16;
 #[cfg(not(target_family = "wasm"))]
-use super::{MicrophoneError, SpoolError, WavError, WavReplayError};
-#[cfg(not(target_family = "wasm"))]
-use super::{f32_from_pcm16, pcm16_from_f32};
+use super::{LengthError, MicrophoneError, WavError, WavReplayError};
 
 // The source-specific error types stay with their backends.
 #[derive(Debug, thiserror::Error)]
@@ -39,7 +35,7 @@ pub enum CaptureError {
 
     #[cfg(not(target_family = "wasm"))]
     #[error(transparent)]
-    Spool(#[from] SpoolError),
+    Length(#[from] LengthError),
 
     #[error("no speech was detected within {0:?}")]
     NoSpeech(Duration),
@@ -58,64 +54,6 @@ pub enum CaptureError {
     StillCapturing,
 }
 
-/// The result of a finished recording: its length and, on a target with a
-/// filesystem, its WAV. A WAV this crate wrote is deleted when its owner
-/// drops. A caller's own file is only borrowed. A recording ended by
-/// [`RecordingWriter::finish`] has none.
-pub struct RecordedAudio {
-    #[cfg(not(target_family = "wasm"))]
-    storage: Storage,
-    samples: u64,
-}
-
-#[cfg(not(target_family = "wasm"))]
-enum Storage {
-    Owned(tempfile::TempPath),
-    Borrowed(std::path::PathBuf),
-    Unsaved,
-}
-
-impl RecordedAudio {
-    pub fn duration(&self) -> Duration {
-        canonical_duration(self.samples)
-    }
-
-    fn from_sample_count(samples: u64) -> Self {
-        Self {
-            #[cfg(not(target_family = "wasm"))]
-            storage: Storage::Unsaved,
-            samples,
-        }
-    }
-}
-
-#[cfg(not(target_family = "wasm"))]
-impl RecordedAudio {
-    pub(super) fn owned(path: tempfile::TempPath, samples: u64) -> Self {
-        Self {
-            storage: Storage::Owned(path),
-            samples,
-        }
-    }
-
-    pub(super) fn borrowed(path: std::path::PathBuf, samples: u64) -> Self {
-        Self {
-            storage: Storage::Borrowed(path),
-            samples,
-        }
-    }
-
-    /// `None` for a recording ended by [`RecordingWriter::finish`], which
-    /// never touched the filesystem.
-    pub fn path(&self) -> Option<&std::path::Path> {
-        match &self.storage {
-            Storage::Owned(path) => Some(path.as_ref()),
-            Storage::Borrowed(path) => Some(path),
-            Storage::Unsaved => None,
-        }
-    }
-}
-
 /// The two ends of one recording, before capture begins.
 pub(super) fn ends() -> (RecordingReader, RecordingWriter) {
     let recording = Arc::new(Recording::new());
@@ -124,7 +62,6 @@ pub(super) fn ends() -> (RecordingReader, RecordingWriter) {
         recording: Arc::clone(&recording),
         samples: Vec::new(),
         offset: 0,
-        keep_samples: true,
         queue,
         owns_outcome: true,
         outcome: None,
@@ -188,15 +125,9 @@ struct Ended {
     /// Whether capture failed. Forks read this: the owning reader moves
     /// `outcome` out, leaving `AlreadyFailed` in its place either way.
     failed: bool,
-    outcome: Result<RecordedAudio, CaptureError>,
+    outcome: Result<(), CaptureError>,
     #[cfg(not(target_family = "wasm"))]
     at: Instant,
-}
-
-/// Room for `samples` plus a second, within the longest spool allowed.
-#[cfg(not(target_family = "wasm"))]
-fn spool_room(samples: usize) -> Duration {
-    (canonical_duration(samples as u64) + Duration::from_secs(1)).min(MAX_RECORDING_DURATION)
 }
 
 impl Recording {
@@ -214,36 +145,7 @@ impl Recording {
         writer.begin(RecordingSource::Prerecorded);
         (reader, writer)
     }
-
-    #[cfg(not(target_family = "wasm"))]
-    pub fn open_spooled(
-        directory: &std::path::Path,
-        maximum_duration: Duration,
-    ) -> Result<(RecordingReader, SpooledRecordingWriter), CaptureError> {
-        let (reader, writer) = Self::open();
-        let spool = WavSpool::create(directory, maximum_duration, &writer)?;
-        Ok((reader, SpooledRecordingWriter { writer, spool }))
-    }
 }
-
-#[cfg(not(target_family = "wasm"))]
-pub struct SpooledRecordingWriter {
-    writer: RecordingWriter,
-    spool: WavSpool,
-}
-
-#[cfg(not(target_family = "wasm"))]
-impl SpooledRecordingWriter {
-    pub fn push(&mut self, samples: &[i16]) -> Result<(), SpoolError> {
-        self.spool.write_samples(samples)
-    }
-
-    pub fn finish(self) {
-        self.writer
-            .close(self.spool.finish().map_err(CaptureError::from));
-    }
-}
-
 /// The write end of a [`Recording`].
 ///
 /// Dropping this without [`RecordingWriter::finish`] ends the recording the
@@ -259,8 +161,7 @@ impl RecordingWriter {
 
     /// Ends the recording. A reader sees every pushed sample.
     pub fn finish(self) {
-        let appended = self.recording.lock().appended as u64;
-        self.close(Ok(RecordedAudio::from_sample_count(appended)));
+        self.close(Ok(()));
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -280,7 +181,7 @@ impl RecordingWriter {
         self.recording.begin(source);
     }
 
-    pub(super) fn close(&self, outcome: Result<RecordedAudio, CaptureError>) {
+    pub(super) fn close(&self, outcome: Result<(), CaptureError>) {
         self.recording.close(outcome);
     }
 }
@@ -352,7 +253,7 @@ impl Recording {
 
     /// The first outcome stands, so a reader learns why capture stopped rather
     /// than what tidied up after it.
-    fn close(&self, outcome: Result<RecordedAudio, CaptureError>) {
+    fn close(&self, outcome: Result<(), CaptureError>) {
         let mut state = self.lock();
         if state.ended.is_none() {
             state.ended = Some(Ended {
@@ -400,21 +301,18 @@ pub struct RecordingReader {
     samples: Vec<f32>,
     /// Stream position of `samples[0]`.
     offset: u64,
-    /// Cleared by a reader that only wants the WAV, so a recording nobody
-    /// reads sample by sample is not held in memory twice.
-    keep_samples: bool,
     /// Which queue in the recording this reader drains.
     queue: u64,
-    /// Whether the finished WAV and the failure cause are this reader's to
-    /// take. Exactly one reader per recording owns them.
+    /// Whether the failure cause is this reader's to take. Exactly one
+    /// reader per recording owns it.
     owns_outcome: bool,
     outcome: Option<Ending>,
 }
 
 /// How the recording ended, for one reader. A fork learns the end and
-/// whether capture failed, but gets neither the audio nor the cause.
+/// whether capture failed, but not the cause.
 enum Ending {
-    Recorded(Option<RecordedAudio>),
+    Recorded,
     Failed,
 }
 
@@ -428,29 +326,14 @@ impl RecordingReader {
         reader
     }
 
-    /// [`RecordingReader::from_samples`], saved as a private WAV in
-    /// `spool_dir`.
+    /// A finished recording of canonical samples in 16-bit PCM, held in
+    /// memory.
     #[cfg(not(target_family = "wasm"))]
-    pub fn from_samples_in(
-        spool_dir: &std::path::Path,
-        samples: &[f32],
-    ) -> Result<Self, CaptureError> {
-        let pcm16: Vec<i16> = samples.iter().copied().map(pcm16_from_f32).collect();
-        Self::from_pcm16_in(spool_dir, &pcm16)
-    }
-
-    /// A finished recording of canonical samples already in 16-bit PCM, saved
-    /// as a private WAV in `spool_dir`.
-    #[cfg(not(target_family = "wasm"))]
-    pub fn from_pcm16_in(
-        spool_dir: &std::path::Path,
-        samples: &[i16],
-    ) -> Result<Self, CaptureError> {
-        let (recording, writer) = Recording::prerecorded();
-        let mut spool = WavSpool::create(spool_dir, spool_room(samples.len()), &writer)?;
-        spool.write_samples(samples)?;
-        writer.close(spool.finish().map_err(CaptureError::from));
-        Ok(recording)
+    pub fn from_pcm16(samples: &[i16]) -> Self {
+        let (reader, writer) = Recording::prerecorded();
+        writer.push_pcm16(samples);
+        writer.finish();
+        reader
     }
 
     /// What capture records from. `None` until capture is live.
@@ -519,7 +402,6 @@ impl RecordingReader {
             recording: Arc::clone(&self.recording),
             samples: Vec::new(),
             offset: from,
-            keep_samples: true,
             queue,
             owns_outcome: false,
             outcome: None,
@@ -534,16 +416,11 @@ impl RecordingReader {
         let pending = std::mem::take(&mut state.queue(self.queue).pending);
         let queue = state.enrol();
         drop(state);
-        if self.keep_samples {
-            self.samples.extend(pending);
-        } else {
-            self.offset += pending.len() as u64;
-        }
+        self.samples.extend(pending);
         Self {
             recording: Arc::clone(&self.recording),
             samples: self.samples.clone(),
             offset: self.offset,
-            keep_samples: true,
             queue,
             owns_outcome: false,
             outcome: None,
@@ -586,27 +463,6 @@ impl RecordingReader {
     /// [`RecordingReader::ended_at`] does not.
     pub fn reached_end(&self) -> bool {
         self.outcome.is_some()
-    }
-
-    /// The finished WAV. Waits for capture to end, and keeps none of the
-    /// samples it waits through.
-    ///
-    /// # Panics
-    ///
-    /// On a fork: only the reader that opened the recording owns its audio.
-    pub fn finished_audio(&mut self) -> Result<&RecordedAudio, CaptureError> {
-        assert!(
-            self.owns_outcome,
-            "only the reader that opened a recording has its audio"
-        );
-        self.keep_samples = false;
-        self.offset = self.held_to();
-        self.samples = Vec::new();
-        self.fill()?;
-        match &self.outcome {
-            Some(Ending::Recorded(Some(audio))) => Ok(audio),
-            _failed => Err(CaptureError::AlreadyFailed),
-        }
     }
 
     /// Waits up to `timeout` for capture to end, reading nothing. Returns
@@ -694,27 +550,19 @@ impl RecordingReader {
         while state.queue(self.queue).pending.is_empty() && state.ended.is_none() {
             state = self.wait_for_more(state)?;
         }
-        let pending = &mut state.queue(self.queue).pending;
-        if self.keep_samples {
-            self.samples.append(pending);
-        } else {
-            // Discarded audio still moves the window, so a position keeps
-            // pointing where it did.
-            self.offset += pending.len() as u64;
-            pending.clear();
-        }
+        self.samples.append(&mut state.queue(self.queue).pending);
 
         let Some(ended) = &mut state.ended else {
             return Ok(());
         };
         if !self.owns_outcome {
-            // The WAV and the cause belong to whoever opened the recording.
-            // A fork learns only that there is no more audio coming.
+            // The cause belongs to whoever opened the recording. A fork
+            // learns only that there is no more audio coming.
             let failed = ended.failed;
             drop(state);
             self.outcome = Some(match failed {
                 true => Ending::Failed,
-                false => Ending::Recorded(None),
+                false => Ending::Recorded,
             });
             return match failed {
                 true => Err(CaptureError::AlreadyFailed),
@@ -726,8 +574,8 @@ impl RecordingReader {
         let outcome = std::mem::replace(&mut ended.outcome, Err(CaptureError::AlreadyFailed));
         drop(state);
         match outcome {
-            Ok(audio) => {
-                self.outcome = Some(Ending::Recorded(Some(audio)));
+            Ok(()) => {
+                self.outcome = Some(Ending::Recorded);
                 Ok(())
             }
             Err(error) => {
@@ -756,7 +604,7 @@ impl Drop for RecordingReader {
 #[cfg(test)]
 mod tests {
     use super::super::capture::MicrophoneError;
-    use super::super::testing::{paced, recorded, spooled, wav_samples};
+    use super::super::testing::{limited, paced, recorded};
 
     use super::*;
 
@@ -792,47 +640,6 @@ mod tests {
             recording.fill_available(),
             Err(CaptureError::AlreadyFailed)
         ));
-    }
-
-    #[test]
-    fn a_live_spool_feeds_the_reader_and_the_wav_the_same_samples() {
-        let directory = tempfile::tempdir().unwrap();
-        let (mut recording, mut writer) =
-            Recording::open_spooled(directory.path(), Duration::from_secs(1)).unwrap();
-        writer.push(&SAMPLES).unwrap();
-        recording.fill_available().unwrap();
-        assert_eq!(recording.samples(), EXPECTED);
-        assert!(!recording.reached_end());
-
-        writer.finish();
-        let path = recording
-            .finished_audio()
-            .unwrap()
-            .path()
-            .unwrap()
-            .to_owned();
-
-        assert_eq!(wav_samples(&path), SAMPLES);
-    }
-
-    #[test]
-    fn the_spooled_wav_is_deleted_when_its_reader_drops() {
-        let directory = tempfile::tempdir().unwrap();
-        let (mut recording, mut writer) =
-            Recording::open_spooled(directory.path(), Duration::from_secs(1)).unwrap();
-        writer.push(&SAMPLES).unwrap();
-        writer.finish();
-        let path = recording
-            .finished_audio()
-            .unwrap()
-            .path()
-            .unwrap()
-            .to_owned();
-        assert!(path.exists());
-
-        drop(recording);
-
-        assert!(!path.exists());
     }
 
     #[test]
@@ -960,20 +767,14 @@ mod tests {
     }
 
     #[test]
-    fn the_finished_audio_belongs_to_the_reader_that_opened_the_recording() {
-        let (_directory, mut recording) = recorded(&SAMPLES);
+    fn a_fork_leaves_the_failure_cause_to_the_reader_that_opened_the_recording() {
+        let (mut recording, writer) = ends();
         let mut forked = recording.fork();
+        writer.close(Err(CaptureError::SourceGone));
 
-        forked.fill().expect("the fork sees a clean end");
+        forked.fill().expect_err("the fork learns capture failed");
 
-        assert!(
-            forked.reached_end(),
-            "the fork learns there is no more audio"
-        );
-        assert!(
-            recording.finished_audio().is_ok(),
-            "and leaves the WAV for whoever opened the recording"
-        );
+        assert!(matches!(recording.fill(), Err(CaptureError::SourceGone)));
     }
 
     #[test]
@@ -1023,26 +824,22 @@ mod tests {
 
     #[test]
     fn a_reader_waits_for_samples_capture_has_not_written_yet() {
-        let (directory, writer, mut spool, mut recording) = spooled();
+        let (writer, mut limited, mut recording) = limited();
         std::thread::spawn(move || {
             for sample in SAMPLES {
-                spool
-                    .write_samples(&[sample])
-                    .expect("samples are writable");
+                limited.push(&[sample]).expect("samples are writable");
             }
-            writer.close(spool.finish().map_err(CaptureError::from));
+            writer.close(limited.finish().map_err(CaptureError::from));
         });
 
         recording.fill().expect("the recording ends");
 
         assert_eq!(recording.samples(), EXPECTED);
-        drop(directory);
     }
 
     #[test]
     fn a_reader_can_take_a_prefix_before_the_recording_ends() {
-        let (_directory, mut recording, pace) =
-            paced(vec![SAMPLES[..2].to_vec(), SAMPLES[2..].to_vec()]);
+        let (mut recording, pace) = paced(vec![SAMPLES[..2].to_vec(), SAMPLES[2..].to_vec()]);
 
         recording
             .fill_through(2)
@@ -1059,7 +856,7 @@ mod tests {
 
     #[test]
     fn asking_past_the_end_returns_what_was_recorded() {
-        let (_directory, mut recording) = recorded(&SAMPLES);
+        let mut recording = recorded(&SAMPLES);
 
         assert!(recording.fill_through(4).expect("the recording succeeded"));
         assert!(
@@ -1078,12 +875,6 @@ mod tests {
     }
 
     #[test]
-    fn a_recording_as_long_as_allowed_still_gets_a_spool() {
-        let samples = crate::audio::MAX_RECORDING_SAMPLES as usize;
-        assert!(super::super::spool::maximum_samples(spool_room(samples)).is_ok());
-    }
-
-    #[test]
     fn waiting_for_the_end_times_out_while_capture_runs() {
         let (recording, writer) = Recording::open();
 
@@ -1099,30 +890,16 @@ mod tests {
         recording.fill().expect("the recording already ended");
 
         assert_eq!(recording.samples(), [0.25, -0.5]);
-        assert_eq!(
-            recording.finished_audio().expect("it succeeded").path(),
-            None
-        );
+        assert!(recording.reached_end());
     }
 
     #[test]
     fn a_pcm16_recording_keeps_every_sample_exactly() {
-        let directory = tempfile::tempdir().expect("test directory is created");
-        let mut recording = RecordingReader::from_pcm16_in(directory.path(), &SAMPLES)
-            .expect("the recording is written");
+        let mut recording = RecordingReader::from_pcm16(&SAMPLES);
 
-        let audio = recording.finished_audio().expect("the recording succeeded");
+        recording.fill().expect("the recording already ended");
 
-        assert_eq!(wav_samples(audio.path().expect("a saved WAV")), SAMPLES);
-    }
-
-    #[test]
-    fn the_wav_reader_keeps_none_of_the_samples_it_waits_through() {
-        let (_directory, mut recording) = recorded(&SAMPLES);
-
-        recording.finished_audio().expect("the recording succeeded");
-
-        assert!(recording.samples().is_empty());
+        assert_eq!(recording.samples(), EXPECTED);
     }
 
     /// Reading on past a failure must not look like an empty recording that
@@ -1138,13 +915,8 @@ mod tests {
             .expect_err("the first read reports the cause");
 
         let again = recording.fill_through(1).expect_err("so does the next one");
-        let finished = recording
-            .finished_audio()
-            .err()
-            .expect("and so does the WAV");
 
         assert!(matches!(again, CaptureError::AlreadyFailed));
-        assert!(matches!(finished, CaptureError::AlreadyFailed));
     }
 
     /// Silence appends no samples, so capture being live must not depend on

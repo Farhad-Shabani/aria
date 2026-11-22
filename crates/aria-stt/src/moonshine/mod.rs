@@ -35,8 +35,8 @@ use std::sync::Mutex;
 use aria_kit::backend::{ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
-    AudioInputKind, Cadence, Engine, Hypothesis, Language, RecognitionAudio, Recognizer, Stream,
-    StreamingEngine, TranscriptionError, check_cancelled, english_only, validate_model_directory,
+    Cadence, Engine, Hypothesis, Language, Recognizer, Stream, StreamingEngine, TranscriptionError,
+    check_cancelled, english_only, validate_model_directory,
 };
 
 use graphs::{Graphs, MIN_SAMPLES};
@@ -102,7 +102,6 @@ impl Moonshine {
 impl Engine for Moonshine {
     const NAME: &'static str = NAME;
     const MODEL: &'static [ModelDownload] = MODEL;
-    const INPUT: AudioInputKind = AudioInputKind::Samples;
 
     type Config = MoonshineConfig;
 
@@ -154,12 +153,11 @@ impl Recognizer for Moonshine {
 
     fn recognize_with(
         &self,
-        audio: RecognitionAudio<'_>,
+        samples: &[f32],
         _language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
         check_cancelled(cancel)?;
-        let samples = audio.require_samples(BACKEND)?;
         let mut graphs = self
             .graphs
             .lock()

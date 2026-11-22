@@ -5,12 +5,13 @@ Load by path under a distinct name to avoid shadowing the parakeet_mlx package.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import importlib.util
 import io
 import itertools
 import json
 import sys
-import wave
 from importlib.util import find_spec
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,20 +34,9 @@ sidecar = _load_sidecar()
 HOP = 160
 
 
-def _write_wav(
-    tmp_path: Path,
-    n_samples: int = 8000,
-    rate: int = 16000,
-    channels: int = 1,
-    sampwidth: int = 2,
-) -> Path:
-    wav_path = tmp_path / "clip.wav"
-    with wave.open(str(wav_path), "w") as wf:
-        wf.setnchannels(channels)
-        wf.setsampwidth(sampwidth)
-        wf.setframerate(rate)
-        wf.writeframes(b"\x00" * (n_samples * channels * sampwidth))
-    return wav_path
+def _request(n_samples: int = 8000, **fields) -> str:
+    audio = base64.b64encode(bytes(2 * n_samples)).decode()
+    return json.dumps({"op": "recognize", "audio": audio, **fields})
 
 
 class TestChunkBounds:
@@ -81,46 +71,62 @@ class TestChunkBounds:
 
 
 class TestParseRequest:
-    def test_a_request_yields_its_path_and_chunk(self, tmp_path):
-        clip = _write_wav(tmp_path)
-        line = json.dumps({"op": "recognize", "audio_path": str(clip), "chunk_samples": 12000})
+    def test_a_request_yields_its_samples_and_chunk(self):
+        frames, chunk = sidecar.parse_request(_request(4, chunk_samples=12000))
 
-        assert sidecar.parse_request(line) == (str(clip), 12000)
+        assert (frames, chunk) == (bytes(8), 12000)
 
-    def test_the_chunk_is_optional(self, tmp_path):
-        clip = _write_wav(tmp_path)
-        line = json.dumps({"op": "recognize", "audio_path": str(clip)})
-
-        assert sidecar.parse_request(line) == (str(clip), None)
+    def test_the_chunk_is_optional(self):
+        assert sidecar.parse_request(_request(4)) == (bytes(8), None)
 
     def test_an_unknown_op_is_refused(self):
         with pytest.raises(ValueError, match="unknown op"):
             sidecar.parse_request(json.dumps({"op": "reticulate"}))
 
-    def test_a_missing_audio_path_is_refused(self):
+    def test_a_request_without_audio_is_refused(self):
         with pytest.raises(KeyError):
             sidecar.parse_request(json.dumps({"op": "recognize"}))
 
-    def test_a_nonexistent_recording_is_refused(self):
-        line = json.dumps({"op": "recognize", "audio_path": "/nonexistent.wav"})
+    def test_audio_that_is_not_base64_is_refused(self):
+        line = json.dumps({"op": "recognize", "audio": "not base64!"})
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(binascii.Error):
+            sidecar.parse_request(line)
+
+    def test_a_half_sample_is_refused(self):
+        line = json.dumps({"op": "recognize", "audio": base64.b64encode(b"\x00").decode()})
+
+        with pytest.raises(ValueError, match="whole 16-bit samples"):
             sidecar.parse_request(line)
 
     @pytest.mark.parametrize("chunk_samples", [0, -12000])
-    def test_a_non_positive_chunk_is_refused(self, tmp_path, chunk_samples):
-        clip = _write_wav(tmp_path)
-        line = json.dumps(
-            {"op": "recognize", "audio_path": str(clip), "chunk_samples": chunk_samples}
-        )
-
+    def test_a_non_positive_chunk_is_refused(self, chunk_samples):
         with pytest.raises(ValueError, match="chunk_samples"):
-            sidecar.parse_request(line)
+            sidecar.parse_request(_request(chunk_samples=chunk_samples))
 
     @pytest.mark.parametrize("line", ["[]", "5", '"recognize"'])
     def test_json_that_is_not_an_object_is_refused(self, line):
         with pytest.raises((ValueError, AttributeError, TypeError)):
             sidecar.parse_request(line)
+
+
+class TestStagedAudio:
+    def test_the_loader_hands_over_the_staged_samples_once(self):
+        staged = sidecar.StagedAudio()
+
+        with staged.staged("samples") as path:
+            assert staged.load(path, 16000) == "samples"
+            with pytest.raises(RuntimeError, match="no request audio"):
+                staged.load(path, 16000)
+
+    def test_leaving_the_stage_drops_unread_samples(self):
+        staged = sidecar.StagedAudio()
+
+        with staged.staged("samples") as path:
+            pass
+
+        with pytest.raises(RuntimeError, match="no request audio"):
+            staged.load(path, 16000)
 
 
 class TestWireFormat:
@@ -159,10 +165,9 @@ class TestWireFormat:
 
 
 class TestServe:
-    def test_one_bad_request_does_not_stop_the_next(self, tmp_path, monkeypatch):
-        clip = _write_wav(tmp_path)
-        good = json.dumps({"op": "recognize", "audio_path": str(clip)})
-        monkeypatch.setattr(sys, "stdin", io.StringIO(f'{{"op":"reticulate"}}\n{good}\n'))
+    def test_one_bad_request_does_not_stop_the_next(self, monkeypatch):
+        monkeypatch.setattr(sys, "stdin", io.StringIO(f'{{"op":"reticulate"}}\n{_request()}\n'))
+        monkeypatch.setattr(sidecar, "samples_from", lambda frames: frames)
         frames = io.StringIO()
         model = SimpleNamespace(
             transcribe=lambda path, chunk_duration, overlap_duration: SimpleNamespace(text=" hi ")
@@ -179,48 +184,14 @@ needs_mlx = pytest.mark.skipif(find_spec("mlx") is None, reason="requires mlx")
 
 
 @needs_mlx
-class TestReadWav:
-    def test_a_canonical_recording_scales_to_unit_floats(self, tmp_path):
-        clip = tmp_path / "clip.wav"
-        with wave.open(str(clip), "w") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(16000)
-            wf.writeframes((32767).to_bytes(2, "little", signed=True))
-
-        samples = sidecar.read_wav(clip, 16000)
+class TestSamplesFrom:
+    def test_little_endian_pcm_scales_to_unit_floats(self):
+        samples = sidecar.samples_from((32767).to_bytes(2, "little", signed=True))
 
         assert samples.shape == (1,)
         assert abs(float(samples[0]) - 32767 / 32768) < 1e-6
 
-    def test_stereo_is_refused(self, tmp_path):
-        with pytest.raises(ValueError, match="mono"):
-            sidecar.read_wav(_write_wav(tmp_path, channels=2), 16000)
 
-    def test_the_wrong_rate_is_refused(self, tmp_path):
-        with pytest.raises(ValueError, match="8000 Hz"):
-            sidecar.read_wav(_write_wav(tmp_path, rate=8000), 16000)
-
-    def test_a_24_bit_recording_is_refused(self, tmp_path):
-        with pytest.raises(ValueError, match="16-bit"):
-            sidecar.read_wav(_write_wav(tmp_path, sampwidth=3), 16000)
-
-    def test_an_empty_file_is_refused(self, tmp_path):
-        empty = tmp_path / "empty.wav"
-        empty.touch()
-
-        with pytest.raises(EOFError):
-            sidecar.read_wav(empty, 16000)
-
-    def test_a_truncated_header_is_refused(self, tmp_path):
-        clipped = tmp_path / "clipped.wav"
-        clipped.write_bytes(_write_wav(tmp_path).read_bytes()[:20])
-
-        with pytest.raises(EOFError):
-            sidecar.read_wav(clipped, 16000)
-
-
-@needs_mlx
 class TestTranscribeStreaming:
     """Guards that must fire before the model is ever asked to stream."""
 
@@ -230,13 +201,11 @@ class TestTranscribeStreaming:
         def transcribe_stream(self, **kwargs):
             raise AssertionError("the guard should have fired first")
 
-    def test_a_chunk_below_one_mel_hop_is_refused(self, tmp_path):
-        clip = _write_wav(tmp_path)
-
+    def test_a_chunk_below_one_mel_hop_is_refused(self):
         with pytest.raises(ValueError, match="mel hop"):
-            sidecar.transcribe_streaming(self.RefusesToStream(), clip, HOP - 1)
+            sidecar.transcribe_streaming(self.RefusesToStream(), [0.0] * 8000, HOP - 1)
 
-    def test_a_recording_below_one_mel_hop_is_silence(self, tmp_path):
-        clip = _write_wav(tmp_path, n_samples=HOP - 1)
+    def test_a_recording_below_one_mel_hop_is_silence(self):
+        samples = [0.0] * (HOP - 1)
 
-        assert sidecar.transcribe_streaming(self.RefusesToStream(), clip, 12000) == ""
+        assert sidecar.transcribe_streaming(self.RefusesToStream(), samples, 12000) == ""

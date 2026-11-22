@@ -1,7 +1,6 @@
 //! Receives LAN audio and dictates it through the press pipeline.
 //! [`crate::daemon::relay`] validates and collects the upload.
 
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -37,8 +36,6 @@ pub(in crate::daemon) struct RelayRpc {
     /// Every phone's and watch's, so one shows at a time.
     announcements: Arc<Announcements>,
     microphone: Arc<Gate>,
-    /// Temporary WAV directory for engines that read recordings from files.
-    spool_dir: Arc<Path>,
     /// The daemon's stop, so a session in flight ends with it rather than
     /// holding the drain open until one of its own clocks runs out.
     shutdown: CancellationToken,
@@ -48,14 +45,12 @@ impl RelayRpc {
     pub(in crate::daemon) fn new(
         dictation: Arc<DictationRuntime>,
         microphone: Arc<Gate>,
-        spool_dir: &Path,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
             announcements: Announcements::new(Arc::clone(&dictation)),
             dictation,
             microphone,
-            spool_dir: Arc::from(spool_dir),
             shutdown,
         }
     }
@@ -110,7 +105,6 @@ impl wire::relay_service_server::RelayService for RelayRpc {
             microphone: Arc::clone(&self.microphone),
             upload: Upload {
                 dictation: Arc::clone(&self.dictation),
-                spool_dir: Arc::clone(&self.spool_dir),
                 opening,
                 showing,
                 return_policy,
@@ -177,7 +171,6 @@ struct Client {
 /// continues.
 struct Upload {
     dictation: Arc<DictationRuntime>,
-    spool_dir: Arc<Path>,
     opening: Opening,
     showing: Showing,
     return_policy: ReturnPolicy,
@@ -408,7 +401,6 @@ enum AfterText {
 fn hear(upload: Upload, audio: Vec<u8>, cancel: CancelToken) -> Result<Option<Heard>, RpcFailure> {
     let Upload {
         dictation,
-        spool_dir,
         opening,
         showing,
         return_policy,
@@ -420,9 +412,7 @@ fn hear(upload: Upload, audio: Vec<u8>, cancel: CancelToken) -> Result<Option<He
     // transcription reads neither.
     drop(audio);
 
-    // File-based engines need a WAV. The recording owns its temporary file.
-    let mut recording = RecordingReader::from_pcm16_in(&spool_dir, &samples)
-        .map_err(|error| RpcFailure::from(&DictationError::from(error)))?;
+    let mut recording = RecordingReader::from_pcm16(&samples);
     drop(samples);
 
     let delivered =
@@ -654,7 +644,6 @@ mod tests {
         let rpc = RelayRpc::new(
             Arc::new(DictationRuntime::detached(settings)),
             Gate::new(),
-            directory.path(),
             CancellationToken::new(),
         );
 

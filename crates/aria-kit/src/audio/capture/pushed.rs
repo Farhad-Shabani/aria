@@ -2,15 +2,14 @@
 //! phone on the network, ended by the same modes as a microphone recording.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::audio::capture::modes::{CaptureProgress, CaptureRecording};
+use crate::audio::limit::LimitedWriter;
 use crate::audio::recording::{self, RecordingWriter};
-use crate::audio::spool::WavSpool;
 use crate::audio::{CaptureError, RecordingReader, RecordingSource, StopSignal};
 use crate::voice_activity::VoiceActivityDetector;
 
@@ -21,7 +20,6 @@ const STOP_POLL: Duration = Duration::from_millis(10);
 
 /// Records one utterance at a time from samples a caller pushes in.
 pub struct PushedCapture<V> {
-    spool_dir: PathBuf,
     maximum_duration: Duration,
     /// One recording runs at a time, as for a microphone, so the lock is
     /// never contended.
@@ -29,9 +27,8 @@ pub struct PushedCapture<V> {
 }
 
 impl<V: VoiceActivityDetector + Send + 'static> PushedCapture<V> {
-    pub fn new(spool_dir: impl Into<PathBuf>, maximum_duration: Duration, vad: V) -> Self {
+    pub fn new(maximum_duration: Duration, vad: V) -> Self {
         Self {
-            spool_dir: spool_dir.into(),
             maximum_duration,
             vad: Arc::new(Mutex::new(vad)),
         }
@@ -53,7 +50,7 @@ impl<V: VoiceActivityDetector + Send + 'static> PushedCapture<V> {
     ) -> Result<RecordingReader, CaptureError> {
         let finished = Finished(Some(finished));
         let (recording, writer) = recording::ends();
-        let spool = WavSpool::create(&self.spool_dir, self.maximum_duration, &writer)?;
+        let limited = LimitedWriter::new(self.maximum_duration, &writer)?;
         let session = Session {
             mode,
             feed,
@@ -64,7 +61,7 @@ impl<V: VoiceActivityDetector + Send + 'static> PushedCapture<V> {
         writer.begin(RecordingSource::Pushed);
         thread::Builder::new()
             .name("aria-pushed-capture".to_owned())
-            .spawn(move || session.run(spool, &first, &vad, writer, stop, finished))
+            .spawn(move || session.run(limited, &first, &vad, writer, stop, finished))
             .map_err(MicrophoneError::SpawnWorker)?;
         Ok(recording)
     }
@@ -80,7 +77,7 @@ struct Session {
 impl Session {
     fn run<V: VoiceActivityDetector>(
         self,
-        spool: WavSpool,
+        limited: LimitedWriter,
         first: &[i16],
         vad: &Mutex<V>,
         writer: RecordingWriter,
@@ -94,7 +91,7 @@ impl Session {
                 );
                 poisoned.into_inner()
             });
-            let mut recording = CaptureRecording::new(spool, self.mode, &mut *vad);
+            let mut recording = CaptureRecording::new(limited, self.mode, &mut *vad);
             self.pump(&mut recording, first, &stop)?;
             recording.finish()
         }))
@@ -153,11 +150,11 @@ impl Session {
         &self,
         recording: &mut CaptureRecording<V>,
     ) -> Result<(), CaptureError> {
-        let Some(spool) = recording.tail() else {
+        let Some(limited) = recording.tail() else {
             return Ok(());
         };
         while let Ok(samples) = self.feed.try_recv() {
-            spool.write_samples(&samples)?;
+            limited.push(&samples)?;
         }
         Ok(())
     }
@@ -187,17 +184,14 @@ mod tests {
     const STALL: Duration = Duration::from_millis(300);
 
     struct Harness {
-        _directory: tempfile::TempDir,
         capture: PushedCapture<Loudness>,
         finished: Arc<AtomicBool>,
     }
 
     impl Harness {
         fn new() -> Self {
-            let directory = tempfile::tempdir().expect("a temp dir");
-            let capture = PushedCapture::new(directory.path(), Duration::from_secs(60), Loudness);
+            let capture = PushedCapture::new(Duration::from_secs(60), Loudness);
             Self {
-                _directory: directory,
                 capture,
                 finished: Arc::new(AtomicBool::new(false)),
             }
@@ -220,9 +214,9 @@ mod tests {
         }
     }
 
-    fn finished_audio(mut recording: RecordingReader) -> Result<Duration, CaptureError> {
+    fn recorded_duration(mut recording: RecordingReader) -> Result<Duration, CaptureError> {
         recording.fill()?;
-        Ok(recording.finished_audio()?.duration())
+        Ok(recording.duration())
     }
 
     #[test]
@@ -237,7 +231,7 @@ mod tests {
         feed.send(silence(Duration::from_millis(500)))
             .expect("sent");
 
-        let audio = finished_audio(recording.expect("audio arrived")).expect("speech was heard");
+        let audio = recorded_duration(recording.expect("audio arrived")).expect("speech was heard");
 
         assert_eq!(audio, Duration::from_secs(1));
     }
@@ -254,7 +248,7 @@ mod tests {
         feed.send(silence(Duration::from_millis(500)))
             .expect("sent");
 
-        finished_audio(recording.expect("audio arrived")).expect("speech was heard");
+        recorded_duration(recording.expect("audio arrived")).expect("speech was heard");
 
         assert!(harness.finished.load(Ordering::SeqCst));
     }
@@ -272,7 +266,7 @@ mod tests {
         let recording = recording.expect("audio arrived");
 
         stopper.stop();
-        let audio = finished_audio(recording).expect("the recording finishes");
+        let audio = recorded_duration(recording).expect("the recording finishes");
 
         assert_eq!(audio, Duration::from_secs(1));
     }
@@ -303,7 +297,7 @@ mod tests {
 
         drop(feed);
         let audio =
-            finished_audio(recording.expect("audio arrived")).expect("the recording finishes");
+            recorded_duration(recording.expect("audio arrived")).expect("the recording finishes");
 
         assert_eq!(audio, Duration::from_millis(500));
     }
@@ -318,7 +312,7 @@ mod tests {
         );
 
         let audio =
-            finished_audio(recording.expect("audio arrived")).expect("the recording finishes");
+            recorded_duration(recording.expect("audio arrived")).expect("the recording finishes");
 
         assert_eq!(audio, Duration::from_millis(500));
     }
@@ -335,7 +329,7 @@ mod tests {
         feed.send(silence(Duration::from_secs(3))).expect("sent");
 
         let audio =
-            finished_audio(recording.expect("audio arrived")).expect("the recording finishes");
+            recorded_duration(recording.expect("audio arrived")).expect("the recording finishes");
 
         assert_eq!(audio, Duration::from_millis(3_500));
     }
