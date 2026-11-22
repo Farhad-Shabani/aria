@@ -33,7 +33,7 @@ impl HostedDaemon {
     /// The real assembly, reading `config(home)` as its `settings.toml`.
     pub(in crate::daemon) fn configured(config: impl FnOnce(&Path) -> String) -> Self {
         Self::serve(|paths| {
-            let home = paths.spool_dir();
+            let home = paths.directory();
             std::fs::create_dir_all(home.join(".aria")).expect("the settings directory is created");
             std::fs::write(aria_settings::default_path(home), config(home))
                 .expect("the settings are written");
@@ -69,7 +69,7 @@ impl HostedDaemon {
     }
 
     pub(in crate::daemon) fn settings_path(&self) -> std::path::PathBuf {
-        aria_settings::default_path(self.paths.spool_dir())
+        aria_settings::default_path(self.paths.directory())
     }
 
     /// A raw gRPC channel, for calls a `DaemonSession` can't make.

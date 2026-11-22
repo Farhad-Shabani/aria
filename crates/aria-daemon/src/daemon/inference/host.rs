@@ -15,7 +15,6 @@ use tonic::service::interceptor::InterceptedService;
 use super::pairing_id;
 use crate::daemon::DaemonLifetime;
 use crate::daemon::config::auto_device;
-use crate::daemon::old_recordings::remove_old_recordings;
 use crate::daemon::server::lan::connections::{self, Admitted};
 use crate::daemon::server::lan::tls::{Lease, Leased, secured};
 use crate::daemon::server::lan::{
@@ -133,7 +132,6 @@ impl Host {
         runtime: &PreparedRuntimePaths,
     ) -> Result<Self, HostFailure> {
         let ownership = ExclusiveListener::bind(runtime.socket_path(), runtime.lock_path())?;
-        remove_old_recordings(runtime.spool_dir());
         let access = ServerAccess::load_or_create(&state.server_identity())?;
         let acceptor = tls::server(&access)?;
         let public = std::net::TcpListener::bind(address).map_err(HostFailure::Io)?;

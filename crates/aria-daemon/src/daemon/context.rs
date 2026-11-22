@@ -35,7 +35,7 @@ impl<'runtime> Context<'runtime> {
         let home = home_directory()?;
         // A unit-test daemon must never expire or delete the user's history.
         #[cfg(test)]
-        let home = paths.spool_dir().to_path_buf();
+        let home = paths.directory().to_path_buf();
         // Nor may it play cues or show banners on the developer's machine.
         let attended = !cfg!(test) && attended(unattended()?.as_deref());
         let delivery = DeliveryFactory::detect(&home);

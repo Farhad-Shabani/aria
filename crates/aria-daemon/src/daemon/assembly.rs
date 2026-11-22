@@ -1,7 +1,6 @@
 //! Concrete assembly and execution of the Aria daemon.
 
 use crate::daemon::config::{DaemonConfig, HotkeyConfig, RelayConfig, WakeWordOverride};
-use crate::daemon::old_recordings::remove_old_recordings;
 use aria_kit::audio::WakeWordMonitor;
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_primitives::error_chain;
@@ -141,9 +140,6 @@ fn compose(
     let socket = ExclusiveListener::bind(paths.socket_path(), paths.lock_path())
         .map_err(DaemonError::Bind)?;
     let context = Context::detect(paths, lifetime).map_err(DaemonError::Context)?;
-    // A daemon starts owning no audio: whatever a run that already ended left
-    // behind goes before this one can record over it.
-    remove_old_recordings(context.paths.spool_dir());
     let cache = Arc::new(open_settings(&context)?);
     // The startup values: restart keys keep these for the daemon's life.
     let startup = cache.effective();
@@ -605,20 +601,20 @@ mod tests {
     use super::*;
     use aria_platform::runtime::RuntimePaths;
 
-    /// Runtime paths whose spool directory is the test daemon's home.
+    /// Runtime paths whose directory is the test daemon's home.
     fn prepared() -> (tempfile::TempDir, PreparedRuntimePaths) {
         let directory = tempfile::tempdir().expect("a temp dir");
         let paths = RuntimePaths::in_directory(directory.path().to_path_buf())
             .prepare()
             .expect("the runtime directory is usable");
-        fs::create_dir_all(paths.spool_dir().join(".aria")).expect("the cache directory");
+        fs::create_dir_all(paths.directory().join(".aria")).expect("the cache directory");
         (directory, paths)
     }
 
     #[test]
     fn an_invalid_settings_file_stops_startup_with_its_position() {
         let (_directory, paths) = prepared();
-        let cache = aria_settings::default_path(paths.spool_dir());
+        let cache = aria_settings::default_path(paths.directory());
         fs::write(&cache, "[tts]\nrate = 9.0\n").expect("written");
 
         let error = build(&paths, DaemonLifetime::OnDemand, WakeWordOverride::Inherit)
