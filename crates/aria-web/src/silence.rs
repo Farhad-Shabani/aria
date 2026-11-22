@@ -1,22 +1,11 @@
-//! Deciding when the speaker has stopped.
-//!
-//! Only the wasm binding drives this, but the logic is plain arithmetic, so a
-//! native build still compiles it to run the tests.
 #![cfg_attr(not(target_family = "wasm"), allow(dead_code))]
 
 use aria_kit::audio::CANONICAL_SAMPLE_RATE;
 
-/// Frames at or below this RMS level count as quiet.
 const QUIET_RMS: f32 = 0.01;
 
-/// The longest pause a caller may ask to wait through.
 const MAX_TRAILING_SILENCE_MS: u32 = 30_000;
 
-/// Calls an utterance over once the speaker has been quiet long enough.
-///
-/// The gate starts counting silence only after detecting speech.
-///
-/// Loudness alone decides, so steady noise — a fan, a keyboard — holds it open.
 pub(crate) struct SilenceGate {
     heard_speech: bool,
     quiet_samples: u32,
@@ -24,7 +13,6 @@ pub(crate) struct SilenceGate {
 }
 
 impl SilenceGate {
-    /// Accepts pauses from 1 ms through [`MAX_TRAILING_SILENCE_MS`].
     pub(crate) fn new(trailing_silence_ms: u32) -> Result<Self, SilenceGateError> {
         if trailing_silence_ms == 0 || trailing_silence_ms > MAX_TRAILING_SILENCE_MS {
             return Err(SilenceGateError::OutOfRange {
@@ -39,7 +27,6 @@ impl SilenceGate {
         })
     }
 
-    /// Takes one frame and tracks how long the quiet has run.
     pub(crate) fn hear(&mut self, samples: &[f32]) {
         if loud(samples) {
             self.heard_speech = true;
@@ -51,14 +38,11 @@ impl SilenceGate {
         }
     }
 
-    /// Whether the speaker has spoken and then stopped.
     pub(crate) fn stopped(&self) -> bool {
         self.heard_speech && self.quiet_samples >= self.enough
     }
 }
 
-/// Compares mean square against the squared threshold, which answers the same
-/// question as a root-mean-square without the square root.
 fn loud(samples: &[f32]) -> bool {
     if samples.is_empty() {
         return false;
@@ -87,7 +71,6 @@ mod tests {
         vec![0.5; FRAME]
     }
 
-    /// Frames of silence needed to reach the configured pause.
     fn frames_for(milliseconds: u32) -> usize {
         (CANONICAL_SAMPLE_RATE / 1_000 * milliseconds) as usize / FRAME
     }

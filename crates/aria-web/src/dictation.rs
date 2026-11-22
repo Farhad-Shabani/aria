@@ -7,7 +7,6 @@ use aria_stt::whisper_candle::WhisperCandle;
 
 use crate::silence::SilenceGate;
 
-/// One dictation: audio pushed in, a transcript out.
 #[wasm_bindgen]
 pub struct Dictation {
     capture: RecordingWriter,
@@ -55,8 +54,7 @@ impl Dictation {
         self.gate.stopped()
     }
 
-    /// Ends the recording and transcribes everything pushed. A recording with
-    /// no speech in it answers with empty text rather than an error.
+    /// A recording with no speech returns empty text.
     pub fn finish(mut self) -> Result<String, JsError> {
         self.capture.finish();
         match self
