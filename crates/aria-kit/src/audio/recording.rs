@@ -827,9 +827,7 @@ mod tests {
         let (writer, mut limited, mut recording) = limited();
         std::thread::spawn(move || {
             for sample in SAMPLES {
-                limited
-                    .push(&[sample])
-                    .expect("samples are writable");
+                limited.push(&[sample]).expect("samples are writable");
             }
             writer.close(limited.finish().map_err(CaptureError::from));
         });

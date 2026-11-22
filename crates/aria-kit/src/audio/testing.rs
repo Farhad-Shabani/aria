@@ -76,9 +76,7 @@ mod recordings {
     pub(crate) fn recorded(samples: &[i16]) -> RecordingReader {
         let (writer, mut limited, recording) = limited();
         writer.begin(super::super::RecordingSource::Prerecorded);
-        limited
-            .push(samples)
-            .expect("samples are writable");
+        limited.push(samples).expect("samples are writable");
         writer.close(limited.finish().map_err(CaptureError::from));
         recording
     }
