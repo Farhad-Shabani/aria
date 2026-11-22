@@ -15,7 +15,7 @@ final class SystemTranscriptionStatusTests: XCTestCase {
 
     func testAStartedSessionIsRunningUntilItEnds() {
         for ending in [Aria_Daemon_V1_SystemTranscriptionStage.stopped, .failed] {
-            let status = SystemTranscriptionStatus(readStatus: { false })
+            let status = SystemTranscriptionStatus(readStatus: { .idle })
             status.handle(event(.started))
             XCTAssertTrue(status.isRunning)
             status.handle(event(ending))
@@ -25,7 +25,7 @@ final class SystemTranscriptionStatusTests: XCTestCase {
 
     func testAnEndedSessionFallsSilent() {
         for ending in [Aria_Daemon_V1_SystemTranscriptionStage.stopped, .failed] {
-            let status = SystemTranscriptionStatus(readStatus: { false })
+            let status = SystemTranscriptionStatus(readStatus: { .idle })
             status.handle(event(.started))
             status.hear(level: 0.8)
             XCTAssertEqual(status.level.value, 0.8)
@@ -35,14 +35,14 @@ final class SystemTranscriptionStatusTests: XCTestCase {
     }
 
     func testALevelShowsASessionThatStartedBeforeAriaOpened() {
-        let status = SystemTranscriptionStatus(readStatus: { false })
+        let status = SystemTranscriptionStatus(readStatus: { .idle })
         status.hear(level: 0.4)
         XCTAssertTrue(status.isRunning)
         XCTAssertEqual(status.level.value, 0.4)
     }
 
     func testALevelDuringASessionPublishesNothing() {
-        let status = SystemTranscriptionStatus(readStatus: { true })
+        let status = SystemTranscriptionStatus(readStatus: { .running })
         status.handle(event(.started))
         var published = 0
         let watching = status.objectWillChange.sink { published += 1 }
@@ -54,7 +54,7 @@ final class SystemTranscriptionStatusTests: XCTestCase {
     }
 
     func testALevelLateForAStoppedSessionLeavesItStopped() async {
-        let status = SystemTranscriptionStatus(readStatus: { false }, stopSession: {})
+        let status = SystemTranscriptionStatus(readStatus: { .idle }, stopSession: {})
         status.handle(event(.started))
         await status.stop()
         status.hear(level: 0.5)
@@ -71,7 +71,7 @@ final class SystemTranscriptionStatusTests: XCTestCase {
         let status = SystemTranscriptionStatus(readStatus: {
             reading.continuation.yield()
             for await _ in finishing.stream { break }
-            return false
+            return .idle
         })
         status.handle(event(.started))
 
@@ -90,7 +90,7 @@ final class SystemTranscriptionStatusTests: XCTestCase {
         let status = SystemTranscriptionStatus(readStatus: {
             reading.continuation.yield()
             for await _ in finishing.stream { break }
-            return false
+            return .idle
         })
 
         async let caughtUp: Void = status.catchUp()
@@ -110,7 +110,7 @@ final class SystemTranscriptionStatusTests: XCTestCase {
     }
 
     func testStoppingEndsTheSession() async {
-        let status = SystemTranscriptionStatus(readStatus: { true }, stopSession: {})
+        let status = SystemTranscriptionStatus(readStatus: { .running }, stopSession: {})
         status.handle(event(.started))
         await status.stop()
         XCTAssertFalse(status.isRunning)
@@ -119,7 +119,7 @@ final class SystemTranscriptionStatusTests: XCTestCase {
     }
 
     func testAStopErrorFromASessionThatEndedIsNotAFailedStop() async {
-        let status = SystemTranscriptionStatus(readStatus: { false }, stopSession: { throw Unreachable() })
+        let status = SystemTranscriptionStatus(readStatus: { .idle }, stopSession: { throw Unreachable() })
         status.handle(event(.started))
         await status.stop()
         XCTAssertFalse(status.isRunning)
@@ -127,7 +127,7 @@ final class SystemTranscriptionStatusTests: XCTestCase {
     }
 
     func testASessionThatOutlivesAStopErrorIsAFailedStop() async {
-        let status = SystemTranscriptionStatus(readStatus: { true }, stopSession: { throw Unreachable() })
+        let status = SystemTranscriptionStatus(readStatus: { .running }, stopSession: { throw Unreachable() })
         status.handle(event(.started))
         await status.stop()
         XCTAssertTrue(status.isRunning)
@@ -135,7 +135,7 @@ final class SystemTranscriptionStatusTests: XCTestCase {
     }
 
     func testANewSessionClearsAnEarlierFailedStop() async {
-        let status = SystemTranscriptionStatus(readStatus: { true }, stopSession: { throw Unreachable() })
+        let status = SystemTranscriptionStatus(readStatus: { .running }, stopSession: { throw Unreachable() })
         status.handle(event(.started))
         await status.stop()
         status.handle(event(.stopped))
@@ -177,20 +177,45 @@ final class SystemTranscriptionStatusTests: XCTestCase {
     }
 
     func testAnAcceptedStartRunsAndARefusedOneSaysSo() async {
-        let started = SystemTranscriptionStatus(readStatus: { false }, startSession: {})
+        let started = SystemTranscriptionStatus(readStatus: { .idle }, startSession: {})
         await started.start()
         XCTAssertTrue(started.isRunning)
         XCTAssertFalse(started.didFailToStart)
 
-        let refused = SystemTranscriptionStatus(readStatus: { false }, startSession: { throw Unreachable() })
+        let refused = SystemTranscriptionStatus(readStatus: { .idle }, startSession: { throw Unreachable() })
         await refused.start()
         XCTAssertFalse(refused.isRunning)
         XCTAssertTrue(refused.didFailToStart)
         XCTAssertFalse(refused.isStarting)
     }
 
+    func testAStartedSessionNamesItsFile() {
+        let status = SystemTranscriptionStatus(readStatus: { .idle })
+        var started = event(.started)
+        started.transcriptPath = "/tmp/standup.txt"
+        status.handle(started)
+        XCTAssertEqual(status.transcriptFile, URL(filePath: "/tmp/standup.txt"))
+    }
+
+    func testAReadNamesTheFileOfASessionJoinedLate() async {
+        let file = URL(filePath: "/tmp/standup.txt")
+        let status = SystemTranscriptionStatus(readStatus: { .init(isRunning: true, transcriptFile: file) })
+        await status.catchUp()
+        XCTAssertEqual(status.transcriptFile, file)
+    }
+
+    func testAReadThatKnowsNoFileKeepsTheLastOne() async {
+        let status = SystemTranscriptionStatus(readStatus: { .idle })
+        var started = event(.started)
+        started.transcriptPath = "/tmp/standup.txt"
+        status.handle(started)
+        status.handle(event(.stopped))
+        await status.catchUp()
+        XCTAssertEqual(status.transcriptFile, URL(filePath: "/tmp/standup.txt"))
+    }
+
     func testASessionJoinedLateDatesItsStartFromTheFirstOffset() {
-        let status = SystemTranscriptionStatus(readStatus: { true })
+        let status = SystemTranscriptionStatus(readStatus: { .running })
         let now = Date(timeIntervalSince1970: 1000)
         var segment = event(.segmentTranscribed)
         segment.offset = .init(seconds: 90)
@@ -200,6 +225,11 @@ final class SystemTranscriptionStatusTests: XCTestCase {
 
         XCTAssertEqual(status.startedAt, Date(timeIntervalSince1970: 910))
     }
+}
+
+extension SystemTranscriptionSnapshot {
+    fileprivate static let idle = Self(isRunning: false, transcriptFile: nil)
+    fileprivate static let running = Self(isRunning: true, transcriptFile: nil)
 }
 
 /// Answers each read from a script, repeating the last answer once it runs out.
@@ -217,10 +247,11 @@ private final class ScriptedDaemon: @unchecked Sendable {
         lock.withLock { reachedCount }
     }
 
-    func read() -> Bool {
+    func read() -> SystemTranscriptionSnapshot {
         lock.withLock {
             reachedCount += 1
-            return reads.count > 1 ? reads.removeFirst() : reads[0]
+            let isRunning = reads.count > 1 ? reads.removeFirst() : reads[0]
+            return isRunning ? .running : .idle
         }
     }
 }

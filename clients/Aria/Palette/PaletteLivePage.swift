@@ -17,8 +17,12 @@ struct PaletteLivePage: View {
                     NoticeText(notice: SystemTranscriptionStatus.stopFailure)
                 } else if let error = history.error {
                     NoticeText(notice: error.message)
+                } else if let notice = history.notice {
+                    Text(notice)
+                } else if let file = systemTranscription.transcriptFile {
+                    TranscriptFileNote(file: file, isRunning: systemTranscription.isRunning)
                 } else {
-                    Text(history.notice ?? SystemTranscriptionStatus.savingNote)
+                    Text(SystemTranscriptionStatus.savingNote)
                 }
             } actions: {
                 PaletteFooterActions(
@@ -34,6 +38,26 @@ struct PaletteLivePage: View {
             Text("Live Transcript")
         } detail: {
             SystemTranscriptionClock(systemTranscription)
+        }
+    }
+}
+
+private struct TranscriptFileNote: View {
+    private static let showInFinder = "Show in Finder"
+
+    let file: URL
+    let isRunning: Bool
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(isRunning ? "Saving to" : "Saved to")
+            Button(file.lastPathComponent) {
+                NSWorkspace.shared.activateFileViewerSelecting([file])
+            }
+            .buttonStyle(.link)
+            .truncationMode(.middle)
+            .help(Self.showInFinder)
+            .accessibilityHint(Self.showInFinder)
         }
     }
 }
