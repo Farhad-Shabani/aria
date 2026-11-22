@@ -64,7 +64,9 @@ pub(super) fn run() -> anyhow::Result<()> {
                 SpeechStage::Failed(code) => writeln!(stdout, "speech failed {}", code.label()),
             },
             DaemonEvent::SystemTranscription(stage) => match stage {
-                SystemTranscriptionStage::Started => writeln!(stdout, "transcription started"),
+                SystemTranscriptionStage::Started { .. } => {
+                    writeln!(stdout, "transcription started")
+                }
                 SystemTranscriptionStage::SegmentTranscribed { text, label, .. } => match label {
                     Some(label) => writeln!(stdout, "transcription segment [{label}] {text}"),
                     None => writeln!(stdout, "transcription segment {text}"),

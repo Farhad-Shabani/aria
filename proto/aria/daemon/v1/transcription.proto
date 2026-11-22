@@ -60,6 +60,8 @@ message SystemTranscriptionEvent {
   // For SPEAKER_MERGED: `merged_from_label` becomes `speaker_label` in the
   // transcript file and subsequent events.
   string merged_from_label = 6;
+  // The file the session writes; only for STARTED.
+  string transcript_path = 7;
 }
 
 // How loud the Mac's audio is while a system transcription runs, about 20

@@ -22,8 +22,10 @@ final class SystemTranscriptionStatus: ObservableObject {
     /// When the session began, worked out from the first stage seen. `nil`
     /// until a stage arrives, as for a session that began before Aria opened.
     @Published private(set) var startedAt: Date?
+    /// The file the session writes, or the last one wrote.
+    @Published private(set) var transcriptFile: URL?
 
-    typealias ReadStatus = @Sendable () async throws -> Bool
+    typealias ReadStatus = @Sendable () async throws -> SystemTranscriptionSnapshot
     typealias StartSession = @Sendable () async throws -> Void
     typealias StopSession = @Sendable () async throws -> Void
 
@@ -39,7 +41,7 @@ final class SystemTranscriptionStatus: ObservableObject {
     private var reconciling: Task<Void, Never>?
 
     init(
-        readStatus: @escaping ReadStatus = SystemTranscriptionClient.isRunning,
+        readStatus: @escaping ReadStatus = SystemTranscriptionClient.status,
         startSession: @escaping StartSession = SystemTranscriptionClient.start,
         stopSession: @escaping StopSession = SystemTranscriptionClient.stop,
         reconcileInterval: Duration = .seconds(15)
@@ -91,6 +93,7 @@ final class SystemTranscriptionStatus: ObservableObject {
             areLevelsStale = false
             isRunning = true
             startedAt = now
+            transcriptFile = SystemTranscriptionClient.transcriptFile(atPath: event.transcriptPath)
         case .segmentTranscribed, .speakerMerged:
             isRunning = true
             if startedAt == nil {
@@ -121,9 +124,11 @@ final class SystemTranscriptionStatus: ObservableObject {
     /// A read that fails leaves the state alone; the transport logs why.
     func catchUp() async {
         let stagesAtRead = stagesSeen
-        guard let isRunning = try? await readStatus(), stagesSeen == stagesAtRead else { return }
-        self.isRunning = isRunning
-        areLevelsStale = !isRunning
+        guard let snapshot = try? await readStatus(), stagesSeen == stagesAtRead else { return }
+        isRunning = snapshot.isRunning
+        areLevelsStale = !snapshot.isRunning
+        // A daemon that restarted knows no file, yet the last one is still on disk.
+        if let file = snapshot.transcriptFile { transcriptFile = file }
     }
 
     /// Answers once the daemon accepted the session. Capture can still fail

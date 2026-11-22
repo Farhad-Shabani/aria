@@ -1486,8 +1486,9 @@ impl From<SystemTranscriptionStage> for wire::Event {
 impl From<SystemTranscriptionStage> for wire::SystemTranscriptionEvent {
     fn from(stage: SystemTranscriptionStage) -> Self {
         match stage {
-            SystemTranscriptionStage::Started => Self {
+            SystemTranscriptionStage::Started { transcript } => Self {
                 stage: wire::SystemTranscriptionStage::Started as i32,
+                transcript_path: transcript.display().to_string(),
                 text: String::new(),
                 speaker_label: String::new(),
                 merged_from_label: String::new(),
@@ -1505,6 +1506,7 @@ impl From<SystemTranscriptionStage> for wire::SystemTranscriptionEvent {
                 merged_from_label: String::new(),
                 offset: Some(wire_duration(Duration::from_secs(at_seconds))),
                 error_code: 0,
+                transcript_path: String::new(),
             },
             SystemTranscriptionStage::SpeakerMerged { from, into } => Self {
                 stage: wire::SystemTranscriptionStage::SpeakerMerged as i32,
@@ -1513,6 +1515,7 @@ impl From<SystemTranscriptionStage> for wire::SystemTranscriptionEvent {
                 merged_from_label: from.to_string(),
                 offset: None,
                 error_code: 0,
+                transcript_path: String::new(),
             },
             SystemTranscriptionStage::Stopped => Self {
                 stage: wire::SystemTranscriptionStage::Stopped as i32,
@@ -1521,6 +1524,7 @@ impl From<SystemTranscriptionStage> for wire::SystemTranscriptionEvent {
                 merged_from_label: String::new(),
                 offset: None,
                 error_code: 0,
+                transcript_path: String::new(),
             },
             SystemTranscriptionStage::Failed(code) => Self {
                 stage: wire::SystemTranscriptionStage::Failed as i32,
@@ -1529,6 +1533,7 @@ impl From<SystemTranscriptionStage> for wire::SystemTranscriptionEvent {
                 merged_from_label: String::new(),
                 offset: None,
                 error_code: error_code_to_wire(code),
+                transcript_path: String::new(),
             },
         }
     }
@@ -1539,7 +1544,9 @@ impl TryFrom<&wire::SystemTranscriptionEvent> for SystemTranscriptionStage {
 
     fn try_from(event: &wire::SystemTranscriptionEvent) -> Result<Self, Self::Error> {
         match wire::SystemTranscriptionStage::try_from(event.stage) {
-            Ok(wire::SystemTranscriptionStage::Started) => Ok(Self::Started),
+            Ok(wire::SystemTranscriptionStage::Started) => Ok(Self::Started {
+                transcript: Arc::from(std::path::Path::new(&event.transcript_path)),
+            }),
             Ok(wire::SystemTranscriptionStage::SegmentTranscribed) => {
                 Ok(Self::SegmentTranscribed {
                     text: Arc::from(event.text.as_str()),
@@ -5191,7 +5198,9 @@ mod tests {
                 from: Arc::from("Speaker 3"),
                 into: Arc::from("Speaker 1"),
             },
-            SystemTranscriptionStage::Started,
+            SystemTranscriptionStage::Started {
+                transcript: Arc::from(std::path::Path::new("/tmp/transcript.txt")),
+            },
             SystemTranscriptionStage::Stopped,
             SystemTranscriptionStage::Failed(RpcErrorCode::SystemTranscriptionPermissionDenied),
         ];
