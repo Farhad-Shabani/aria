@@ -89,7 +89,8 @@ impl PreparedRuntimePaths {
         &self.paths.directory
     }
 
-    /// Directory for temporary recordings owned by the daemon.
+    /// Where older builds kept temporary recordings. Startup removes what
+    /// they left.
     pub fn spool_dir(&self) -> &Path {
         &self.paths.spool_dir
     }

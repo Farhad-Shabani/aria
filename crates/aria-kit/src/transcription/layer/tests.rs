@@ -66,7 +66,7 @@ impl Layer for Replace {
 
 #[test]
 fn layers_apply_in_declaration_order() {
-    let (_directory, mut recording) = recorded(&[1, 2]);
+    let mut recording = recorded(&[1, 2]);
     let transcription = Transcription::complete(Scripted::new(["one"]))
         .with(Replace("one", "two"))
         .with(Replace("two", "three"));
@@ -83,7 +83,7 @@ fn layers_apply_in_declaration_order() {
 #[test]
 fn an_absent_layer_leaves_the_text_raw() {
     for enabled in [false, true] {
-        let (_directory, mut recording) = recorded(&[1, 2]);
+        let mut recording = recorded(&[1, 2]);
         let transcription = Transcription::complete(Scripted::new(["Um, hello."]))
             .with(enabled.then_some(RemoveHesitations));
         assert_eq!(
@@ -99,7 +99,7 @@ fn an_absent_layer_leaves_the_text_raw() {
 #[test]
 fn complete_and_streaming_sessions_apply_real_layers() {
     let vocabulary = Vocabulary::new(["Cargo.toml"]).unwrap();
-    let (_directory, mut recording) = recorded(&[1, 2]);
+    let mut recording = recorded(&[1, 2]);
     let transcription = Transcription::complete(Scripted::new([
         "Um, open cargo dot toml. They had had enough.",
     ]))
@@ -113,7 +113,7 @@ fn complete_and_streaming_sessions_apply_real_layers() {
         "Open Cargo.toml. They had had enough."
     );
 
-    let (_directory, recording) = recorded(&[1; 1600]);
+    let recording = recorded(&[1; 1600]);
     let transcription = Transcription::agreement(
         Cadence::from_millis(100, 20_000),
         Scripted::new(["Um, open cargo dot toml."]),
@@ -182,7 +182,7 @@ fn native_layers_process_joined_words_and_flush_with_independent_opt_outs() {
         (true, true, vec!["Cargo.toml", "done"]),
     ] {
         for drain_tail in [false, true] {
-            let (_directory, mut recording) = recorded(&[1; 3200]);
+            let mut recording = recorded(&[1; 3200]);
             let transcription = Transcription::stream(Stream::Native, NativeScripted)
                 .with(hesitations.then_some(RemoveHesitations))
                 .with(vocabulary.then(|| Vocabulary::new(["Cargo.toml"]).unwrap()));
@@ -230,7 +230,7 @@ fn vocabulary_does_not_rewrite_across_finalized_segments() {
 
 #[test]
 fn removing_every_word_finishes_without_redecoding() {
-    let (_directory, mut recording) = recorded(&[1, 2]);
+    let mut recording = recorded(&[1, 2]);
     let transcription =
         Transcription::complete(Scripted::new(["Um, uh, hmm."])).with(RemoveHesitations);
     let mut operation = transcription.start(&Language::Automatic).unwrap();
@@ -476,7 +476,7 @@ fn text_bounds_cover_each_segment_before_and_after_a_layer() {
         (MAX_TEXT_BYTES + 1, 1),
         (1, MAX_TEXT_BYTES + 1),
     ] {
-        let (_directory, mut recording) = recorded(&[1, 2]);
+        let mut recording = recorded(&[1, 2]);
         let transcription = Transcription::complete(Scripted::new(["x".repeat(input_bytes)]))
             .with(Expand(output_bytes));
         let result = transcription.transcribe(&mut recording, &Language::Automatic);

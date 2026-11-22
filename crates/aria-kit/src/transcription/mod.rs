@@ -1911,8 +1911,8 @@ mod coordinator_tests {
 
     #[test]
     fn a_boxed_or_shared_recognizer_still_opens_its_stream() {
-        let (_directory, mut boxed_recording) = recorded(&[1, 2, 3, 4]);
-        let (_directory, mut shared_recording) = recorded(&[1, 2, 3, 4]);
+        let mut boxed_recording = recorded(&[1, 2, 3, 4]);
+        let mut shared_recording = recorded(&[1, 2, 3, 4]);
         let boxed: Box<dyn Recognizer> = Box::new(Chunked);
         let shared = Arc::new(Chunked);
 
@@ -1990,7 +1990,7 @@ mod coordinator_tests {
     #[test]
     fn native_and_whole_updates_finalize_every_word() {
         fn check<T: Recognizer, M: Mode>(transcription: Transcription<T, M>, expected: &str) {
-            let (_directory, mut recording) = recorded(&[1, 2, 3, 4]);
+            let mut recording = recorded(&[1, 2, 3, 4]);
             let mut operation = transcription.start(&Language::Automatic).expect("starts");
             let mut segments = Vec::new();
             while let Some(update) = operation.next_update(&mut recording).expect("reads") {
@@ -2028,7 +2028,7 @@ mod coordinator_tests {
 
     #[test]
     fn complete_invokes_the_engine_once_with_the_whole_recording() {
-        let (_directory, mut recording) = recorded(&[1, 2, 3]);
+        let mut recording = recorded(&[1, 2, 3]);
         let recognizer = Arc::new(FakeRecognizer::answering("hello there"));
         let transcription = Transcription::complete(Arc::clone(&recognizer));
 
@@ -2196,7 +2196,7 @@ mod coordinator_tests {
 
     #[test]
     fn an_empty_hypothesis_becomes_terminal_no_speech() {
-        let (_directory, mut recording) = recorded(&[1, 2, 3]);
+        let mut recording = recorded(&[1, 2, 3]);
         let transcription = Transcription::complete(FakeRecognizer::answering("   "));
 
         let outcome = transcription.transcribe(&mut recording, &Language::Automatic);
@@ -2206,7 +2206,7 @@ mod coordinator_tests {
 
     #[test]
     fn cancellation_prevents_complete_inference() {
-        let (_directory, mut recording) = recorded(&[1, 2, 3]);
+        let mut recording = recorded(&[1, 2, 3]);
         let recognizer = Arc::new(FakeRecognizer::answering("unreachable"));
         let transcription = Transcription::complete(Arc::clone(&recognizer));
         let cancel = CancelToken::new();
@@ -2220,7 +2220,7 @@ mod coordinator_tests {
 
     #[test]
     fn language_rejection_prevents_complete_inference() {
-        let (_directory, mut recording) = recorded(&[1, 2, 3]);
+        let mut recording = recorded(&[1, 2, 3]);
         let mut fake = FakeRecognizer::answering("unreachable");
         fake.reject_language = true;
         let recognizer = Arc::new(fake);

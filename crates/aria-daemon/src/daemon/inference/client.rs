@@ -944,13 +944,8 @@ mod tests {
         let client = server.paired_client().await;
         let audio = tempfile::tempdir().unwrap();
         let fixture = fixture_of(audio.path(), 32_000);
-        let capture = WavReplayCapture::new(
-            audio.path(),
-            Duration::from_secs(5),
-            &fixture,
-            ReplayPace::Realtime,
-        )
-        .unwrap();
+        let capture =
+            WavReplayCapture::new(Duration::from_secs(5), &fixture, ReplayPace::Realtime).unwrap();
         let log = CallLog::default();
         let delivered = log.clone();
         let control = ExecutionControl::for_test(StopMode::Manual);

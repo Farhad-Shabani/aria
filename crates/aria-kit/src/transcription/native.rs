@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn a_chunks_last_word_waits_for_the_next_chunk() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; 3 * CHUNK]);
+        let mut recording = recorded(&vec![0_i16; 3 * CHUNK]);
         let (stream, _) = Scripted::new(&["one two", "three", "four five"]);
         let mut state = state(stream);
 
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn a_word_split_across_chunks_is_joined() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; 3 * CHUNK]);
+        let mut recording = recorded(&vec![0_i16; 3 * CHUNK]);
         let (stream, _) = Scripted::new(&["thrown into pris", "+on for this", "+ness"]);
         let mut state = state(stream);
 
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn a_silent_chunk_waits_for_the_next() {
-        let (_directory, mut recording, pace) = paced(vec![
+        let (mut recording, pace) = paced(vec![
             vec![0_i16; CHUNK],
             vec![0_i16; CHUNK],
             vec![0_i16; CHUNK],
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn the_last_partial_chunk_is_padded_and_flushed() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; CHUNK + CHUNK / 2]);
+        let mut recording = recorded(&vec![0_i16; CHUNK + CHUNK / 2]);
         let (stream, fed) = Scripted::new(&["one", "two", "three"]);
         let mut state = state(stream);
 
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn frames_become_absolute_stream_spans() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; 3 * CHUNK]);
+        let mut recording = recorded(&vec![0_i16; 3 * CHUNK]);
         let timed = Hypothesis::with_words(
             "hello world",
             vec![
@@ -508,7 +508,7 @@ mod tests {
             ),
             (Hypothesis::new("hello"), 0..3 * CHUNK as u64),
         ] {
-            let (_directory, mut recording) = recorded(&vec![0_i16; 3 * CHUNK]);
+            let mut recording = recorded(&vec![0_i16; 3 * CHUNK]);
             let mut state = state(Scripted::timed(vec![
                 Hypothesis::new(""),
                 Hypothesis::new(""),
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn an_untimed_chunk_can_have_words_from_any_earlier_audio() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; 2 * CHUNK]);
+        let mut recording = recorded(&vec![0_i16; 2 * CHUNK]);
         let (stream, _) = Scripted::new(&["", "hello world"]);
         let mut state = state(stream);
 
@@ -597,7 +597,7 @@ mod tests {
 
     #[test]
     fn a_word_completed_by_the_flush_keeps_its_real_audio() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; CHUNK]);
+        let mut recording = recorded(&vec![0_i16; CHUNK]);
         let mut stream = Scripted::timed(vec![
             Hypothesis::with_words(
                 "some",
@@ -632,7 +632,7 @@ mod tests {
 
     #[test]
     fn the_flush_segment_never_claims_audio_past_the_recording() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; 2 * CHUNK]);
+        let mut recording = recorded(&vec![0_i16; 2 * CHUNK]);
         let (stream, _) = Scripted::new(&["", "", "held back"]);
         let mut state = state(stream);
 
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn retained_from_keeps_the_last_chunk() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; 3 * CHUNK]);
+        let mut recording = recorded(&vec![0_i16; 3 * CHUNK]);
         let (stream, _) = Scripted::new(&["one", "", "two"]);
         let mut state = state(stream);
         let cancel = CancelToken::never();
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn retained_from_keeps_a_held_word_older_than_the_last_chunk() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; 2 * CHUNK]);
+        let mut recording = recorded(&vec![0_i16; 2 * CHUNK]);
         let (stream, _) = Scripted::new(&["one", ""]);
         let mut state = state(stream);
         let cancel = CancelToken::never();
@@ -685,7 +685,7 @@ mod tests {
 
     #[test]
     fn segments_concatenate_into_the_final_transcript() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; 2 * CHUNK]);
+        let mut recording = recorded(&vec![0_i16; 2 * CHUNK]);
         let (stream, _) = Scripted::new(&["Hello there,", "friend.", "Bye."]);
         let mut state = state(stream);
         let cancel = CancelToken::never();
@@ -706,7 +706,7 @@ mod tests {
 
     #[test]
     fn a_silent_stream_finishes_without_a_transcript() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; CHUNK]);
+        let mut recording = recorded(&vec![0_i16; CHUNK]);
         let (stream, _) = Scripted::new(&[]);
         let mut state = state(stream);
 
@@ -727,7 +727,7 @@ mod tests {
 
     #[test]
     fn an_empty_recording_is_the_capture_error_and_feeds_nothing() {
-        let (_directory, mut recording) = recorded(&[]);
+        let mut recording = recorded(&[]);
         let (stream, fed) = Scripted::new(&["never"]);
         let mut state = state(stream);
 
@@ -739,7 +739,7 @@ mod tests {
 
     #[test]
     fn a_cancelled_operation_stops_before_the_next_feed() {
-        let (_directory, mut recording) = recorded(&vec![0_i16; 2 * CHUNK]);
+        let mut recording = recorded(&vec![0_i16; 2 * CHUNK]);
         let (stream, fed) = Scripted::new(&["one", "two"]);
         let mut state = state(stream);
         let cancel = CancelToken::new();

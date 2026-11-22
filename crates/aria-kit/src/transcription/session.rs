@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn a_streaming_session_commits_words_as_their_agreement_holds() {
-        let (_directory, recording, pace) = paced(vec![stride_batch(); 4]);
+        let (recording, pace) = paced(vec![stride_batch(); 4]);
         let cadence = Cadence::from_millis(STRIDE_MS, 20_000);
         let transcription = Transcription::agreement(
             cadence,
@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn a_whole_session_has_only_its_end() {
-        let (_directory, recording) = recorded(&[0; 64]);
+        let recording = recorded(&[0; 64]);
         let transcription = Transcription::complete(Scripted::new(&["hello world"]));
         let language = Language::Automatic;
 

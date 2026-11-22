@@ -129,7 +129,6 @@ impl DictationRuntime {
         vocabulary: Arc<VocabularyRuntime>,
     ) -> Self {
         let delivery = context.delivery.clone();
-        let spool_dir = context.paths.spool_dir().to_path_buf();
         let home = context.home.clone();
         let sound_muting = context.sound_muting();
         let retry_home = home.clone();
@@ -180,7 +179,6 @@ impl DictationRuntime {
                             // A daemon that defers its build serves one press and no relay.
                             phones: None,
                         },
-                        &spool_dir,
                         &home,
                         Arc::clone(&history),
                         ModelLoading::OnFirstUse,
@@ -260,7 +258,6 @@ impl DictationRuntime {
             wake_control,
         } = build_dictation(
             setup,
-            context.paths.spool_dir(),
             &context.home,
             Arc::clone(&history),
             ModelLoading::Eager,
@@ -1442,7 +1439,6 @@ mod history_tests {
                     hold_microphone: tokio::sync::watch::channel(true).1,
                     phones: None,
                 },
-                &home,
                 &home,
                 Arc::clone(&fixture.runtime.history),
                 ModelLoading::Eager,

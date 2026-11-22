@@ -607,8 +607,7 @@ mod tests {
             } else {
                 TranscriptRoute::Deliver
             };
-            let mut recording =
-                RecordingReader::from_samples_in(directory.path(), &[0.25; 1_600]).unwrap();
+            let mut recording = RecordingReader::from_samples(&[0.25; 1_600]);
             sink.dictation_started(&settings, &ExecutionControl::for_test(StopMode::Manual))
                 .unwrap();
             sink.segment(Utterance::anonymous("partial")).unwrap();

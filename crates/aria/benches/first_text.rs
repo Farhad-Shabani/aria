@@ -165,10 +165,8 @@ fn first_text_ms<T: Recognizer>(
     wav: &Path,
     now: impl FnOnce() -> Instant,
 ) -> anyhow::Result<u64> {
-    let spool = tempfile::TempDir::new().context("cannot create replay spool")?;
     let stopper = Stopper::new();
-    let capture =
-        WavReplayCapture::new(spool.path(), MAXIMUM_UTTERANCE, wav, ReplayPace::Realtime)?;
+    let capture = WavReplayCapture::new(MAXIMUM_UTTERANCE, wav, ReplayPace::Realtime)?;
     let started = now();
     let mut recording = capture.start(
         RecordingMode::UntilStopped,

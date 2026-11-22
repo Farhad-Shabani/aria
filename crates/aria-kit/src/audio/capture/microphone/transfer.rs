@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::audio::capture::modes::{CaptureProgress, CaptureRecording};
-use crate::audio::{CaptureError, RecordedAudio, StopSignal};
+use crate::audio::{CaptureError, StopSignal};
 use crate::voice_activity::VoiceActivityDetector;
 
 use super::Result;
@@ -19,7 +19,7 @@ pub(super) fn capture<V: VoiceActivityDetector>(
     pre_press: &mut VecDeque<i16>,
     maximum_duration: Duration,
     stop: &StopSignal,
-) -> Result<RecordedAudio> {
+) -> Result<()> {
     if prepend_pre_press(&mut recording, pre_press)? == CaptureProgress::Continue {
         pump(live, &mut recording, maximum_duration, stop)?;
     }
@@ -34,12 +34,12 @@ fn drain_tail<V: VoiceActivityDetector>(
     live: &mut LiveStream,
     recording: &mut CaptureRecording<V>,
 ) -> Result<()> {
-    let Some(spool) = recording.tail() else {
+    let Some(limited) = recording.tail() else {
         return Ok(());
     };
     let mut scratch = [0_i16; DRAIN_BUFFER_SAMPLES];
     while let input @ [_, ..] = live.pop(&mut scratch)? {
-        spool.write_samples(input)?;
+        limited.write_samples(input)?;
     }
     Ok(())
 }

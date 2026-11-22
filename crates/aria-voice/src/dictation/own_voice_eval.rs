@@ -991,14 +991,8 @@ fn acceptance(truth: &Truth, scores: &[(Press, Score)]) -> Vec<String> {
 }
 
 fn dictate(speaker: &SpeakerConfig, wav: &Path, parakeet: &Arc<Parakeet>, press: Press) -> Typed {
-    let spool = tempfile::tempdir().unwrap();
-    let capture = WavReplayCapture::new(
-        spool.path(),
-        Duration::from_secs(120),
-        wav,
-        ReplayPace::Realtime,
-    )
-    .unwrap();
+    let capture =
+        WavReplayCapture::new(Duration::from_secs(120), wav, ReplayPace::Realtime).unwrap();
     let (diarizer, segmenter) = tracking_models(speaker);
     let typed = Arc::new(Mutex::new(Typed::default()));
     let started = Arc::new(OnceLock::new());

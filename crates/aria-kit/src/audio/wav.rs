@@ -5,7 +5,6 @@ use aria_primitives::Cause;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::recording::RecordedAudio;
 use super::{
     CANONICAL_SAMPLE_RATE, CHANNELS, CaptureError, Clip, ClipError, MAX_RECORDING_DURATION,
     RecordingReader, canonical_samples, pcm16_from_f32,
@@ -59,11 +58,7 @@ impl RecordingReader {
 
         let (recording, writer) = super::Recording::prerecorded();
         writer.push_pcm16(&samples);
-        let sample_count = samples.len() as u64;
-        writer.close(Ok(RecordedAudio::borrowed(
-            path.to_path_buf(),
-            sample_count,
-        )));
+        writer.finish();
         Ok(recording)
     }
 
@@ -378,11 +373,7 @@ mod tests {
 
         recording.fill().expect("the recording already ended");
         assert_eq!(recording.samples().len(), FIXTURE_SAMPLES);
-        let audio = recording
-            .finished_audio()
-            .expect("the recording already ended");
-        assert_eq!(audio.path(), Some(fixture.as_path()));
-        assert_eq!(audio.duration(), Duration::from_secs(1));
+        assert_eq!(recording.duration(), Duration::from_secs(1));
     }
 
     #[test]
@@ -414,11 +405,6 @@ mod tests {
 
         recording.fill().expect("the recording already ended");
         assert_eq!(recording.samples(), expected.as_slice());
-        let audio = recording
-            .finished_audio()
-            .expect("the recording already ended");
-        assert_eq!(audio.path(), None);
-        assert_eq!(audio.duration(), Duration::from_secs(1));
     }
 
     #[test]

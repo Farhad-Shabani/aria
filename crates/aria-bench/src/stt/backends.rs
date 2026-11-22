@@ -628,7 +628,6 @@ mod tests {
 
     #[test]
     fn attempts_reset_metrics_and_disconnect_replay_on_failure_and_unwind() {
-        let directory = tempfile::tempdir().unwrap();
         let step = Step::default();
         let engine = stepped_trace_engine(true, step.clone());
         let loaded = Loaded {
@@ -639,9 +638,7 @@ mod tests {
         };
 
         for unwind in [false, true] {
-            let mut recording =
-                aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4])
-                    .unwrap();
+            let mut recording = aria_kit::audio::RecordingReader::from_samples(&[0.5; 4]);
             let (advance, gate) = mpsc::channel();
             loaded.timing.decode_busy.store(9_000, Ordering::Relaxed);
             loaded.timing.decode_calls.store(7, Ordering::Relaxed);
@@ -674,9 +671,7 @@ mod tests {
 
     #[test]
     fn streaming_trace_preserves_order_without_inventing_word_spans() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut recording =
-            aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4]).unwrap();
+        let mut recording = aria_kit::audio::RecordingReader::from_samples(&[0.5; 4]);
         let composed =
             Composed::Streaming(Transcription::stream(Stream::Native, trace_engine(false)));
         let started = Instant::now();
@@ -799,9 +794,7 @@ mod tests {
 
     #[test]
     fn a_later_failure_keeps_the_already_emitted_trace() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut recording =
-            aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4]).unwrap();
+        let mut recording = aria_kit::audio::RecordingReader::from_samples(&[0.5; 4]);
         let composed =
             Composed::Streaming(Transcription::stream(Stream::Native, trace_engine(true)));
         let mut segments = Vec::new();
@@ -823,9 +816,7 @@ mod tests {
 
     #[test]
     fn whole_transcription_has_no_streaming_trace() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut recording =
-            aria_kit::audio::RecordingReader::from_samples_in(directory.path(), &[0.5; 4]).unwrap();
+        let mut recording = aria_kit::audio::RecordingReader::from_samples(&[0.5; 4]);
         let composed = Composed::Whole(Transcription::complete(trace_engine(false)));
         let mut segments = Vec::new();
 

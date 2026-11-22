@@ -20,10 +20,8 @@ pub mod vocabulary;
 
 use aria_harness::artifact::{Provenance, fingerprint, fingerprint_value, write_json};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
-
-use tempfile::TempDir;
 
 use aria_kit::audio::{
     AudioCapture, Inputs, RecordingMode, RecordingReader, ReplayPace, StopSignal, WavReplayCapture,
@@ -221,8 +219,6 @@ pub fn run(request: &Request) -> Result<Report, BenchError> {
     if let Some(baseline) = baseline {
         baseline.validate_candidate(&manifest)?;
     }
-    let spool_dir = TempDir::new().map_err(BenchError::Recordings)?;
-
     let mut writer = RecordWriter::create(&results)?;
     let mut summaries = Vec::new();
     for selection in &selections {
@@ -230,7 +226,6 @@ pub fn run(request: &Request) -> Result<Report, BenchError> {
             selection,
             &language,
             &corpus,
-            spool_dir.path(),
             &manifest.provenance.run_id,
             request.passes,
             request.realtime,
@@ -257,7 +252,6 @@ fn measure(
     selection: &Selection,
     language: &Language,
     corpus: &Corpus,
-    spool_dir: &Path,
     run_id: &str,
     passes: u32,
     realtime: bool,
@@ -281,7 +275,7 @@ fn measure(
                 index + 1,
                 utterance.id
             );
-            let heard = hear(&loaded, language, utterance, spool_dir, conditions);
+            let heard = hear(&loaded, language, utterance, conditions);
             let record = Record::score(
                 &heard,
                 utterance,
@@ -333,7 +327,6 @@ fn hear(
     loaded: &Loaded,
     language: &Language,
     utterance: &Utterance,
-    spool_dir: &Path,
     conditions: Conditions,
 ) -> Heard {
     // A streaming engine must get audio as capture would feed it. Handed
@@ -347,10 +340,12 @@ fn hear(
             .step
             .replay(&utterance.audio, MAXIMUM_UTTERANCE, stride_samples)
             .map(|(recording, armed)| (recording, Some(armed))),
-        Replay::Realtime => wav_replay(utterance, spool_dir, ReplayPace::Realtime)
-            .map(|recording| (recording, None)),
-        Replay::Immediate => wav_replay(utterance, spool_dir, ReplayPace::Immediate)
-            .map(|recording| (recording, None)),
+        Replay::Realtime => {
+            wav_replay(utterance, ReplayPace::Realtime).map(|recording| (recording, None))
+        }
+        Replay::Immediate => {
+            wav_replay(utterance, ReplayPace::Immediate).map(|recording| (recording, None))
+        }
     };
     let (mut recording, _armed) = match replayed {
         Ok(replayed) => replayed,
@@ -400,12 +395,8 @@ fn hear(
     }
 }
 
-fn wav_replay(
-    utterance: &Utterance,
-    spool_dir: &Path,
-    pace: ReplayPace,
-) -> Result<RecordingReader, ReplayError> {
-    let replay = WavReplayCapture::new(spool_dir, MAXIMUM_UTTERANCE, &utterance.audio, pace)?;
+fn wav_replay(utterance: &Utterance, pace: ReplayPace) -> Result<RecordingReader, ReplayError> {
+    let replay = WavReplayCapture::new(MAXIMUM_UTTERANCE, &utterance.audio, pace)?;
     Ok(replay.start(
         RecordingMode::UntilStopped,
         Inputs::Local,
@@ -462,9 +453,6 @@ pub enum BenchError {
 
     #[error(transparent)]
     Record(#[from] RecordError),
-
-    #[error("failed to create a directory for replayed recordings")]
-    Recordings(#[source] std::io::Error),
 
     #[error("failed to load the {backend} model")]
     Load {

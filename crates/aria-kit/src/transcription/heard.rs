@@ -133,7 +133,7 @@ mod tests {
             }
         }
         let run = |previews, timed| {
-            let (_directory, mut recording, pace) = paced(vec![vec![8192_i16; 1600]; 4]);
+            let (mut recording, pace) = paced(vec![vec![8192_i16; 1600]; 4]);
             let transcription = Transcription::agreement(
                 Cadence::from_millis(100, 200),
                 Script {
@@ -220,7 +220,7 @@ mod tests {
             }
         }
         let second = CANONICAL_SAMPLE_RATE as usize;
-        let (_directory, mut recording, pace) = paced(vec![vec![8192_i16; second]; 8]);
+        let (mut recording, pace) = paced(vec![vec![8192_i16; second]; 8]);
         let transcription = Transcription::agreement(
             Cadence::from_millis(1_000, 20_000),
             Script {

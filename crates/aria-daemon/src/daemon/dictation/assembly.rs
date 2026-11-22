@@ -600,7 +600,6 @@ pub(super) struct BuiltDictation {
 /// last, so a failed eager load never opens the input device.
 pub(super) fn build_dictation(
     setup: DictationSetup,
-    spool_dir: &Path,
     home: &Path,
     transcripts: Arc<HistoryStore>,
     loading: ModelLoading,
@@ -637,7 +636,6 @@ pub(super) fn build_dictation(
         preference,
         hold_microphone,
         phones,
-        spool_dir,
         timeouts.recording(),
     )?;
     let backend = stt.clone();
@@ -940,7 +938,6 @@ pub(in crate::daemon::dictation) mod tests {
                     phones: None,
                 },
                 &root,
-                &root,
                 Arc::new(HistoryStore::new()),
                 ModelLoading::Eager,
                 Gate::new(),
@@ -1041,7 +1038,6 @@ pub(in crate::daemon::dictation) mod tests {
 
         let outcome = build_dictation(
             setup,
-            home.path(),
             home.path(),
             Arc::new(HistoryStore::new()),
             ModelLoading::Eager,

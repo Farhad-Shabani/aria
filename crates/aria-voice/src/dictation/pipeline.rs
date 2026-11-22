@@ -1958,13 +1958,9 @@ mod tests {
     ) -> (tempfile::TempDir, WavReplayCapture) {
         let directory = tempfile::tempdir().expect("test directory is created");
         let fixture = fixture(directory.path());
-        let capture = WavReplayCapture::new(
-            directory.path(),
-            Duration::from_secs(10),
-            &fixture,
-            ReplayPace::Immediate,
-        )
-        .expect("fixture is replayable");
+        let capture =
+            WavReplayCapture::new(Duration::from_secs(10), &fixture, ReplayPace::Immediate)
+                .expect("fixture is replayable");
         (directory, capture)
     }
 
@@ -2124,10 +2120,10 @@ mod tests {
 
     /// What is heard in a short loud recording when the engine answers
     /// `text`.
-    fn heard(directory: &std::path::Path, text: &'static str) -> Heard {
+    fn heard(text: &'static str) -> Heard {
         let transcription = Transcription::complete(Answering(text));
         let mut operation = transcription.start(&Language::Automatic).unwrap();
-        let mut recording = RecordingReader::from_samples_in(directory, &[0.5; 1600]).unwrap();
+        let mut recording = RecordingReader::from_samples(&[0.5; 1600]);
         aria_kit::transcription::next_heard(&mut operation, &mut recording)
             .unwrap()
             .unwrap()
@@ -2360,8 +2356,7 @@ mod tests {
         let log = CallLog::default();
         let mut sinks = (log.history(), log.cursor());
         sinks.dictation_started(&settings, &control).unwrap();
-        let directory = tempfile::tempdir().unwrap();
-        let heard = heard(directory.path(), "turn left");
+        let heard = heard("turn left");
 
         published.provisional("uncommitted guess", &sinks);
         publish_whole(&mut published, heard, "turn left", &mut sinks).unwrap();
@@ -3556,7 +3551,7 @@ mod tests {
 
     #[test]
     fn transcribing_a_recording_runs_every_cleanup_pass() {
-        let (directory, capture) = capture();
+        let (_directory, capture) = capture();
         let layer = FinalLayer(|text: &mut String, _: &CancelToken| {
             assert_eq!(text, "meet at 3");
             *text = "Meet at 3.".to_owned();
@@ -3574,8 +3569,7 @@ mod tests {
             backtrack: true,
             llm: true,
         };
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
+        let mut recording = RecordingReader::from_samples(&[0.5; 1600]);
         let cancel = CancelToken::new();
         assert_eq!(
             pipeline
@@ -3758,7 +3752,6 @@ mod tests {
     #[test]
     fn streaming_completion_keeps_segment_corrections_across_the_final_drain() {
         for fail in [false, true] {
-            let directory = tempfile::tempdir().unwrap();
             let control = ExecutionControl::for_test(StopMode::Manual);
             let events = DictationEventEmitter::unsubscribed();
             let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
@@ -3782,7 +3775,7 @@ mod tests {
                 ("two", None),
                 ("run d b two", Some("run db2")),
             ] {
-                let heard = heard(directory.path(), text);
+                let heard = heard(text);
                 publish_whole(&mut published, heard, corrected.unwrap_or(text), &mut sinks)
                     .unwrap();
             }
@@ -3837,8 +3830,7 @@ mod tests {
         sinks.dictation_started(&settings, &control).unwrap();
         published.provisional("turn lift", &sinks);
 
-        let directory = tempfile::tempdir().unwrap();
-        let heard = heard(directory.path(), "turn left");
+        let heard = heard("turn left");
         publish_whole(&mut published, heard, "turn left", &mut sinks).unwrap();
         published.provisional("", &sinks);
         drop(published);
@@ -3873,8 +3865,7 @@ mod tests {
         sinks.dictation_started(&settings, &control).unwrap();
         published.provisional("one", &sinks);
 
-        let directory = tempfile::tempdir().unwrap();
-        let heard = heard(directory.path(), "one");
+        let heard = heard("one");
         publish_whole(&mut published, heard, "one", &mut sinks).unwrap();
         // The recording drains after the failure, so previews keep arriving.
         published.provisional("one two", &sinks);
@@ -4837,7 +4828,6 @@ mod tests {
 
     #[test]
     fn a_segment_decoded_while_focus_is_away_is_queued_and_recording_goes_on() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let (events, stages) = stage_events();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
@@ -4854,7 +4844,7 @@ mod tests {
         );
         sinks.dictation_started(&settings, &control).unwrap();
         for text in ["one", "two"] {
-            let heard = heard(directory.path(), text);
+            let heard = heard(text);
             publish_whole(&mut published, heard, text, &mut sinks).unwrap();
         }
 
@@ -4939,7 +4929,6 @@ mod tests {
 
     #[test]
     fn queued_text_types_on_a_silent_return_at_most_once_per_interval() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let (events, stages) = stage_events();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
@@ -4954,7 +4943,7 @@ mod tests {
         );
         sinks.dictation_started(&settings, &control).unwrap();
         for text in ["one", "two"] {
-            let heard = heard(directory.path(), text);
+            let heard = heard(text);
             publish_whole(&mut published, heard, text, &mut sinks).unwrap();
         }
 
@@ -4991,7 +4980,6 @@ mod tests {
     #[test]
     fn a_press_ending_away_from_its_field_reports_its_words_kept() {
         for typed in [0, 1] {
-            let directory = tempfile::tempdir().unwrap();
             let control = ExecutionControl::for_test(StopMode::Manual);
             let events = DictationEventEmitter::unsubscribed();
             let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
@@ -5008,7 +4996,7 @@ mod tests {
             );
             sinks.dictation_started(&settings, &control).unwrap();
             for text in ["one", "two"] {
-                let heard = heard(directory.path(), text);
+                let heard = heard(text);
                 publish_whole(&mut published, heard, text, &mut sinks).unwrap();
             }
 
@@ -5081,7 +5069,6 @@ mod tests {
 
     #[test]
     fn queued_words_lost_with_the_closing_mark_fail_the_press() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
@@ -5100,7 +5087,7 @@ mod tests {
         );
         sinks.dictation_started(&settings, &control).unwrap();
         for text in ["one", "two."] {
-            let heard = heard(directory.path(), text);
+            let heard = heard(text);
             publish_whole(&mut published, heard, text, &mut sinks).unwrap();
         }
 
@@ -5111,7 +5098,6 @@ mod tests {
 
     #[test]
     fn a_moved_caret_after_typed_text_reads_as_stopped_partway() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
@@ -5127,7 +5113,7 @@ mod tests {
         );
         sinks.dictation_started(&settings, &control).unwrap();
         for text in ["one", "two"] {
-            let heard = heard(directory.path(), text);
+            let heard = heard(text);
             publish_whole(&mut published, heard, text, &mut sinks).unwrap();
         }
 
@@ -5138,7 +5124,6 @@ mod tests {
 
     #[test]
     fn a_streamed_segment_of_only_fillers_is_neither_typed_nor_kept() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
@@ -5148,7 +5133,7 @@ mod tests {
         let mut sinks = (log.history(), log.cursor());
         sinks.dictation_started(&settings, &control).unwrap();
         for (text, corrected) in [("um", Some("")), ("run", None)] {
-            let heard = heard(directory.path(), text);
+            let heard = heard(text);
             publish_whole(&mut published, heard, corrected.unwrap_or(text), &mut sinks).unwrap();
         }
         let whole = Transcript::new("um run").unwrap();
@@ -5199,7 +5184,6 @@ mod tests {
     #[test]
     fn each_streamed_segment_logs_where_its_words_end() {
         let captured = CapturedLogs::start(tracing::Level::INFO);
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = streaming();
@@ -5210,7 +5194,7 @@ mod tests {
         sinks.dictation_started(&settings, &control).unwrap();
 
         for (text, end) in [("first part", 1_600), ("second part", 16_000)] {
-            let mut heard = heard(directory.path(), text);
+            let mut heard = heard(text);
             heard.span = Some(0..end);
             publish_whole(&mut published, heard, text, &mut sinks).unwrap();
         }
@@ -5233,7 +5217,6 @@ mod tests {
 
     #[test]
     fn a_short_silence_does_not_end_a_streamed_sentence() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let (events, stages) = stage_events();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
@@ -5249,7 +5232,7 @@ mod tests {
             ("while it shouldn't.", Some(false)),
             ("Ship it.", Some(true)),
         ] {
-            let mut heard = heard(directory.path(), text);
+            let mut heard = heard(text);
             heard.segment = heard.segment.with_sentence_ended_before(ended_before);
             publish_whole(&mut published, heard, text, &mut sinks).unwrap();
         }
@@ -5280,7 +5263,6 @@ mod tests {
 
     #[test]
     fn a_cancelled_press_owes_no_closing_period() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = streaming();
@@ -5288,7 +5270,7 @@ mod tests {
         let mut history = log.history();
         let mut published =
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
-        let heard = heard(directory.path(), "we should.");
+        let heard = heard("we should.");
         publish_whole(&mut published, heard, "we should.", &mut history).unwrap();
         assert!(control.cancel());
 
@@ -5318,13 +5300,12 @@ mod tests {
             }
         }
 
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
         let mut published =
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
-        let heard = heard(directory.path(), "we should.");
+        let heard = heard("we should.");
         publish_whole(&mut published, heard, "we should.", &mut FailingPeriod).unwrap();
         let whole = Transcript::new("unused").unwrap();
 
@@ -5335,7 +5316,6 @@ mod tests {
 
     /// A streaming press that heard "it is twenty" and holds "twenty".
     fn holding_twenty<'a, S>(
-        directory: &std::path::Path,
         settings: &DictationSettings,
         control: &'a ExecutionControl,
         events: &'a DictationEventEmitter,
@@ -5346,7 +5326,7 @@ mod tests {
         S::Error: Into<DictationError>,
     {
         let mut published = Published::new(settings, no_terms(), control, events, Instant::now());
-        let heard = heard(directory, "it is twenty");
+        let heard = heard("it is twenty");
         let unheld = published.hold("it is twenty", &heard);
         let segment = published.correct(unheld);
         published.publish(heard, &segment, None, sinks).unwrap();
@@ -5362,14 +5342,12 @@ mod tests {
 
     #[test]
     fn held_words_are_published_once_the_speaker_pauses() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
         let log = CallLog::default();
         let mut sinks = (log.history(), log.cursor());
-        let mut published =
-            holding_twenty(directory.path(), &settings, &control, &events, &mut sinks);
+        let mut published = holding_twenty(&settings, &control, &events, &mut sinks);
 
         published
             .publish_after_pause(Pause::NotYet, Instant::now() + HELD_WAIT, &mut sinks)
@@ -5384,14 +5362,12 @@ mod tests {
 
     #[test]
     fn without_a_speech_map_held_words_wait_out_the_clock() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
         let log = CallLog::default();
         let mut sinks = (log.history(), log.cursor());
-        let mut published =
-            holding_twenty(directory.path(), &settings, &control, &events, &mut sinks);
+        let mut published = holding_twenty(&settings, &control, &events, &mut sinks);
 
         published
             .publish_after_pause(Pause::Unjudged, Instant::now(), &mut sinks)
@@ -5406,14 +5382,12 @@ mod tests {
 
     #[test]
     fn a_segment_cancelled_while_rewritten_leaves_the_held_words_held() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = streaming();
         let log = CallLog::default();
         let mut sinks = (log.history(), log.cursor());
-        let mut published =
-            holding_twenty(directory.path(), &settings, &control, &events, &mut sinks);
+        let mut published = holding_twenty(&settings, &control, &events, &mut sinks);
         let (_directory, capture) = capture();
         let pipeline = DictationPipeline::new(
             capture,
@@ -5426,12 +5400,8 @@ mod tests {
             checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0
         });
 
-        let rewritten = pipeline.rewritten(
-            &heard(directory.path(), "one"),
-            &mut published,
-            settings.cleanup,
-            &cancel,
-        );
+        let rewritten =
+            pipeline.rewritten(&heard("one"), &mut published, settings.cleanup, &cancel);
 
         assert!(rewritten.is_err());
         assert!(published.ends.words.is_holding());
@@ -5683,14 +5653,12 @@ mod tests {
 
     #[test]
     fn complete_delivery_keeps_held_words_through_a_pause() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
         let log = CallLog::default();
         let mut sinks = (log.history(), log.cursor());
-        let mut published =
-            holding_twenty(directory.path(), &settings, &control, &events, &mut sinks);
+        let mut published = holding_twenty(&settings, &control, &events, &mut sinks);
 
         published
             .publish_after_pause(Pause::Heard, Instant::now() + HELD_WAIT, &mut sinks)
@@ -5701,7 +5669,6 @@ mod tests {
 
     #[test]
     fn complete_delivery_keeps_a_held_mark_whatever_the_next_reading() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
@@ -5711,7 +5678,7 @@ mod tests {
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         for (text, sentence_ended_before) in [("I have twenty.", None), ("one apple.", Some(false))]
         {
-            let mut heard = heard(directory.path(), text);
+            let mut heard = heard(text);
             heard.segment = heard
                 .segment
                 .with_sentence_ended_before(sentence_ended_before);
@@ -5808,13 +5775,12 @@ mod tests {
             }
         }
 
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
         let mut published =
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
-        let heard = heard(directory.path(), "it is twenty one");
+        let heard = heard("it is twenty one");
         let unheld = published.hold("it is twenty one", &heard);
         let segment = published.correct(unheld);
         published
@@ -5829,7 +5795,6 @@ mod tests {
 
     #[test]
     fn complete_delivery_publishes_segments_unjoined() {
-        let directory = tempfile::tempdir().unwrap();
         let control = ExecutionControl::for_test(StopMode::Manual);
         let events = DictationEventEmitter::unsubscribed();
         let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
@@ -5838,7 +5803,7 @@ mod tests {
         let log = CallLog::default();
         let mut sinks = (log.history(), log.cursor());
         for text in ["we should.", "And ship it."] {
-            let heard = heard(directory.path(), text);
+            let heard = heard(text);
             publish_whole(&mut published, heard, text, &mut sinks).unwrap();
         }
 
@@ -5983,14 +5948,12 @@ mod tests {
 
     #[test]
     fn a_relayed_recording_without_speech_is_refused() {
-        let (directory, capture) = capture();
+        let (_directory, capture) = capture();
         let pipeline =
             DictationPipeline::new(capture, Transcription::complete(Answering("Mm-hmm.")), ())
                 .hearing_speech(Some(Loud));
-        let mut silent =
-            RecordingReader::from_samples_in(directory.path(), &[0.0; 16_000]).unwrap();
-        let mut spoken =
-            RecordingReader::from_samples_in(directory.path(), &[0.5; 16_000]).unwrap();
+        let mut silent = RecordingReader::from_samples(&[0.0; 16_000]);
+        let mut spoken = RecordingReader::from_samples(&[0.5; 16_000]);
 
         let refused = pipeline.transcribed(&mut silent, false, &CancelToken::never());
         let heard = pipeline.transcribed(&mut spoken, false, &CancelToken::never());
@@ -6132,15 +6095,14 @@ mod tests {
     #[test]
     fn a_relayed_recording_is_heard_only_in_the_enrolled_voice() {
         for voice in [OWN, OTHER] {
-            let (directory, capture) = judged_capture();
+            let (_directory, capture) = judged_capture();
             let pipeline = filtered_pipeline(
                 capture,
                 diarizer(Voice(voice)),
                 Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("hello")),
                 (),
             );
-            let mut recording = RecordingReader::from_samples_in(directory.path(), &[0.5; 64_000])
-                .expect("the test recording is written");
+            let mut recording = RecordingReader::from_samples(&[0.5; 64_000]);
 
             let heard = pipeline.transcribed(&mut recording, true, &CancelToken::never());
 
@@ -6155,14 +6117,13 @@ mod tests {
 
     #[test]
     fn a_transcribed_recording_honors_cancellation() {
-        let (directory, capture) = capture();
+        let (_directory, capture) = capture();
         let pipeline = DictationPipeline::new(
             capture,
             Transcription::complete(Answering("must not escape")),
             (),
         );
-        let mut recording =
-            RecordingReader::from_samples_in(directory.path(), &[0.5; 1600]).unwrap();
+        let mut recording = RecordingReader::from_samples(&[0.5; 1600]);
         let cancel = CancelToken::new();
         cancel.cancel();
         assert!(matches!(
@@ -6429,7 +6390,6 @@ mod tests {
         // Realtime and longer than the press's 5 s budget, so only a stop
         // ends capture before the bound.
         let capture = WavReplayCapture::new(
-            directory.path(),
             Duration::from_secs(20),
             &fixture_of(directory.path(), 160_000),
             ReplayPace::Realtime,
