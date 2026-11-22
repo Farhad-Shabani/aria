@@ -12,7 +12,7 @@ app=clients/build/mac/Build/Products/Release/Aria.app
 licenses="$app/Contents/Resources/Licenses"
 rm -rf "$licenses"
 mkdir -p "$licenses"
-cp LICENSE-GPL target/THIRD-PARTY-LICENSES.md "$licenses/"
+cp LICENSE-GPL LICENSE-APACHE licenses/macos-app.md target/THIRD-PARTY-LICENSES.md "$licenses/"
 for package in clients/build/mac/SourcePackages/checkouts/*/; do
     name=$(basename "$package")
     # Vendored code, such as SwiftNIO's llhttp, keeps its license beside it.
