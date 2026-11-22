@@ -4,6 +4,7 @@ use std::convert::Infallible;
 
 use crate::cancel::CancelToken;
 
+mod fuzzy;
 mod personal;
 pub use personal::PersonalRules;
 use personal::Respellings;
