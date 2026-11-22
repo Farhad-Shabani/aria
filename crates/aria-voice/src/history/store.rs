@@ -1221,10 +1221,15 @@ fn now_ms() -> u64 {
 /// The WAV an insert saves, refused past the audio budget. Encoded in
 /// memory, so the recording never reaches a file.
 fn encoded_audio(samples: &[f32]) -> Result<Vec<u8>, HistoryError> {
-    if WAV_HEADER_BYTES + 2 * samples.len() as u64 > MAX_AUDIO_BYTES {
+    if encoded_bytes(samples.len()) > MAX_AUDIO_BYTES {
         return Err(HistoryError::AudioUnavailable);
     }
     encode_wav(samples).map_err(|_| HistoryError::AudioUnavailable)
+}
+
+/// The size of the WAV `encoded_audio` makes from `samples` samples.
+fn encoded_bytes(samples: usize) -> u64 {
+    WAV_HEADER_BYTES + 2 * samples as u64
 }
 
 fn save_audio(state: &State, id: u64, wav: &[u8]) -> Result<(), HistoryError> {
@@ -3639,6 +3644,37 @@ mod tests {
             store.begin_retry(failed.id),
             Err(HistoryError::AudioUnavailable)
         ));
+    }
+
+    #[test]
+    fn the_audio_budget_counts_the_bytes_the_wav_takes() {
+        let wav = encode_wav(&[0.25; 3]).unwrap();
+
+        assert_eq!(encoded_bytes(3), wav.len() as u64);
+    }
+
+    #[test]
+    fn audio_an_older_build_saved_still_plays_back() {
+        let (directory, store) = opened();
+        let saved = save(
+            &store,
+            "partial",
+            HistoryStatus::TranscriptionFailed,
+            Some(audio()),
+        );
+        let fixture = aria_kit::audio::canonical_fixture(directory.path());
+        tamper(
+            &store,
+            "UPDATE audio SET wav=?1 WHERE entry=?2",
+            params![fs::read(&fixture).unwrap(), sql_integer(saved.id).unwrap()],
+        );
+        let mut expected = RecordingReader::from_wav_file(&fixture).unwrap();
+        expected.fill().unwrap();
+
+        let mut lease = store.begin_retry(saved.id).unwrap();
+        lease.recording.fill().unwrap();
+
+        assert_eq!(lease.recording.samples(), expected.samples());
     }
 
     #[test]
