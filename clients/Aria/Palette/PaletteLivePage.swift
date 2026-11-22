@@ -47,15 +47,20 @@ private struct TranscriptFileNote: View {
 
     let file: URL
     let isRunning: Bool
+    @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 3) {
             Text(isRunning ? "Saving to" : "Saved to")
-            Button(file.lastPathComponent) {
+            Button {
                 NSWorkspace.shared.activateFileViewerSelecting([file])
+            } label: {
+                Text(file.lastPathComponent).underline(isHovered)
             }
             .buttonStyle(.link)
             .truncationMode(.middle)
+            .pointerStyle(.link)
+            .onHover { isHovered = $0 }
             .help(Self.showInFinder)
             .accessibilityHint(Self.showInFinder)
         }
