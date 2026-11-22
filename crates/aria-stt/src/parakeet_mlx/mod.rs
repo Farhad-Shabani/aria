@@ -1,13 +1,13 @@
 //! Transcription through a supervised parakeet-mlx child process.
 //!
 //! The model runs as an MLX child process on macOS; recordings reach it
-//! as WAV files.
+//! as 16-bit PCM over its pipe, never as files.
 //!
 //! ```no_run
 //! use aria_stt::{parakeet_mlx::ParakeetMlx, prelude::*};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let transcription = Transcription::complete_wav(ParakeetMlx::load("interpreter", "model")?)
+//! let transcription = Transcription::complete_samples(ParakeetMlx::load("interpreter", "model")?)
 //!     .with(RemoveHesitations)
 //!     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
 //! let transcript: Transcript = transcription.transcribe_file("recording.wav")?;

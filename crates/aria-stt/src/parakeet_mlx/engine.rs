@@ -1,7 +1,7 @@
 //! The engine the daemon holds: one resident sidecar, restarted when a
 //! request leaves it unusable.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use aria_kit::backend::ModelDownload;
@@ -67,7 +67,7 @@ pub struct ParakeetMlxConfig {
 impl Engine for ParakeetMlx {
     const NAME: &'static str = super::NAME;
     const MODEL: &'static [ModelDownload] = &[];
-    const INPUT: AudioInputKind = AudioInputKind::Wav;
+    const INPUT: AudioInputKind = AudioInputKind::Samples;
 
     type Config = ParakeetMlxConfig;
 
@@ -114,13 +114,7 @@ impl Recognizer for ParakeetMlx {
         _language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
-        let audio = input.require_wav(BACKEND)?;
-        let audio_path = audio.path().and_then(|path| path.to_str()).ok_or_else(|| {
-            TranscriptionError::UnsupportedAudioPath {
-                backend: BACKEND,
-                path: audio.path().map(Path::to_path_buf).unwrap_or_default(),
-            }
-        })?;
+        let samples = input.require_samples(BACKEND)?;
 
         let mut slot = self.claim();
         let sidecar = match slot.as_mut() {
@@ -128,7 +122,7 @@ impl Recognizer for ParakeetMlx {
             None => slot.insert(start(&self.interpreter, &self.model, cancel)?),
         };
 
-        let outcome = recognize(sidecar, audio_path, self.chunk_samples, cancel);
+        let outcome = recognize(sidecar, samples, self.chunk_samples, cancel);
         if !still_serving(sidecar, &outcome) {
             slot.take();
         }
@@ -170,35 +164,9 @@ mod tests {
     }
 
     #[test]
-    fn samples_input_is_refused_before_any_sidecar_is_started() {
-        let outcome = unspawnable().recognize_with(
-            RecognitionAudio::Samples(&[]),
-            &Language::Automatic,
-            &CancelToken::never(),
-        );
-
-        // The unspawnable interpreter proves the refusal came first.
-        assert!(matches!(
-            outcome,
-            Err(TranscriptionError::UnsupportedAudioInput { backend, .. }) if backend == BACKEND
-        ));
-    }
-
-    #[test]
     fn an_empty_slot_respawns_and_a_bad_interpreter_makes_that_a_load_error() {
-        let directory = tempfile::tempdir().expect("the fixture directory should be created");
-        let path = directory.path().join("respawn.wav");
-        aria_kit::audio::write_wav(&path, &aria_kit::audio::Clip::canonical(vec![0.0]))
-            .expect("the fixture should write");
-        let mut recording = aria_kit::audio::RecordingReader::from_wav_file(&path)
-            .expect("the fixture should load");
-
         let outcome = unspawnable().recognize_with(
-            RecognitionAudio::Wav(
-                recording
-                    .finished_audio()
-                    .expect("the fixture should finish"),
-            ),
+            RecognitionAudio::Samples(&[0.0]),
             &Language::Automatic,
             &CancelToken::never(),
         );

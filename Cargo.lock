@@ -432,6 +432,7 @@ dependencies = [
  "anyhow",
  "aria-harness",
  "aria-kit",
+ "base64 0.22.1",
  "candle-core",
  "candle-nn",
  "candle-transformers",

@@ -105,7 +105,7 @@ impl Selection {
         };
         let decoding = self.decoding();
         let transcription = match decoding {
-            Decoding::ChunkedFile { .. } => Composed::Whole(Transcription::complete_wav(engine)),
+            Decoding::ChunkedFile { .. } => Composed::Whole(Transcription::complete_samples(engine)),
             Decoding::Native { .. } => {
                 Composed::Streaming(Transcription::stream(Stream::Native, engine))
             }
