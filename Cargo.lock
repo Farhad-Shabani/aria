@@ -326,7 +326,6 @@ dependencies = [
  "rstest",
  "rtrb",
  "rubato",
- "rustix",
  "serde",
  "serde_json",
  "silero",
