@@ -78,11 +78,11 @@ struct PaletteBars<Top: View, Content: View, Bottom: View>: View {
     }
 }
 
-/// Opaque down to the bottom bar's top, then clear before its text, so a row
-/// scrolling under the bar fades out instead of crossing its words.
+/// Clear across the whole bottom bar, so a row scrolling under it is gone
+/// before it reaches the footer's text, and the bar keeps its own room.
 private struct BottomFade: View {
-    /// How far into the bar a row is gone: just above its text.
-    private static let reach: CGFloat = 12
+    /// The list's own bottom padding, so a list at rest loses no row to it.
+    private static let reach = PaletteBarMetrics.listInset
     let height: CGFloat
 
     var body: some View {
@@ -90,7 +90,7 @@ private struct BottomFade: View {
             Color.black
             LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
                 .frame(height: Self.reach)
-            Color.clear.frame(height: max(height - Self.reach, 0))
+            Color.clear.frame(height: height)
         }
         .ignoresSafeArea()
     }
