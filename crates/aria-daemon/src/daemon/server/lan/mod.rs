@@ -226,7 +226,8 @@ async fn bind(
             };
         }
     };
-    let advert = Advert::register(port, fingerprint)
+    let advert = Advert::register(port, *fingerprint)
+        .await
         .inspect_err(|error| {
             tracing::error!(error = %error_chain(error), "the relay is not discoverable");
         })

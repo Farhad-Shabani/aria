@@ -1,15 +1,28 @@
 //! Bonjour advertisement of the relay port, so a phone can find this Mac.
 //!
-//! Registration shells out to `dns-sd`, which macOS ships, rather than to a
-//! library: library mDNS misbehaves on a Mac with many interfaces or
-//! restrictive multicast routing, where Apple's own resolver does not.
-//! `dns-sd -R` holds the registration for as long as it runs, so the child
-//! *is* the advert: [`ChildProcess`] kills its group on drop, which covers a
-//! clean shutdown and a panic in the server task alike.
+//! On macOS the daemon registers through mDNSResponder's client API. Library
+//! mDNS misbehaves on a Mac with many interfaces or restrictive multicast
+//! routing. mDNSResponder drops a registration once its client's connection
+//! closes, so the advert ends with the daemon, even a killed one.
+//!
+//! A `dns-sd` child outlives a killed daemon. After a re-mint, its stale
+//! record keeps the old `id` and hides the next daemon's under the same name.
+//! On Linux this API needs a library the daemon doesn't link, so a `dns-sd`
+//! child holds the advert there, and a killed daemon can leave it behind.
 
-use std::process::{Command, Stdio};
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 
-use aria_kit::primitives::process::ChildProcess;
+#[cfg(target_os = "linux")]
+use linux::Registration;
+#[cfg(target_os = "macos")]
+use macos::Registration;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("the relay advert supports only macOS and Linux");
+
+use std::time::Duration;
 
 use super::pairing::to_hex;
 
@@ -17,38 +30,47 @@ use super::pairing::to_hex;
 /// for the old one must never reach a server that cannot speak its protocol.
 pub const SERVICE_TYPE: &str = "_aria-grpc._tcp";
 
+/// The default registration domains can include a wide-area one, which would
+/// publish the fingerprint and port beyond the LAN.
 const DOMAIN: &str = "local";
+
 /// Which shape of the record the phone is reading, for when it grows a key.
 const TXT_VERSION: &str = "version=1";
 
+/// Registering waits for mDNSResponder's answer. A wedged mDNSResponder must
+/// not hold up the daemon's start.
+const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// A live registration. Dropping it unregisters.
 pub(in crate::daemon) struct Advert {
-    _registration: ChildProcess,
+    _registration: Registration,
 }
 
 impl Advert {
     /// `id` is the relay certificate's fingerprint: the one thing about this
     /// Mac that survives a rename, so the phone keys its pairing by it.
-    pub(in crate::daemon) fn register(port: u16, id: &[u8; 32]) -> Result<Self, AdvertError> {
-        let host = hostname();
+    pub(in crate::daemon) async fn register(port: u16, id: [u8; 32]) -> Result<Self, AdvertError> {
         let instance = instance_name();
-        let mut command = Command::new("dns-sd");
-        command
-            .args([
-                "-R",
-                &instance,
-                SERVICE_TYPE,
-                DOMAIN,
-                &port.to_string(),
-                TXT_VERSION,
-                &format!("name={host}"),
-                &id_record(id),
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-
-        let registration = ChildProcess::spawn(&mut command).map_err(AdvertError::Spawn)?;
+        let registering = tokio::task::spawn_blocking({
+            let instance = instance.clone();
+            move || {
+                Registration::new(
+                    &instance,
+                    SERVICE_TYPE,
+                    DOMAIN,
+                    port,
+                    &[
+                        TXT_VERSION,
+                        &format!("name={}", hostname()),
+                        &id_record(&id),
+                    ],
+                )
+            }
+        });
+        let registration = tokio::time::timeout(REGISTER_TIMEOUT, registering)
+            .await
+            .map_err(|_elapsed| AdvertError::Unanswered)?
+            .map_err(AdvertError::Panicked)??;
         tracing::info!(
             service = SERVICE_TYPE,
             instance = instance.as_str(),
@@ -84,8 +106,22 @@ fn hostname() -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::daemon) enum AdvertError {
+    #[cfg(target_os = "macos")]
+    #[error("the advert's name, type, or domain holds a NUL byte")]
+    Nul(#[source] std::ffi::NulError),
+    #[cfg(target_os = "macos")]
+    #[error("the advert's TXT record is too long")]
+    TxtRecord,
+    #[cfg(target_os = "macos")]
+    #[error("mDNSResponder refused the registration (error {0})")]
+    Register(i32),
+    #[cfg(target_os = "linux")]
     #[error("failed to start dns-sd to advertise the relay")]
     Spawn(#[source] std::io::Error),
+    #[error("mDNSResponder didn't answer within {} s", REGISTER_TIMEOUT.as_secs())]
+    Unanswered,
+    #[error("registering the advert panicked")]
+    Panicked(#[source] tokio::task::JoinError),
 }
 
 #[cfg(test)]
