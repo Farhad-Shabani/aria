@@ -26,9 +26,7 @@ use aria_primitives::local_socket::LocalSocketError;
 use aria_primitives::private_document::DocumentError;
 use aria_settings::rpc::RpcErrorCode;
 use aria_voice::config::PairingId;
-use aria_voice::stt::{
-    Hypothesis, Language, RecognitionAudio, Recognizer, Transcription, TranscriptionError, Whole,
-};
+use aria_voice::stt::{Hypothesis, Language, Recognizer, Transcription, TranscriptionError, Whole};
 
 pub(super) const ADMIN_TIMEOUT: Duration = Duration::from_secs(10);
 const CANCEL_POLL: Duration = Duration::from_millis(25);
@@ -643,11 +641,11 @@ impl Recognizer for RemoteRecognizer {
     /// One bounded input, run as a whole-recording operation on the server.
     fn recognize_with(
         &self,
-        audio: RecognitionAudio<'_>,
+        samples: &[f32],
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
-        let mut recording = RecordingReader::from_samples(audio.require_samples("remote")?);
+        let mut recording = RecordingReader::from_samples(samples);
         Transcription::<_, Whole>::delegated(self.clone())
             .transcribe_with(&mut recording, language, cancel)
             .map(|transcript| Hypothesis::new(transcript.into_text()))
@@ -829,7 +827,7 @@ mod tests {
     use super::*;
     use crate::daemon::inference::host::tests::{Fixture, Observed};
     use aria_kit::audio::Recording;
-    use aria_kit::transcription::{AudioInputKind, Cadence, TimedWord, TranscriptSegment};
+    use aria_kit::transcription::{Cadence, TimedWord, TranscriptSegment};
     use aria_voice::stt::{Stream, Streaming};
 
     #[tokio::test]
@@ -905,7 +903,7 @@ mod tests {
 
         fn recognize_with(
             &self,
-            _: RecognitionAudio<'_>,
+            _: &[f32],
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {
@@ -938,7 +936,6 @@ mod tests {
 
         let server = Fixture::with_model(
             "whisper",
-            AudioInputKind::Samples,
             Some(Stream::Agreement(Cadence::from_millis(100, 1000))),
             Box::new(Agreement),
             Arc::new(Observed::default()),
@@ -1043,7 +1040,6 @@ mod tests {
 
         let server = Fixture::with_model(
             "parakeet",
-            AudioInputKind::Samples,
             None,
             Box::new(Agreement),
             Arc::new(Observed::default()),
@@ -1106,7 +1102,7 @@ mod tests {
             }
             fn recognize_with(
                 &self,
-                _: RecognitionAudio<'_>,
+                _: &[f32],
                 _: &Language,
                 _: &CancelToken,
             ) -> Result<Hypothesis, TranscriptionError> {
@@ -1172,7 +1168,6 @@ mod tests {
             });
             let server = Fixture::with_model(
                 "whisper",
-                AudioInputKind::Samples,
                 Some(Stream::Native),
                 Box::new(Delayed(Arc::clone(&gate))),
                 Arc::new(Observed::default()),

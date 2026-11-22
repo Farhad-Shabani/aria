@@ -7,7 +7,7 @@
 //! use aria_stt::{parakeet_mlx::ParakeetMlx, prelude::*};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let transcription = Transcription::complete_samples(ParakeetMlx::load("interpreter", "model")?)
+//! let transcription = Transcription::complete(ParakeetMlx::load("interpreter", "model")?)
 //!     .with(RemoveHesitations)
 //!     .with(Vocabulary::new(["aria-stt", "Cargo.toml"])?);
 //! let transcript: Transcript = transcription.transcribe_file("recording.wav")?;

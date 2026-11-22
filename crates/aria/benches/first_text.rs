@@ -206,7 +206,7 @@ mod tests {
     use super::*;
     use aria_kit::cancel::CancelToken;
     use aria_settings::config::backend;
-    use aria_voice::stt::{Hypothesis, RecognitionAudio, TranscriptionError};
+    use aria_voice::stt::{Hypothesis, TranscriptionError};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -229,7 +229,7 @@ mod tests {
 
         fn recognize_with(
             &self,
-            _: RecognitionAudio<'_>,
+            _: &[f32],
             _: &Language,
             _: &CancelToken,
         ) -> Result<Hypothesis, TranscriptionError> {

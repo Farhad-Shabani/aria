@@ -8,11 +8,10 @@ use aria_kit::backend::ModelDownload;
 use aria_kit::cancel::CancelToken;
 use aria_kit::primitives::process::{Sidecar, validate_interpreter};
 use aria_kit::transcription::{
-    AudioInputKind, Engine, Hypothesis, Language, RecognitionAudio, Recognizer, TranscriptionError,
-    check_cancelled,
+    Engine, Hypothesis, Language, Recognizer, TranscriptionError, check_cancelled,
 };
 
-use super::protocol::{BACKEND, Phase, recognize, start, still_serving};
+use super::protocol::{Phase, recognize, start, still_serving};
 
 pub struct ParakeetMlx {
     interpreter: PathBuf,
@@ -67,7 +66,6 @@ pub struct ParakeetMlxConfig {
 impl Engine for ParakeetMlx {
     const NAME: &'static str = super::NAME;
     const MODEL: &'static [ModelDownload] = &[];
-    const INPUT: AudioInputKind = AudioInputKind::Samples;
 
     type Config = ParakeetMlxConfig;
 
@@ -110,12 +108,10 @@ impl Recognizer for ParakeetMlx {
 
     fn recognize_with(
         &self,
-        input: RecognitionAudio<'_>,
+        samples: &[f32],
         _language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
-        let samples = input.require_samples(BACKEND)?;
-
         let mut slot = self.claim();
         let sidecar = match slot.as_mut() {
             Some(sidecar) => sidecar,
@@ -165,11 +161,8 @@ mod tests {
 
     #[test]
     fn an_empty_slot_respawns_and_a_bad_interpreter_makes_that_a_load_error() {
-        let outcome = unspawnable().recognize_with(
-            RecognitionAudio::Samples(&[0.0]),
-            &Language::Automatic,
-            &CancelToken::never(),
-        );
+        let outcome =
+            unspawnable().recognize_with(&[0.0], &Language::Automatic, &CancelToken::never());
 
         assert!(matches!(outcome, Err(TranscriptionError::Load { .. })));
     }

@@ -98,7 +98,7 @@ fn the_sidecar_survives_an_adversarial_whole_decode_matrix() {
 
     // One engine across the matrix: the sequence itself proves the sidecar
     // keeps serving after whatever each clip provoked.
-    let transcription = Transcription::complete_samples(engine);
+    let transcription = Transcription::complete(engine);
     for (name, clip) in clips {
         // Any transcript, or the pipeline's own no-speech verdict; what must
         // not happen is a crashed decode or a dead sidecar.
@@ -115,7 +115,7 @@ fn the_sidecar_survives_an_adversarial_whole_decode_matrix() {
 fn streaming_folds_a_sub_hop_tail_instead_of_crashing_the_encoder() {
     let engine = engine();
     let directory = tempfile::tempdir().expect("the fixture directory should be created");
-    let transcription = Transcription::complete_samples(engine.stream_chunks(16000));
+    let transcription = Transcription::complete(engine.stream_chunks(16000));
 
     for (name, total) in [
         ("one-sample-tail", SUB_HOP_TAIL_SAMPLES),
@@ -137,7 +137,7 @@ fn streaming_folds_a_sub_hop_tail_instead_of_crashing_the_encoder() {
 fn a_chunk_below_one_mel_hop_fails_the_request_but_not_the_sidecar() {
     let engine = engine();
     let directory = tempfile::tempdir().expect("the fixture directory should be created");
-    let transcription = Transcription::complete_samples(engine.stream_chunks(1));
+    let transcription = Transcription::complete(engine.stream_chunks(1));
 
     // Twice: the second refusal proves the sidecar survived the first.
     for _ in 0..2 {

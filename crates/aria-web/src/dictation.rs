@@ -32,7 +32,7 @@ impl Dictation {
         let gate = SilenceGate::new(trailing_silence_ms)
             .map_err(|error| JsError::new(&error_chain(&error)))?;
         let engine = WhisperCandle::from_bytes(weights, tokenizer, config).map_err(failed)?;
-        let transcription = Transcription::complete_samples(engine);
+        let transcription = Transcription::complete(engine);
         let (recording, capture) = Recording::open();
         Ok(Self {
             capture,

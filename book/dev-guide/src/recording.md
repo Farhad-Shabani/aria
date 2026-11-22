@@ -105,7 +105,7 @@ use aria_stt::{prelude::*, whisper::Whisper};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Whisper::load("/absolute/path/ggml-base.en.bin")?;
-    let transcription = Transcription::complete_samples(engine);
+    let transcription = Transcription::complete(engine);
     let mut microphone = Microphone::builder()
         .maximum_duration(Duration::from_secs(60 * 60))
         .open()?;

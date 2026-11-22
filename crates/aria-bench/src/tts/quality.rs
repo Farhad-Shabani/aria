@@ -56,7 +56,7 @@ impl Judge {
         Ok(Self {
             // A whole-buffer decode: the recording is already complete, so
             // streaming would add nothing but pacing.
-            transcription: Transcription::complete_samples(backend),
+            transcription: Transcription::complete(backend),
         })
     }
 

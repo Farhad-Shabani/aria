@@ -428,6 +428,16 @@ impl RecordingReader {
         reader
     }
 
+    /// A finished recording of canonical samples in 16-bit PCM, held in
+    /// memory.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn from_pcm16(samples: &[i16]) -> Self {
+        let (reader, writer) = Recording::prerecorded();
+        writer.push_pcm16(samples);
+        writer.finish();
+        reader
+    }
+
     /// [`RecordingReader::from_samples`], saved as a private WAV in
     /// `spool_dir`.
     #[cfg(not(target_family = "wasm"))]

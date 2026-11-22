@@ -6,8 +6,8 @@ use super::*;
 use crate::audio::testing::recorded;
 use crate::audio::{Recording, RecordingReader, RecordingWriter};
 use crate::transcription::{
-    Cadence, ChunkStream, Emitted, Hypothesis, Language, Operation, RecognitionAudio, Recognizer,
-    Session, Stream, TimedWord, Transcription,
+    Cadence, ChunkStream, Emitted, Hypothesis, Language, Operation, Recognizer, Session, Stream,
+    TimedWord, Transcription,
 };
 
 struct Scripted(Mutex<VecDeque<Hypothesis>>);
@@ -27,7 +27,7 @@ impl Recognizer for Scripted {
 
     fn recognize_with(
         &self,
-        _: RecognitionAudio<'_>,
+        _: &[f32],
         _: &Language,
         _: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
@@ -67,7 +67,7 @@ impl Layer for Replace {
 #[test]
 fn layers_apply_in_declaration_order() {
     let (_directory, mut recording) = recorded(&[1, 2]);
-    let transcription = Transcription::complete_samples(Scripted::new(["one"]))
+    let transcription = Transcription::complete(Scripted::new(["one"]))
         .with(Replace("one", "two"))
         .with(Replace("two", "three"));
 
@@ -84,7 +84,7 @@ fn layers_apply_in_declaration_order() {
 fn an_absent_layer_leaves_the_text_raw() {
     for enabled in [false, true] {
         let (_directory, mut recording) = recorded(&[1, 2]);
-        let transcription = Transcription::complete_samples(Scripted::new(["Um, hello."]))
+        let transcription = Transcription::complete(Scripted::new(["Um, hello."]))
             .with(enabled.then_some(RemoveHesitations));
         assert_eq!(
             transcription
@@ -100,7 +100,7 @@ fn an_absent_layer_leaves_the_text_raw() {
 fn complete_and_streaming_sessions_apply_real_layers() {
     let vocabulary = Vocabulary::new(["Cargo.toml"]).unwrap();
     let (_directory, mut recording) = recorded(&[1, 2]);
-    let transcription = Transcription::complete_samples(Scripted::new([
+    let transcription = Transcription::complete(Scripted::new([
         "Um, open cargo dot toml. They had had enough.",
     ]))
     .with(RemoveHesitations)
@@ -127,44 +127,6 @@ fn complete_and_streaming_sessions_apply_real_layers() {
     assert_eq!(session.finish().unwrap().as_str(), segment.as_str());
 }
 
-struct WavScripted(&'static str);
-
-impl Recognizer for WavScripted {
-    fn validate_language(&self, _: &Language, _: &CancelToken) -> Result<(), TranscriptionError> {
-        Ok(())
-    }
-
-    fn recognize_with(
-        &self,
-        audio: RecognitionAudio<'_>,
-        _: &Language,
-        _: &CancelToken,
-    ) -> Result<Hypothesis, TranscriptionError> {
-        let wav = audio.require_wav("scripted")?;
-        assert!(wav.path().unwrap().is_file());
-        Ok(Hypothesis::new(self.0))
-    }
-}
-
-#[test]
-fn whole_wav_layers_process_text_and_can_remove_all_speech() {
-    for (input, expected) in [
-        ("Um, open cargo dot toml.", Some("Open Cargo.toml.")),
-        ("Um, uh.", None),
-    ] {
-        let (_directory, recording) = recorded(&[1, 2]);
-        let transcription = Transcription::complete_wav(WavScripted(input))
-            .with(RemoveHesitations)
-            .with(Vocabulary::new(["Cargo.toml"]).unwrap());
-        let session = Session::over(&transcription, &Language::Automatic, recording).unwrap();
-        let result = session.finish();
-        match expected {
-            Some(text) => assert_eq!(result.unwrap().as_str(), text),
-            None => assert!(matches!(result, Err(TranscriptionError::NoSpeech))),
-        }
-    }
-}
-
 struct NativeScripted;
 
 impl Recognizer for NativeScripted {
@@ -174,7 +136,7 @@ impl Recognizer for NativeScripted {
 
     fn recognize_with(
         &self,
-        _: RecognitionAudio<'_>,
+        _: &[f32],
         _: &Language,
         _: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
@@ -270,7 +232,7 @@ fn vocabulary_does_not_rewrite_across_finalized_segments() {
 fn removing_every_word_finishes_without_redecoding() {
     let (_directory, mut recording) = recorded(&[1, 2]);
     let transcription =
-        Transcription::complete_samples(Scripted::new(["Um, uh, hmm."])).with(RemoveHesitations);
+        Transcription::complete(Scripted::new(["Um, uh, hmm."])).with(RemoveHesitations);
     let mut operation = transcription.start(&Language::Automatic).unwrap();
     assert!(operation.next_finalized(&mut recording).unwrap().is_none());
     assert!(operation.completed().is_none());
@@ -515,9 +477,8 @@ fn text_bounds_cover_each_segment_before_and_after_a_layer() {
         (1, MAX_TEXT_BYTES + 1),
     ] {
         let (_directory, mut recording) = recorded(&[1, 2]);
-        let transcription =
-            Transcription::complete_samples(Scripted::new(["x".repeat(input_bytes)]))
-                .with(Expand(output_bytes));
+        let transcription = Transcription::complete(Scripted::new(["x".repeat(input_bytes)]))
+            .with(Expand(output_bytes));
         let result = transcription.transcribe(&mut recording, &Language::Automatic);
         if input_bytes <= MAX_TEXT_BYTES && output_bytes <= MAX_TEXT_BYTES {
             assert_eq!(result.unwrap().as_str().len(), output_bytes);

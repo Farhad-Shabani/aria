@@ -12,12 +12,13 @@ use tokio_util::sync::{CancellationToken, DropGuard};
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response, Status};
 
-use crate::daemon::inference::engine::{Engine, Input};
+use crate::daemon::inference::engine::Engine;
 use crate::daemon::inference::identity::{self, Admission, ServerAccess};
 use crate::daemon::inference::{IDLE_INPUT_TIMEOUT, OVERALL_TIMEOUT, QUEUE_CAPACITY};
 use crate::daemon::relay::presented;
 use crate::inference::{Completion, Event, MAX_AUDIO_BYTES, MAX_AUDIO_MESSAGE_BYTES, Start};
 use crate::ipc::wire;
+use aria_kit::audio::{RecordingWriter, f32_from_pcm16};
 use aria_settings::config::ServerEndpoint;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 
@@ -137,7 +138,7 @@ type Worker = JoinHandle<(Result<Completion, RpcFailure>, Admission)>;
 /// without reading the rest of the upload.
 async fn supervise<S>(
     requests: &mut S,
-    input: Input,
+    input: RecordingWriter,
     mut worker: Worker,
 ) -> Result<Completion, RpcFailure>
 where
@@ -245,7 +246,7 @@ impl Stream for Output {
     }
 }
 
-async fn collect<S>(stream: &mut S, mut writer: Input) -> Result<(), RpcFailure>
+async fn collect<S>(stream: &mut S, mut writer: RecordingWriter) -> Result<(), RpcFailure>
 where
     S: Stream<Item = Result<wire::InferenceRequest, Status>> + Unpin,
 {
@@ -271,9 +272,9 @@ where
                 bytes += chunk.len();
                 let samples: Vec<_> = chunk
                     .chunks_exact(2)
-                    .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]))
+                    .map(|bytes| f32_from_pcm16(i16::from_le_bytes([bytes[0], bytes[1]])))
                     .collect();
-                writer.push(&samples)?;
+                writer.push(&samples);
             }
             Some(wire::inference_request::Body::Stop(_)) => stopped = true,
             _ => return Err(invalid("expected inference audio or Stop")),
@@ -595,13 +596,8 @@ mod tests {
         assert!(output.next().await.is_none());
     }
     #[tokio::test]
-    async fn a_failed_upload_removes_its_spool_and_wakes_its_reader() {
-        let directory = tempfile::tempdir().unwrap();
-        let (mut reader, writer) = aria_kit::audio::Recording::open_spooled(
-            directory.path(),
-            Duration::from_secs(crate::inference::MAX_AUDIO_SECONDS),
-        )
-        .unwrap();
+    async fn a_failed_upload_wakes_its_reader() {
+        let (mut reader, writer) = aria_kit::audio::Recording::open();
         let mut requests = tokio_stream::iter([
             Ok(wire::InferenceRequest {
                 body: Some(wire::inference_request::Body::Audio(vec![1, 0])),
@@ -611,12 +607,9 @@ mod tests {
             }),
             Err(Status::cancelled("private transport failure")),
         ]);
-        let error = collect(&mut requests, Input::Wav(writer))
-            .await
-            .unwrap_err();
+        let error = collect(&mut requests, writer).await.unwrap_err();
         assert_eq!(error.code, RpcErrorCode::Cancelled);
         assert!(reader.fill().is_err());
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
     }
     #[tokio::test]
     async fn cancellation_holds_buffered_text_until_the_terminal_failure_arrives() {

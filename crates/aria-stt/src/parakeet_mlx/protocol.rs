@@ -168,8 +168,6 @@ pub(super) fn still_serving(
             | TranscriptionError::Capture(_)
             | TranscriptionError::Inference { .. }
             | TranscriptionError::UnsupportedLanguage { .. }
-            | TranscriptionError::UnsupportedAudioInput { .. }
-            | TranscriptionError::UnsupportedAudioPath { .. }
             | TranscriptionError::UnsupportedBackend { .. }
             | TranscriptionError::UnsupportedDevice { .. }
             | TranscriptionError::NoNativeStream
@@ -433,13 +431,8 @@ mod tests {
     fn a_transcript_is_read_back_from_the_sidecar() {
         let mut sidecar = stub(r#"read line; echo '{"ok":true,"text":"hello there"}'"#);
 
-        let text = recognize(
-            &mut sidecar,
-            &[0.0],
-            None,
-            &CancelToken::never(),
-        )
-        .expect("the stub should answer");
+        let text = recognize(&mut sidecar, &[0.0], None, &CancelToken::never())
+            .expect("the stub should answer");
 
         assert_eq!(text, "hello there");
     }
@@ -448,12 +441,7 @@ mod tests {
     fn a_sidecar_that_reports_a_failure_keeps_serving() {
         let mut sidecar = stub(r#"while read line; do echo '{"ok":false,"error":"boom"}'; done"#);
 
-        let outcome = recognize(
-            &mut sidecar,
-            &[0.0],
-            None,
-            &CancelToken::never(),
-        );
+        let outcome = recognize(&mut sidecar, &[0.0], None, &CancelToken::never());
 
         assert!(matches!(
             &outcome,
@@ -489,12 +477,7 @@ mod tests {
     fn a_second_readiness_report_is_refused() {
         let mut sidecar = stub(&format!("read line; {READY}"));
 
-        let outcome = recognize(
-            &mut sidecar,
-            &[0.0],
-            None,
-            &CancelToken::never(),
-        );
+        let outcome = recognize(&mut sidecar, &[0.0], None, &CancelToken::never());
 
         assert!(matches!(
             outcome,
@@ -509,12 +492,7 @@ mod tests {
     fn a_child_that_dies_mid_request_is_not_reused() {
         let mut sidecar = stub("read line; exit 1");
 
-        let outcome = recognize(
-            &mut sidecar,
-            &[0.0],
-            None,
-            &CancelToken::never(),
-        );
+        let outcome = recognize(&mut sidecar, &[0.0], None, &CancelToken::never());
 
         assert!(matches!(
             &outcome,

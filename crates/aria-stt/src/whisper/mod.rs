@@ -40,9 +40,9 @@ use whisper_rs::{
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
-    AudioInputKind, Cadence, Engine, Hypothesis, Language, RecognitionAudio, Recognizer,
-    SILENCE_FLOOR, Stream, StreamingEngine, TimedWord, TranscriptionError, check_cancelled,
-    english_only, validate_model_file, word_timings,
+    Cadence, Engine, Hypothesis, Language, Recognizer, SILENCE_FLOOR, Stream, StreamingEngine,
+    TimedWord, TranscriptionError, check_cancelled, english_only, validate_model_file,
+    word_timings,
 };
 
 /// Names this engine under `stt.backend` and in its own errors.
@@ -118,7 +118,6 @@ impl Whisper {
 impl Engine for Whisper {
     const NAME: &'static str = NAME;
     const MODEL: &'static [ModelDownload] = MODEL;
-    const INPUT: AudioInputKind = AudioInputKind::Samples;
 
     type Config = WhisperConfig;
 
@@ -160,12 +159,11 @@ impl Recognizer for Whisper {
 
     fn recognize_with(
         &self,
-        audio: RecognitionAudio<'_>,
+        samples: &[f32],
         language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
         check_cancelled(cancel)?;
-        let samples = audio.require_samples(BACKEND)?;
         if !audible(samples) {
             return Ok(Hypothesis::new(""));
         }

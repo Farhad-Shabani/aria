@@ -15,10 +15,9 @@ use aria_stt::whisper_candle::WhisperCandleConfig;
 
 pub use aria_kit::backend::ModelError;
 pub use aria_kit::transcription::{
-    AudioInputKind, Cadence, ChunkStream, Emitted, Engine, Hypothesis, Language, LanguageCode,
-    LanguageCodeError, Mode, Operation, RecognitionAudio, Recognizer, Stream, Streaming,
-    StreamingEngine, Transcript, TranscriptSegment, TranscriptUpdate, Transcription,
-    TranscriptionError, Whole,
+    Cadence, ChunkStream, Emitted, Engine, Hypothesis, Language, LanguageCode, LanguageCodeError,
+    Mode, Operation, Recognizer, Stream, Streaming, StreamingEngine, Transcript, TranscriptSegment,
+    TranscriptUpdate, Transcription, TranscriptionError, Whole,
 };
 
 impl TryFrom<SttConfig> for EngineConfig {

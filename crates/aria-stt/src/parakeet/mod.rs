@@ -33,9 +33,8 @@ use aria_kit::audio::{CANONICAL_SAMPLE_RATE, CHANNELS};
 use aria_kit::backend::{BackendError, ModelDownload, Unpack};
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::{
-    AudioInputKind, Cadence, Engine, Hypothesis, Language, RecognitionAudio, Recognizer, Stream,
-    StreamingEngine, TimedWord, TranscriptionError, check_cancelled, validate_model_directory,
-    word_timings,
+    Cadence, Engine, Hypothesis, Language, Recognizer, Stream, StreamingEngine, TimedWord,
+    TranscriptionError, check_cancelled, validate_model_directory, word_timings,
 };
 
 /// Names this engine under `stt.backend` and in its own errors.
@@ -139,7 +138,6 @@ impl Parakeet {
 impl Engine for Parakeet {
     const NAME: &'static str = NAME;
     const MODEL: &'static [ModelDownload] = MODEL;
-    const INPUT: AudioInputKind = AudioInputKind::Samples;
 
     type Config = ParakeetConfig;
 
@@ -185,12 +183,11 @@ impl Recognizer for Parakeet {
 
     fn recognize_with(
         &self,
-        audio: RecognitionAudio<'_>,
+        samples: &[f32],
         _language: &Language,
         cancel: &CancelToken,
     ) -> Result<Hypothesis, TranscriptionError> {
         check_cancelled(cancel)?;
-        let samples = audio.require_samples(BACKEND)?;
         let mut model = self
             .model
             .lock()
