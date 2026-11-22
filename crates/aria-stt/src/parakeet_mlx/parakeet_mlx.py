@@ -91,7 +91,7 @@ STAGED = StagedAudio()
 
 
 def samples_from(frames):
-    """Little-endian 16-bit PCM as unit floats."""
+    """Little-endian 16-bit PCM as float32 samples in -1.0..1.0."""
     import mlx.core as mx
     import numpy
 

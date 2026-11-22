@@ -1,7 +1,7 @@
 //! Transcription through a supervised parakeet-mlx child process.
 //!
-//! The model runs as an MLX child process on macOS; recordings reach it
-//! as 16-bit PCM over its pipe, never as files.
+//! The model runs as an MLX child process on macOS. Recordings reach it as
+//! 16-bit PCM over its pipe, never as files.
 //!
 //! ```no_run
 //! use aria_stt::{parakeet_mlx::ParakeetMlx, prelude::*};

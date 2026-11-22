@@ -52,8 +52,8 @@ pub use wav::{WavError, encode_wav, read_wav, write_wav};
 
 pub const CANONICAL_SAMPLE_RATE: u32 = 16_000;
 
-/// The longest recording capture keeps or `from_wav_file` reads, so any
-/// recording fits a WAV. hound sums a 16-bit mono WAV's RIFF size as data
+/// The most audio capture keeps in one recording, or `from_wav_file` reads,
+/// so any recording fits a WAV. hound sums a 16-bit mono WAV's RIFF size as data
 /// bytes plus 36 in a `u32`, so one more sample wraps it. That is about 37
 /// hours.
 #[cfg(not(target_family = "wasm"))]

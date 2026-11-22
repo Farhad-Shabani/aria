@@ -177,8 +177,8 @@ pub trait TranscriptSink {
         None
     }
 
-    /// The dictation's recording is done with. `recording` holds all of it,
-    /// from its first sample.
+    /// Transcription has ended. `recording` reads the whole recording, from
+    /// its first sample, though capture may still be finishing.
     fn recording_finished(
         &mut self,
         _recording: &mut aria_kit::audio::RecordingReader,

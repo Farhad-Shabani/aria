@@ -60,7 +60,7 @@ impl Judge {
         })
     }
 
-    /// What the judge hears in a finished WAV file.
+    /// What the judge hears in a finished recording.
     fn hear(&self, mut recording: RecordingReader) -> Result<String, TranscriptionError> {
         let language = Language::Specific(LanguageCode::english());
         let cancel = CancelToken::from_fn({
@@ -151,7 +151,7 @@ pub(super) fn hear_back(
     }
 }
 
-/// Canonical audio for the judge, as 16-bit PCM the way capture keeps it.
+/// Canonical audio for the judge, rounded to 16-bit PCM as capture's samples are.
 fn judged_recording(
     sample_rate: u32,
     speech: Vec<f32>,

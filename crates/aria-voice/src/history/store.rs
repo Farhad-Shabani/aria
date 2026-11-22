@@ -1382,7 +1382,7 @@ fn entries_schema(table: &str) -> String {
     )
 }
 
-/// A saved recording, whole, as the WAV capture wrote it.
+/// A saved recording, whole, as a 16 kHz mono 16-bit WAV.
 fn audio_schema() -> String {
     format!(
         "CREATE TABLE audio (

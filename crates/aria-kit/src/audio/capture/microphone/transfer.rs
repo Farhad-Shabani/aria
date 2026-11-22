@@ -1,4 +1,4 @@
-//! Bounded transfer from the microphone stream to WAV storage.
+//! Bounded transfer from the microphone stream to the recording.
 
 use std::collections::VecDeque;
 use std::thread;
