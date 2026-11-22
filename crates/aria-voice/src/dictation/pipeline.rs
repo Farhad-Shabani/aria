@@ -3087,14 +3087,14 @@ mod tests {
             ),
             (
                 Stream::Native,
-                "run d b two",
+                "run db2",
                 &[
                     "prepare:Insert",
-                    "segment:run d b",
-                    "deliver:run d b",
-                    "segment:two",
-                    "deliver: two",
-                    "completed:run d b two",
+                    "segment:run",
+                    "deliver:run",
+                    "segment:db2",
+                    "deliver: db2",
+                    "completed:run db2",
                 ][..],
             ),
         ] {

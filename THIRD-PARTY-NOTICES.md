@@ -57,3 +57,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## SCOWL
+
+`crates/aria-kit/src/transcription/layer/vocabulary/english.fst` is a
+modified extract of SCOWL 2020.12.07 by Kevin Atkinson.
+[`crates/aria-kit/THIRD-PARTY-NOTICES.md`](crates/aria-kit/THIRD-PARTY-NOTICES.md)
+records how it is built, its source, and its license.

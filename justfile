@@ -268,6 +268,12 @@ _swift-plugins:
             -c release --only-use-versions-from-resolved-file --product "$product" --quiet
     done
 
+# Word lists
+
+# Rebuild the English words fuzzy matching leaves alone; a local SCOWL archive skips the download
+english-words archive="":
+    crates/aria-kit/scripts/english-words.sh {{ archive }}
+
 # Release
 
 # Write the aria binary's third-party licenses to target/THIRD-PARTY-LICENSES.md

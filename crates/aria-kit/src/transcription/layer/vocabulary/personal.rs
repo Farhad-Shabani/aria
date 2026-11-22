@@ -7,6 +7,7 @@ use crate::cancel::CancelToken;
 use super::super::claim::{Claimed, Word};
 use super::super::number_words::{is_up_to_twenty, word_for};
 use super::super::symbol_words::symbol;
+use super::fuzzy::{Fix, apply_fuzzy, best_term, capitals};
 use super::{MatchError, is_word};
 
 /// What stored rules may cost in memory.
@@ -25,7 +26,12 @@ pub struct PersonalRules {
 impl PersonalRules {
     pub fn new(terms: Vec<String>, learned: Vec<(String, String)>) -> Self {
         let mut pairs: Vec<_> = variant_pairs(&terms).collect();
-        pairs.extend(learned);
+        let listed = casings(&terms);
+        pairs.extend(
+            learned
+                .into_iter()
+                .map(|(spoken, correct)| (spoken, as_listed(&listed, correct))),
+        );
         Self::from_pairs(terms, pairs)
     }
 
@@ -36,10 +42,11 @@ impl PersonalRules {
         learned: Vec<(String, String)>,
         cancel: &CancelToken,
     ) -> Result<Self, MatchError> {
-        let listed: HashSet<String> = terms.iter().map(|term| term.to_lowercase()).collect();
+        let listed = casings(&terms);
         let learned = learned
             .into_iter()
-            .filter(|(_, correct)| listed.contains(&correct.to_lowercase()));
+            .filter(|(_, correct)| listed.contains_key(&correct.to_lowercase()))
+            .map(|(spoken, correct)| (spoken, as_listed(&listed, correct)));
         let forms = Self::forms(variant_pairs(&terms).chain(learned), Some(cancel))?;
         let rules = Self {
             known: known(&terms),
@@ -267,21 +274,42 @@ impl PersonalRules {
         Ok(forms)
     }
 
-    /// Defers the words of a spoken form that waits on a symbol, where more
-    /// speech may still change it: a form the cut would split, as learned
-    /// "tilde dot" → `~.` in "cd tilde dot", or one the text ends inside, as
-    /// "use see sharp" may become "see sharp dot" → `C#.`. Forms are read
-    /// in the text between claims, as [`Self::apply_checked`] reads them.
+    /// Defers the words of a spoken form that more speech may still change:
+    /// a form the cut would split, or one the text ends inside.
     pub(super) fn defer_waiting_forms(&self, text: &str, claimed: &mut Claimed<'_>) {
+        self.defer_a_capital(text, claimed);
+        if self.forms.is_empty() {
+            return;
+        }
+        self.defer_a_split_form(text, claimed);
+        self.defer_an_unfinished_form(text, claimed);
+    }
+
+    /// Defers a listed word before the cut that would take its capitals: a
+    /// spoken symbol in more speech may join it into a written name, which
+    /// keeps it as heard. "open aria" may go on as "aria dot toml".
+    fn defer_a_capital(&self, text: &str, claimed: &mut Claimed<'_>) {
+        let before = text[..claimed.deferred_from()].trim_end();
+        let start = before
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '\'' || c == '-'))
+            .map_or(0, |end| end + 1);
+        let never = &|_| Ok::<_, std::convert::Infallible>(());
+        let capital = best_term(&before[start..], &self.terms, &self.known, never)
+            .unwrap_or_else(|never| match never {});
+        if matches!(capital, Some(Fix::Capitals(_))) {
+            claimed.defer_at(start);
+        }
+    }
+
+    /// Defers a form the cut would split, as learned "tilde dot" → `~.` in
+    /// "cd tilde dot". Forms are read in the text between claims, as
+    /// [`Self::apply_checked`] reads them.
+    fn defer_a_split_form(&self, text: &str, claimed: &mut Claimed<'_>) {
         let cut = claimed.deferred_from();
         let Some(gap) = unclaimed_around(claimed.words(), text.len(), cut) else {
             return;
         };
-        if self.forms.is_empty() {
-            return;
-        }
         let (offsets, chars): (Vec<usize>, Vec<char>) = text[gap.clone()].char_indices().unzip();
-        let at = |index: usize| gap.start + offsets[index];
         let cut = offsets.partition_point(|offset| gap.start + offset < cut);
         let forms = self
             .forms_typed(&chars, &|| Ok::<_, std::convert::Infallible>(()))
@@ -290,24 +318,37 @@ impl PersonalRules {
             .iter()
             .find(|(form, _)| form.start < cut && cut < form.end)
         {
-            claimed.defer_at(at(form.start));
-            return;
+            claimed.defer_at(gap.start + offsets[form.start]);
         }
-        if gap.end < text.len() {
-            return;
-        }
-        let after_forms = forms.last().map_or(0, |(form, _)| form.end);
-        if let Some(start) =
-            (after_forms..cut).find(|&start| self.begins_a_waiting_form(&chars, start))
-        {
-            claimed.defer_at(at(start));
+    }
+
+    /// Defers the words the text ends on when they begin a longer form:
+    /// "detect db" may go on as "db 1" → `db1`, and "use see sharp" as "see
+    /// sharp dot" → `C#.`. The words are read as heard from where each claim
+    /// starts, whatever claimed them, because the whole form outranks a later step's claim on its
+    /// words: "i eighteen" begins "i eighteen n" → `i18n`. A finished form
+    /// waits too when it begins another, as "db 1" begins "db 1 cluster".
+    fn defer_an_unfinished_form(&self, text: &str, claimed: &mut Claimed<'_>) {
+        let cut = claimed.deferred_from();
+        let (offsets, chars): (Vec<usize>, Vec<char>) = text.trim_end().char_indices().unzip();
+        let start = claimed
+            .words()
+            .iter()
+            .map(|word| word.span.start)
+            .take_while(|&start| start < cut)
+            .find(|&start| {
+                let position = offsets.partition_point(|&offset| offset < start);
+                self.begins_a_longer_form(&chars, position)
+            });
+        if let Some(start) = start {
+            claimed.defer_at(start);
         }
     }
 
     /// Whether the words from `position` to the end of `chars` begin a
-    /// longer form that waits on a symbol: "see sharp" begins "see sharp
-    /// dot".
-    fn begins_a_waiting_form(&self, chars: &[char], position: usize) -> bool {
+    /// longer form: "see sharp" begins "see sharp dot", and "db" begins
+    /// "db 1".
+    fn begins_a_longer_form(&self, chars: &[char], position: usize) -> bool {
         let said = &chars[position..];
         let Some(first) = said.first() else {
             return false;
@@ -322,11 +363,10 @@ impl PersonalRules {
                     .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
         };
         boundary(chars, position)
-            && self.forms.get(&first).is_some_and(|forms| {
-                forms
-                    .iter()
-                    .any(|(form, _)| edges_on_a_symbol(form) && begins(form))
-            })
+            && self
+                .forms
+                .get(&first)
+                .is_some_and(|forms| forms.iter().any(|(form, _)| begins(form)))
     }
 
     /// Claims the forms in `between`, the text from one claim to the next,
@@ -418,9 +458,6 @@ fn edges_on_a_symbol(spoken: &[char]) -> bool {
         .any(|word| symbol(word).is_some())
 }
 
-/// A false substitution reads worse than a missed one.
-const FUZZY_RATIO: f64 = 0.85;
-const MIN_TOKEN_LEN: usize = 3;
 const MAX_VARIANTS: usize = 8;
 /// A term with more parts than this is a serial number, not a word, and
 /// its spoken forms would number in the millions.
@@ -742,6 +779,24 @@ fn variant_pairs(terms: &[String]) -> impl Iterator<Item = (String, String)> + '
         .filter(move |(variant, _)| !listed.contains(&variant.to_lowercase()))
 }
 
+/// Every listed casing of each word, by the word in lowercase.
+fn casings(terms: &[String]) -> HashMap<String, Vec<&str>> {
+    let mut casings: HashMap<String, Vec<&str>> = HashMap::new();
+    for term in terms {
+        casings.entry(term.to_lowercase()).or_default().push(term);
+    }
+    casings
+}
+
+/// What a learned pair types: its word's listed capitals, so a pair learned
+/// as arya → aria types `Aria`.
+fn as_listed(listed: &HashMap<String, Vec<&str>>, correct: String) -> String {
+    listed
+        .get(&correct.to_lowercase())
+        .and_then(|listed| capitals(listed))
+        .map_or(correct, str::to_owned)
+}
+
 /// Each term lowercased, as the fuzzy pass compares it.
 fn known(terms: &[String]) -> Vec<Vec<char>> {
     terms
@@ -768,150 +823,6 @@ fn boundary(chars: &[char], position: usize) -> bool {
     before != word_at(position)
 }
 
-/// A word the user does not have in their list becomes the listed word it
-/// nearly is. Tokens are ASCII words; a match must share its first letter
-/// and about its length before the ratio is consulted.
-fn apply_fuzzy<E>(
-    text: &str,
-    terms: &[String],
-    known: &[Vec<char>],
-    check: &impl Fn(usize) -> Result<(), E>,
-) -> Result<(String, Vec<(String, String)>), E> {
-    check(text.len())?;
-    if terms.is_empty() {
-        return Ok((text.to_owned(), Vec::new()));
-    }
-    let mut output = String::with_capacity(text.len());
-    let mut substitutions = Vec::new();
-    let mut rest = text;
-    while let Some((start, length)) = next_token(rest) {
-        check(output.len().saturating_add(start))?;
-        output.push_str(&rest[..start]);
-        let token = &rest[start..start + length];
-        match best_term(token, terms, known, check)? {
-            Some(term) => {
-                check(output.len().saturating_add(term.len()))?;
-                substitutions.push((token.to_owned(), term.to_owned()));
-                output.push_str(term);
-            }
-            None => {
-                check(output.len().saturating_add(token.len()))?;
-                output.push_str(token);
-            }
-        }
-        rest = &rest[start + length..];
-    }
-    check(output.len().saturating_add(rest.len()))?;
-    output.push_str(rest);
-    Ok((output, substitutions))
-}
-
-/// The next `[A-Za-z0-9][A-Za-z0-9'-]*` as byte offset and length.
-fn next_token(text: &str) -> Option<(usize, usize)> {
-    let start = text.find(|c: char| c.is_ascii_alphanumeric())?;
-    let length = text[start..]
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '\'' || c == '-'))
-        .unwrap_or(text.len() - start);
-    Some((start, length))
-}
-
-fn best_term<'a, E>(
-    token: &str,
-    terms: &'a [String],
-    known: &[Vec<char>],
-    check: &impl Fn(usize) -> Result<(), E>,
-) -> Result<Option<&'a str>, E> {
-    check(0)?;
-    let folded = token.to_lowercase();
-    if token.chars().count() < MIN_TOKEN_LEN {
-        return Ok(None);
-    }
-    for word in known {
-        check(0)?;
-        if word.iter().copied().eq(folded.chars()) {
-            return Ok(None);
-        }
-    }
-    let folded: Vec<char> = folded.chars().collect();
-    let mut best: Option<(&str, f64)> = None;
-    for (term, term_folded) in terms.iter().zip(known) {
-        check(0)?;
-        // "speaker" against "wespeaker" scores 0.875: the first letter is
-        // the guard that keeps it from matching.
-        if term_folded.first() != folded.first() {
-            continue;
-        }
-        let longest = folded.len().max(term_folded.len());
-        let allowed = ((0.2 * longest as f64) as usize).max(1);
-        if folded.len().abs_diff(term_folded.len()) > allowed {
-            continue;
-        }
-        let ratio = ratio(&folded, term_folded, check)?;
-        if ratio >= FUZZY_RATIO && best.is_none_or(|(_, best_ratio)| ratio > best_ratio) {
-            best = Some((term, ratio));
-        }
-    }
-    Ok(best.map(|(term, _)| term))
-}
-
-/// Python's `difflib.SequenceMatcher.ratio`: twice the characters in the
-/// matching blocks over both lengths, the blocks found longest-first and
-/// earliest-first, as difflib finds them. The thresholds were tuned
-/// against that number, so it is that number.
-fn ratio<E>(a: &[char], b: &[char], check: &impl Fn(usize) -> Result<(), E>) -> Result<f64, E> {
-    if a.is_empty() && b.is_empty() {
-        return Ok(1.0);
-    }
-    let mut matched = 0;
-    let mut windows = vec![(0, a.len(), 0, b.len())];
-    while let Some((a_low, a_high, b_low, b_high)) = windows.pop() {
-        let (i, j, size) = longest_match(a, a_low, a_high, b, b_low, b_high, check)?;
-        if size == 0 {
-            continue;
-        }
-        matched += size;
-        if a_low < i && b_low < j {
-            windows.push((a_low, i, b_low, j));
-        }
-        if i + size < a_high && j + size < b_high {
-            windows.push((i + size, a_high, j + size, b_high));
-        }
-    }
-    Ok(2.0 * matched as f64 / (a.len() + b.len()) as f64)
-}
-
-/// The longest common run within the windows; ties go to the earliest
-/// start in `a`, then in `b`.
-fn longest_match<E>(
-    a: &[char],
-    a_low: usize,
-    a_high: usize,
-    b: &[char],
-    b_low: usize,
-    b_high: usize,
-    check: &impl Fn(usize) -> Result<(), E>,
-) -> Result<(usize, usize, usize), E> {
-    check(0)?;
-    let mut best = (a_low, b_low, 0);
-    let mut lengths = vec![0; b_high - b_low + 1];
-    for (i, a_char) in a.iter().enumerate().take(a_high).skip(a_low) {
-        check(0)?;
-        let mut next = vec![0; b_high - b_low + 1];
-        for (j, b_char) in b.iter().enumerate().take(b_high).skip(b_low) {
-            if a_char != b_char {
-                continue;
-            }
-            let size = lengths[j - b_low] + 1;
-            next[j - b_low + 1] = size;
-            if size > best.2 {
-                best = (i + 1 - size, j + 1 - size, size);
-            }
-        }
-        lengths = next;
-    }
-    Ok(best)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -935,6 +846,16 @@ mod tests {
 
         let (typed, _) = stored.apply("db two and Vexe16");
         assert_eq!(typed, "db9 and vex16");
+    }
+
+    #[test]
+    fn a_learned_pair_types_its_word_as_listed() {
+        let learned = vec![("arya".to_owned(), "aria".to_owned())];
+
+        let stored =
+            PersonalRules::from_stored(strings(&["Aria"]), learned, &CancelToken::never()).unwrap();
+
+        assert_eq!(stored.apply("saying arya now").0, "saying Aria now");
     }
 
     #[test]
@@ -992,44 +913,6 @@ mod tests {
     }
 
     /// Values from Python's difflib, which the thresholds were tuned on.
-    #[test]
-    fn ratio_matches_difflib() {
-        let cases = [
-            ("vexe16", "vex16", 0.9090909090909091),
-            ("speaker", "wespeaker", 0.875),
-            ("zxx9", "zx9", 0.8571428571428571),
-            ("kubernets", "kubernetes", 0.9473684210526315),
-            ("abcdef", "abdcef", 0.8333333333333334),
-            ("abc", "abc", 1.0),
-            ("abc", "xyz", 0.0),
-            ("", "", 1.0),
-        ];
-        for (a, b, expected) in cases {
-            let a: Vec<char> = a.chars().collect();
-            let b: Vec<char> = b.chars().collect();
-            let actual = ratio(&a, &b, &|_| Ok::<_, std::convert::Infallible>(())).unwrap();
-            assert!(
-                (actual - expected).abs() < 1e-12,
-                "{a:?} vs {b:?}: {actual} != {expected}"
-            );
-        }
-    }
-
-    #[test]
-    fn fuzzy_comparison_propagates_cancellation_during_matching() {
-        let checks = std::cell::Cell::new(0);
-        let word: Vec<char> = "kubernetes".chars().collect();
-        let result = ratio(&word, &word, &|_| {
-            checks.set(checks.get() + 1);
-            if checks.get() == 3 {
-                Err("cancelled")
-            } else {
-                Ok(())
-            }
-        });
-        assert_eq!(result, Err("cancelled"));
-    }
-
     #[test]
     fn variants_match_the_python_generator() {
         let cases: [(&str, &[&str]); 7] = [
@@ -1112,18 +995,84 @@ mod tests {
 
     #[test]
     fn fuzzy_fixes_a_near_miss_and_leaves_the_rest() {
-        let terms = strings(&["kubernetes", "wespeaker", "vex16"]);
+        let terms = strings(&[
+            "kubernetes",
+            "wespeaker",
+            "vex16",
+            "Flickr",
+            "Rivers",
+            "Redshift",
+            "Colours",
+            "Theyre",
+        ]);
         let cases = [
             ("kubernets rocks", "kubernetes rocks"),
             ("the speaker is loud", "the speaker is loud"),
             ("kubernetes is fine", "kubernetes is fine"),
             ("ok", "ok"),
             ("vexe16 boots", "vex16 boots"),
+            ("a flick of the wrist", "a flick of the wrist"),
+            ("the river's edge", "the river's edge"),
+            ("a red-shift", "a red-shift"),
+            ("colour me", "colour me"),
+            ("they're here", "they're here"),
         ];
         for (input, expected) in cases {
             assert_eq!(apply_corrections(input, &[], &terms).0, expected, "{input}");
         }
         assert_eq!(apply_corrections("kubernets", &[], &[]).0, "kubernets");
+    }
+
+    #[test]
+    fn a_listed_capital_types_as_listed() {
+        let rules = PersonalRules::new(strings(&["Aria", "kubernetes"]), vec![]);
+        let cases = [
+            ("saying aria now", "saying Aria now"),
+            ("ARIA is here", "Aria is here"),
+            ("Kubernetes is fine", "Kubernetes is fine"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(rules.apply(input).0, expected, "{input}");
+        }
+        let both = PersonalRules::new(strings(&["Aria", "aria"]), vec![]);
+        assert_eq!(both.apply("saying aria now").0, "saying aria now");
+    }
+
+    #[test]
+    fn a_near_miss_stays_out_of_written_names() {
+        let rules = PersonalRules::new(strings(&["kubernetes"]), vec![]);
+        assert_eq!(
+            rules.apply("in src/kubernets.yaml").0,
+            "in src/kubernets.yaml"
+        );
+        assert_eq!(rules.apply("kubernets rocks").0, "kubernetes rocks");
+    }
+
+    #[test]
+    fn a_listed_capital_holds_where_it_is_also_a_real_word() {
+        let rules = PersonalRules::new(strings(&["Linear"]), vec![]);
+        assert_eq!(rules.apply("a linear model").0, "a Linear model");
+    }
+
+    #[test]
+    fn a_listed_capital_stays_out_of_written_names() {
+        let rules = PersonalRules::new(strings(&["Aria", "Rust"]), vec![]);
+        for heard in [
+            "open aria-kit and rust-analyzer",
+            "in src/rust/aria.toml",
+            "call aria_kit and @aria",
+        ] {
+            assert_eq!(rules.apply(heard).0, heard);
+        }
+        assert_eq!(rules.apply("I like aria.").0, "I like Aria.");
+    }
+
+    #[test]
+    fn two_listed_casings_of_a_word_stay_as_heard() {
+        let rules = PersonalRules::new(strings(&["Mac", "MAC"]), vec![]);
+        for heard in ["the MAC address", "a Mac here", "my mac"] {
+            assert_eq!(rules.apply(heard).0, heard);
+        }
     }
 
     #[test]

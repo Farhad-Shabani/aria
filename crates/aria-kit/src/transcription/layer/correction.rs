@@ -216,6 +216,9 @@ mod tests {
     #[case::form_with_a_symbol_inside("open cargo dot toml", &[], &[("cargo dot toml", "Cargo.toml")], "open Cargo.toml")]
     #[case::form_opening_on_a_symbol_joins("example dot com", &[], &[("dot com", ".com")], "example.com")]
     #[case::form_opening_on_a_symbol_with_no_word_before("dot com is taken", &[], &[("dot com", ".com")], ".com is taken")]
+    #[case::listed_capital_after_a_number("at nine fifty five pm", &["PM"], &[], "at 9:55 PM")]
+    #[case::listed_capital_inside_a_join("open aria dot toml", &["Aria"], &[], "open aria.toml")]
+    #[case::listed_capital_on_a_pair_target("saying arya now", &["Aria"], &[("arya", "aria")], "saying Aria now")]
     fn each_step_keeps_what_an_earlier_one_claimed(
         #[case] heard: &str,
         #[case] terms: &[&str],

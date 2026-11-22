@@ -346,19 +346,42 @@ mod tests {
     #[case("meet at nine fifty five pm or three am")]
     #[case("on March twenty first twenty fifteen and June five")]
     fn any_split_types_what_the_whole_text_would(#[case] heard: &str) {
-        let vocabulary = Vocabulary::default();
-        let whole = whole(heard, &vocabulary);
+        assert_any_split_types_the_whole(heard, &Vocabulary::default());
+    }
+
+    /// Listed words whose spoken forms span words, hold a number word, or
+    /// begin another listed word's forms.
+    #[rstest]
+    #[case("detect db 1 is that")]
+    #[case("run d b one now")]
+    #[case("the db 1 cluster is up")]
+    #[case("use i eighteen n now")]
+    #[case("open aria dot toml now")]
+    fn any_split_types_a_spoken_form_whole(#[case] heard: &str) {
+        let listed = vec![
+            "db1".into(),
+            "db1-cluster".into(),
+            "i18n".into(),
+            "Aria".into(),
+        ];
+        let vocabulary = Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap();
+        assert_any_split_types_the_whole(heard, &vocabulary);
+    }
+
+    /// Cuts `heard` at its spaces into two or three segments, every way.
+    fn assert_any_split_types_the_whole(heard: &str, vocabulary: &Vocabulary) {
+        let whole = whole(heard, vocabulary);
         let words: Vec<&str> = heard.split(' ').collect();
         for first in 1..words.len() {
             for second in first..words.len() {
                 let pieces = [&words[..first], &words[first..second], &words[second..]]
-                    .map(|piece| (piece.join(" "), None));
+                    .map(|piece| piece.join(" "));
                 let pieces: Vec<(&str, Option<bool>)> = pieces
                     .iter()
-                    .filter(|(piece, _)| !piece.is_empty())
-                    .map(|(piece, ended)| (piece.as_str(), *ended))
+                    .filter(|piece| !piece.is_empty())
+                    .map(|piece| (piece.as_str(), None))
                     .collect();
-                assert_eq!(streamed(&pieces, &vocabulary), whole, "{pieces:?}");
+                assert_eq!(streamed(&pieces, vocabulary), whole, "{pieces:?}");
             }
         }
     }
@@ -509,21 +532,7 @@ mod tests {
     #[case("open app delegate dot swift now")]
     #[case::through_a_pair("open arya hyphen kit now")]
     fn any_split_types_a_name_whole(#[case] heard: &str) {
-        let vocabulary = names();
-        let whole = vocabulary.correct_spoken(heard, "").unwrap().text;
-        let words: Vec<&str> = heard.split(' ').collect();
-        for first in 1..words.len() {
-            for second in first..words.len() {
-                let pieces = [&words[..first], &words[first..second], &words[second..]]
-                    .map(|piece| piece.join(" "));
-                let pieces: Vec<(&str, Option<bool>)> = pieces
-                    .iter()
-                    .filter(|piece| !piece.is_empty())
-                    .map(|piece| (piece.as_str(), None))
-                    .collect();
-                assert_eq!(streamed(&pieces, &vocabulary), whole, "{pieces:?}");
-            }
-        }
+        assert_any_split_types_the_whole(heard, &names());
     }
 
     #[rstest]
