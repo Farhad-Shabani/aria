@@ -20,6 +20,7 @@ mod live_keys;
 mod log;
 mod memory;
 mod microphone;
+mod old_recordings;
 mod operation;
 mod phone;
 pub(crate) mod relay;

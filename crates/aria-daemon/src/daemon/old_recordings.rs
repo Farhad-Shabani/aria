@@ -1,4 +1,5 @@
-//! Cleanup of the temporary WAVs older builds wrote while capturing.
+//! Cleanup of the temporary WAVs older builds wrote while capturing. Nothing
+//! writes them now.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -11,9 +12,10 @@ const MAX_CLEANUP_ENTRIES: usize = 256;
 // Best-effort: failures are logged, never returned, so cleanup cannot block
 // startup. The caller must hold the daemon's exclusive lock, because every
 // matching WAV in `directory` is deleted.
-pub fn remove_all_spools(directory: &Path) {
+pub(super) fn remove_old_recordings(directory: &Path) {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
         Err(error) => {
             tracing::warn!(
                 directory = %directory.display(),
@@ -59,8 +61,7 @@ pub fn remove_all_spools(directory: &Path) {
     }
 }
 
-// The spool directory is user-configurable, so cleanup removes only files
-// named like this crate's spools.
+// Cleanup removes only files named like the WAVs older builds wrote.
 fn is_recording_artifact(name: &OsStr) -> bool {
     name.to_str()
         .is_some_and(|name| name.starts_with(FILE_PREFIX) && name.ends_with(FILE_SUFFIX))
@@ -81,7 +82,7 @@ mod tests {
         plant(directory.path(), "aria-recording-notapid.wav");
         plant(directory.path(), "keep-me.txt");
 
-        remove_all_spools(directory.path());
+        remove_old_recordings(directory.path());
 
         assert!(directory.path().join("keep-me.txt").exists());
         assert!(
@@ -100,7 +101,7 @@ mod tests {
             .expect("trap must be creatable");
         plant(directory.path(), "aria-recording-1-orphan.wav");
 
-        remove_all_spools(directory.path());
+        remove_old_recordings(directory.path());
 
         assert!(
             !directory

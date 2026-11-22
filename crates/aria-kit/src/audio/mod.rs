@@ -16,8 +16,6 @@ mod capture;
 mod limit;
 #[cfg(not(target_family = "wasm"))]
 mod resample;
-#[cfg(not(target_family = "wasm"))]
-mod spool;
 #[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 pub(crate) mod testing;
 #[cfg(not(target_family = "wasm"))]
@@ -47,8 +45,6 @@ pub use capture::{
 };
 #[cfg(not(target_family = "wasm"))]
 pub use limit::LengthError;
-#[cfg(not(target_family = "wasm"))]
-pub use spool::remove_all_spools;
 #[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 pub use testing::{canonical_fixture, fixture_of};
 #[cfg(not(target_family = "wasm"))]

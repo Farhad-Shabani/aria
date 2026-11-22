@@ -1,7 +1,8 @@
 //! Concrete assembly and execution of the Aria daemon.
 
 use crate::daemon::config::{DaemonConfig, HotkeyConfig, RelayConfig, WakeWordOverride};
-use aria_kit::audio::{WakeWordMonitor, remove_all_spools};
+use crate::daemon::old_recordings::remove_old_recordings;
+use aria_kit::audio::WakeWordMonitor;
 use aria_platform::runtime::PreparedRuntimePaths;
 use aria_primitives::error_chain;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
@@ -142,7 +143,7 @@ fn compose(
     let context = Context::detect(paths, lifetime).map_err(DaemonError::Context)?;
     // A daemon starts owning no audio: whatever a run that already ended left
     // behind goes before this one can record over it.
-    remove_all_spools(context.paths.spool_dir());
+    remove_old_recordings(context.paths.spool_dir());
     let cache = Arc::new(open_settings(&context)?);
     // The startup values: restart keys keep these for the daemon's life.
     let startup = cache.effective();

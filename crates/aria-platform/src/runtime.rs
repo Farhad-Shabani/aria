@@ -59,7 +59,6 @@ impl RuntimePaths {
                 })?;
         }
         prepare_private_directory(&self.directory)?;
-        prepare_private_directory(&self.spool_dir)?;
         Ok(PreparedRuntimePaths { paths: self })
     }
 

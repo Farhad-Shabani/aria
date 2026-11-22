@@ -15,6 +15,7 @@ use tonic::service::interceptor::InterceptedService;
 use super::pairing_id;
 use crate::daemon::DaemonLifetime;
 use crate::daemon::config::auto_device;
+use crate::daemon::old_recordings::remove_old_recordings;
 use crate::daemon::server::lan::connections::{self, Admitted};
 use crate::daemon::server::lan::tls::{Lease, Leased, secured};
 use crate::daemon::server::lan::{
@@ -27,7 +28,6 @@ use crate::daemon::service::{
 };
 use crate::daemon::shutdown::{ShutdownError, ShutdownSignal};
 use crate::ipc::wire;
-use aria_kit::audio::remove_all_spools;
 use aria_platform::runtime::{PreparedRuntimePaths, RuntimeError};
 use aria_primitives::cancel::CancelToken;
 use aria_primitives::local_socket::{ExclusiveListener, LocalSocketError};
@@ -133,7 +133,7 @@ impl Host {
         runtime: &PreparedRuntimePaths,
     ) -> Result<Self, HostFailure> {
         let ownership = ExclusiveListener::bind(runtime.socket_path(), runtime.lock_path())?;
-        remove_all_spools(runtime.spool_dir());
+        remove_old_recordings(runtime.spool_dir());
         let access = ServerAccess::load_or_create(&state.server_identity())?;
         let acceptor = tls::server(&access)?;
         let public = std::net::TcpListener::bind(address).map_err(HostFailure::Io)?;
