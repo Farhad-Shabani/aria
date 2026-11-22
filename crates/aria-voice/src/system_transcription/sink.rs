@@ -99,6 +99,10 @@ impl TranscriptFile {
         Self::open(path, options)
     }
 
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     fn open(path: PathBuf, mut options: OpenOptions) -> io::Result<(Self, PathBuf)> {
         if let Some(parent) = path.parent() {
             DirBuilder::new()

@@ -96,7 +96,7 @@ fn follow_transcript(session: &DaemonSession) -> anyhow::Result<()> {
     let mut failure = None;
     for stage in follow {
         match stage? {
-            SystemTranscriptionStage::Started => {}
+            SystemTranscriptionStage::Started { .. } => {}
             SystemTranscriptionStage::SegmentTranscribed {
                 text,
                 label,

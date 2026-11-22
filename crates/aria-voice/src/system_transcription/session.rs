@@ -46,7 +46,9 @@ pub fn run_session(
     sink: TranscriptFile,
     cancel: &CancelToken,
 ) -> Result<(), SystemTranscriptionError> {
-    events.emit(SystemTranscriptionStage::Started);
+    events.emit(SystemTranscriptionStage::Started {
+        transcript: Arc::from(sink.path()),
+    });
     let session = Session { vocabulary, events };
     session.run(
         &config.engine,

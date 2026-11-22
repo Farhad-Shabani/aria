@@ -197,6 +197,9 @@ public nonisolated struct Aria_Daemon_V1_SystemTranscriptionEvent: Sendable {
   /// transcript file and subsequent events.
   public var mergedFromLabel: String = String()
 
+  /// The file the session writes; only for STARTED.
+  public var transcriptPath: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -412,7 +415,7 @@ nonisolated extension Aria_Daemon_V1_GetSystemTranscriptionStatusResponse: Swift
 
 nonisolated extension Aria_Daemon_V1_SystemTranscriptionEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SystemTranscriptionEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}speaker_label\0\u{3}error_code\0\u{1}offset\0\u{3}merged_from_label\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{3}speaker_label\0\u{3}error_code\0\u{1}offset\0\u{3}merged_from_label\0\u{3}transcript_path\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -426,6 +429,7 @@ nonisolated extension Aria_Daemon_V1_SystemTranscriptionEvent: SwiftProtobuf.Mes
       case 4: try { try decoder.decodeSingularEnumField(value: &self.errorCode) }()
       case 5: try { try decoder.decodeSingularMessageField(value: &self._offset) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.mergedFromLabel) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.transcriptPath) }()
       default: break
       }
     }
@@ -454,6 +458,9 @@ nonisolated extension Aria_Daemon_V1_SystemTranscriptionEvent: SwiftProtobuf.Mes
     if !self.mergedFromLabel.isEmpty {
       try visitor.visitSingularStringField(value: self.mergedFromLabel, fieldNumber: 6)
     }
+    if !self.transcriptPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.transcriptPath, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -464,6 +471,7 @@ nonisolated extension Aria_Daemon_V1_SystemTranscriptionEvent: SwiftProtobuf.Mes
     if lhs.errorCode != rhs.errorCode {return false}
     if lhs._offset != rhs._offset {return false}
     if lhs.mergedFromLabel != rhs.mergedFromLabel {return false}
+    if lhs.transcriptPath != rhs.transcriptPath {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

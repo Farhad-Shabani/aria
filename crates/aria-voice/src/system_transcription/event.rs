@@ -1,5 +1,6 @@
 //! What a system transcription announces while it runs.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use aria_settings::event::EventEmitter;
@@ -9,7 +10,10 @@ use aria_settings::rpc::RpcErrorCode;
 pub enum SystemTranscriptionStage {
     /// The session was accepted. Capture may still fail to start, which
     /// `Failed` reports.
-    Started,
+    Started {
+        /// The file the session writes.
+        transcript: Arc<Path>,
+    },
     SegmentTranscribed {
         text: Arc<str>,
         /// The tentative live speaker label; the transcript's final rewrite
