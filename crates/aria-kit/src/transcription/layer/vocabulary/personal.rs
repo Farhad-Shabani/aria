@@ -7,7 +7,7 @@ use crate::cancel::CancelToken;
 use super::super::claim::{Claimed, Word};
 use super::super::number_words::{is_up_to_twenty, word_for};
 use super::super::symbol_words::symbol;
-use super::fuzzy::{Fix, apply_fuzzy, begins_a_join, best_term, capitals};
+use super::fuzzy::{Fix, apply_fuzzy, begins_a_merge, best_term, capitals};
 use super::{MatchError, is_word};
 
 /// What stored rules may cost in memory.
@@ -288,8 +288,8 @@ impl PersonalRules {
     /// Defers the word before the cut when more speech may change it. A
     /// listed word that would take its capitals may join a spoken symbol
     /// into a written name, which keeps it as heard: "open aria" may go on
-    /// as "aria dot toml". A word that isn't real may join the next word
-    /// into a listed word: "use postgre" may go on as "postgre sql".
+    /// as "aria dot toml". A word that isn't real may merge with the next
+    /// word into a listed word: "use postgre" may go on as "postgre sql".
     fn defer_a_last_word(&self, text: &str, claimed: &mut Claimed<'_>) {
         let before = text[..claimed.deferred_from()].trim_end();
         let start = before
@@ -300,7 +300,7 @@ impl PersonalRules {
         let capital =
             best_term(word, &self.terms, &self.known, never).unwrap_or_else(|never| match never {});
         if matches!(capital, Some(Fix::Capitals(_)))
-            || begins_a_join(word, &self.terms, &self.known)
+            || begins_a_merge(word, &self.terms, &self.known)
         {
             claimed.defer_at(start);
         }
@@ -1029,7 +1029,7 @@ mod tests {
     }
 
     #[test]
-    fn a_listed_word_heard_as_two_words_joins() {
+    fn a_listed_word_heard_as_two_words_merges() {
         let rules = PersonalRules::new(strings(&["PostgreSQL", "kubernetes", "Redshift"]), vec![]);
         let cases = [
             ("use postgre sql now", "use PostgreSQL now"),
@@ -1046,7 +1046,7 @@ mod tests {
     }
 
     #[test]
-    fn a_short_word_never_joins_a_listed_word() {
+    fn a_short_word_never_merges_into_a_listed_word() {
         let rules = PersonalRules::new(strings(&["Postgres", "Atlas"]), vec![]);
         for heard in ["postgr is running", "meet at Las Vegas"] {
             assert_eq!(rules.apply(heard).0, heard);

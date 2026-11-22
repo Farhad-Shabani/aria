@@ -17,7 +17,7 @@ pub(super) fn capitals<'a>(listed: &[&'a str]) -> Option<&'a str> {
 
 /// A word the user does not have in their list becomes the listed word it
 /// nearly is, unless it is a real English word. Two words heard for one
-/// listed word join into it, unless both are real words. Tokens are ASCII
+/// listed word merge into it, unless both are real words. Tokens are ASCII
 /// words; a match must share its first letter and about its length before
 /// the ratio is consulted. A listed word heard in another case types its
 /// listed capitals. No fix reaches into a written name such as
@@ -46,13 +46,13 @@ pub(super) fn apply_fuzzy<E>(
         } else {
             best_term(token, terms, known, check)?
         };
-        let joined = if single.is_none() {
-            joined_term(token, after, terms, known, check)?
+        let merged = if single.is_none() {
+            merged_term(token, after, terms, known, check)?
                 .filter(|(_, second)| !in_a_written_name(before, &after[*second..]))
         } else {
             None
         };
-        let (heard, typed) = match joined {
+        let (heard, typed) = match merged {
             Some((typed, second)) => (&rest[start..start + length + second], Some(typed)),
             None => (
                 token,
@@ -153,7 +153,7 @@ pub(super) fn best_term<'a, E>(
 
 /// The listed word that `first` and the word one space into `after` were
 /// heard for, as "postgre sql" for `PostgreSQL`, and where that word ends.
-fn joined_term<E>(
+fn merged_term<E>(
     first: &str,
     after: &str,
     terms: &[String],
@@ -164,7 +164,7 @@ fn joined_term<E>(
         return Ok(None);
     };
     let (second, ending) = possessive(&after[1..1 + length]);
-    if !may_join(first, second) {
+    if !may_merge(first, second) {
         return Ok(None);
     }
     // A word the list already knows keeps its own fix: "kubernets is" keeps
@@ -175,15 +175,15 @@ fn joined_term<E>(
     {
         return Ok(None);
     }
-    let joined = format!("{first}{second}").to_lowercase();
-    let listed = listed(&joined, terms, known, check)?;
+    let merged = format!("{first}{second}").to_lowercase();
+    let listed = listed(&merged, terms, known, check)?;
     let term = if listed.is_empty() {
-        match best_term(&joined, terms, known, check)? {
+        match best_term(&merged, terms, known, check)? {
             Some(Fix::NearMiss(term)) => term,
             _ => return Ok(None),
         }
     } else {
-        capitals(&listed).unwrap_or(&joined)
+        capitals(&listed).unwrap_or(&merged)
     };
     Ok(Some((format!("{term}{ending}"), 1 + length)))
 }
@@ -191,15 +191,15 @@ fn joined_term<E>(
 /// Whether two heard words may be one listed word. A word under three
 /// letters is often one like "is" or "at", which a near miss would swallow,
 /// and two real words are what was said.
-fn may_join(first: &str, second: &str) -> bool {
+fn may_merge(first: &str, second: &str) -> bool {
     let real = |word: &str| is_english(&word.to_lowercase());
     first.len() >= MIN_TOKEN_LEN && second.len() >= MIN_TOKEN_LEN && !(real(first) && real(second))
 }
 
-/// Whether more speech may join `word` and the next word into a listed
+/// Whether more speech may merge `word` and the next word into a listed
 /// word. Only a word that isn't real waits, so "ads" ending a segment types
-/// at once, though "ads viser" joins within one.
-pub(super) fn begins_a_join(word: &str, terms: &[String], known: &[Vec<char>]) -> bool {
+/// at once, though "ads viser" merges within one.
+pub(super) fn begins_a_merge(word: &str, terms: &[String], known: &[Vec<char>]) -> bool {
     let never = &|_| Ok::<_, std::convert::Infallible>(());
     let folded = word.to_lowercase();
     let longer = |listed: &Vec<char>| {
