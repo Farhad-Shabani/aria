@@ -1,5 +1,5 @@
-//! The longest recording capture may keep, and the writer that holds it to
-//! that length.
+//! The most audio capture may keep in one recording, and the writer that
+//! holds it to that length.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,15 +29,8 @@ impl LimitedWriter {
         })
     }
 
-    /// Appends samples to the recording. Fails once the maximum length would
-    /// be exceeded.
-    pub(super) fn write_samples(&mut self, samples: &[i16]) -> Result<()> {
-        let sample_count =
-            u64::try_from(samples.len()).map_err(|_error| LengthError::SampleCountOverflow)?;
-        let attempted_samples = self
-            .samples_written
-            .checked_add(sample_count)
-            .ok_or(LengthError::SampleCountOverflow)?;
+    pub(super) fn push(&mut self, samples: &[i16]) -> Result<()> {
+        let attempted_samples = self.samples_written + samples.len() as u64;
         if attempted_samples > self.maximum_samples {
             return Err(LengthError::LimitExceeded {
                 attempted_samples,
@@ -49,7 +42,7 @@ impl LimitedWriter {
         Ok(())
     }
 
-    /// Ends the writing. A recording that got no samples is refused.
+    /// Refuses a recording that got no samples.
     pub(super) fn finish(self) -> Result<()> {
         if self.samples_written == 0 {
             return Err(LengthError::Empty);
@@ -87,9 +80,6 @@ pub enum LengthError {
         maximum_samples: u64,
     },
 
-    #[error("recording sample count overflowed")]
-    SampleCountOverflow,
-
     #[error("cannot finish an empty recording")]
     Empty,
 }
@@ -105,7 +95,7 @@ mod tests {
             LimitedWriter::new(Duration::from_secs(1), &writer).expect("the limit is valid");
 
         let error = limited
-            .write_samples(&vec![0; CANONICAL_SAMPLE_RATE as usize + 1])
+            .push(&vec![0; CANONICAL_SAMPLE_RATE as usize + 1])
             .expect_err("an oversized recording is refused");
 
         assert!(matches!(error, LengthError::LimitExceeded { .. }));

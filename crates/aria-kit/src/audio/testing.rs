@@ -77,7 +77,7 @@ mod recordings {
         let (writer, mut limited, recording) = limited();
         writer.begin(super::super::RecordingSource::Prerecorded);
         limited
-            .write_samples(samples)
+            .push(samples)
             .expect("samples are writable");
         writer.close(limited.finish().map_err(CaptureError::from));
         recording
@@ -96,7 +96,7 @@ mod recordings {
                 if wait.recv().is_err() {
                     break;
                 }
-                limited.write_samples(&batch).expect("samples are writable");
+                limited.push(&batch).expect("samples are writable");
                 if index + 1 < count {
                     let _ = acknowledge.send(());
                 }

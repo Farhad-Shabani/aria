@@ -154,7 +154,7 @@ impl Session {
             return Ok(());
         };
         while let Ok(samples) = self.feed.try_recv() {
-            limited.write_samples(&samples)?;
+            limited.push(&samples)?;
         }
         Ok(())
     }

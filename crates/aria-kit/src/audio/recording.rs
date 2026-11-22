@@ -828,7 +828,7 @@ mod tests {
         std::thread::spawn(move || {
             for sample in SAMPLES {
                 limited
-                    .write_samples(&[sample])
+                    .push(&[sample])
                     .expect("samples are writable");
             }
             writer.close(limited.finish().map_err(CaptureError::from));

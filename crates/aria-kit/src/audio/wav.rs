@@ -34,32 +34,15 @@ impl RecordingReader {
     ///
     /// The file is validated for format, not trust — trust policy is for
     /// artifacts a daemon loads on a user's behalf, and this file is the
-    /// caller's own. The file is borrowed, never deleted, and read whole into
-    /// memory: about 8 bytes per sample, near 460 MB per hour of audio.
+    /// caller's own. The file is left in place and read whole into memory:
+    /// about 8 bytes per sample, near 460 MB per hour of audio.
     pub fn from_wav_file(path: impl AsRef<Path>) -> std::result::Result<Self, CaptureError> {
         let path = path.as_ref();
         let file = std::fs::File::open(path).map_err(|source| WavError::Open {
             path: path.to_path_buf(),
             source: Box::new(source),
         })?;
-        Self::from_open_wav(file, path)
-    }
-
-    /// [`RecordingReader::from_wav_file`] over a `file` already open at
-    /// `path`, so checks made on that descriptor cover what is read.
-    pub fn from_open_wav(
-        file: std::fs::File,
-        path: impl AsRef<Path>,
-    ) -> std::result::Result<Self, CaptureError> {
-        let path = path.as_ref();
-        let reader = canonical_wav(file, path)?;
-        check_declared_length(&reader, path, MAX_RECORDING_DURATION)?;
-        let samples = collect_samples(reader, path)?;
-
-        let (recording, writer) = super::Recording::prerecorded();
-        writer.push_pcm16(&samples);
-        writer.finish();
-        Ok(recording)
+        Self::from_wav(file, path)
     }
 
     /// A finished recording of the canonical WAV read from `wav`, such as one
@@ -374,21 +357,6 @@ mod tests {
         recording.fill().expect("the recording already ended");
         assert_eq!(recording.samples().len(), FIXTURE_SAMPLES);
         assert_eq!(recording.duration(), Duration::from_secs(1));
-    }
-
-    #[test]
-    fn an_open_wav_reads_its_descriptor_not_the_path() {
-        let directory = tempfile::tempdir().expect("tempdir must be creatable");
-        let fixture = canonical_fixture(directory.path());
-        let opened = std::fs::File::open(&fixture).expect("the fixture opens");
-        std::fs::remove_file(&fixture).expect("the path is removable");
-        fixture_of(directory.path(), 10);
-
-        let mut recording =
-            RecordingReader::from_open_wav(opened, &fixture).expect("the descriptor still reads");
-
-        recording.fill().expect("the recording already ended");
-        assert_eq!(recording.samples().len(), FIXTURE_SAMPLES);
     }
 
     #[test]

@@ -122,7 +122,7 @@ fn replay_paced(
         if let Some(wait) = due.checked_duration_since(Instant::now()) {
             thread::sleep(wait);
         }
-        limited.write_samples(batch)?;
+        limited.push(batch)?;
         if stop.should_stop() {
             break;
         }

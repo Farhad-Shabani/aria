@@ -44,7 +44,7 @@ impl<V: VoiceActivityDetector> CaptureRecording<V> {
         match self {
             Self::OnSilence(recording) => recording.push(samples),
             Self::UntilStopped(limited) => {
-                limited.write_samples(samples)?;
+                limited.push(samples)?;
                 Ok(CaptureProgress::Continue)
             }
             Self::UntilQuiet(recording) => recording.push(samples),
@@ -95,7 +95,7 @@ impl<V: VoiceActivityDetector> QuietRecording<V> {
     }
 
     fn push(&mut self, mut samples: &[i16]) -> Result<CaptureProgress> {
-        self.limited.write_samples(samples)?;
+        self.limited.push(samples)?;
         while !samples.is_empty() {
             let copied = (V::FRAME_SAMPLES - self.frame.len()).min(samples.len());
             self.frame.extend_from_slice(&samples[..copied]);
@@ -168,7 +168,7 @@ impl<V: VoiceActivityDetector> SilenceRecording<V> {
 
         if self.speech_started {
             self.limited
-                .write_samples(&samples[..(kept_to - pushed_from) as usize])?;
+                .push(&samples[..(kept_to - pushed_from) as usize])?;
         } else if let Some(Boundary::Start(at)) = boundaries.first() {
             self.open_speech(*at, samples, kept_to)?;
         } else {
@@ -192,7 +192,7 @@ impl<V: VoiceActivityDetector> SilenceRecording<V> {
         let from = start.saturating_sub((LEAD_IN_FRAMES * V::FRAME_SAMPLES) as u64);
         let heard = self.lead_in.make_contiguous();
         self.limited
-            .write_samples(&heard[(from - heard_from) as usize..(kept_to - heard_from) as usize])?;
+            .push(&heard[(from - heard_from) as usize..(kept_to - heard_from) as usize])?;
         self.lead_in.clear();
         Ok(())
     }

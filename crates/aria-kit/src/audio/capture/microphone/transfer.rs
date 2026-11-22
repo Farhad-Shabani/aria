@@ -39,7 +39,7 @@ fn drain_tail<V: VoiceActivityDetector>(
     };
     let mut scratch = [0_i16; DRAIN_BUFFER_SAMPLES];
     while let input @ [_, ..] = live.pop(&mut scratch)? {
-        limited.write_samples(input)?;
+        limited.push(input)?;
     }
     Ok(())
 }
