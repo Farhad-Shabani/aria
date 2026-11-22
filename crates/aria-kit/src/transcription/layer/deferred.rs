@@ -7,8 +7,8 @@ use super::Vocabulary;
 const MAX_HELD_WORDS: usize = 8;
 
 /// Holds a segment's last words while the next segment may still change
-/// them: a spoken symbol it may join, a number it may go on, or a name it
-/// may complete.
+/// them: a spoken symbol it may join, a number it may go on, a name it may
+/// complete, or a fragment it may merge into a listed word.
 ///
 /// Streaming can split "user underscore id", "twenty one" or "aria hyphen
 /// kit" across segments. Correct what [`hold`](Self::hold) releases with
@@ -354,18 +354,25 @@ mod tests {
     #[rstest]
     #[case("detect db 1 is that")]
     #[case("run d b one now")]
-    #[case("the db 1 cluster is up")]
+    #[case("the db 1 backup is up")]
     #[case("use i eighteen n now")]
     #[case("open aria dot toml now")]
     fn any_split_types_a_spoken_form_whole(#[case] heard: &str) {
         let listed = vec![
             "db1".into(),
-            "db1-cluster".into(),
+            "db1-backup".into(),
             "i18n".into(),
             "Aria".into(),
         ];
         let vocabulary = Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap();
         assert_any_split_types_the_whole(heard, &vocabulary);
+    }
+
+    #[test]
+    fn any_split_types_a_merged_word_whole() {
+        let listed = vec!["PostgreSQL".into()];
+        let vocabulary = Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap();
+        assert_any_split_types_the_whole("use postgre sql now", &vocabulary);
     }
 
     /// Cuts `heard` at its spaces into two or three segments, every way.

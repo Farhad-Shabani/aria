@@ -16,10 +16,11 @@ pub(super) fn capitals<'a>(listed: &[&'a str]) -> Option<&'a str> {
 }
 
 /// A word the user does not have in their list becomes the listed word it
-/// nearly is, unless it is a real English word. Tokens are ASCII words; a
-/// match must share its first letter and about its length before the ratio
-/// is consulted. A listed word heard in another case types its listed
-/// capitals. Neither fix reaches into a written name such as
+/// nearly is, unless it is a real English word. Two words heard for one
+/// listed word merge into it, unless both are real words. Tokens are ASCII
+/// words; a match must share its first letter and about its length before
+/// the ratio is consulted. A listed word heard in another case types its
+/// listed capitals. No fix reaches into a written name such as
 /// `src/aria.toml`.
 pub(super) fn apply_fuzzy<E>(
     text: &str,
@@ -37,25 +38,39 @@ pub(super) fn apply_fuzzy<E>(
     while let Some((start, length)) = next_token(rest) {
         check(output.len().saturating_add(start))?;
         output.push_str(&rest[..start]);
+        let before = &rest[..start];
         let token = &rest[start..start + length];
-        let term = if in_a_written_name(&rest[..start], &rest[start + length..]) {
+        let after = &rest[start + length..];
+        let single = if in_a_written_name(before, after) {
             None
         } else {
             best_term(token, terms, known, check)?
-                .map(|(Fix::Capitals(term) | Fix::NearMiss(term))| term)
         };
-        match term {
-            Some(term) => {
-                check(output.len().saturating_add(term.len()))?;
-                substitutions.push((token.to_owned(), term.to_owned()));
-                output.push_str(term);
+        let merged = if single.is_none() {
+            merged_term(token, after, terms, known, check)?
+                .filter(|(_, second)| !in_a_written_name(before, &after[*second..]))
+        } else {
+            None
+        };
+        let (heard, typed) = match merged {
+            Some((typed, second)) => (&rest[start..start + length + second], Some(typed)),
+            None => (
+                token,
+                single.map(|(Fix::Capitals(term) | Fix::NearMiss(term))| term.to_owned()),
+            ),
+        };
+        match typed {
+            Some(typed) => {
+                check(output.len().saturating_add(typed.len()))?;
+                output.push_str(&typed);
+                substitutions.push((heard.to_owned(), typed));
             }
             None => {
-                check(output.len().saturating_add(token.len()))?;
-                output.push_str(token);
+                check(output.len().saturating_add(heard.len()))?;
+                output.push_str(heard);
             }
         }
-        rest = &rest[start + length..];
+        rest = &rest[start + heard.len()..];
     }
     check(output.len().saturating_add(rest.len()))?;
     output.push_str(rest);
@@ -70,13 +85,9 @@ const ENGLISH_WORDS: &[u8] = include_bytes!("english.fst");
 /// "river's" and "red-shift" are real because "river", "red" and "shift"
 /// are, though the list holds no possessives or compounds.
 fn is_english(folded: &str) -> bool {
-    folded.split('-').all(|part| {
-        let stem = part
-            .strip_suffix("'s")
-            .or_else(|| part.strip_suffix('\''))
-            .unwrap_or(part);
-        english_words().contains(part) || english_words().contains(stem)
-    })
+    folded
+        .split('-')
+        .all(|part| english_words().contains(part) || english_words().contains(possessive(part).0))
 }
 
 fn english_words() -> &'static fst::Set<&'static [u8]> {
@@ -106,13 +117,7 @@ pub(super) fn best_term<'a, E>(
     if token.chars().count() < MIN_TOKEN_LEN {
         return Ok(None);
     }
-    let mut listed = Vec::new();
-    for (term, word) in terms.iter().zip(known) {
-        check(0)?;
-        if word.iter().copied().eq(folded.chars()) {
-            listed.push(term.as_str());
-        }
-    }
+    let listed = listed(&folded, terms, known, check)?;
     // Listing `Linear` asks for its capitals, so a listed word takes them
     // even where it is also a real word, as in "a linear model".
     if !listed.is_empty() {
@@ -144,6 +149,96 @@ pub(super) fn best_term<'a, E>(
         return Ok(None);
     }
     Ok(best.map(|(term, _)| Fix::NearMiss(term)))
+}
+
+/// The listed word that `first` and the word one space into `after` were
+/// heard for, as "postgre sql" for `PostgreSQL`, and where that word ends.
+fn merged_term<E>(
+    first: &str,
+    after: &str,
+    terms: &[String],
+    known: &[Vec<char>],
+    check: &impl Fn(usize) -> Result<(), E>,
+) -> Result<Option<(String, usize)>, E> {
+    let Some(Some((0, length))) = after.strip_prefix(' ').map(next_token) else {
+        return Ok(None);
+    };
+    let (second, ending) = possessive(&after[1..1 + length]);
+    if !may_merge(first, second) {
+        return Ok(None);
+    }
+    // A word the list already knows keeps its own fix: "kubernets is" keeps
+    // its "is".
+    if !listed(first, terms, known, check)?.is_empty()
+        || !listed(second, terms, known, check)?.is_empty()
+        || best_term(second, terms, known, check)?.is_some()
+    {
+        return Ok(None);
+    }
+    let merged = format!("{first}{second}").to_lowercase();
+    let listed = listed(&merged, terms, known, check)?;
+    let term = if listed.is_empty() {
+        match best_term(&merged, terms, known, check)? {
+            Some(Fix::NearMiss(term)) => term,
+            _ => return Ok(None),
+        }
+    } else {
+        capitals(&listed).unwrap_or(&merged)
+    };
+    Ok(Some((format!("{term}{ending}"), 1 + length)))
+}
+
+/// Whether two heard words may be one listed word. A word under three
+/// letters is often one like "is" or "at", which a near miss would swallow,
+/// and two real words are what was said.
+fn may_merge(first: &str, second: &str) -> bool {
+    let real = |word: &str| is_english(&word.to_lowercase());
+    first.len() >= MIN_TOKEN_LEN && second.len() >= MIN_TOKEN_LEN && !(real(first) && real(second))
+}
+
+/// Whether more speech may merge `word` and the next word into a listed
+/// word. Only a word that isn't real waits, so "ads" ending a segment types
+/// at once, though "ads viser" merges within one.
+pub(super) fn begins_a_merge(word: &str, terms: &[String], known: &[Vec<char>]) -> bool {
+    let never = &|_| Ok::<_, std::convert::Infallible>(());
+    let folded = word.to_lowercase();
+    let longer = |listed: &Vec<char>| {
+        listed.len() > folded.chars().count() && listed.first() == folded.chars().next().as_ref()
+    };
+    let fixed = || {
+        let listed = listed(word, terms, known, never).unwrap_or_else(|never| match never {});
+        let fix = best_term(word, terms, known, never).unwrap_or_else(|never| match never {});
+        !listed.is_empty() || fix.is_some()
+    };
+    word.len() >= MIN_TOKEN_LEN && !is_english(&folded) && known.iter().any(longer) && !fixed()
+}
+
+/// The spellings `terms` lists for `word`, in any case.
+fn listed<'a, E>(
+    word: &str,
+    terms: &'a [String],
+    known: &[Vec<char>],
+    check: &impl Fn(usize) -> Result<(), E>,
+) -> Result<Vec<&'a str>, E> {
+    let folded = word.to_lowercase();
+    let mut listed = Vec::new();
+    for (term, listed_word) in terms.iter().zip(known) {
+        check(0)?;
+        if listed_word.iter().copied().eq(folded.chars()) {
+            listed.push(term.as_str());
+        }
+    }
+    Ok(listed)
+}
+
+/// `word` without its possessive ending, and the ending: "sql's" is "sql"
+/// and "'s".
+fn possessive(word: &str) -> (&str, &str) {
+    let stem = word
+        .strip_suffix("'s")
+        .or_else(|| word.strip_suffix('\''))
+        .unwrap_or(word);
+    (stem, &word[stem.len()..])
 }
 
 /// What the fuzzy pass types in place of a heard word.
