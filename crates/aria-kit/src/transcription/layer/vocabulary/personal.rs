@@ -7,7 +7,7 @@ use crate::cancel::CancelToken;
 use super::super::claim::{Claimed, Word};
 use super::super::number_words::{is_up_to_twenty, word_for};
 use super::super::symbol_words::symbol;
-use super::fuzzy::{Fix, apply_fuzzy, best_term, capitals};
+use super::fuzzy::{Fix, apply_fuzzy, begins_a_join, best_term, capitals};
 use super::{MatchError, is_word};
 
 /// What stored rules may cost in memory.
@@ -277,7 +277,7 @@ impl PersonalRules {
     /// Defers the words of a spoken form that more speech may still change:
     /// a form the cut would split, or one the text ends inside.
     pub(super) fn defer_waiting_forms(&self, text: &str, claimed: &mut Claimed<'_>) {
-        self.defer_a_capital(text, claimed);
+        self.defer_a_last_word(text, claimed);
         if self.forms.is_empty() {
             return;
         }
@@ -285,18 +285,23 @@ impl PersonalRules {
         self.defer_an_unfinished_form(text, claimed);
     }
 
-    /// Defers a listed word before the cut that would take its capitals: a
-    /// spoken symbol in more speech may join it into a written name, which
-    /// keeps it as heard. "open aria" may go on as "aria dot toml".
-    fn defer_a_capital(&self, text: &str, claimed: &mut Claimed<'_>) {
+    /// Defers the word before the cut when more speech may change it. A
+    /// listed word that would take its capitals may join a spoken symbol
+    /// into a written name, which keeps it as heard: "open aria" may go on
+    /// as "aria dot toml". A word that isn't real may join the next word
+    /// into a listed word: "use postgre" may go on as "postgre sql".
+    fn defer_a_last_word(&self, text: &str, claimed: &mut Claimed<'_>) {
         let before = text[..claimed.deferred_from()].trim_end();
         let start = before
             .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '\'' || c == '-'))
             .map_or(0, |end| end + 1);
         let never = &|_| Ok::<_, std::convert::Infallible>(());
-        let capital = best_term(&before[start..], &self.terms, &self.known, never)
-            .unwrap_or_else(|never| match never {});
-        if matches!(capital, Some(Fix::Capitals(_))) {
+        let word = &before[start..];
+        let capital =
+            best_term(word, &self.terms, &self.known, never).unwrap_or_else(|never| match never {});
+        if matches!(capital, Some(Fix::Capitals(_)))
+            || begins_a_join(word, &self.terms, &self.known)
+        {
             claimed.defer_at(start);
         }
     }
@@ -327,7 +332,7 @@ impl PersonalRules {
     /// sharp dot" → `C#.`. The words are read as heard from where each claim
     /// starts, whatever claimed them, because the whole form outranks a later step's claim on its
     /// words: "i eighteen" begins "i eighteen n" → `i18n`. A finished form
-    /// waits too when it begins another, as "db 1" begins "db 1 cluster".
+    /// waits too when it begins another, as "db 1" begins "db 1 backup".
     fn defer_an_unfinished_form(&self, text: &str, claimed: &mut Claimed<'_>) {
         let cut = claimed.deferred_from();
         let (offsets, chars): (Vec<usize>, Vec<char>) = text.trim_end().char_indices().unzip();
@@ -1021,6 +1026,31 @@ mod tests {
             assert_eq!(apply_corrections(input, &[], &terms).0, expected, "{input}");
         }
         assert_eq!(apply_corrections("kubernets", &[], &[]).0, "kubernets");
+    }
+
+    #[test]
+    fn a_listed_word_heard_as_two_words_joins() {
+        let rules = PersonalRules::new(strings(&["PostgreSQL", "kubernetes", "Redshift"]), vec![]);
+        let cases = [
+            ("use postgre sql now", "use PostgreSQL now"),
+            ("deploy kuber nettes", "deploy kubernetes"),
+            ("a red shift", "a red shift"),
+            ("the postgre sql's config", "the PostgreSQL's config"),
+            ("deploy Kuber Netes", "deploy kubernetes"),
+            ("in src/postgre sql", "in src/postgre sql"),
+            ("postgre sql.conf", "postgre sql.conf"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(rules.apply(input).0, expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn a_short_word_never_joins_a_listed_word() {
+        let rules = PersonalRules::new(strings(&["Postgres", "Atlas"]), vec![]);
+        for heard in ["postgr is running", "meet at Las Vegas"] {
+            assert_eq!(rules.apply(heard).0, heard);
+        }
     }
 
     #[test]

@@ -354,15 +354,17 @@ mod tests {
     #[rstest]
     #[case("detect db 1 is that")]
     #[case("run d b one now")]
-    #[case("the db 1 cluster is up")]
+    #[case("the db 1 backup is up")]
     #[case("use i eighteen n now")]
     #[case("open aria dot toml now")]
+    #[case("use postgre sql now")]
     fn any_split_types_a_spoken_form_whole(#[case] heard: &str) {
         let listed = vec![
             "db1".into(),
-            "db1-cluster".into(),
+            "db1-backup".into(),
             "i18n".into(),
             "Aria".into(),
+            "PostgreSQL".into(),
         ];
         let vocabulary = Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap();
         assert_any_split_types_the_whole(heard, &vocabulary);
