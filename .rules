@@ -69,9 +69,10 @@ macOS. The scoped recipes use default features.
   dependencies.
 - Files that draw the Aria logo fall under `assets/brand/LICENSE`, not GPL.
   List any new one there and give it the same header.
-- Record copied third-party files in `THIRD-PARTY-NOTICES.md`. If the file
-  ships in a published crate, add the notice to that crate's own
-  `THIRD-PARTY-NOTICES.md` too.
+- Put a copied third-party file's notice in its crate's
+  `THIRD-PARTY-NOTICES.md`, and link that file from the root one. Outside
+  published crates, the root file holds the full notice. If the `aria` binary
+  embeds the file, add its crate's notices to `just notices`.
 
 ## Maintaining Instructions
 

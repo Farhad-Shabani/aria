@@ -285,8 +285,13 @@ notices:
     cargo about generate --locked -m crates/aria/Cargo.toml \
         -c licenses/about.toml -o "$out" licenses/about.hbs
     full_text() { printf '\n### %s\n\n```text\n' "$1"; cat "$2"; printf '```\n'; }
+    # Retitles a crate's notices file as a section of this list.
+    copied() { printf '\n'; sed "1s/.*/### $1/" "$2"; }
     {
+        # Must follow native.md, whose last section is Bundled data.
         cat licenses/native.md
+        copied "OpenAI Whisper mel filter bank, in aria-stt" crates/aria-stt/THIRD-PARTY-NOTICES.md
+        copied "SCOWL word list, in aria-kit" crates/aria-kit/THIRD-PARTY-NOTICES.md
         printf '\n## Full license texts\n'
         full_text "ONNX Runtime third-party notices" licenses/vendor/onnxruntime-notices.txt
     } >> "$out"

@@ -1,15 +1,15 @@
 # Third-party notices
 
-This file covers third-party material copied into this repository. Licenses of
-Cargo dependencies are not listed here.
+Third-party files copied into this repository. A file in a published crate has
+its notice in that crate's `THIRD-PARTY-NOTICES.md`, linked below. Any other
+file has its full notice here. Cargo dependency licenses aren't listed.
 
 ## livekit-wakeword
 
-`crates/aria-wake/tests/fixtures/negative.wav` is a verbatim copy of
-`tests/fixtures/negative.wav` from livekit-wakeword by LiveKit, Inc., under the
-Apache License 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE)).
-`crates/aria-wake/THIRD-PARTY-NOTICES.md` carries this notice in the published
-crate.
+`crates/aria-wake/tests/fixtures/negative.wav` is a verbatim copy of a test
+fixture from livekit-wakeword by LiveKit, Inc., under the Apache License 2.0.
+[`crates/aria-wake/THIRD-PARTY-NOTICES.md`](crates/aria-wake/THIRD-PARTY-NOTICES.md)
+holds its notice.
 
 Source: <https://github.com/livekit/livekit-wakeword>
 
@@ -29,8 +29,8 @@ keeps its copyright notice.
   mel filter bank. It is a verbatim copy of the file in
   [Candle's Whisper example](https://github.com/huggingface/candle/tree/main/candle-examples/examples/whisper),
   which Candle distributes under `MIT OR Apache-2.0`.
-  `crates/aria-stt/THIRD-PARTY-NOTICES.md` carries this notice in the
-  published crate.
+  [`crates/aria-stt/THIRD-PARTY-NOTICES.md`](crates/aria-stt/THIRD-PARTY-NOTICES.md)
+  holds its notice.
 
 Source: <https://github.com/openai/whisper>
 
