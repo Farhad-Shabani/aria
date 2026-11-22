@@ -1059,7 +1059,6 @@ mod error_tests {
 
 #[cfg(test)]
 mod history_tests {
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -1177,12 +1176,10 @@ mod history_tests {
                 &directory.path().join("history"),
                 Arc::new(crate::daemon::storage::StorageKey::for_tests()),
             ));
-            let audio = aria_kit::audio::canonical_fixture(directory.path());
-            std::fs::set_permissions(&audio, std::fs::Permissions::from_mode(0o600)).unwrap();
             let original = history
                 .storage()
                 .unwrap()
-                .insert(entry(), Some(&audio))
+                .insert(entry(), Some(&[0.25; 16_000]))
                 .unwrap();
             let settings =
                 Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
@@ -1385,14 +1382,10 @@ mod history_tests {
         server.pair_home(home.clone()).await;
         let observed = Arc::clone(&server.observed);
         tokio::task::spawn_blocking(move || {
-            let audio = home.join("speech.wav");
-            std::fs::copy(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../aria-wake/tests/fixtures/negative.wav"),
-                &audio,
-            )
-            .unwrap();
-            std::fs::set_permissions(&audio, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let audio = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../aria-wake/tests/fixtures/negative.wav");
+            let mut speech = RecordingReader::from_wav_file(&audio).unwrap();
+            speech.fill().unwrap();
             let project = home.join("original-project");
             std::fs::create_dir(&project).unwrap();
             let mut original = entry();
@@ -1404,7 +1397,7 @@ mod history_tests {
                 .history
                 .storage()
                 .unwrap()
-                .insert(original, Some(&audio))
+                .insert(original, Some(speech.samples()))
                 .unwrap();
             fixture
                 .runtime

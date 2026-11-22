@@ -157,6 +157,21 @@ pub fn write_wav(path: impl AsRef<Path>, clip: &Clip) -> Result<()> {
     writer.finalize().map_err(failed)
 }
 
+/// Canonical samples as the bytes of a 16 kHz mono 16-bit WAV, built in
+/// memory so the audio never reaches a file.
+pub fn encode_wav(samples: &[f32]) -> Result<Vec<u8>> {
+    let failed = |source: hound::Error| WavError::Encode(Box::new(source));
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    let mut writer = hound::WavWriter::new(&mut bytes, wav_spec()).map_err(failed)?;
+    for &sample in samples {
+        writer
+            .write_sample(pcm16_from_f32(sample))
+            .map_err(failed)?;
+    }
+    writer.finalize().map_err(failed)?;
+    Ok(bytes.into_inner())
+}
+
 /// Opens the WAV and rejects anything but the canonical 16 kHz mono format.
 pub(super) fn open_canonical_wav(path: &Path) -> Result<WavFileReader> {
     let file = std::fs::File::open(path).map_err(|source| WavError::Open {
@@ -264,6 +279,9 @@ pub enum WavError {
         source: Cause,
     },
 
+    #[error("failed to encode a WAV in memory")]
+    Encode(#[source] Cause),
+
     #[error(
         "WAV file is longer than the recording limit {maximum_duration:?}: {}",
         path.display()
@@ -290,6 +308,18 @@ mod tests {
         write_wav(&path, &clip).expect("the WAV is writable");
 
         assert_eq!(read_wav(&path).expect("the WAV is readable"), clip);
+    }
+
+    #[test]
+    fn an_encoded_wav_reads_back_as_the_same_samples() {
+        let samples = [0.0, 0.5, -0.5, 0.25];
+
+        let bytes = encode_wav(&samples).expect("the samples encode");
+        let mut recording =
+            RecordingReader::from_wav(bytes.as_slice(), Path::new("encoded")).expect("it decodes");
+        recording.fill().expect("the recording is finished");
+
+        assert_eq!(recording.samples(), samples);
     }
 
     #[test]

@@ -177,6 +177,8 @@ pub trait TranscriptSink {
         None
     }
 
+    /// The dictation's recording is done with. `recording` holds all of it,
+    /// from its first sample.
     fn recording_finished(
         &mut self,
         _recording: &mut aria_kit::audio::RecordingReader,

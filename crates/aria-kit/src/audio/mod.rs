@@ -50,7 +50,7 @@ pub use spool::{SpoolError, remove_all_spools};
 #[cfg(all(not(target_family = "wasm"), any(test, feature = "test-support")))]
 pub use testing::{canonical_fixture, fixture_of};
 #[cfg(not(target_family = "wasm"))]
-pub use wav::{WavError, read_wav, write_wav};
+pub use wav::{WavError, encode_wav, read_wav, write_wav};
 
 pub const CANONICAL_SAMPLE_RATE: u32 = 16_000;
 

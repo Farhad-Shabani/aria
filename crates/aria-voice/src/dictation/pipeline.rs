@@ -509,6 +509,7 @@ where
         vocabulary: Option<&Vocabulary>,
     ) -> Result<String, DictationError> {
         check_execution(control)?;
+        let mut whole = recording.fork_window();
         let stage_started = Instant::now();
         sinks
             .dictation_started(settings, control)
@@ -549,7 +550,7 @@ where
             )?;
             Ok(transcript.into_text())
         })();
-        sinks.recording_finished(recording, result.as_ref().map(|_| ()));
+        sinks.recording_finished(&mut whole, result.as_ref().map(|_| ()));
         if let Ok(text) = &result {
             events.emit(DictationStage::delivered(sinks.delivered(), text));
         }
@@ -585,6 +586,8 @@ where
 
         let stage_started = Instant::now();
         let mut recording = self.start_recording(&settings, control, events, stage_started)?;
+        // Decoding may release audio as it goes. The sinks get every sample.
+        let mut whole = recording.fork_window();
         // Only a transcript delivered whole reaches the model.
         if settings.delivery_mode == DeliveryMode::Complete {
             self.rewrites.prepare(settings.cleanup);
@@ -655,7 +658,7 @@ where
         if result.is_err() {
             control.request_recording_stop();
         }
-        sinks.recording_finished(&mut recording, result.as_ref().map(|_| ()));
+        sinks.recording_finished(&mut whole, result.as_ref().map(|_| ()));
         if let Ok(transcript) = &result {
             // The stop cue plays on this stage, so the sound must be back first.
             control.await_capture_release();
@@ -5623,6 +5626,59 @@ mod tests {
         assert!(matches!(result, Err(DictationError::Cancelled)));
         assert_eq!(*finished.lock().unwrap(), [false], "history saves nothing");
         assert_eq!(stages.iter().last(), Some(DictationStage::Cancelled));
+    }
+
+    #[test]
+    fn the_sinks_get_the_whole_recording_that_streaming_released() {
+        struct WholeRecording(Arc<Mutex<Option<(u64, usize)>>>);
+
+        impl TranscriptSink for WholeRecording {
+            type Error = DictationError;
+
+            fn segment(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
+                Ok(())
+            }
+
+            fn completed(&mut self, _utterance: Utterance<'_>) -> Result<(), DictationError> {
+                Ok(())
+            }
+
+            fn dictation_started(
+                &mut self,
+                _settings: &DictationSettings,
+                _control: &Arc<ExecutionControl>,
+            ) -> Result<(), DictationError> {
+                Ok(())
+            }
+
+            fn recording_finished(
+                &mut self,
+                recording: &mut RecordingReader,
+                _result: Result<(), &DictationError>,
+            ) {
+                recording.fill().unwrap();
+                *self.0.lock().unwrap() = Some((recording.held_from(), recording.samples().len()));
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(None));
+        let (_directory, capture) = judged_capture();
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::stream(Stream::Native, Parts(&["please meet me", "at the office"])),
+            WholeRecording(Arc::clone(&seen)),
+        );
+
+        pipeline
+            .execute(
+                streaming(),
+                &ExecutionControl::for_test(StopMode::Manual),
+                &DictationEventEmitter::unsubscribed(),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(*seen.lock().unwrap(), Some((0, 64_000)));
     }
 
     #[test]
