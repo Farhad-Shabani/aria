@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PaletteView: View {
     @ObservedObject var controller: PaletteController
-    let systemTranscription: SystemTranscriptionStatus
+    @ObservedObject var systemTranscription: SystemTranscriptionStatus
     let history: HistoryState
 
     var body: some View {
@@ -29,6 +29,7 @@ struct PaletteView: View {
                 }
             }
         }
+        .environment(\.audioLevel, systemTranscription.isRunning ? systemTranscription.level : nil)
         .frame(width: PalettePanel.size.width, height: PalettePanel.size.height)
     }
 }

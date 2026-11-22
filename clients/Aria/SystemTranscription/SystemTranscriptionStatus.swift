@@ -9,7 +9,11 @@ final class SystemTranscriptionStatus: ObservableObject {
     static let startFailure = "Aria couldn’t start transcribing your Mac’s audio. Try again."
     static let stopFailure = "Aria couldn’t stop transcribing. Try again."
 
-    @Published private(set) var isRunning = false
+    @Published private(set) var isRunning = false {
+        didSet { if !isRunning { level.value = 0 } }
+    }
+    /// How loud the Mac's audio is. Silent whenever no session runs.
+    let level = LiveLevel()
     @Published private(set) var isStarting = false
     @Published private(set) var didFailToStart = false
     @Published private(set) var isStopping = false
@@ -28,6 +32,9 @@ final class SystemTranscriptionStatus: ObservableObject {
     private let stopSession: StopSession
     /// Goes up with every stream update, so a status read that one overtook is dropped.
     private var stagesSeen = 0
+    /// A reply said no session runs before the stream did, so levels still
+    /// queued belong to the session that ended. The next Started clears it.
+    private var areLevelsStale = false
     private let reconcileInterval: Duration
     private var reconciling: Task<Void, Never>?
 
@@ -46,6 +53,7 @@ final class SystemTranscriptionStatus: ObservableObject {
     convenience init(events: DaemonEvents) {
         self.init()
         events.onSystemTranscription { [weak self] event in self?.handle(event) }
+        events.onSystemAudioLevel { [weak self] level in self?.hear(level: level) }
         events.onStreamOpened { [weak self] in self?.startReconciling() }
     }
 
@@ -72,12 +80,15 @@ final class SystemTranscriptionStatus: ObservableObject {
         guard let event else {
             reconciling?.cancel()
             isRunning = false
+            // A new stream replays no levels from before it.
+            areLevelsStale = false
             return
         }
         transcript.apply(event, at: now)
         switch event.stage {
         case .started:
             didFailToStop = false
+            areLevelsStale = false
             isRunning = true
             startedAt = now
         case .segmentTranscribed, .speakerMerged:
@@ -92,12 +103,27 @@ final class SystemTranscriptionStatus: ObservableObject {
         }
     }
 
+    /// Only a running session sends levels, so one shows the session even
+    /// before a stage or a status read does, as when Aria opens partway
+    /// through. The daemon sends the last level before the session's end.
+    func hear(level: Float) {
+        guard !areLevelsStale else { return }
+        // Levels come 20 times a second. Only the first may publish, or every
+        // observer redraws with each one and every status read is dropped.
+        if !isRunning {
+            stagesSeen += 1
+            isRunning = true
+        }
+        self.level.value = level
+    }
+
     /// The stream doesn't replay a session that started before it connected.
     /// A read that fails leaves the state alone; the transport logs why.
     func catchUp() async {
         let stagesAtRead = stagesSeen
         guard let isRunning = try? await readStatus(), stagesSeen == stagesAtRead else { return }
         self.isRunning = isRunning
+        areLevelsStale = !isRunning
     }
 
     /// Answers once the daemon accepted the session. Capture can still fail
@@ -125,6 +151,7 @@ final class SystemTranscriptionStatus: ObservableObject {
         do {
             try await stopSession()
             isRunning = false
+            areLevelsStale = true
         } catch {
             await catchUp()
             didFailToStop = isRunning

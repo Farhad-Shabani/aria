@@ -43,19 +43,31 @@ extension PaletteHeader where Detail == EmptyView {
 }
 
 /// A page's top bar and footer. On macOS 26 they float over the scrolling
-/// content, which softens as it passes under them, as Settings does.
+/// content. It softens as it passes under the top bar, as Settings does, and
+/// fades out before the footer, so nothing rules the footer off from the page.
 struct PaletteBars<Top: View, Content: View, Bottom: View>: View {
     @ViewBuilder let top: Top
     @ViewBuilder let content: Content
     @ViewBuilder let bottom: Bottom
+    /// The bottom bar's height: the footer, plus a follow-up row on some pages.
+    @State private var bottomHeight = PaletteBarMetrics.footerHeight
 
     var body: some View {
         if #available(macOS 26, *) {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .mask { BottomFade(height: bottomHeight) }
                 .safeAreaBar(edge: .top, spacing: 0) { top }
-                .safeAreaBar(edge: .bottom, spacing: 0) { bottom }
-                .scrollEdgeEffectStyle(.soft, for: .vertical)
+                // An inset, not a bar: a bar draws an edge along its top.
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    bottom.onGeometryChange(for: CGFloat.self) {
+                        $0.size.height
+                    } action: {
+                        bottomHeight = $0
+                    }
+                }
+                .scrollEdgeEffectStyle(.soft, for: .top)
+                .scrollEdgeEffectHidden(true, for: .bottom)
         } else {
             VStack(spacing: 0) {
                 top
@@ -63,5 +75,23 @@ struct PaletteBars<Top: View, Content: View, Bottom: View>: View {
                 bottom
             }
         }
+    }
+}
+
+/// Clear across the whole bottom bar, so a row scrolling under it is gone
+/// before it reaches the footer's text, and the bar keeps its own room.
+private struct BottomFade: View {
+    /// The list's own bottom padding, so a list at rest loses no row to it.
+    private static let reach = PaletteBarMetrics.listInset
+    let height: CGFloat
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.black
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: Self.reach)
+            Color.clear.frame(height: height)
+        }
+        .ignoresSafeArea()
     }
 }

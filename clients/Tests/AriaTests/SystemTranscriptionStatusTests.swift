@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 
 @testable import Aria
@@ -20,6 +21,67 @@ final class SystemTranscriptionStatusTests: XCTestCase {
             status.handle(event(ending))
             XCTAssertFalse(status.isRunning)
         }
+    }
+
+    func testAnEndedSessionFallsSilent() {
+        for ending in [Aria_Daemon_V1_SystemTranscriptionStage.stopped, .failed] {
+            let status = SystemTranscriptionStatus(readStatus: { false })
+            status.handle(event(.started))
+            status.hear(level: 0.8)
+            XCTAssertEqual(status.level.value, 0.8)
+            status.handle(event(ending))
+            XCTAssertEqual(status.level.value, 0)
+        }
+    }
+
+    func testALevelShowsASessionThatStartedBeforeAriaOpened() {
+        let status = SystemTranscriptionStatus(readStatus: { false })
+        status.hear(level: 0.4)
+        XCTAssertTrue(status.isRunning)
+        XCTAssertEqual(status.level.value, 0.4)
+    }
+
+    func testALevelDuringASessionPublishesNothing() {
+        let status = SystemTranscriptionStatus(readStatus: { true })
+        status.handle(event(.started))
+        var published = 0
+        let watching = status.objectWillChange.sink { published += 1 }
+        status.hear(level: 0.3)
+        status.hear(level: 0.6)
+        XCTAssertEqual(published, 0)
+        XCTAssertEqual(status.level.value, 0.6)
+        watching.cancel()
+    }
+
+    func testALevelLateForAStoppedSessionLeavesItStopped() async {
+        let status = SystemTranscriptionStatus(readStatus: { false }, stopSession: {})
+        status.handle(event(.started))
+        await status.stop()
+        status.hear(level: 0.5)
+        XCTAssertFalse(status.isRunning)
+        XCTAssertEqual(status.level.value, 0)
+        status.handle(event(.started))
+        status.hear(level: 0.5)
+        XCTAssertEqual(status.level.value, 0.5)
+    }
+
+    func testALevelDuringAReadKeepsTheRead() async {
+        let reading = AsyncStream<Void>.makeStream()
+        let finishing = AsyncStream<Void>.makeStream()
+        let status = SystemTranscriptionStatus(readStatus: {
+            reading.continuation.yield()
+            for await _ in finishing.stream { break }
+            return false
+        })
+        status.handle(event(.started))
+
+        async let caughtUp: Void = status.catchUp()
+        for await _ in reading.stream { break }
+        status.hear(level: 0.5)
+        finishing.continuation.yield()
+        await caughtUp
+
+        XCTAssertFalse(status.isRunning)
     }
 
     func testAStageDuringAReadWinsOverTheRead() async {

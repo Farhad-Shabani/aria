@@ -345,8 +345,8 @@ mod tests {
         let events = SystemTranscriptionEventEmitter::forwarded_by({
             let history = Arc::clone(&history);
             let listed_at_stop = Arc::clone(&listed_at_stop);
-            move |stage| {
-                if stage == SystemTranscriptionStage::Stopped {
+            move |event| {
+                if event == SystemTranscriptionStage::Stopped.into() {
                     let page = history
                         .list(HistoryQuery {
                             section: None,

@@ -204,6 +204,22 @@ public nonisolated struct Aria_Daemon_V1_SystemTranscriptionEvent: Sendable {
   fileprivate var _offset: SwiftProtobuf.Google_Protobuf_Duration? = nil
 }
 
+/// How loud the Mac's audio is while a system transcription runs, about 20
+/// times a second. A full subscriber queue drops the level without closing
+/// the subscription.
+public nonisolated struct Aria_Daemon_V1_SystemAudioLevel: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// 0 at the noise floor, 1 at loud audio.
+  public var level: Float = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
@@ -448,6 +464,36 @@ nonisolated extension Aria_Daemon_V1_SystemTranscriptionEvent: SwiftProtobuf.Mes
     if lhs.errorCode != rhs.errorCode {return false}
     if lhs._offset != rhs._offset {return false}
     if lhs.mergedFromLabel != rhs.mergedFromLabel {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_SystemAudioLevel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SystemAudioLevel"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}level\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularFloatField(value: &self.level) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.level.bitPattern != 0 {
+      try visitor.visitSingularFloatField(value: self.level, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_SystemAudioLevel, rhs: Aria_Daemon_V1_SystemAudioLevel) -> Bool {
+    if lhs.level != rhs.level {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

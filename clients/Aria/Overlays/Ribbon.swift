@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The microphone's latest level, 0 to 1. The ribbon reads it every frame,
-/// so a new level needs no redraw of the pill around it.
+/// A meter's latest level, 0 to 1. Its drawing reads it every frame, so a
+/// new level needs no redraw of the view around it.
 @MainActor
 final class LiveLevel {
     var value: Float = 0

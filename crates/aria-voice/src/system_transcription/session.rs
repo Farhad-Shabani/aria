@@ -19,8 +19,9 @@ use crate::stt::{Language, Recognizer, Stream, Streaming, Transcription, Transcr
 use crate::vocabulary::Vocabulary;
 use aria_kit::audio::RecordingReader;
 
-use super::event::{SystemTranscriptionEventEmitter, SystemTranscriptionStage};
+use super::event::{SystemAudioLevel, SystemTranscriptionEventEmitter, SystemTranscriptionStage};
 use super::{SystemAudioCapture, SystemTranscriptionError, TranscriptFile};
+use crate::level::{Meter, Scale};
 
 use crate::dictation::Utterance;
 use crate::speaker::{self, Diarizer, Label, VoiceTrack, VoiceprintTracker};
@@ -121,6 +122,7 @@ impl Session<'_> {
         // Forked before the model loads, because loading is seconds of audio the
         // track would otherwise never hear.
         let track_audio = recording.fork();
+        let meter = self.meter(&recording, cancel);
         let result = match load(transcription, cancel) {
             Ok((stream, engine)) => self.transcribe_all(
                 recording,
@@ -134,7 +136,24 @@ impl Session<'_> {
             Err(error) => Err(SystemTranscriptionError::Transcription(error)),
         };
         capture.stopper().stop();
-        result.and(capture.finish())
+        let finished = capture.finish();
+        // After capture ends, which is what ends the meter's wait.
+        drop(meter);
+        result.and(finished)
+    }
+
+    /// Levels for the palette from a fork of their own, so they flow while the
+    /// model loads and never wait on transcription.
+    fn meter(&self, recording: &RecordingReader, cancel: &CancelToken) -> Meter {
+        let cancel = cancel.clone();
+        let events = self.events.clone();
+        Meter::watching(
+            recording,
+            Scale::SystemAudio,
+            "aria-system-audio-level",
+            move || cancel.is_cancelled(),
+            move |level| events.emit(SystemAudioLevel { level }),
+        )
     }
 
     fn transcribe_all<T, V>(

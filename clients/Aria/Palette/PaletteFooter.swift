@@ -4,6 +4,7 @@ struct PaletteFooter<Note: View, Actions: View>: View {
 
     @ViewBuilder let note: Note
     @ViewBuilder let actions: Actions
+    @Environment(\.audioLevel) private var audioLevel
 
     var body: some View {
         HStack(spacing: 4) {
@@ -15,10 +16,12 @@ struct PaletteFooter<Note: View, Actions: View>: View {
         // With no note the row is only its actions, and they still sit right.
         .frame(maxWidth: .infinity, alignment: .trailing)
         .font(.caption)
-        .foregroundStyle(.secondary)
+        // Secondary text is too faint over the audio backdrop.
+        .foregroundStyle(audioLevel == nil ? .secondary : .primary)
         .padding(.leading, PaletteBarMetrics.leading)
         .padding(.trailing, PaletteBarMetrics.trailing)
         .frame(minHeight: PaletteBarMetrics.footerHeight)
+        .background(alignment: .bottom) { PaletteAudioBackdrop() }
     }
 }
 

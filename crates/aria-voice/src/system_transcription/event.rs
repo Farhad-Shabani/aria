@@ -28,6 +28,34 @@ pub enum SystemTranscriptionStage {
     Failed(RpcErrorCode),
 }
 
-pub type SystemTranscriptionEventEmitter = EventEmitter<SystemTranscriptionStage>;
+/// How loud the Mac's audio is right now, from silent to pinned. About 20
+/// a second while a session runs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SystemAudioLevel {
+    /// 0 at the noise floor, 1 at loud audio.
+    pub level: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SystemTranscriptionEvent {
+    Stage(SystemTranscriptionStage),
+    /// A level that arrives late is worth less than none, so whoever wires
+    /// the emitter drops levels a full queue can't take.
+    Level(SystemAudioLevel),
+}
+
+impl From<SystemTranscriptionStage> for SystemTranscriptionEvent {
+    fn from(stage: SystemTranscriptionStage) -> Self {
+        Self::Stage(stage)
+    }
+}
+
+impl From<SystemAudioLevel> for SystemTranscriptionEvent {
+    fn from(level: SystemAudioLevel) -> Self {
+        Self::Level(level)
+    }
+}
+
+pub type SystemTranscriptionEventEmitter = EventEmitter<SystemTranscriptionEvent>;
 
 pub const EVENT_THREAD: &str = "aria-transcribe-events";
