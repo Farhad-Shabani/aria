@@ -56,6 +56,8 @@ struct SystemTranscriptView: View {
             } action: { _, height in
                 visibleHeight = height
             }
+            // Following the newest line would flash the scroller with every line.
+            .scrollIndicators(isPinnedToEnd ? .hidden : .automatic)
             .onAppear { scrollToEnd(proxy) }
             // The last line also grows as words join it.
             .onChange(of: transcript.lines.last) {
