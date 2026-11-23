@@ -21,7 +21,8 @@ pub(super) fn capitals<'a>(listed: &[&'a str]) -> Option<&'a str> {
 /// words; a match must share its first letter, its digits and about its
 /// length before the ratio is consulted, and a tie between two listed words
 /// fixes nothing. A listed word heard in another case types its
-/// listed capitals. No fix reaches into a written name such as
+/// listed capitals, unless it is a real word under three letters, as "it"
+/// is for `IT`. No fix reaches into a written name such as
 /// `src/aria.toml`.
 pub(super) fn apply_fuzzy<E>(
     text: &str,
@@ -131,13 +132,20 @@ fn best_term<'a, E>(
     check(0)?;
     let folded = token.to_lowercase();
     let listed = listed(&folded, terms, known, check)?;
-    // Listing `Linear` asks for its capitals, so a listed word takes them
-    // even where it is also a real word, as in "a linear model".
-    if !listed.is_empty() {
-        return Ok(Some(capitals(&listed).unwrap_or(token)));
-    }
     let chars: Vec<char> = folded.chars().collect();
-    if chars.len() < MIN_TOKEN_LEN || is_english(&folded) {
+    let is_short = chars.len() < MIN_TOKEN_LEN;
+    // Listing `Linear` asks for its capitals, so a listed word takes them
+    // even where it is also a real word, as in "a linear model". A short
+    // real word such as "it" for a listed `IT` is too common to take them.
+    if !listed.is_empty() {
+        let typed = if is_short && is_english(&folded) {
+            None
+        } else {
+            capitals(&listed)
+        };
+        return Ok(Some(typed.unwrap_or(token)));
+    }
+    if is_short || is_english(&folded) {
         return Ok(None);
     }
     fn digits(word: &[char]) -> impl Iterator<Item = char> + '_ {

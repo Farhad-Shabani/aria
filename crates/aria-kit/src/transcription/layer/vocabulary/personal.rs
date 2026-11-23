@@ -1065,6 +1065,13 @@ mod tests {
     }
 
     #[test]
+    fn a_short_listed_word_leaves_the_real_word_it_spells() {
+        let rules = PersonalRules::new(strings(&["IT", "US", "AI"]), vec![]);
+        assert_eq!(rules.apply("is it with us").0, "is it with us");
+        assert_eq!(rules.apply("ask ai").0, "ask AI");
+    }
+
+    #[test]
     fn a_short_word_never_merges_into_a_listed_word() {
         let rules = PersonalRules::new(strings(&["Postgres", "Atlas"]), vec![]);
         for heard in ["postgr is running", "meet at Las Vegas"] {
