@@ -369,6 +369,8 @@ impl AgreementState {
                 return Vec::new();
             }
             let by_word = self.agreement.after_last_delivered(&words);
+            // With no delivered word to go by, the decode reworded it or
+            // it was untimed, and only the timings are left.
             let buffer_words = by_word.unwrap_or_else(|| {
                 words
                     .iter()
@@ -676,19 +678,31 @@ impl Agreement {
     }
 
     /// How many opening words of a lookback decode were delivered already:
-    /// the words through the last delivered one, found by its text and its
-    /// audio. Text alone finds an earlier copy of a phrase when the decode
-    /// rewords the delivered one. The audio need only overlap, and no
-    /// timing says which words follow: an engine moves a word's start by up
-    /// to a second, most of all the first word after a pause.
+    /// the words through the latest, longest run of the last delivered
+    /// words that ends where the last one sounded. Text alone finds an
+    /// earlier copy of a phrase when the decode rewords the delivered one,
+    /// and audio alone a later copy of the word timed back into the pause.
+    /// The audio need only overlap, and no timing says which words follow:
+    /// an engine moves a word's start by up to a second, most of all the
+    /// first word after a pause.
     ///
-    /// `None` when the decode holds no such word, or the last delivered
-    /// word is untimed.
+    /// `None` when the decode holds no such run, or the last delivered word
+    /// is untimed.
     fn after_last_delivered(&self, words: &[Word]) -> Option<usize> {
-        self.delivered.last()?.span.as_ref()?;
-        (1..=words.len())
+        let carried = &self.delivered[self.delivered.len().saturating_sub(CARRIED_WORDS)..];
+        let sounded = carried.last()?.span.as_ref()?;
+        (1..=carried.len().min(words.len()))
             .rev()
-            .find(|&end| self.anchored_at(words, end))
+            .find_map(|count| {
+                let run = &carried[carried.len() - count..];
+                (count..=words.len()).rev().find(|&end| {
+                    lcp(run, &words[end - count..]) == count
+                        && words[end - 1]
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| same_audio(span, sounded))
+                })
+            })
     }
 
     /// The latest decode's words still waiting for a second decode.
@@ -840,9 +854,7 @@ impl Agreement {
             return false;
         }
         match (&word.span, &delivered.span) {
-            (Some(word), Some(delivered)) => {
-                word == delivered || (word.start < delivered.end && delivered.start < word.end)
-            }
+            (Some(word), Some(delivered)) => same_audio(word, delivered),
             _ => {
                 end >= 2
                     && self.delivered.len() >= 2
@@ -1116,6 +1128,11 @@ fn lcp(previous: &[Word], current: &[Word]) -> usize {
 fn ended_before(words: &[Word], at: usize) -> Option<bool> {
     at.checked_sub(1)
         .map(|before| ends_sentence(&words[before].text))
+}
+
+/// Whether two timings of a word overlap. Two empty timings must match.
+fn same_audio(one: &std::ops::Range<u64>, other: &std::ops::Range<u64>) -> bool {
+    one == other || (one.start < other.end && other.start < one.end)
 }
 
 /// Ignores case and punctuation when comparing successive decodes.
@@ -2884,6 +2901,46 @@ mod tests {
             }
 
             assert_eq!(segments, ["one", "two"]);
+        }
+
+        #[test]
+        fn a_later_copy_of_the_last_delivered_word_is_not_taken_for_it() {
+            // The delivered "now" is timed on into the pause, and the
+            // lookback decode times the later "now" back into it, so both
+            // sound where the delivered one did. Only the first follows
+            // "we should go".
+            const SPOKEN: [Spoken; 9] = [
+                ("we", 8_000, 0.1, 0.3),
+                ("should", 7_900, 0.4, 0.7),
+                ("go", 7_800, 0.8, 1.0),
+                ("now", 7_700, 1.2, 1.4),
+                ("yes", 7_600, 3.1, 3.3),
+                ("I", 7_500, 3.35, 3.45),
+                ("think", 7_400, 3.5, 3.7),
+                ("now", 7_300, 3.8, 4.0),
+                ("works", 7_200, 4.1, 4.4),
+            ];
+            let cadence = Cadence::from_millis(1_000, 20_000);
+            let audio = spoken_audio(&SPOKEN, 6.0);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            let run = run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, mut timings) = whole_words(&SPOKEN, window);
+                    if words == ["we", "should", "go", "now"] {
+                        timings[3].end += 0.8;
+                    }
+                    if words.first() == Some(&"we") && words.len() > 7 {
+                        timings[7].start = 2.1;
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |_| {},
+            );
+
+            assert_eq!(run.transcript(), "we should go now yes I think now works");
         }
 
         #[test]
