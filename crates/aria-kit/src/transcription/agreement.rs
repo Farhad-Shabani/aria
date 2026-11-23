@@ -368,26 +368,24 @@ impl AgreementState {
                 self.lookback = None;
                 return Vec::new();
             }
-            let cut = self.buffer_start;
-            let mut buffer_words = words
-                .iter()
-                .position(|word| word.span.as_ref().is_some_and(|span| span.start >= cut))
-                .unwrap_or(words.len());
-            // One word may lie across the cut: the last delivered word,
-            // timed on into the pause, or the buffer's first, timed back
-            // into it. An engine moves a start by up to a second. The word
-            // is the buffer's when the delivered words end before it.
-            if let Some(across) = buffer_words.checked_sub(1)
-                && words[across]
-                    .span
-                    .as_ref()
-                    .is_some_and(|span| span.end > cut)
-                && self.agreement.delivered_run(&words[..across])
-                    > self.agreement.delivered_run(&words[..=across])
-            {
-                tracing::debug!("the word across the cut is the buffer's");
-                buffer_words = across;
-            }
+            // The delivered words place the split when the decode repeats
+            // them. A decode that rewords them leaves only its timings.
+            let by_text = self.agreement.after_delivered_text(&words, from);
+            let buffer_words = by_text.unwrap_or_else(|| {
+                words
+                    .iter()
+                    .position(|word| {
+                        word.span
+                            .as_ref()
+                            .is_some_and(|span| span.start >= self.buffer_start)
+                    })
+                    .unwrap_or(words.len())
+            });
+            tracing::debug!(
+                by_text = by_text.is_some(),
+                before = buffer_words,
+                "lookback split"
+            );
             let mut heard_before = words.drain(..buffer_words);
             lookback.sentence_ended_at_cut = heard_before
                 .next_back()
@@ -680,14 +678,32 @@ impl Agreement {
         }
     }
 
-    /// How many of the last delivered words `words` ends with.
-    fn delivered_run(&self, words: &[Word]) -> usize {
-        self.delivered
+    /// How many opening words of a lookback decode were delivered already,
+    /// going by their text: the words through the one run that repeats
+    /// every carried word the decode could hear. Timings can't place the
+    /// split: an engine times the words after a pause up to a second early,
+    /// two or three of them before the cut. They only rule out a run that
+    /// opens past the delivered end. A carried word that began before
+    /// `from`, where the decode's audio opens, may be clipped away.
+    ///
+    /// `None` when the decode rewords a carried word, or repeats the run. A
+    /// shorter run matches another copy of the phrase, and no text tells
+    /// two whole copies apart. Either way the words between the copies
+    /// would go out twice or not at all.
+    fn after_delivered_text(&self, words: &[Word], from: u64) -> Option<usize> {
+        let through = self.delivered_through?;
+        let carried = &self.delivered[self.delivered.len().saturating_sub(CARRIED_WORDS)..];
+        let heard = carried
             .iter()
-            .rev()
-            .zip(words.iter().rev())
-            .take_while(|(delivered, word)| spoken(&delivered.text) == spoken(&word.text))
-            .count()
+            .position(|word| word.span.as_ref().is_none_or(|span| span.start >= from))?;
+        let run = &carried[heard..];
+        let mut ends = (run.len()..=words.len()).filter(|&end| {
+            let first = &words[end - run.len()];
+            lcp(run, &words[end - run.len()..]) == run.len()
+                && first.span.as_ref().is_some_and(|span| span.start < through)
+        });
+        let end = ends.next()?;
+        ends.next().is_none().then_some(end)
     }
 
     /// The latest decode's words still waiting for a second decode.
@@ -2784,6 +2800,63 @@ mod tests {
         }
 
         #[test]
+        fn words_carried_past_the_pause_go_out_when_the_lookback_decode_times_them_early() {
+            // "at most" is heard past the pause before the cut. The decode
+            // after it hears both again, timed before the cut.
+            const SPOKEN: [Spoken; 5] = [
+                ("one", 8_000, 0.1, 0.4),
+                ("at", 7_000, 1.3, 1.5),
+                ("most", 6_000, 1.6, 1.9),
+                ("we", 5_000, 2.4, 2.6),
+                ("know", 4_000, 2.7, 2.95),
+            ];
+            let cadence = Cadence::from_millis(1_000, 20_000);
+            let run = replay(cadence, &SPOKEN, 5.0, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                if words.first() == Some(&"one") && words.len() > 3 {
+                    timings[1] = TimedWord {
+                        start: 0.45,
+                        end: 0.6,
+                    };
+                    timings[2] = TimedWord {
+                        start: 0.6,
+                        end: 0.8,
+                    };
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one at most we know");
+        }
+
+        #[test]
+        fn a_carried_word_from_before_the_lookback_need_not_be_heard_again() {
+            // The lookback opens three seconds before the cut, past "a" and
+            // inside "b". The decode repeats "c d", all it could hear of the
+            // carried words, and times "e" from where "d" ends.
+            const SPOKEN: [Spoken; 6] = [
+                ("a", 8_000, 0.2, 0.5),
+                ("b", 7_000, 1.3, 1.6),
+                ("c", 6_000, 2.4, 2.7),
+                ("d", 5_000, 3.5, 3.8),
+                ("e", 4_000, 5.0, 5.3),
+                ("f", 3_000, 5.4, 5.6),
+            ];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let run = replay(cadence, &SPOKEN, 7.5, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                if let Some(e) = words.iter().position(|word| *word == "e")
+                    && e > 0
+                {
+                    timings[e].start = timings[e - 1].end;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "a b c d e f");
+        }
+
+        #[test]
         fn a_reworded_last_delivered_phrase_does_not_split_at_an_earlier_copy() {
             // Once "new" is heard, the decode merges the second "that was"
             // into "that's". The first "that was" reads the same as the
@@ -2906,8 +2979,8 @@ mod tests {
         fn a_later_copy_of_the_last_delivered_word_is_not_taken_for_it() {
             // The delivered "now" is timed on into the pause. The lookback
             // decode times the later "now" back into it, and writes "go" as
-            // "leave". Neither copy of "now" lies across the cut, so the
-            // timings alone split the decode.
+            // "leave". With a carried word reworded, neither "now" places
+            // the split, and the timings do.
             const SPOKEN: [Spoken; 9] = [
                 ("we", 8_000, 0.1, 0.3),
                 ("should", 7_900, 0.4, 0.7),
@@ -2933,6 +3006,59 @@ mod tests {
             });
 
             assert_eq!(run.transcript(), "we should go now yes I think now works");
+        }
+
+        #[test]
+        fn two_copies_of_every_delivered_word_leave_the_split_to_the_timings() {
+            // Only "now" has gone out, timed on into the pause. The decode
+            // after the cut times the later "now" back into it. Both copies
+            // read as the delivered word, and "yes I think" lies between.
+            const SPOKEN: [Spoken; 6] = [
+                ("now", 7_700, 0.2, 0.4),
+                ("yes", 7_600, 2.1, 2.3),
+                ("I", 7_500, 2.35, 2.45),
+                ("think", 7_400, 2.5, 2.7),
+                ("now", 7_300, 2.8, 3.0),
+                ("works", 7_200, 3.1, 3.4),
+            ];
+            let cadence = Cadence::from_millis(1_000, 20_000);
+            let run = replay(cadence, &SPOKEN, 5.0, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["now"] {
+                    timings[0].end += 0.8;
+                }
+                if words.first() == Some(&"now") && words.len() > 4 {
+                    timings[4].start = 1.1;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "now yes I think now works");
+        }
+
+        #[test]
+        fn a_run_that_opens_past_the_delivered_end_is_new_speech() {
+            // The speaker says "one two" again after the pause. The decode
+            // after the cut rewords the delivered copy, so the new copy is
+            // the only one that reads as the delivered words.
+            const SPOKEN: [Spoken; 5] = [
+                ("one", 8_000, 0.1, 0.4),
+                ("two", 7_000, 0.5, 0.8),
+                ("one", 6_000, 2.1, 2.4),
+                ("two", 5_000, 2.5, 2.8),
+                ("three", 4_000, 2.9, 3.2),
+            ];
+            let cadence = Cadence::from_millis(1_000, 20_000);
+            let run = replay(cadence, &SPOKEN, 5.0, |window| {
+                let (mut words, timings) = whole_words(&SPOKEN, window);
+                if words.len() > 2 {
+                    words[0] = "won";
+                    words[1] = "too";
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one two one two three");
         }
 
         #[test]
