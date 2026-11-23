@@ -364,14 +364,22 @@ impl AgreementState {
                 self.lookback = None;
                 return Vec::new();
             }
-            let buffer_words = words
-                .iter()
-                .position(|word| {
-                    word.span
-                        .as_ref()
-                        .is_some_and(|span| span.start >= self.buffer_start)
-                })
-                .unwrap_or(words.len());
+            let by_text = self.agreement.after_delivered_text(&words);
+            let buffer_words = by_text.unwrap_or_else(|| {
+                words
+                    .iter()
+                    .position(|word| {
+                        word.span
+                            .as_ref()
+                            .is_some_and(|span| span.start >= self.buffer_start)
+                    })
+                    .unwrap_or(words.len())
+            });
+            tracing::debug!(
+                by_text = by_text.is_some(),
+                before = buffer_words,
+                "lookback split"
+            );
             let mut heard_before = words.drain(..buffer_words);
             lookback.sentence_ended_at_cut = heard_before
                 .next_back()
@@ -653,6 +661,39 @@ impl Agreement {
             candidate: waiting,
             ..self.next_buffer()
         }
+    }
+
+    /// How many opening words of a lookback decode were delivered already,
+    /// going by their text. They run up to the latest, longest run of the
+    /// last delivered words that opens before the delivered end. Timings
+    /// only bound the run: an engine moves a word's start by up
+    /// to a second, most of all the first word after a pause. A lone word
+    /// must also overlap the last delivered word, or an earlier copy of it
+    /// would pass for it once the decode rewords it. `None` when no run
+    /// turns up.
+    fn after_delivered_text(&self, words: &[Word]) -> Option<usize> {
+        let through = self.delivered_through?;
+        let last = self.delivered.last()?.span.as_ref();
+        let carried = &self.delivered[self.delivered.len().saturating_sub(CARRIED_WORDS)..];
+        let overlaps_last = |word: &Word| {
+            word.span
+                .as_ref()
+                .zip(last)
+                .is_some_and(|(word, last)| word.start < last.end && last.start < word.end)
+        };
+        (1..=carried.len().min(words.len()))
+            .rev()
+            .find_map(|count| {
+                let run = &carried[carried.len() - count..];
+                (count..=words.len()).rev().find(|&end| {
+                    lcp(run, &words[end - count..]) == count
+                        && words[end - count]
+                            .span
+                            .as_ref()
+                            .is_some_and(|span| span.start < through)
+                        && (count > 1 || overlaps_last(&words[end - 1]))
+                })
+            })
     }
 
     /// The latest decode's words still waiting for a second decode.
@@ -2687,6 +2728,69 @@ mod tests {
             // Only a decode that heard "one" too writes "two" that way.
             assert_eq!(run.segments, ["one.", "two"]);
             assert_eq!(run.ended_before, [None, Some(false)]);
+        }
+
+        #[test]
+        fn a_buffer_word_the_lookback_decode_times_before_the_cut_goes_out() {
+            // Engines time the first word after a pause early. The decode
+            // that hears "one" again opens "two" where "one" ends, before
+            // the cut, yet "two" follows the delivered word.
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
+            let audio = spoken_audio(&SPOKEN, 3.0);
+            let (mut recording, pace) = paced(strides(&audio));
+            let run = run(
+                AgreementState::new(cadence(20_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, mut timings) = whole_words(&SPOKEN, window);
+                    if words == ["one", "two"] {
+                        timings[1].start = timings[0].end;
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |_| {},
+            );
+
+            assert_eq!(run.segments, ["one", "two"]);
+        }
+
+        #[test]
+        fn a_reworded_last_delivered_word_does_not_split_at_an_earlier_copy() {
+            // Once "new" is heard, the decode merges "that was" into
+            // "that's". The only "was" left is the one after "she", which is
+            // not the delivered one.
+            const SPOKEN: [Spoken; 8] = [
+                ("she", 8_000, 0.0, 0.3),
+                ("was", 7_900, 0.4, 0.7),
+                ("there", 7_800, 0.8, 1.1),
+                ("and", 7_700, 1.2, 1.4),
+                ("that", 7_600, 1.5, 1.7),
+                ("was", 7_500, 1.8, 2.1),
+                ("new", 7_400, 3.0, 3.3),
+                ("words", 7_300, 3.4, 3.7),
+            ];
+            let audio = spoken_audio(&SPOKEN, 5.0);
+            let (mut recording, pace) = paced(strides(&audio));
+            let run = run(
+                AgreementState::new(cadence(20_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                    if let Some(that) = words.iter().position(|word| *word == "that")
+                        && words.contains(&"new")
+                    {
+                        words[that] = "that's";
+                        words.remove(that + 1);
+                        timings[that].end = timings.remove(that + 1).end;
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |_| {},
+            );
+
+            assert_eq!(run.transcript(), "she was there and that was new words");
         }
 
         #[test]
