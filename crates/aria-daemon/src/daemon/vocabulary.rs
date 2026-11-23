@@ -1170,16 +1170,15 @@ impl<C: Collector> Worker<C> {
         }
         let deadline = Deadline::after(REFRESH_BUDGET);
         let token = self.control(cancel, deadline);
-        let compiled = self.compile(&prepared.terms, &token);
+        // New rules can grow a list past the size it was admitted at, so
+        // the build itself stops at the room left beside the live lists.
+        let used = self.personal.estimated_bytes() + self.runtime.registry().live_bytes();
+        let compiled =
+            self.compile_within(&prepared.terms, LIVE_BYTES.saturating_sub(used), &token);
         let result = if deadline.expired() {
             Err(Error::TooLarge)
         } else {
             compiled.and_then(|matcher| {
-                // New rules can grow a list past the size it was admitted at.
-                let used = self.personal.estimated_bytes() + self.runtime.registry().live_bytes();
-                if !fits(used, matcher.estimated_bytes()) {
-                    return Err(Error::TooLarge);
-                }
                 self.runtime
                     .republish(&directory, &prepared.matcher, matcher, &token)
             })
@@ -1297,12 +1296,22 @@ impl<C: Collector> Worker<C> {
     }
 
     fn compile(&self, terms: &[Term], token: &CancelToken) -> Result<Arc<Vocabulary>, Error> {
+        self.compile_within(terms, usize::MAX, token)
+    }
+
+    fn compile_within(
+        &self,
+        terms: &[Term],
+        limit: usize,
+        token: &CancelToken,
+    ) -> Result<Arc<Vocabulary>, Error> {
         if token.is_cancelled() {
             return Err(Error::Busy);
         }
-        let matcher = Arc::new(Vocabulary::compile_with(
+        let matcher = Arc::new(Vocabulary::compile_within(
             terms,
             self.personal.clone(),
+            limit,
             token,
         )?);
         if token.is_cancelled() {
