@@ -11,7 +11,9 @@ macOS. The scoped recipes use default features.
 
 | Task | Command |
 |------|---------|
-| Gate, before committing | `just check` = `proto-check` + `rust-native` + `support-check` |
+| Final check, once the work or review fixes are done | `just rust-lint <package>` and `just rust-test <package>`, for each changed package and each package that uses the changed code |
+| Final check, when `proto/` or the sidecar changed | `just proto-check` / `just support-check` |
+| Whole-workspace check, only when asked | `just check` = `proto-check` + `rust-native` + `support-check` |
 | Check then lint one package, while editing | `just rust-check <package>`, `just rust-lint <package>` |
 | Test one package | `just rust-test <package> [filter]` |
 | Rust part of the gate, every package | `just rust-native` |
