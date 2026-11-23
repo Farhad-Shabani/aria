@@ -324,11 +324,11 @@ impl AgreementState {
         let confirmed = self.commit(confirmed);
         // Relative to this decode's window, so it is read before the trim
         // moves the window on.
-        let skipped_in_window = skipped.map(|at| at - self.buffer_start);
+        let skipped = skipped.map(|at| at - self.buffer_start);
         let step = if recording.reached_end() && available == recording.held_to() {
             self.finish_after(confirmed)?
         } else {
-            let tail = self.trim_when_due(&loudness, available, standing, skipped);
+            let tail = self.trim_when_due(&loudness, available, standing);
             self.one_at_a_time(confirmed, tail)
                 .map(|segment| ChunkStep {
                     update: Some(TranscriptUpdate::Finalized(segment)),
@@ -345,7 +345,7 @@ impl AgreementState {
             decode_ms,
             behind,
             heard_count,
-            skipped_in_window,
+            skipped,
             [released, self.pending_segment.as_ref()],
             standing == Standing::Settled,
         );
@@ -466,14 +466,9 @@ impl AgreementState {
         loudness: &Loudness,
         available: u64,
         standing: Standing,
-        skipped: Option<u64>,
     ) -> Option<TranscriptSegment> {
         let pause = match standing {
             Standing::Ignored => None,
-            // Skipped speech stays in this buffer until a decode hears it.
-            // The next buffer ignores unheard speech at its opening, and
-            // would deliver the words past it first.
-            _ if skipped.is_some() => None,
             Standing::Current => self.pause_past_delivered(loudness),
             // A further stride added no words: a pause, or a word the model
             // holds back until it hears the end of it. When no delivered
@@ -500,11 +495,11 @@ impl AgreementState {
 
     /// The pause that follows the last delivered word's sound. It ends
     /// before any word still waiting for a second decode. Every word before
-    /// it is out and none past it is,
-    /// so a cut there repeats and drops nothing, wherever the stride ends
-    /// fall. Timings only bound the pause: a word's end often runs into the
-    /// silence after it, and the next word's start into the silence before
-    /// it. `None` until this buffer delivers a timed word.
+    /// it is out and none past it is, so a cut there repeats and drops
+    /// nothing, wherever the stride ends fall. Timings only bound the
+    /// pause: a word's end often runs into the silence after it, and the
+    /// next word's start into the silence before it. `None` until this
+    /// buffer delivers a timed word.
     fn pause_past_delivered(&self, loudness: &Loudness) -> Option<Pause> {
         let last = self
             .agreement
@@ -557,15 +552,21 @@ impl AgreementState {
     }
 
     /// Where speech the model skipped begins, past what was delivered: the
-    /// first stretch of speech no word of `heard` covers. Nothing this close to
-    /// the buffer's opening counts, or a buffer the model keeps skipping
-    /// the start of would never move on.
+    /// first stretch of speech no word of `heard` covers. Nothing within a
+    /// stride of a cap cut counts, or a buffer the model keeps skipping the
+    /// start of would never move on. A buffer that opened in a pause opens
+    /// on no sound, so all its speech counts: the words past a skipped
+    /// first word would go out ahead of it.
     fn skipped_speech(&self, loudness: &Loudness, heard: &[Word]) -> Option<u64> {
+        let opening = match self.pause_level {
+            Some(_) => self.buffer_start,
+            None => self.buffer_start + self.cadence.stride_samples as u64,
+        };
         let from = self
             .agreement
             .delivered_through
             .unwrap_or(self.buffer_start)
-            .max(self.buffer_start + self.cadence.stride_samples as u64);
+            .max(opening);
         loudness.unheard_speech(self.buffer_start, heard, from)
     }
 
@@ -2815,21 +2816,21 @@ mod tests {
         }
 
         #[test]
-        fn speech_the_model_skipped_is_not_cut_away_from_the_words_after_it() {
-            // The model skips "missing" until it has heard three seconds.
-            // A cut in the pause before it would open a buffer on the
-            // skipped speech, too near the opening to count, and "two"
-            // would go out ahead of it.
+        fn speech_the_model_skipped_after_a_cut_holds_the_words_after_it() {
+            // The cut comes when 140 ms of "missing" has arrived, too little
+            // to count as skipped. The buffer it opens must still notice
+            // the word, or "two" goes out ahead of it.
             const SPOKEN: [Spoken; 4] = [
                 ("one", 8_000, 0.2, 0.5),
-                ("missing", 7_000, 0.95, 1.62),
-                ("two", 6_000, 1.75, 1.95),
-                ("three", 5_000, 2.05, 2.25),
+                ("missing", 7_000, 1.36, 1.9),
+                ("two", 6_000, 2.05, 2.25),
+                ("three", 5_000, 2.35, 2.55),
             ];
             let cadence = Cadence::from_millis(500, 20_000);
-            let audio = spoken_audio(&SPOKEN, 4.5);
+            let audio = spoken_audio(&SPOKEN, 5.0);
             let (mut recording, pace) = paced(strides_of(cadence, &audio));
             let mut heard_to = 0;
+            let mut cut_at = None;
             let run = run(
                 AgreementState::new(cadence),
                 &mut recording,
@@ -2837,7 +2838,7 @@ mod tests {
                 |window| {
                     heard_to += cadence.stride_samples();
                     let (mut words, mut timings) = whole_words(&SPOKEN, window);
-                    if heard_to < sample_at(3.0)
+                    if heard_to < sample_at(3.5)
                         && let Some(skipped) = words.iter().position(|word| *word == "missing")
                     {
                         words.remove(skipped);
@@ -2845,9 +2846,14 @@ mod tests {
                     }
                     Hypothesis::with_words(words.join(" "), timings)
                 },
-                |_| {},
+                |state| {
+                    if state.buffer_start > 0 {
+                        cut_at.get_or_insert(state.decoded_end);
+                    }
+                },
             );
 
+            assert_eq!(cut_at, Some(sample_at(1.5) as u64));
             assert_eq!(run.transcript(), "one missing two three");
         }
 
