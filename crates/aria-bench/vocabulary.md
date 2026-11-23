@@ -24,6 +24,19 @@ deterministic contract check, not held-out audio or a population accuracy estima
 `evaluate SUITE OUTPUT` accepts the schema in `src/stt/vocabulary-cases.json`.
 `whole_input` and `segments` are independent observations; set an unavailable
 one to `null`. Do not manufacture a whole-recording ASR result by joining segments.
+Whole and streaming candidates both apply dictation's spoken-number and symbol rules.
+Compare the personal and project conditions to measure what project terms change.
+Replay uses a learned pair only when `personal_terms` includes its target.
+For streaming, `sentence_ended_before` optionally supplies the decoder's reading
+before each segment. Use `true` for a sentence break, `false` for a continuation,
+and `null` for an unknown boundary. Frozen STT traces supply these readings directly.
+
+Candidate `output_segments` lists the text released for insertion, including
+any closing mark held until the end. `output` includes the spaces dictation
+inserts between releases. Replay treats consecutive segments as uninterrupted
+speech and flushes held words at the end. The baseline retains the original
+space-joined segments or saved legacy output.
+
 Target `written_words` ranges index exact whitespace tokens in the intended output.
 `spoken_words` ranges index the existing scorer's normalized spoken reference.
 Ranges are zero-based, end-exclusive, ordered and non-overlapping. `group` identifies

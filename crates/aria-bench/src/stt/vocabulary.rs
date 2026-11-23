@@ -7,6 +7,8 @@ use std::time::Instant;
 
 use aria_harness::artifact::{Provenance, fingerprint, fingerprint_value, write_json};
 use aria_harness::stats::bootstrap;
+use aria_kit::cancel::CancelToken;
+use aria_kit::transcription::{Caret, Corrected, DeferredWords, SentenceEnds, Spacing, Unheld};
 use aria_voice::vocabulary::{PersonalRules, Term, Vocabulary};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -33,6 +35,8 @@ pub struct Case {
     pub written_reference: String,
     pub whole_input: Option<String>,
     pub segments: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sentence_ended_before: Vec<Option<bool>>,
     #[serde(default)]
     pub personal_terms: Vec<String>,
     #[serde(default)]
@@ -101,6 +105,11 @@ impl Suite {
                     || (case.error.is_none() && segments.iter().any(|text| text.trim().is_empty())))
             {
                 return Err(format!("empty finalized segment: {}", case.id).into());
+            }
+            if !case.sentence_ended_before.is_empty()
+                && case.segments.as_ref().map(Vec::len) != Some(case.sentence_ended_before.len())
+            {
+                return Err(format!("sentence readings do not cover segments: {}", case.id).into());
             }
             if let Some(legacy) = &case.legacy_segments
                 && case.segments.as_ref().map(Vec::len) != Some(legacy.len())
@@ -295,13 +304,66 @@ fn incorrect_vocabulary_spans(
     incorrect
 }
 
+fn corrected_stream(
+    inputs: &[String],
+    sentence_ended_before: &[Option<bool>],
+    vocabulary: &Vocabulary,
+) -> (String, Vec<String>) {
+    let mut words = DeferredWords::default();
+    let mut sentences = SentenceEnds::default();
+    let mut written = String::new();
+    let mut segments = Vec::new();
+    let mut publish = |unheld: Unheld| {
+        if unheld.text.is_empty() {
+            return;
+        }
+        let before = if sentences.reads_on(unheld.sentence_ended_before) {
+            written.as_str()
+        } else {
+            ""
+        };
+        let corrected = vocabulary
+            .correct_spoken(&unheld.text, before)
+            .unwrap_or(Corrected {
+                text: unheld.text,
+                joins_before: false,
+            });
+        let punctuated = sentences.punctuate(&corrected.text, unheld.sentence_ended_before);
+        let spacing = Spacing {
+            joins_before: corrected.joins_before,
+            defers_ending: punctuated.defers_ending,
+        };
+        written.push_str(&Caret::between(&written, "").insert_with(&punctuated.text, spacing));
+        segments.push(punctuated.text);
+    };
+    for (index, input) in inputs.iter().enumerate() {
+        publish(words.hold(
+            input,
+            sentence_ended_before.get(index).copied().flatten(),
+            vocabulary,
+        ));
+    }
+    if let Some(held) = words.finish() {
+        publish(held);
+    }
+    if let Some(mark) = sentences.finish() {
+        written.push_str(&mark);
+        segments.push(mark);
+    }
+    (written, segments)
+}
+
 pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
     suite.validate()?;
     let mut rows = Vec::new();
     let mut totals: BTreeMap<String, Counts> = BTreeMap::new();
     let mut groups: BTreeMap<String, BTreeMap<String, Counts>> = BTreeMap::new();
     for case in &suite.cases {
-        let rules = PersonalRules::new(case.personal_terms.clone(), case.personal_pairs.clone());
+        let rules = PersonalRules::from_stored(
+            case.personal_terms.clone(),
+            case.personal_pairs.clone(),
+            &CancelToken::never(),
+        )?;
         let personal = Vocabulary::compile(&[], rules.clone())?;
         let terms: Vec<_> = case
             .project_terms
@@ -341,16 +403,23 @@ pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
                 ("project", Some(&project)),
             ] {
                 let started = Instant::now();
-                let corrected: Vec<_> = if let Some(matcher) = matcher {
-                    inputs
-                        .iter()
-                        .map(|input| matcher.correct(input).unwrap_or_else(|| input.clone()))
-                        .collect()
-                } else {
-                    legacy.clone().unwrap_or_else(|| inputs.clone())
+                let (text, corrected) = match matcher {
+                    Some(matcher) if streaming => {
+                        corrected_stream(&inputs, &case.sentence_ended_before, matcher)
+                    }
+                    Some(matcher) => {
+                        let input = &inputs[0];
+                        let text = matcher
+                            .correct_spoken(input, "")
+                            .map_or_else(|| input.clone(), |corrected| corrected.text);
+                        (text.clone(), vec![text])
+                    }
+                    None => (
+                        baseline.clone(),
+                        legacy.clone().unwrap_or_else(|| inputs.clone()),
+                    ),
                 };
                 let correction_ns = started.elapsed().as_nanos();
-                let text = corrected.join(" ");
                 let counts = score(case, &baseline, &text, streaming);
                 let mode = if streaming {
                     "streaming_segments"
@@ -365,7 +434,12 @@ pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
                     .entry(case.group.clone())
                     .or_default()
                     .add(&counts);
-                rows.push(json!({"id": case.id, "group": case.group, "category": case.category, "mode": mode, "condition": name, "baseline_kind": baseline_kind, "input": inputs, "baseline": baseline, "output": text, "output_segments": corrected, "error": case.error, "correction_ns": correction_ns, "metrics": counts.report()}));
+                let readings = if streaming {
+                    case.sentence_ended_before.as_slice()
+                } else {
+                    &[]
+                };
+                rows.push(json!({"id": case.id, "group": case.group, "category": case.category, "mode": mode, "condition": name, "baseline_kind": baseline_kind, "input": inputs, "sentence_ended_before": readings, "baseline": baseline, "output": text, "output_segments": corrected, "error": case.error, "correction_ns": correction_ns, "metrics": counts.report()}));
             }
         }
     }
@@ -419,6 +493,7 @@ pub fn fixtures() -> Result<Suite> {
                 .into(),
             whole_input: Some(input.clone()),
             segments: (!input.trim().is_empty()).then(|| vec![input]),
+            sentence_ended_before: Vec::new(),
             personal_terms: serde_json::from_value(value["terms"].clone())?,
             personal_pairs: serde_json::from_value(
                 value.get("pairs").cloned().unwrap_or(json!([])),
@@ -483,6 +558,11 @@ pub fn apply_legacy_report(suite: &mut Suite, path: &Path) -> Result<()> {
 }
 
 pub fn replay(path: &Path, annotations: &Suite, backend: &str, output: &Path) -> Result<()> {
+    #[derive(Deserialize)]
+    struct Segment {
+        text: String,
+        sentence_ended_before: Option<bool>,
+    }
     super::analysis::Artifact::load(path)?;
     annotations.validate()?;
     let mut cases = Vec::new();
@@ -511,17 +591,12 @@ pub fn replay(path: &Path, annotations: &Suite, backend: &str, output: &Path) ->
             .as_str()
             .ok_or("trace has no hypothesis")?
             .to_owned();
-        let segments: Vec<String> = row["segments"]
-            .as_array()
-            .ok_or("trace has no segment list")?
-            .iter()
-            .map(|segment| {
-                segment["text"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .ok_or("invalid segment text")
-            })
-            .collect::<std::result::Result<_, _>>()?;
+        let observed = Vec::<Segment>::deserialize(&row["segments"])?;
+        let (segments, readings): (Vec<_>, Vec<_>) = observed
+            .into_iter()
+            .map(|segment| (segment.text, segment.sentence_ended_before))
+            .unzip();
+        case.sentence_ended_before = readings;
         if row["conditions"]["decoding"]["mode"] == "whole"
             || row["conditions"]["decoding"]["mode"] == "chunked_file"
         {
@@ -723,6 +798,42 @@ mod tests {
     }
 
     #[test]
+    fn replay_uses_only_learned_pairs_for_listed_words() {
+        let mut suite = fixtures().unwrap();
+        suite
+            .cases
+            .retain(|case| case.id == "personal/learned_punctuation");
+        let case = &mut suite.cases[0];
+        case.personal_terms.clear();
+        case.legacy_whole = Some(case.written_reference.clone());
+        case.legacy_segments = Some(vec![case.written_reference.clone()]);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("result.json");
+        evaluate(&suite, &path).unwrap();
+        let report: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        for row in report["rows"].as_array().unwrap() {
+            let expected = if row["condition"] == "baseline" {
+                "Hello, Lumenforge!"
+            } else {
+                "Hello, lumen forge!"
+            };
+            assert_eq!(row["output"], expected);
+        }
+    }
+
+    #[test]
+    fn streaming_replay_spaces_spoken_symbols_and_uses_the_decoders_sentence_reading() {
+        let inputs = ["open src.", "slash main.", "then stop."].map(str::to_owned);
+        let (typed, segments) = corrected_stream(
+            &inputs,
+            &[None, Some(false), Some(true)],
+            &Vocabulary::default(),
+        );
+        assert_eq!(typed, "open src/main. then stop.");
+        assert_eq!(segments, ["open src", "/main", ". then stop", "."]);
+    }
+
+    #[test]
     fn evaluation_scores_whole_and_segment_inputs_separately() {
         let mut suite = fixtures().unwrap();
         let case = suite
@@ -746,7 +857,8 @@ mod tests {
             .find(|row| row["condition"] == "project" && row["mode"] == "streaming_segments")
             .unwrap();
         assert_eq!(whole["output"], "aria-stt");
-        assert_eq!(streaming["output"], "aria dash stt");
+        assert_eq!(streaming["output"], "aria-stt");
+        assert_eq!(streaming["metrics"]["counts"]["supported_recovered"], 1);
         assert_eq!(streaming["metrics"]["counts"]["baseline_target_errors"], 1);
     }
 }
