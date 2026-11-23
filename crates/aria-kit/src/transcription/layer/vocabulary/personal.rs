@@ -1074,9 +1074,12 @@ mod tests {
 
     #[test]
     fn a_short_listed_word_leaves_the_real_word_it_spells() {
-        let rules = PersonalRules::new(strings(&["IT", "US", "AI"]), vec![]);
+        let rules = PersonalRules::new(strings(&["IT", "US", "AI", "ID", "MS"]), vec![]);
         assert_eq!(rules.apply("is it with us").0, "is it with us");
-        assert_eq!(rules.apply("ask ai").0, "ask AI");
+        assert_eq!(
+            rules.apply("ask ai for my id in ms").0,
+            "ask AI for my ID in MS"
+        );
     }
 
     #[test]

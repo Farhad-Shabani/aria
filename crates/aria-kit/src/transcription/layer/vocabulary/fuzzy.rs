@@ -21,8 +21,8 @@ pub(super) fn capitals<'a>(listed: &[&'a str]) -> Option<&'a str> {
 /// words; a match must share its first letter, its digits and about its
 /// length before the ratio is consulted, and a tie between two listed words
 /// fixes nothing. A listed word heard in another case types its
-/// listed capitals, unless it is a real word under three letters, as "it"
-/// is for `IT`. No fix reaches into a written name such as
+/// listed capitals, unless it is an everyday short word, as "it" is for
+/// `IT`. No fix reaches into a written name such as
 /// `src/aria.toml`.
 pub(super) fn apply_fuzzy<E>(
     text: &str,
@@ -117,6 +117,13 @@ enum Match<'a> {
     NearMiss(&'a str),
 }
 
+/// Short words too common to take a listed word's capitals: listing `IT`
+/// leaves "is it" alone. An abbreviation such as "id" or "ms" takes them.
+const EVERYDAY_WORDS: &[&str] = &[
+    "a", "am", "an", "as", "at", "be", "by", "do", "go", "he", "i", "if", "in", "is", "it", "me",
+    "my", "no", "of", "oh", "ok", "on", "or", "so", "to", "up", "us", "we",
+];
+
 /// SCOWL size 35, lowercase words and contractions, as an fst set.
 /// `scripts/english-words.sh` rebuilds it from the source in `THIRD-PARTY-NOTICES.md`.
 const ENGLISH_WORDS: &[u8] = include_bytes!("english.fst");
@@ -156,17 +163,15 @@ fn best_term<'a, E>(
     let folded = token.to_lowercase();
     let listed = listed(&folded, terms, known, check)?;
     let chars: Vec<char> = folded.chars().collect();
-    let is_short = chars.len() < MIN_TOKEN_LEN;
     // Listing `Linear` asks for its capitals, so a listed word takes them
-    // even where it is also a real word, as in "a linear model". A short
-    // real word such as "it" for a listed `IT` is too common to take them.
+    // even where it is also a real word, as in "a linear model".
     if !listed.is_empty() {
-        let capitals = (!is_short || !is_english(&folded))
+        let capitals = (!EVERYDAY_WORDS.contains(&folded.as_str()))
             .then(|| capitals(&listed))
             .flatten();
         return Ok(Some(Match::Listed(capitals)));
     }
-    if is_short || is_english(&folded) {
+    if chars.len() < MIN_TOKEN_LEN || is_english(&folded) {
         return Ok(None);
     }
     fn digits(word: &[char]) -> impl Iterator<Item = char> + '_ {
