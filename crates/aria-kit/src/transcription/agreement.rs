@@ -117,10 +117,7 @@ pub struct AgreementState {
     /// The loudest frame of the pause the buffer opened in. While nothing
     /// since has broken that pause, its decode is ignored.
     pause_level: Option<f32>,
-    /// What this buffer's decodes have agreed on so far. A trim keeps only
-    /// the last delivered words, so the next buffer's decodes can tell them
-    /// apart when they hear them again. A pause cut also keeps the words
-    /// heard past the pause, which lie inside the next buffer.
+    /// What this buffer's decodes have agreed on so far.
     agreement: Agreement,
     transcript: Vec<String>,
     /// A segment waiting for the next call, so a step carries one segment
@@ -154,9 +151,10 @@ impl AgreementState {
     /// The earliest position a reader may still need. Never decreases: a
     /// cut lands at or after the opening, so the next lookback starts no
     /// earlier. A cap-forced trim moves the opening past a segment nobody
-    /// has taken yet, whose reader still wants its audio. So does a word
-    /// that waits for a second decode: a lookback decode may time it
-    /// before the buffer, and an untimed decode then ends the lookback.
+    /// has taken yet, whose reader still wants its audio. A reader also
+    /// wants the audio of a word that waits for a second decode. A lookback
+    /// decode may time that word before the buffer, and an untimed decode
+    /// then ends the lookback.
     pub(super) fn retained_from(&self) -> u64 {
         let pending = self
             .pending_segment
@@ -458,8 +456,7 @@ impl AgreementState {
         segment
     }
 
-    /// Cuts the buffer at a pause, or at the cap. Returns the tail a cap
-    /// cut delivers unconfirmed.
+    /// Returns the tail a cap cut delivers unconfirmed.
     fn trim_when_due(
         &mut self,
         loudness: &Loudness,
@@ -471,8 +468,8 @@ impl AgreementState {
             Standing::Current => self.pause_past_delivered(loudness),
             // A further stride added no words: a pause, or a word the model
             // holds back until it hears the end of it. When no delivered
-            // word places the pause, only one the buffer ends in tells the
-            // two apart. No word is left waiting to carry past it.
+            // word places the pause, only a pause the buffer ends in tells
+            // the two apart. No word is left waiting to carry past it.
             Standing::Settled => self
                 .pause_past_delivered(loudness)
                 .or_else(|| loudness.trailing_pause()),
@@ -496,7 +493,7 @@ impl AgreementState {
     /// before any word still waiting for a second decode. Every word before
     /// it is out and none past it is, so a cut there repeats and drops
     /// nothing, wherever the stride ends fall. Timings only bound the
-    /// pause: a word's end often runs into the silence after it, and the
+    /// pause. A word's end often runs into the silence after it, and the
     /// next word's start into the silence before it. `None` unless the
     /// last delivered word is timed inside the buffer: the loudness holds
     /// no frame before the opening.
@@ -555,8 +552,8 @@ impl AgreementState {
     /// first stretch of speech no word of `heard` covers. Nothing within a
     /// stride of the opening counts, or a buffer the model keeps skipping
     /// the start of would never move on. A buffer that opened in a pause
-    /// opens on no sound, so all its speech counts: the words past a
-    /// skipped first word would go out ahead of it.
+    /// opens on no sound, so all its speech counts. Otherwise the words
+    /// past a skipped first word would go out ahead of it.
     fn skipped_speech(&self, loudness: &Loudness, heard: &[Word]) -> Option<u64> {
         let opening = match self.pause_level {
             Some(_) => self.buffer_start,
@@ -667,7 +664,7 @@ impl Agreement {
         }
     }
 
-    /// The agreement for the buffer a pause cut opens. Beside the last
+    /// The agreement for the buffer a pause cut opens. Besides the last
     /// delivered words, it keeps the words heard past the pause, so the next
     /// decode can confirm them rather than hear them afresh.
     fn next_buffer_past_pause(&mut self) -> Self {
@@ -679,15 +676,15 @@ impl Agreement {
     }
 
     /// How many opening words of a lookback decode were delivered already,
-    /// going by their text: the words through the one run that repeats
-    /// every carried word the decode could hear. Timings can't place the
-    /// split: an engine times the words after a pause up to a second early,
-    /// two or three of them before the cut. They only rule out a run that
-    /// opens past the delivered end. A carried word that began before
-    /// `from`, where the decode's audio opens, may be clipped away.
+    /// going by their text. They end with the one run that repeats every
+    /// carried word the decode could hear. Timings can't place the split:
+    /// an engine may time several words after a pause before the cut.
+    /// Timings only rule out a run that opens past the delivered end. The
+    /// decode may miss a carried word that began before `from`, where its
+    /// audio opens.
     ///
     /// `None` when the decode rewords a carried word, or repeats the run. A
-    /// shorter run matches another copy of the phrase, and no text tells
+    /// shorter run can match another copy of the phrase, and no text tells
     /// two whole copies apart. Either way the words between the copies
     /// would go out twice or not at all.
     fn after_delivered_text(&self, words: &[Word], from: u64) -> Option<usize> {
@@ -1077,10 +1074,10 @@ impl Agreement {
 enum Standing {
     /// It left the last decode in force.
     Ignored,
-    /// It stands as the last decode.
+    /// It became the last decode.
     Current,
-    /// It stands as the last decode, and says the same words as the one
-    /// before.
+    /// It became the last decode. Past the delivered words, it says what
+    /// the one before said and no more.
     Settled,
 }
 
@@ -1218,7 +1215,6 @@ fn room_noise(squares: &[f32]) -> f32 {
     *noise
 }
 
-/// A pause to cut the buffer at.
 struct Pause {
     /// Where to cut, as a sample offset into the buffer.
     at: usize,
@@ -1303,8 +1299,8 @@ impl Loudness {
 
     /// The pause that follows a word whose timing touches the frames
     /// `word`. It opens right after speech, inside the timing or within
-    /// `HEARD_MARGIN_FRAMES` past it, stays quiet through the timing's end,
-    /// and holds no speech for long enough to trust before frame `until`.
+    /// `HEARD_MARGIN_FRAMES` past it. It stays quiet through the timing's
+    /// end, and for long enough to trust before frame `until`.
     /// Quiet that speech breaks inside the timing comes before the word's
     /// sound, whose start was timed early. Quiet beside the loudest frame
     /// is not enough here: a soft word after a loud one reads as quiet, and
@@ -1324,7 +1320,6 @@ impl Loudness {
         Some(self.pause_in(start..start + quiet_from(start)))
     }
 
-    /// The pause a quiet run of frames makes: cut at its midpoint.
     fn pause_in(&self, quiet: std::ops::Range<usize>) -> Pause {
         let at = quiet.start + quiet.len() / 2;
         Pause {
@@ -2831,9 +2826,9 @@ mod tests {
 
         #[test]
         fn a_carried_word_from_before_the_lookback_need_not_be_heard_again() {
-            // The lookback opens three seconds before the cut, past "a" and
-            // inside "b". The decode repeats "c d", all it could hear of the
-            // carried words, and times "e" from where "d" ends.
+            // The lookback opens past "a". The decode repeats "b c d", all
+            // it could hear of the carried words, and times "e" from where
+            // "d" ends.
             const SPOKEN: [Spoken; 6] = [
                 ("a", 8_000, 0.2, 0.5),
                 ("b", 7_000, 1.3, 1.6),
@@ -2860,7 +2855,7 @@ mod tests {
         fn a_reworded_last_delivered_phrase_does_not_split_at_an_earlier_copy() {
             // Once "new" is heard, the decode merges the second "that was"
             // into "that's". The first "that was" reads the same as the
-            // delivered one, and sounds a second before it.
+            // delivered one, and sounds earlier.
             const SPOKEN: [Spoken; 7] = [
                 ("that", 8_000, 0.0, 0.3),
                 ("was", 7_900, 0.4, 0.7),
@@ -2964,8 +2959,7 @@ mod tests {
                     );
                     segments.push(segment.into_text());
                 }
-                // A reader releases audio on every update, as the remote
-                // client does.
+                // A reader may release audio after every update.
                 released_to = state.retained_from();
                 if std::mem::take(&mut untimed) {
                     pace.advance();
@@ -3094,8 +3088,7 @@ mod tests {
         }
 
         /// Which gap between words each pause cut lands in, and the
-        /// transcript, at Parakeet's 500 ms stride. Decode `late` runs
-        /// while two strides arrive.
+        /// transcript. Decode `late` runs while two strides arrive.
         fn pauses_cut(spoken: &[Spoken], late: Option<usize>) -> (Vec<usize>, String) {
             let cadence = Cadence::from_millis(500, 20_000);
             let audio = spoken_audio(spoken, 9.0);
@@ -3531,7 +3524,7 @@ mod tests {
                 "the next word arrives before the pause runs long enough"
             );
 
-            // The word's timing ran seven frames into the silence after it.
+            // The word's timing ran on into the silence after it.
             let late = 0..11;
             let cut = after(3, 16)
                 .pause_after(late, 19)
