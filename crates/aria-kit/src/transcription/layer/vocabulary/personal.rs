@@ -1147,6 +1147,8 @@ mod tests {
             "echo ${id}",
             "pass --flag=id",
             "set id=5 first",
+            "export id=\"abc\"",
+            "export id=",
         ] {
             assert_eq!(rules.apply(heard).0, heard);
         }

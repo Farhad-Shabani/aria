@@ -396,8 +396,13 @@ fn possessive(word: &str) -> (&str, &str) {
 /// `src/aria.toml`, `aria_kit`, `@aria`, `--aria`, `$aria` and `x=aria`. `before` and `after` are the
 /// text on either side of it.
 fn in_a_written_name(before: &str, after: &str) -> bool {
-    const JOINS: [char; 7] = ['.', '/', '\\', '_', '@', ':', '='];
+    const JOINS: [char; 6] = ['.', '/', '\\', '_', '@', ':'];
     let continues = |c: char| !c.is_ascii() && super::is_word(c);
+    // An equals sign assigns on either side, even to a quote or to
+    // nothing: `id="x"` and `id=`. No sentence ends a word with one.
+    if before.ends_with('=') || after.starts_with('=') {
+        return true;
+    }
     let mut after = after.chars();
     // A word holds its own hyphens, so one before it opens a flag: `--id`.
     // A dollar sign opens a variable: `$id` or `${id}`.
