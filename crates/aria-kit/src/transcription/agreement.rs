@@ -103,6 +103,12 @@ struct Lookback {
     sentence_ended_at_cut: Option<bool>,
 }
 
+#[derive(Clone, Copy)]
+struct LookbackWindow {
+    from: u64,
+    pause_end: Option<u64>,
+}
+
 /// Drives a growing buffer of audio through [`Agreement`] and delivers what
 /// it confirms, one segment per step.
 pub struct AgreementState {
@@ -351,10 +357,15 @@ impl AgreementState {
     /// and reads the cut from the one before them. Empty when none can go
     /// out.
     fn hear(&mut self, hypothesis: &Hypothesis, loudness: &Loudness, from: u64) -> Vec<Word> {
-        if self.pause_level.is_some_and(|level| loudness.within(level)) {
-            tracing::debug!("buffer holds only the pause; decode ignored");
-            return Vec::new();
-        }
+        let pause_end = if let Some(level) = self.pause_level {
+            let Some(offset) = loudness.end_of_pause(level) else {
+                tracing::debug!("buffer holds only the pause; decode ignored");
+                return Vec::new();
+            };
+            Some(self.buffer_start + offset as u64)
+        } else {
+            None
+        };
         let mut words = self.words_of(hypothesis, from);
         if let Some(lookback) = &mut self.lookback
             && from < self.buffer_start
@@ -367,7 +378,9 @@ impl AgreementState {
             }
             // The delivered words place the split when the decode says
             // them again. Otherwise only its timings are left.
-            let again = self.agreement.delivered_again(&words, Some(from));
+            let again = self
+                .agreement
+                .delivered_again(&words, Some(LookbackWindow { from, pause_end }));
             if let Some(again) = &again {
                 self.agreement.remember(again, &words);
             }
@@ -542,7 +555,7 @@ impl AgreementState {
         // that creeps up over many caps stays the pause.
         let pause_level = self
             .pause_level
-            .filter(|&level| loudness.within(level))
+            .filter(|&level| loudness.end_of_pause(level).is_none())
             .map(|level| level.max(loudness.loudest));
         let agreement = self.agreement.next_buffer(cut, self.lookback_before(cut));
         self.trim(cut, agreement, tail, pause_level)
@@ -695,13 +708,10 @@ impl Agreement {
     /// runs past the cut.
     ///
     /// `None` when the opening differs in more than `TOLERATED_LOSS` words
-    /// and keeps fewer than half of the last `CARRIED_WORDS`. Also `None`
-    /// when a lookback line-up opens on a word that starts past the cut,
-    /// unless the waiting words follow the line-up more closely than the
-    /// cut. That word is then the speaker saying it again.
-    fn delivered_again(&self, words: &[Word], lookback: Option<u64>) -> Option<Again> {
+    /// and keeps fewer than half of the last `CARRIED_WORDS`.
+    fn delivered_again(&self, words: &[Word], lookback: Option<LookbackWindow>) -> Option<Again> {
         let (first, clipped) = match lookback {
-            Some(from) => {
+            Some(LookbackWindow { from, .. }) => {
                 let first = self
                     .delivered
                     .iter()
@@ -731,22 +741,32 @@ impl Agreement {
         }
         let cut = lookback.map(|_| self.opening);
         let opening = Opening::of(expected, clipped, self.waiting(), words, cut);
-        let opens_past_cut = opening
-            .pairs
-            .first()
-            .and_then(|&(_, said)| words[said].span.as_ref())
-            .is_some_and(|span| span.start >= self.opening);
-        let by_timing = words
-            .iter()
-            .position(|word| {
-                word.span
-                    .as_ref()
-                    .is_some_and(|span| span.start >= self.opening)
-            })
-            .unwrap_or(words.len());
-        let next_follows_text = opening.unlike_next[opening.words] < opening.unlike_next[by_timing];
-        if lookback.is_some() && opens_past_cut && !next_follows_text {
-            return None;
+        if let Some(window) = lookback
+            && let Some(span) = opening
+                .pairs
+                .first()
+                .and_then(|&(_, said)| words[said].span.as_ref())
+            && span.start >= self.opening
+        {
+            // A match wholly inside the opening silence cannot be a new utterance.
+            // A forced cut can land in speech, so only the waiting text can settle it.
+            let old = match window.pause_end {
+                Some(end) => span.start < end && span.end <= end,
+                None => {
+                    let by_timing = words
+                        .iter()
+                        .position(|word| {
+                            word.span
+                                .as_ref()
+                                .is_some_and(|span| span.start >= self.opening)
+                        })
+                        .unwrap_or(words.len());
+                    opening.unlike_next[opening.words] < opening.unlike_next[by_timing]
+                }
+            };
+            if !old {
+                return None;
+            }
         }
         let recent = expected.len().saturating_sub(CARRIED_WORDS);
         let kept = opening
@@ -1435,19 +1455,23 @@ impl Loudness {
         self.squares[frame] > self.speech
     }
 
-    /// Whether the buffer is still the pause whose loudest frame was
-    /// `level`. One frame over the floor breaks it. So does a run of frames
-    /// well over the pause, as a distant voice makes without reaching the
-    /// floor.
-    fn within(&self, level: f32) -> bool {
-        if self.loudest > SILENCE_FLOOR {
-            return false;
-        }
+    /// The first sample of the frame that breaks the opening pause. A run
+    /// above the room noise also counts when a distant voice stays below
+    /// the ordinary speech floor.
+    fn end_of_pause(&self, level: f32) -> Option<usize> {
         let ceiling = (level * SPEECH_OVER_NOISE).clamp(QUIETEST_SPEECH, SILENCE_FLOOR);
-        !self
-            .squares
-            .windows(PAUSE_BREAK_FRAMES)
-            .any(|run| run.iter().all(|&square| square > ceiling))
+        let mut run = 0;
+        for (frame, &power) in self.squares.iter().enumerate() {
+            if power > ceiling {
+                run += 1;
+                if power > SILENCE_FLOOR || run == PAUSE_BREAK_FRAMES {
+                    return Some((frame + 1 - run) * TRIM_FRAME_SAMPLES);
+                }
+            } else {
+                run = 0;
+            }
+        }
+        None
     }
 
     /// Where the buffer's tail opens onto a real pause, as a sample offset
@@ -1987,7 +2011,13 @@ mod tests {
                 ("help", 1.5, 1.8),
             ]);
 
-            let again = agreement.delivered_again(&decode, Some(0));
+            let again = agreement.delivered_again(
+                &decode,
+                Some(LookbackWindow {
+                    from: 0,
+                    pause_end: None,
+                }),
+            );
             assert_eq!(again.map(|again| again.words), Some(2));
         }
 
@@ -2003,7 +2033,13 @@ mod tests {
             decode[0].span = Some(four.clone());
             decode[1].span = Some(four.end..2 * four.end);
 
-            let again = agreement.delivered_again(&decode, Some(four.start));
+            let again = agreement.delivered_again(
+                &decode,
+                Some(LookbackWindow {
+                    from: four.start,
+                    pause_end: None,
+                }),
+            );
             assert_eq!(again.map(|again| again.words), Some(1));
         }
 
@@ -3265,6 +3301,82 @@ mod tests {
             });
 
             assert_eq!(run.transcript(), "yes yes please");
+        }
+
+        #[test]
+        fn a_second_cap_lookback_keeps_its_waiting_word() {
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.10, 0.95), ("two", 7_000, 1.01, 1.08)];
+            let audio = spoken_audio(&SPOKEN, 1.6);
+            let (mut recording, pace) = paced(strides(&audio));
+            let mut cut = None;
+            let run = run(
+                AgreementState::new(cadence(1_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, mut timings) = whole_words(&SPOKEN, window);
+                    if words == ["one", "two"] && window.len() >= sample_at(1.15) {
+                        timings[0] = TimedWord {
+                            start: 0.96,
+                            end: 1.0,
+                        };
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |state| {
+                    if state.buffer_start > 0 && cut.is_none() {
+                        cut = Some((state.buffer_start, state.pause_level));
+                    }
+                },
+            );
+            assert_eq!(
+                cut,
+                Some((sample_at(0.95) as u64 - CUT_OVERLAP_SAMPLES, None))
+            );
+            assert_eq!(run.transcript(), "one two");
+        }
+
+        #[test]
+        fn a_recovered_repeat_before_a_waiting_word_goes_out() {
+            const SPOKEN: [Spoken; 3] = [
+                ("yes", 8_000, 0.2, 0.5),
+                ("yes", 7_000, 1.5, 1.68),
+                ("please", 6_000, 1.7, 1.88),
+            ];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let run = replay(cadence, &SPOKEN, 3.5, |window| {
+                let (words, timings) = whole_words(&SPOKEN, window);
+                // The first decode after "please" misses both copies of "yes".
+                // The next one recovers the second, where it was spoken.
+                let first = match words.len() {
+                    3 if window.len() == sample_at(2.0) => 2,
+                    3 => 1,
+                    _ => 0,
+                };
+                Hypothesis::with_words(words[first..].join(" "), timings[first..].to_vec())
+            });
+
+            assert_eq!(run.transcript(), "yes yes please");
+        }
+
+        #[test]
+        fn a_delivered_word_timed_in_the_pause_stays_out_with_no_word_waiting() {
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.55, 0.78), ("two", 7_000, 1.3, 1.64)];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let run = replay(cadence, &SPOKEN, 3.5, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                // "two" was unfinished at the cut. Once it is heard, the
+                // decode times the delivered "one" in the remaining silence.
+                if words == ["one", "two"] {
+                    timings[0] = TimedWord {
+                        start: 1.1,
+                        end: 1.25,
+                    };
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one two");
         }
 
         #[test]
