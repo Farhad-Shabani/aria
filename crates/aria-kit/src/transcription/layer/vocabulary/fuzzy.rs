@@ -384,7 +384,7 @@ fn possessive(word: &str) -> (&str, &str) {
 /// text on either side of it.
 fn in_a_written_name(before: &str, after: &str) -> bool {
     const JOINS: [char; 6] = ['.', '/', '\\', '_', '@', ':'];
-    let continues = |c: char| !c.is_ascii() && unicode_ident::is_xid_continue(c);
+    let continues = |c: char| !c.is_ascii() && super::is_word(c);
     let mut after = after.chars();
     before.ends_with(JOINS)
         || before.ends_with(continues)

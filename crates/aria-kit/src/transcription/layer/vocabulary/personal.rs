@@ -990,6 +990,9 @@ mod tests {
         assert_eq!((text.as_str(), subs.len()), ("sp2 ok", 1));
         let (text, _) = apply_corrections("midb2 db2x", &pairs(&[("db2", "x")]), &[]);
         assert_eq!(text, "midb2 db2x");
+        let accented = "e\u{301}db2 db2e\u{301}";
+        let (text, _) = apply_corrections(accented, &pairs(&[("db2", "x")]), &[]);
+        assert_eq!(text, accented);
     }
 
     #[test]

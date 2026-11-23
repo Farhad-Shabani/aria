@@ -573,8 +573,9 @@ fn continues_word(mut outward: impl Iterator<Item = char>) -> bool {
     }
 }
 
+/// Whether `character` can sit inside a word, a combining accent included.
 fn is_word(character: char) -> bool {
-    character.is_alphanumeric() || character == '_'
+    character.is_alphanumeric() || unicode_ident::is_xid_continue(character)
 }
 
 fn first_word(text: &str) -> Option<Cow<'_, str>> {
