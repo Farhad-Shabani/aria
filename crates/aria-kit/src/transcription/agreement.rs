@@ -1299,12 +1299,18 @@ impl Loudness {
 
     /// The pause that follows a word whose timing touches the frames
     /// `word`. It opens right after speech, inside the timing or within
-    /// `HEARD_MARGIN_FRAMES` past it. It stays quiet through the timing's
-    /// end, and for long enough to trust before frame `until`.
-    /// Quiet that speech breaks inside the timing comes before the word's
-    /// sound, whose start was timed early. Quiet beside the loudest frame
-    /// is not enough here: a soft word after a loud one reads as quiet, and
-    /// a cut there splits it.
+    /// `HEARD_MARGIN_FRAMES` past it, and holds no speech for long enough
+    /// to trust before frame `until`.
+    ///
+    /// The word must sound before the pause, and its timing may be off at
+    /// either end. A start timed early leaves only a neighbour's last
+    /// frames before the pause, and the word sounds after it. An end timed
+    /// late runs past the pause into the next words. So the pause counts
+    /// when the rest of the timing is quiet, or when more speech precedes
+    /// it than a neighbour leaves.
+    ///
+    /// Quiet beside the loudest frame is not enough here: a soft word
+    /// after a loud one reads as quiet, and a cut there splits it.
     fn pause_after(&self, word: std::ops::Range<usize>, until: usize) -> Option<Pause> {
         let until = until.min(self.squares.len());
         let quiet_from = |start: usize| {
@@ -1315,7 +1321,14 @@ impl Loudness {
         let opens = word.start + 1..word.end + HEARD_MARGIN_FRAMES;
         let start = opens.take_while(|&frame| frame < until).find(|&frame| {
             let quiet = quiet_from(frame);
-            self.is_speech(frame - 1) && quiet >= TRIM_SILENCE_FRAMES && frame + quiet >= word.end
+            let sound = (word.start..frame)
+                .rev()
+                .take_while(|&frame| self.is_speech(frame))
+                .count();
+            let rest_is_quiet = frame + quiet >= word.end.min(until);
+            quiet >= TRIM_SILENCE_FRAMES
+                && sound > 0
+                && (rest_is_quiet || sound > HEARD_MARGIN_FRAMES)
         })?;
         Some(self.pause_in(start..start + quiet_from(start)))
     }
@@ -3087,6 +3100,50 @@ mod tests {
             assert_eq!(run.transcript(), "one two three four five");
         }
 
+        #[test]
+        fn a_pause_is_cut_when_the_delivered_words_timing_runs_into_the_next_words() {
+            // The engine times the end of "weary" a second late, past the
+            // pause and into "the". The words after it are timed later still.
+            const SPOKEN: [Spoken; 3] = [
+                ("weary", 8_000, 0.2, 0.6),
+                ("the", 7_000, 1.3, 1.5),
+                ("dull", 6_000, 1.55, 1.8),
+            ];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let audio = spoken_audio(&SPOKEN, 3.0);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            let mut cuts = Vec::new();
+            let run = run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, mut timings) = whole_words(&SPOKEN, window);
+                    let mut late = 0.0_f32;
+                    for (index, timing) in timings.iter_mut().enumerate() {
+                        if index == 0 {
+                            timing.end = (timing.end + 1.0).min(seconds_at(window.len()));
+                        }
+                        timing.start = timing.start.max(late);
+                        timing.end = timing.end.max(timing.start);
+                        late = timing.end;
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |state| {
+                    if cuts.last() != Some(&state.buffer_start) {
+                        cuts.push(state.buffer_start);
+                    }
+                },
+            );
+
+            // The pause runs from frame 19, past the frame "weary" ends in,
+            // to frame 40, where "the" begins.
+            let pause = ((19 + 21 / 2) * TRIM_FRAME_SAMPLES) as u64;
+            assert_eq!(cuts.first(), Some(&pause));
+            assert_eq!(run.transcript(), "weary the dull");
+        }
+
         /// Which gap between words each pause cut lands in, and the
         /// transcript. Decode `late` runs while two strides arrive.
         fn pauses_cut(spoken: &[Spoken], late: Option<usize>) -> (Vec<usize>, String) {
@@ -3530,6 +3587,31 @@ mod tests {
                 .pause_after(late, 19)
                 .expect("a late timed end still finds the pause");
             assert_eq!(cut.at, (3 + 16 / 2) * TRIM_FRAME_SAMPLES);
+            assert!(
+                after(3, 16).pause_after(0..20, 19).is_some(),
+                "a timing may end past the last whole frame decoded"
+            );
+        }
+
+        #[test]
+        fn speech_before_a_pause_is_the_words_own_past_a_neighbours_last_frames() {
+            // Speech, a pause, then speech again, all inside one word's
+            // timing. Only the length of the first speech tells which side
+            // of the pause the word sounds on.
+            let pause_after = |speech: usize| {
+                let mut buffer = loud_frames(speech);
+                buffer.extend(frames_at(0.0, 16));
+                buffer.extend(loud_frames(8));
+                Loudness::of(&buffer).pause_after(0..speech + 20, speech + 24)
+            };
+
+            assert!(pause_after(HEARD_MARGIN_FRAMES).is_none());
+            let cut =
+                pause_after(HEARD_MARGIN_FRAMES + 1).expect("the word sounds before the pause");
+            assert_eq!(
+                cut.at,
+                (HEARD_MARGIN_FRAMES + 1 + 16 / 2) * TRIM_FRAME_SAMPLES
+            );
         }
 
         #[test]
