@@ -174,10 +174,7 @@ fn best_term<'a, E>(
     if chars.len() < MIN_TOKEN_LEN || is_english(&folded) {
         return Ok(None);
     }
-    fn digits(word: &[char]) -> impl Iterator<Item = char> + '_ {
-        word.iter().copied().filter(char::is_ascii_digit)
-    }
-    let mut best: Option<(&str, &[char], f64)> = None;
+    let mut best: Option<(&str, f64)> = None;
     let mut tied = false;
     for (term, term_folded) in terms.iter().zip(known) {
         check(0)?;
@@ -200,20 +197,27 @@ fn best_term<'a, E>(
             continue;
         }
         match best {
-            Some((_, best_folded, best_ratio)) if ratio == best_ratio => {
-                tied |= best_folded != term_folded.as_slice();
+            Some((best_term, best_ratio)) if ratio == best_ratio => {
+                tied |= best_term != term;
             }
-            Some((.., best_ratio)) if ratio < best_ratio => {}
+            Some((_, best_ratio)) if ratio < best_ratio => {}
             _ => {
-                best = Some((term, term_folded, ratio));
+                best = Some((term, ratio));
                 tied = false;
             }
         }
     }
-    // Two listed words equally near leave no one word it was heard for.
+    // Two listed spellings equally near, even of one word, leave no one
+    // spelling it was heard for.
     Ok(best
         .filter(|_| !tied)
-        .map(|(term, ..)| Match::NearMiss(term)))
+        .map(|(term, _)| Match::NearMiss(term)))
+}
+
+/// The digits of a word in order, in any script: a listed `２` is a digit
+/// the heard word must have too.
+fn digits(word: &[char]) -> impl Iterator<Item = char> + '_ {
+    word.iter().copied().filter(|c| c.is_numeric())
 }
 
 /// The listed word that `first` and the word one space into `after` were
@@ -316,11 +320,13 @@ fn begins_a_merge(word: &str, known: &[Vec<char>]) -> bool {
     for b in folded.bytes() {
         letters[usize::from(b)] += 1;
     }
-    !known
-        .iter()
-        .any(|term| term.iter().copied().eq(folded.chars()))
+    let heard: Vec<char> = folded.chars().collect();
+    !known.iter().any(|term| *term == heard)
         && known.iter().any(|term| {
-            term.first().copied() == folded.chars().next()
+            // More words only add digits after the fragment's own.
+            let mut listed = digits(term);
+            term.first() == heard.first()
+                && digits(&heard).all(|digit| listed.next() == Some(digit))
                 && can_complete(&letters, folded.len(), term)
         })
 }
@@ -385,13 +391,15 @@ fn possessive(word: &str) -> (&str, &str) {
 }
 
 /// Whether a word sits inside a written name, as "aria" does in
-/// `src/aria.toml`, `aria_kit` and `@aria`. `before` and `after` are the
+/// `src/aria.toml`, `aria_kit`, `@aria` and `--aria`. `before` and `after` are the
 /// text on either side of it.
 fn in_a_written_name(before: &str, after: &str) -> bool {
     const JOINS: [char; 6] = ['.', '/', '\\', '_', '@', ':'];
     let continues = |c: char| !c.is_ascii() && super::is_word(c);
     let mut after = after.chars();
+    // A word holds its own hyphens, so one before it opens a flag: `--id`.
     before.ends_with(JOINS)
+        || before.ends_with('-')
         || before.ends_with(continues)
         || after.clone().next().is_some_and(continues)
         || (after.next().is_some_and(|next| JOINS.contains(&next))

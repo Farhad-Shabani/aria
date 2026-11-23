@@ -412,7 +412,7 @@ mod tests {
     fn only_fragments_that_can_reach_a_listed_word_wait() {
         let personal = PersonalRules::new(vec!["PostgreSQL".into()], vec![]);
         let v = Vocabulary::compile(&[], personal).unwrap();
-        for name in ["Pablo", "Priya", "PyTorch"] {
+        for name in ["Pablo", "Priya", "PyTorch", "postgr2"] {
             assert_eq!(DeferredWords::default().hold(name, None, &v).text, name);
         }
         for (start, end) in [("use postgre", "sql"), ("use pyst", "gresql")] {
