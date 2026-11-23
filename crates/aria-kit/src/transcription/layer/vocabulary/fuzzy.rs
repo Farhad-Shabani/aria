@@ -18,8 +18,9 @@ pub(super) fn capitals<'a>(listed: &[&'a str]) -> Option<&'a str> {
 /// A word the user does not have in their list becomes the listed word it
 /// nearly is, unless it is a real English word. Two words heard for one
 /// listed word merge into it, unless both are real words. Tokens are ASCII
-/// words; a match must share its first letter and about its length before
-/// the ratio is consulted. A listed word heard in another case types its
+/// words; a match must share its first letter, its digits and about its
+/// length before the ratio is consulted, and a tie between two listed words
+/// fixes nothing. A listed word heard in another case types its
 /// listed capitals. No fix reaches into a written name such as
 /// `src/aria.toml`.
 pub(super) fn apply_fuzzy<E>(
@@ -139,7 +140,11 @@ fn best_term<'a, E>(
     if chars.len() < MIN_TOKEN_LEN || is_english(&folded) {
         return Ok(None);
     }
-    let mut best: Option<(&str, f64)> = None;
+    fn digits(word: &[char]) -> impl Iterator<Item = char> + '_ {
+        word.iter().copied().filter(char::is_ascii_digit)
+    }
+    let mut best: Option<(&str, &[char], f64)> = None;
+    let mut tied = false;
     for (term, term_folded) in terms.iter().zip(known) {
         check(0)?;
         // "speaker" against "wespeaker" scores 0.875: the first letter is
@@ -147,16 +152,32 @@ fn best_term<'a, E>(
         if term_folded.first() != chars.first() {
             continue;
         }
+        // A recognizer writes the digits it heard, so `db12` names another
+        // thing than `db2` rather than misspelling it.
+        if !digits(&chars).eq(digits(term_folded)) {
+            continue;
+        }
         let shorter = chars.len().min(term_folded.len());
         if chars.len().max(term_folded.len()) > max_match_len(shorter) {
             continue;
         }
         let ratio = ratio(&chars, term_folded, check)?;
-        if ratio >= FUZZY_RATIO && best.is_none_or(|(_, best_ratio)| ratio > best_ratio) {
-            best = Some((term, ratio));
+        if ratio < FUZZY_RATIO {
+            continue;
+        }
+        match best {
+            Some((_, best_folded, best_ratio)) if ratio == best_ratio => {
+                tied |= best_folded != term_folded.as_slice();
+            }
+            Some((.., best_ratio)) if ratio < best_ratio => {}
+            _ => {
+                best = Some((term, term_folded, ratio));
+                tied = false;
+            }
         }
     }
-    Ok(best.map(|(term, _)| term))
+    // Two listed words equally near leave no one word it was heard for.
+    Ok(best.filter(|_| !tied).map(|(term, ..)| term))
 }
 
 /// The listed word that `first` and the word one space into `after` were

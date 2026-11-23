@@ -1111,6 +1111,20 @@ mod tests {
     }
 
     #[test]
+    fn a_near_miss_keeps_its_own_digits() {
+        let rules = PersonalRules::new(strings(&["db2"]), vec![]);
+        assert_eq!(rules.apply("check db12 now").0, "check db12 now");
+    }
+
+    #[test]
+    fn a_near_miss_equally_close_to_two_listed_words_stays_as_heard() {
+        let one = PersonalRules::new(strings(&["Lumenforge"]), vec![]);
+        assert_eq!(one.apply("call Lumenforg now").0, "call Lumenforge now");
+        let two = PersonalRules::new(strings(&["Lumenforge", "Lumenforga"]), vec![]);
+        assert_eq!(two.apply("call Lumenforg now").0, "call Lumenforg now");
+    }
+
+    #[test]
     fn a_listed_capital_holds_where_it_is_also_a_real_word() {
         let rules = PersonalRules::new(strings(&["Linear"]), vec![]);
         assert_eq!(rules.apply("a linear model").0, "a Linear model");
