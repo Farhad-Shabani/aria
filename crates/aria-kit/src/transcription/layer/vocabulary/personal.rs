@@ -684,14 +684,13 @@ impl Respellings {
         let end = entries.partition_point(|s| self.chars[s.target.start] == first);
         entries[..end]
             .chunk_by(|a, b| self.chars[a.target.clone()] == self.chars[b.target.clone()])
-            .find_map(|group| {
+            .find(|group| {
                 let target = &self.chars[group[0].target.clone()];
                 let after = chars.get(position + target.len()).copied();
-                (chars[position..].starts_with(target)
+                chars[position..].starts_with(target)
                     && group
                         .iter()
-                        .any(|s| fits(before, &self.chars[s.spoken.clone()], after)))
-                .then_some(group)
+                        .any(|s| fits(before, &self.chars[s.spoken.clone()], after))
             })
     }
 }
