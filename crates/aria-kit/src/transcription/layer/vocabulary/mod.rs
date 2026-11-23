@@ -184,18 +184,46 @@ impl Vocabulary {
         personal: PersonalRules,
         cancel: &CancelToken,
     ) -> Result<Self, MatchError> {
+        Self::compile_within(terms, personal, usize::MAX, cancel)
+    }
+
+    /// The matcher and temporary respelling index share `build_budget` bytes.
+    /// The finished matcher also has its own snapshot size limit.
+    pub fn compile_within(
+        terms: &[Term],
+        personal: PersonalRules,
+        build_budget: usize,
+        cancel: &CancelToken,
+    ) -> Result<Self, MatchError> {
         if cancel.is_cancelled() {
             return Err(MatchError::Cancelled);
         }
-        if terms.len() > MAX_TERMS || personal.estimated_bytes() > MAX_SNAPSHOT_BYTES {
+        let snapshot_limit = build_budget.min(MAX_SNAPSHOT_BYTES);
+        let base = size_of::<Self>() + personal.estimated_bytes();
+        if terms.len() > MAX_TERMS || base > snapshot_limit {
             return Err(MatchError::TooLarge);
         }
-        let respellings = personal.respellings();
-        let built = match Self::build(terms, &personal, &respellings, cancel) {
-            // Respellings are optional, so names that fit without them
-            // still match.
+        let respellings = if terms.iter().any(|term| has_symbol(&term.canonical)) {
+            match personal.respellings(build_budget - base, cancel) {
+                Ok(index) => index,
+                Err(MatchError::TooLarge) => Respellings::default(),
+                Err(error) => return Err(error),
+            }
+        } else {
+            Respellings::default()
+        };
+        let limit_with_index = snapshot_limit.min(build_budget - respellings.estimated_bytes());
+        let built = match Self::build(terms, &personal, &respellings, limit_with_index, cancel) {
+            // Free the optional index before giving the canonical names the full budget.
             Err(MatchError::TooLarge) if !respellings.is_empty() => {
-                Self::build(terms, &personal, &Respellings::default(), cancel)
+                drop(respellings);
+                Self::build(
+                    terms,
+                    &personal,
+                    &Respellings::default(),
+                    snapshot_limit,
+                    cancel,
+                )
             }
             built => built,
         };
@@ -208,14 +236,19 @@ impl Vocabulary {
         terms: &[Term],
         personal: &PersonalRules,
         respellings: &Respellings,
+        limit: usize,
         cancel: &CancelToken,
     ) -> Result<Self, MatchError> {
         let mut matcher = Self {
             index: HashMap::new(),
             personal: PersonalRules::default(),
             term_count: terms.len(),
-            estimated_bytes: std::mem::size_of::<Self>() + personal.estimated_bytes(),
+            estimated_bytes: 0,
         };
+        matcher.grow(
+            std::mem::size_of::<Self>() + personal.estimated_bytes(),
+            limit,
+        )?;
         for term in terms {
             if cancel.is_cancelled() {
                 return Err(MatchError::Cancelled);
@@ -230,7 +263,7 @@ impl Vocabulary {
                 // name types as heard.
                 if symbolic {
                     for respelling in respellings.of(&form) {
-                        matcher.add(respelling, Candidate::new(term, Origin::Respelled))?;
+                        matcher.add(respelling, Candidate::new(term, Origin::Respelled), limit)?;
                     }
                 }
                 let origin = if index == 0 {
@@ -238,7 +271,7 @@ impl Vocabulary {
                 } else {
                     Origin::Spoken
                 };
-                matcher.add(form, Candidate::new(term, origin))?;
+                matcher.add(form, Candidate::new(term, origin), limit)?;
             }
         }
         matcher.share_with_pairs(personal, cancel)?;
@@ -248,15 +281,15 @@ impl Vocabulary {
         Ok(matcher)
     }
 
-    fn add(&mut self, form: String, candidate: Candidate) -> Result<(), MatchError> {
-        let Some(bucket) = self.add_bucket(&form)? else {
+    fn add(&mut self, form: String, candidate: Candidate, limit: usize) -> Result<(), MatchError> {
+        let Some(bucket) = self.add_bucket(&form, limit)? else {
             return Ok(());
         };
         let bytes = match bucket.aliases.get_mut(&form) {
             Some(existing) => existing.settle(candidate),
             None => bucket.insert(form, candidate),
         };
-        self.grow(bytes)
+        self.grow(bytes, limit)
     }
 
     fn share_with_pairs(
@@ -281,7 +314,7 @@ impl Vocabulary {
         Ok(())
     }
 
-    fn add_bucket(&mut self, alias: &str) -> Result<Option<&mut Bucket>, MatchError> {
+    fn add_bucket(&mut self, alias: &str, limit: usize) -> Result<Option<&mut Bucket>, MatchError> {
         let Some(first) = first_word(alias).map(Cow::into_owned) else {
             return Ok(None);
         };
@@ -293,13 +326,13 @@ impl Vocabulary {
         }
         bytes +=
             (self.index.capacity() - capacity) * 2 * (std::mem::size_of::<(String, Bucket)>() + 1);
-        self.grow(bytes)?;
+        self.grow(bytes, limit)?;
         Ok(self.index.get_mut(&first))
     }
 
-    fn grow(&mut self, bytes: usize) -> Result<(), MatchError> {
+    fn grow(&mut self, bytes: usize, limit: usize) -> Result<(), MatchError> {
         self.estimated_bytes += bytes;
-        if self.estimated_bytes > MAX_SNAPSHOT_BYTES {
+        if self.estimated_bytes > limit {
             return Err(MatchError::TooLarge);
         }
         Ok(())
@@ -324,8 +357,10 @@ impl Vocabulary {
     ) -> Result<Option<String>, E> {
         if self.index.is_empty() {
             check(text.len())?;
-            let (corrected, _) = self.personal.apply_checked(text, check)?;
-            return Ok((corrected != text).then_some(corrected));
+            if QuotedValues::opener(text).is_none() {
+                let (corrected, _) = self.personal.apply_checked(text, check)?;
+                return Ok((corrected != text).then_some(corrected));
+            }
         }
         self.correct_with(text, |_| {}, check)
     }
@@ -474,9 +509,19 @@ impl Vocabulary {
         let mut words = Vec::new();
         let mut word_start = None;
         let mut position = 0;
+        let mut values = QuotedValues::new(text).map(|value| value.span).peekable();
         while position < text.len() {
             check(0)?;
-            let rest = &text[position..];
+            if let Some(value) = values.next_if(|value| value.start == position) {
+                if let Some(start) = word_start.take() {
+                    words.push(plain(start..position));
+                }
+                position = value.end;
+                words.push(Word::claimed(value.clone(), Cow::Borrowed(&text[value])));
+                continue;
+            }
+            let unquoted = &text[..values.peek().map_or(text.len(), |value| value.start)];
+            let rest = &unquoted[position..];
             let character = rest.chars().next().unwrap();
             if character.is_whitespace() {
                 if let Some(start) = word_start.take() {
@@ -487,7 +532,7 @@ impl Vocabulary {
             }
             let matched = if !continues_word(text[..position].chars().rev()) {
                 match first_word(rest).and_then(|first| self.index.get(first.as_ref())) {
-                    Some(bucket) => self.find(text, position, bucket, check)?,
+                    Some(bucket) => self.find(unquoted, position, bucket, check)?,
                     None => None,
                 }
             } else {
@@ -551,6 +596,71 @@ impl Vocabulary {
     }
 }
 
+struct QuotedValue {
+    span: std::ops::Range<usize>,
+    closed: bool,
+}
+
+struct QuotedValues<'a> {
+    text: &'a str,
+    position: usize,
+}
+
+impl<'a> QuotedValues<'a> {
+    fn new(text: &'a str) -> Self {
+        Self { text, position: 0 }
+    }
+
+    fn opener(text: &str) -> Option<(usize, char)> {
+        text.match_indices('=').find_map(|(equal, _)| {
+            let start = equal + 1;
+            let quote = text[start..].chars().next()?;
+            matches!(quote, '\'' | '"').then_some((start, quote))
+        })
+    }
+}
+
+impl Iterator for QuotedValues<'_> {
+    type Item = QuotedValue;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let rest = &self.text[self.position..];
+        let (start, quote) = Self::opener(rest)?;
+        let content = &rest[start + 1..];
+        let mut escaped = false;
+        let close = content.char_indices().find(|&(_, c)| {
+            let closes = !escaped && c == quote;
+            escaped = !escaped && c == '\\' && quote == '"';
+            closes
+        });
+        // An unmatched opening quote protects its first token. The stream
+        // can still wait for a closing quote before it publishes that token.
+        let length = match close {
+            Some((end, _)) => end + 1,
+            None => content.find(char::is_whitespace).unwrap_or(content.len()),
+        };
+        let start = self.position + start;
+        self.position = start + 1 + length;
+        Some(QuotedValue {
+            span: start..self.position,
+            closed: close.is_some(),
+        })
+    }
+}
+
+pub(super) fn defer_unclosed_assignment(text: &str, max_words: usize, claimed: &mut Claimed<'_>) {
+    for value in QuotedValues::new(text).filter(|value| !value.closed) {
+        // Keep the assignment name with its value across the segment join.
+        let start = text[..value.span.start]
+            .trim_end_matches(|c: char| !c.is_whitespace())
+            .len();
+        if text[start..].split_whitespace().nth(max_words).is_none() {
+            claimed.defer_at(start);
+            break;
+        }
+    }
+}
+
 fn validate_name(name: &str) -> Result<(), MatchError> {
     if name.is_empty()
         || name.len() > MAX_NAME_BYTES
@@ -573,8 +683,9 @@ fn continues_word(mut outward: impl Iterator<Item = char>) -> bool {
     }
 }
 
+/// Whether `character` can sit inside a word, a combining accent included.
 fn is_word(character: char) -> bool {
-    character.is_alphanumeric() || character == '_'
+    character.is_alphanumeric() || unicode_ident::is_xid_continue(character)
 }
 
 fn first_word(text: &str) -> Option<Cow<'_, str>> {
@@ -1060,6 +1171,60 @@ mod tests {
             matcher.correct("db two and Vexe16"),
             Some("db9 and vex16".into())
         );
+    }
+
+    #[test]
+    fn a_rebuild_reserves_its_respelling_workspace() {
+        let rules = || {
+            let pairs = (0..256)
+                .map(|n| (format!("heard {n}"), format!("word{n}")))
+                .collect();
+            PersonalRules::new(vec![], pairs)
+        };
+        let terms = [Term {
+            canonical: "word0-kit".into(),
+            priority: 1,
+        }];
+        let full = Vocabulary::compile(&terms, rules()).unwrap();
+        assert_eq!(
+            full.correct("heard 0 dash kit").as_deref(),
+            Some("word0-kit")
+        );
+        // Room for the result alone cannot also hold the respelling index.
+        let tight = Vocabulary::compile_within(
+            &terms,
+            rules(),
+            full.estimated_bytes(),
+            &CancelToken::never(),
+        )
+        .unwrap();
+        assert_eq!(
+            tight.correct("word0 dash kit").as_deref(),
+            Some("word0-kit")
+        );
+        assert_ne!(
+            tight.correct("heard 0 dash kit").as_deref(),
+            Some("word0-kit")
+        );
+    }
+
+    #[test]
+    fn a_matcher_compiles_only_within_its_byte_limit() {
+        let terms = [Term {
+            canonical: "aria-kit".into(),
+            priority: 1,
+        }];
+        let personal = || PersonalRules::new(vec!["db2".into()], vec![]);
+        let never = CancelToken::never();
+        let bytes = Vocabulary::compile(&terms, personal())
+            .unwrap()
+            .estimated_bytes();
+        assert!(matches!(
+            Vocabulary::compile_within(&terms, personal(), bytes - 1, &never),
+            Err(MatchError::TooLarge)
+        ));
+        let fitted = Vocabulary::compile_within(&terms, personal(), bytes, &never).unwrap();
+        assert_eq!(fitted.estimated_bytes(), bytes);
     }
 
     #[test]

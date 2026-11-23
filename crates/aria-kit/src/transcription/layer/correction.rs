@@ -172,6 +172,7 @@ impl Vocabulary {
             claim_each(&SPOKEN[..unjoined], text, self, claimed);
         });
         // Outside the loop: where a name starts doesn't move with the cut.
+        super::vocabulary::defer_unclosed_assignment(text, max_words, &mut claimed);
         self.defer_waiting_names(text, max_words, &mut claimed);
         loop {
             let from = claimed.deferred_from();

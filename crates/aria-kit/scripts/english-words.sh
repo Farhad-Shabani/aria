@@ -46,7 +46,7 @@ final="$work/scowl-2020.12.07/final"
 {
     cat "$final"/{english,american,british}-words.{10,20,35} \
         | iconv -f ISO-8859-1 -t UTF-8 \
-        | grep -E '^[a-z]{3,}$'
+        | grep -E '^[a-z]+$'
     cat "$final"/english-contractions.{10,35} \
         | iconv -f ISO-8859-1 -t UTF-8 \
         | tr '[:upper:]' '[:lower:]' \

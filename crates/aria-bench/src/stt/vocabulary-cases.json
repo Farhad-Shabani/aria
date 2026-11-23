@@ -459,7 +459,7 @@
           },
           "context_available": true,
           "supported_whole": true,
-          "supported_streaming": false
+          "supported_streaming": true
         }
       ],
       "legacy_whole": null,
@@ -492,7 +492,7 @@
           },
           "context_available": true,
           "supported_whole": true,
-          "supported_streaming": false
+          "supported_streaming": true
         }
       ],
       "legacy_whole": null,
@@ -526,7 +526,7 @@
           },
           "context_available": true,
           "supported_whole": true,
-          "supported_streaming": false
+          "supported_streaming": true
         }
       ],
       "legacy_whole": null,

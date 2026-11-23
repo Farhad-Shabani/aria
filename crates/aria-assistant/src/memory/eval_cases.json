@@ -390,28 +390,28 @@
     },
     {
       "id": "learned_punctuation",
-      "terms": [],
+      "terms": ["Lumenforge"],
       "pairs": [["lumen forge", "Lumenforge"]],
       "input": "Hello, lumen forge!",
       "expected": "Hello, Lumenforge!"
     },
     {
       "id": "learned_repeated",
-      "terms": [],
+      "terms": ["Lumenforge"],
       "pairs": [["lumen forge", "Lumenforge"]],
       "input": "lumen forge, then lumen forge again.",
       "expected": "Lumenforge, then Lumenforge again."
     },
     {
       "id": "learned_longest_phrase",
-      "terms": [],
+      "terms": ["Lumen", "Lumenforge"],
       "pairs": [["lumen", "Lumen"], ["lumen forge", "Lumenforge"]],
       "input": "Visit lumen forge.",
       "expected": "Visit Lumenforge."
     },
     {
       "id": "learned_no_cascade",
-      "terms": [],
+      "terms": ["Lumenforge", "OtherCompany"],
       "pairs": [["lumen forge", "Lumenforge"], ["Lumenforge", "OtherCompany"]],
       "input": "lumen forge",
       "expected": "Lumenforge"
@@ -466,29 +466,29 @@
       "expected": "Lumenforge uses db2 and kubernetes."
     },
     {
-      "id": "case_only_unchanged",
+      "id": "case_listed_capitals",
       "terms": ["Lumenforge"],
       "pairs": [],
       "input": "LUMENFORGE",
-      "expected": "LUMENFORGE"
+      "expected": "Lumenforge"
     },
     {
       "id": "pair_word_boundaries",
-      "terms": [],
+      "terms": ["Lumenforge"],
       "pairs": [["lumen", "Lumenforge"]],
       "input": "The lumenometer measures lumens.",
       "expected": "The lumenometer measures lumens."
     },
     {
       "id": "pair_identifier_boundary",
-      "terms": [],
+      "terms": ["Lumenforge"],
       "pairs": [["lumen", "Lumenforge"]],
       "input": "Use lumen_value and value_lumen.",
       "expected": "Use lumen_value and value_lumen."
     },
     {
       "id": "pair_unicode_boundary",
-      "terms": [],
+      "terms": ["Lumenforge"],
       "pairs": [["lumen", "Lumenforge"]],
       "input": "élumen lumené",
       "expected": "élumen lumené"
@@ -579,7 +579,7 @@
     },
     {
       "id": "adversarial_pair_adjacent_punctuation",
-      "terms": [],
+      "terms": ["Lumenforge"],
       "pairs": [["lumen forge", "Lumenforge"]],
       "input": "(lumen forge); [lumen forge]",
       "expected": "(Lumenforge); [Lumenforge]"

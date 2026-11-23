@@ -1,176 +1,154 @@
 # Vocabulary evaluation
 
-Run from the repository root. These commands require local Rust dependencies, no API key.
-Output artifacts are private and cannot overwrite an existing file.
+Use text replay to check what dictation writes with your dictionary and project
+vocabulary. You can replay the built-in cases without a model or an API key.
+Run the commands from the repository root.
+
+## Run the fixtures
+
+Choose a fresh output path. The report contains transcripts and vocabulary.
 
 ```sh
-cargo run --release --locked -p aria-bench \
-  --example vocabulary -- \
-  fixtures /absolute/path/fixtures.json \
-  /absolute/path/frozen-memory-report.json
-
-cargo run --release --locked -p aria-bench \
-  --example vocabulary -- \
-  microbench /absolute/path/microbench.json
-
-cargo test --locked -p aria-bench vocabulary
+cargo run \
+  --release \
+  --locked \
+  -p aria-bench \
+  --example vocabulary \
+  -- fixtures fixtures.json
 ```
 
-The frozen memory report is optional. With it, every personal lexicon case
-compares against its saved legacy output after input/rule identity checks.
-Without it, the baseline is labeled uncorrected input. The fixture set is a
-deterministic contract check, not held-out audio or a population accuracy estimate.
+Open `fixtures.json` and find `dash_name`. With project vocabulary, “look in
+aria dash stt” becomes `look in aria-stt`. The report has file mode `0600`.
 
-`evaluate SUITE OUTPUT` accepts the schema in `src/stt/vocabulary-cases.json`.
-`whole_input` and `segments` are independent observations; set an unavailable
-one to `null`. Do not manufacture a whole-recording ASR result by joining segments.
-Target `written_words` ranges index exact whitespace tokens in the intended output.
-`spoken_words` ranges index the existing scorer's normalized spoken reference.
-Ranges are zero-based, end-exclusive, ordered and non-overlapping. `group` identifies
-the independent source recording/project; overlapping clips and repetitions share it.
+To compare personal dictionary cases against a saved memory evaluation, append
+the report path after `fixtures.json`. Replay checks every case's input,
+expected text, terms and learned pairs before using its saved output.
+Otherwise the baseline is the uncorrected input.
 
-`replay TRACES ANNOTATIONS BACKEND OUTPUT` validates a completed STT artifact of
-the current schema and completion manifest before replaying its frozen hypotheses/segments. Annotations
-use the same suite schema, with one case per utterance and references matching the
-artifact. All cases must be covered. Dataset conversion must preserve the published
-split and source groups; vocabulary supplied from references is labeled oracle context.
-No public dataset is downloaded by this tool.
+The fixtures check specific behavior. To measure accuracy on real speech, use
+recordings you kept separate from development.
 
-Reports retain raw before/after text, failures, counts, denominators and grouped WER
-intervals. Case-level exact precision is deliberately separate from edit-level
-precision, which this evaluation does not estimate. Canonical target recall and recovery
-use exact aligned target spans. Spoken-reference WER may penalize desired written
-formatting such as `aria-stt`; do not use it as the identifier spelling score.
-Schema-2 replay reports require contiguous canonical spans. `introduced_errors` counts
-candidate error occurrences absent from the baseline at the same reference position;
-`introduced_error_cases` counts affected cases. `introduced_incorrect_vocabulary_spans`
-also counts new incorrect canonical occurrences, including distractors, by name and
-aligned reference location. Repeated occurrences retain their multiplicity; overlapping
-names use the longest span. These use exact whitespace-token alignment, including
-punctuation, and its deterministic attribution for repeated words. `harmed_cases`
-retains the narrower count of previously exact whole cases that became incorrect.
-Target/background insertion errors attach to the following reference word, or the last
-word at EOF. This local convention is not a claim of matching an external scorer.
+## Replay your recordings
 
-Microbenchmarks report compilation cost, estimated snapshot bytes and warmed matcher
-calls at 100–100,000 names, retaining failed compilations. These timings exclude capture,
-ASR, delivery and refresh contention. The daemon's paired real-time benchmark is still
-required before claiming no responsiveness regression.
+Use the same Cargo command with one of these argument lists after `--`.
 
-## Daemon delivery baseline
+| Arguments | Input |
+|---|---|
+| `evaluate SUITE OUTPUT` | A JSON suite in the format of `crates/aria-bench/src/stt/vocabulary-cases.json`. |
+| `replay TRACES ANNOTATIONS BACKEND OUTPUT` | A completed speech-to-text JSONL file and a suite covering every utterance for the chosen backend. Keep `TRACES.manifest.json` beside `TRACES`. Each spoken reference must match the trace. |
 
-The `dictation_latency` bench drives a chosen frozen daemon through RPC. Both
-revisions use the same measurement executable. It records progress timestamps,
-complete output and clipboard readback, and reports `release->delivered` and
-`capture->delivered` timing. This is complete clipboard delivery;
-it does not measure streaming insertion into another application.
+Keep each dataset's published split. Give overlapping clips and repetitions
+from the same source the same `group`. If you take vocabulary from reference
+transcripts, disclose that the matcher had access to the answers.
 
-From the repository root, collect the frozen baseline, then repeat with the candidate daemon:
+- Record `whole_input` and finalized `segments` separately. Set a missing
+  observation to `null`. Joining segments can't reproduce whole-recording
+  recognition.
+- For streaming, you can supply one `sentence_ended_before` value per segment.
+  Use `true` for a sentence break, `false` for a continuation and `null` for
+  unknown. Trace replay reads these values from the recording's results.
+- Mark each target in both references. `written_words` counts exact tokens
+  separated by whitespace. `spoken_words` counts normalized spoken words.
+  Start at zero, exclude the end index and keep ranges in order without overlap.
+
+## Read the results
+
+Compare `personal` with `project` to see what adding project terms changes.
+Both use dictation's rules for spoken numbers and symbols. For example, the
+spoken reference can contain “twelve boxes” while the written reference expects
+`12 boxes`. A learned pair applies only while its written form appears in
+`personal_terms`.
+
+Streaming replay treats consecutive segments as uninterrupted speech.
+`output_segments` shows each release, including a closing mark held until the
+end. `output` shows the text with insertion spacing. The streaming baseline
+joins the original segments, or saved legacy segments, with spaces.
+
+| Report field | What it measures |
+|---|---|
+| `canonical_target_recall`, `overall_recovery` | Share of written targets spelled exactly, and share of baseline target errors corrected. Target tokens must match consecutively, including punctuation. |
+| `introduced_errors`, `introduced_error_cases` | New error occurrences at aligned reference positions, and cases with any such error. |
+| `introduced_incorrect_vocabulary_spans` | New incorrect occurrences of vocabulary names, including distractors. Repetitions count separately. The longest overlapping name wins. |
+| `harmed_cases` | Previously exact cases that now contain an error. |
+| `changed_case_exact_precision` | Share of changed cases with entirely correct output. |
+| `spoken_reference_wer` | Word error rate against the spoken reference. Correct written forms such as `aria-stt` can count as errors here. |
+
+The report includes counts, denominators, failures and a grouped interval for
+the change in spoken word error rate when the data permit one. The scorer
+assigns insertions to the following reference word, or the last word at the end.
+
+## Measure delivery latency
+
+Use the same benchmark executable, model, WAV and personal dictionary for both
+daemon builds. For Moonshine, set `ARIA_TEST_MOONSHINE_MODEL`,
+`ARIA_TEST_DICTATION_WAV` and `ARIA_BENCH_BACKENDS=moonshine`. Set the number
+of trials before measuring, for example `ARIA_BENCH_RUNS=30` and
+`ARIA_BENCH_WARMUPS=2`. Replace the uppercase paths below with absolute paths.
 
 ```sh
-ARIA_BENCH_DAEMON=/absolute/path/frozen-baseline-aria \
-ARIA_TEST_MOONSHINE_MODEL=/absolute/path/moonshine/base \
-ARIA_TEST_DICTATION_WAV=/absolute/path/fixture.wav \
-ARIA_BENCH_BACKENDS=moonshine \
-ARIA_BENCH_RUNS=30 \
-ARIA_BENCH_WARMUPS=2 \
-ARIA_BENCH_RESULTS=/absolute/path/baseline \
-cargo bench --locked --bench dictation_latency
+ARIA_BENCH_DAEMON=BASELINE_BINARY \
+ARIA_BENCH_RESULTS=BASELINE_DIR \
+just bench-latency
 
-ARIA_BENCH_DAEMON=/absolute/path/candidate-aria \
-ARIA_TEST_MOONSHINE_MODEL=/absolute/path/moonshine/base \
-ARIA_TEST_DICTATION_WAV=/absolute/path/fixture.wav \
-ARIA_BENCH_BACKENDS=moonshine \
-ARIA_BENCH_RUNS=30 \
-ARIA_BENCH_WARMUPS=2 \
-ARIA_BENCH_RESULTS=/absolute/path/candidate \
-ARIA_BENCH_BASELINE=/absolute/path/baseline/dictation-latency.json \
+ARIA_BENCH_DAEMON=CANDIDATE_BINARY \
+ARIA_BENCH_RESULTS=CANDIDATE_DIR \
+ARIA_BENCH_BASELINE=BASELINE_DIR/dictation-latency.json \
 ARIA_BENCH_MAX_REGRESSION=0.05 \
 ARIA_BENCH_REQUIRE_SAME_TEXT=1 \
-cargo bench --locked --bench dictation_latency
+just bench-latency
 ```
 
-Run the candidate again with `ARIA_BENCH_VOCABULARY_DIR` naming a prepared project.
-Preparation enables the feature and waits for a nonempty ready snapshot before
-measurement. `ARIA_BENCH_PERSONAL_TERMS` optionally supplies the same lexicon file
-to both isolated daemons. Preserve model/audio/personal identities and alternate
-baseline/candidate ordering across process pairs. Thirty repetitions are an initial
-collection budget, not evidence that a 5% margin is statistically resolved.
+Alternate which build runs first across pairs. The example allows a 5% median
+slowdown. Use the same-text check for speech you expect to stay unchanged.
+For intended corrections, compare against the written reference instead.
 
-The same-text gate suits ordinary-speech negatives where project context should
-change nothing. Positive correction cases need their frozen intended-output references
-and the vocabulary scorer. The gate's tests inject latency and deleted/duplicated
-words; both cause rejection.
+Set `ARIA_BENCH_PERSONAL_TERMS` to use the same dictionary file in both runs.
+Set `ARIA_BENCH_VOCABULARY_DIR` on the candidate run to measure project
+vocabulary. The benchmark waits for the daemon to load project terms.
 
-The production streaming pipeline also has an ignored benchmark using an owned sink:
+By default, `release->delivered` and `capture->delivered` measure time to
+clipboard delivery. On a Mac, set `ARIA_BENCH_STREAMING=1` to measure
+insertion in a test app. Give the daemon
+Accessibility permission and keep the desktop idle during the run.
+Unset `ARIA_BENCH_TARGET_PID` and `ARIA_BENCH_TARGET_TEXT_FILE` so the benchmark
+can manage its own app. `request->first-receipt` and `request->final-receipt`
+measure when the app observes its first and last text changes.
+
+## Run focused diagnostics
+
+For matcher timings, use `microbench OUTPUT` after `--` in the fixture command.
+It reports compilation time, estimated memory and warmed calls with 100 to
+100,000 names. It records failed compilations.
+
+The streaming pipeline test uses a deterministic recognizer to check the
+delivered text and time gaps between releases.
 
 ```sh
-ARIA_VOCABULARY_PIPELINE_RESULTS=/absolute/path/streaming-pipeline.json \
-cargo test --release --locked -p aria --lib \
-  vocabulary_streaming_delivery_benchmark -- \
-  --ignored \
-  --nocapture
+ARIA_VOCABULARY_PIPELINE_RESULTS="$PWD/streaming-pipeline.json" \
+just rust-test aria-voice \
+  --release \
+  --lib \
+  vocabulary_streaming_delivery_benchmark \
+  -- \
+  --ignored
 ```
 
-It alternates enabled/disabled matching, records first sink receipt and gaps, and checks
-that concatenated delivered segments equal the final transcript. Its deterministic
-recognizer and immediate WAV replay isolate pipeline behavior; they do not establish
-real-ASR streaming latency or platform insertion latency.
+For project vocabulary collection, run the same test command with
+`vocabulary_collection_benchmark` as the test name. Set
+`ARIA_VOCABULARY_COLLECTION_RESULTS` to a fresh path in a directory with mode
+`0700`. Set `ARIA_VOCABULARY_SCAN_DIR` to include a local folder. The report
+contains counts and timings and omits filenames and extracted names.
 
-For real macOS streaming insertion, run `dictation_latency` with the existing model,
-WAV, daemon and result settings plus `ARIA_BENCH_STREAMING=1`. The runner uses
-`xcrun swiftc` in Swift 6 mode to compile its AppKit target in a private temporary
-directory. It launches the target, resets its text and cursor before each trial,
-waits for keyboard focus, and closes it afterward, including on failure. Leave the
-Mac's desktop undisturbed during the run. The daemon needs Accessibility permission;
-WAV EOF ends capture. The runner refuses to start while `ARIA_BENCH_TARGET_PID`
-or `ARIA_BENCH_TARGET_TEXT_FILE` is set.
-
-The target timestamps text-change callbacks with `CLOCK_UPTIME_RAW`, the same clock
-used by the Rust runner. It buffers at most 4,096 observations and 64 KiB of text per
-trial, with no per-change file writes. Replies travel over an inherited local socket;
-only the benchmark result artifact retains the text and timings. Trial IDs, exact
-final text, receipt order and focus-loss checks must pass. Focus checks do not make
-OS event routing atomic: the daemon still binds an application, not an exact control.
-
-`request->first-receipt` and `request->final-receipt` measure request start to the
-first and last target text-change callbacks. They measure application receipt, not
-screen rendering or microphone-to-text latency. The `target` trace includes receipt
-lengths, gaps and exact final text. Daemon segment timings remain separate in
-`capture->first-segment` and `corrected_segments`. Streaming comparisons check
-both receipt metrics; `rpc-delivery-v2` prevents comparison against older manual
-target runs. Streaming omits only the daemon's `delivery` stage; its
-`release->delivered` comes from the transcription stage, which types the last text.
-
-The native insertion check needs no speech model. It opens two test windows and
-requires Accessibility permission on the test executable. Keep the desktop idle;
-switching apps or typing invalidates the trial:
+On a Mac, test Unicode insertion, selection replacement and focus loss on an
+idle desktop. Give the test executable Accessibility permission.
 
 ```sh
 just rust-test aria \
-  --lib \
+  --test macos_delivery \
   native_streaming_target_receives_unicode_selection_and_rejects_focus_loss \
   -- \
   --ignored \
   --test-threads=1
 ```
 
-It exercises Unicode insertion across event chunks, replacement of a UTF-16
-selection, refusal after focus changes, and resetting the target for another trial.
-Protocol and receipt-validation tests run with `just rust-test aria --test latency_benches`.
-
-## Generic collector diagnostics
-
-The generic collector has an ignored release diagnostic covering extraction, selection,
-SQLite reuse, and compilation. Create a private output directory first. The optional
-scan directory is read locally; the report contains aggregate counts and timings, not
-its filenames or extracted names.
-
-```sh
-ARIA_VOCABULARY_COLLECTION_RESULTS=/absolute/private/directory/collection.json \
-ARIA_VOCABULARY_SCAN_DIR=/absolute/path/to/selected/folder \
-cargo test --release --locked -p aria --lib \
-  vocabulary_collection_benchmark -- \
-  --ignored \
-  --nocapture
-```
+See [Speech benchmarks](README.md#latency) for paired latency comparisons.

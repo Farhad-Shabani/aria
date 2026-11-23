@@ -8,7 +8,8 @@ const MAX_HELD_WORDS: usize = 8;
 
 /// Holds a segment's last words while the next segment may still change
 /// them: a spoken symbol it may join, a number it may go on, a name it may
-/// complete, or a fragment it may merge into a listed word.
+/// complete, a fragment it may merge into a listed word, or a quoted
+/// assignment its closing quote may complete.
 ///
 /// Streaming can split "user underscore id", "twenty one" or "aria hyphen
 /// kit" across segments. Correct what [`hold`](Self::hold) releases with
@@ -279,8 +280,7 @@ mod tests {
 
     #[test]
     fn words_a_personal_rule_uses_are_released() {
-        let personal = PersonalRules::new(vec!["db2".into()], vec![]);
-        let vocabulary = Vocabulary::compile(&[], personal).unwrap();
+        let vocabulary = listing(&["db2"]);
         let mut words = DeferredWords::default();
         assert_eq!(
             words.hold("run d b two", None, &vocabulary).text,
@@ -358,21 +358,132 @@ mod tests {
     #[case("use i eighteen n now")]
     #[case("open aria dot toml now")]
     fn any_split_types_a_spoken_form_whole(#[case] heard: &str) {
-        let listed = vec![
-            "db1".into(),
-            "db1-backup".into(),
-            "i18n".into(),
-            "Aria".into(),
-        ];
-        let vocabulary = Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap();
+        let vocabulary = listing(&["db1", "db1-backup", "i18n", "Aria"]);
         assert_any_split_types_the_whole(heard, &vocabulary);
     }
 
     #[test]
     fn any_split_types_a_merged_word_whole() {
-        let listed = vec!["PostgreSQL".into()];
-        let vocabulary = Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap();
+        let vocabulary = listing(&["PostgreSQL"]);
         assert_any_split_types_the_whole("use postgre sql now", &vocabulary);
+    }
+
+    #[rstest]
+    #[case("open test_aria", "open test_aria")]
+    #[case("open src/aria", "open src/aria")]
+    #[case("open file dot aria", "open file.aria")]
+    #[case("say my aria", "say Alias")]
+    #[case("an éclair", "an éclair")]
+    fn fuzzy_holds_respect_the_words_other_steps_read(#[case] heard: &str, #[case] expected: &str) {
+        let project = Term {
+            canonical: "file.aria".into(),
+            priority: 1,
+        };
+        let personal = PersonalRules::new(
+            vec!["Aria".into(), "Clair".into(), "Alias".into()],
+            vec![("my aria".into(), "Alias".into())],
+        );
+        let vocabulary = Vocabulary::compile(&[project], personal).unwrap();
+        assert_eq!(streamed(&[(heard, None)], &vocabulary), expected);
+        assert_any_split_types_the_whole(heard, &vocabulary);
+    }
+
+    #[rstest]
+    #[case(&["open kubernets", "dot yaml"], "open kubernets.yaml")]
+    #[case(&["use postgre sql", "dot conf"], "use postgre sql.conf")]
+    fn a_fuzzy_word_at_segment_end_may_join_a_symbol(
+        #[case] segments: &[&str],
+        #[case] expected: &str,
+    ) {
+        let vocabulary = listing(&["PostgreSQL", "Kubernetes"]);
+        let pieces: Vec<_> = segments.iter().map(|s| (*s, None)).collect();
+        assert_eq!(streamed(&pieces, &vocabulary), expected);
+    }
+
+    #[test]
+    fn only_fragments_that_can_reach_a_listed_word_wait() {
+        let v = listing(&["PostgreSQL"]);
+        for name in ["Pablo", "Priya", "PyTorch", "postgr2"] {
+            assert_eq!(DeferredWords::default().hold(name, None, &v).text, name);
+        }
+        // No ASCII word can supply a listed word's full-width digit.
+        let wide = listing(&["Nvidia\u{ff12}"]);
+        assert_eq!(
+            DeferredWords::default().hold("nvid", None, &wide).text,
+            "nvid"
+        );
+        for (start, end) in [("use postgre", "sql"), ("use pyst", "gresql")] {
+            assert_eq!(
+                streamed(&[(start, None), (end, None)], &v),
+                "use PostgreSQL"
+            );
+        }
+    }
+
+    #[rstest]
+    #[case("pass --flag='id' then ask for id", "pass --flag='id' then ask for ID")]
+    #[case("set title=\"id\" or say 'id'", "set title=\"id\" or say 'ID'")]
+    #[case(
+        "set x='server id' then open kubernets",
+        "set x='server id' then open Kubernetes"
+    )]
+    #[case("set x=\"id and kubernets\" now", "set x=\"id and kubernets\" now")]
+    #[case(r#"x="use \"id\" and id" then id"#, r#"x="use \"id\" and id" then ID"#)]
+    #[case(
+        "x='twenty one user underscore id' and twenty one",
+        "x='twenty one user underscore id' and 21"
+    )]
+    fn quoted_assignment_values_keep_their_words(#[case] heard: &str, #[case] expected: &str) {
+        let vocabulary = listing(&["ID", "Kubernetes"]);
+        assert_eq!(whole(heard, &vocabulary), expected);
+        assert_any_split_types_the_whole(heard, &vocabulary);
+    }
+
+    #[test]
+    fn an_unclosed_assignment_preserves_just_its_first_word() {
+        let vocabulary = listing(&["ID", "Kubernetes"]);
+        let heard = "set x='id then ask for id and kubernets";
+        let expected = "set x='id then ask for ID and Kubernetes";
+        assert_eq!(whole(heard, &vocabulary), expected);
+        assert_eq!(vocabulary.correct(heard).as_deref(), Some(expected));
+        assert_any_split_types_the_whole(heard, &vocabulary);
+        let next = vocabulary
+            .correct_spoken("for id and kubernets", "set x='id then ask")
+            .unwrap();
+        assert_eq!(next.text, "for ID and Kubernetes");
+    }
+
+    #[test]
+    fn an_unfinished_quote_obeys_the_stream_hold_limit() {
+        let vocabulary = listing(&["ID"]);
+        let mut words = DeferredWords::default();
+        assert_eq!(words.hold("set x='server", None, &vocabulary).text, "set");
+        let released = words.hold(
+            "one two three four five six seven eight nine",
+            None,
+            &vocabulary,
+        );
+        assert!(released.text.starts_with("x='server one two"));
+    }
+
+    #[test]
+    fn written_values_survive_project_and_personal_correction() {
+        let terms = [Term {
+            canonical: "file.aria".into(),
+            priority: 1,
+        }];
+        let personal = PersonalRules::new(vec!["ID".into()], vec![("aye dee".into(), "ID".into())]);
+        let vocabulary = Vocabulary::compile(&terms, personal).unwrap();
+        let heard = "x='file dot aria aye dee' then file dot aria aye dee";
+        let expected = "x='file dot aria aye dee' then file.aria ID";
+        assert_eq!(vocabulary.correct(heard).as_deref(), Some(expected));
+        assert_eq!(whole(heard, &vocabulary), expected);
+        assert_any_split_types_the_whole(heard, &vocabulary);
+    }
+
+    fn listing(words: &[&str]) -> Vocabulary {
+        let listed = words.iter().map(|word| (*word).to_owned()).collect();
+        Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap()
     }
 
     /// Cuts `heard` at its spaces into two or three segments, every way.
@@ -434,8 +545,7 @@ mod tests {
     /// segment completes, where the whole text keeps it inside the join.
     #[test]
     fn a_fuzzy_fix_beside_a_held_join_applies() {
-        let personal = PersonalRules::new(vec!["Kubernetes".into()], vec![]);
-        let vocabulary = Vocabulary::compile(&[], personal).unwrap();
+        let vocabulary = listing(&["Kubernetes"]);
         assert_eq!(
             streamed(
                 &[("kubernets dot twenty", None), ("one", None)],

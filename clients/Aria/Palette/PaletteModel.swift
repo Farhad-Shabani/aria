@@ -63,8 +63,11 @@ struct PaletteModel: Equatable {
     /// The listed words the search matches, kept so a read of `items` doesn't
     /// search every word again.
     private var matchingWords: [PaletteCommand] = []
-    /// Counts edits, so a read sent before one can't undo it.
-    private(set) var dictionaryEdits = 0
+    private var dictionaryRead = 0
+    private enum DictionaryReadState {
+        case pending, edited, refreshingAfterEdit
+    }
+    private var dictionaryReadState: DictionaryReadState?
     /// Shown until the search changes.
     var dictionaryNotice: DictionaryNotice?
     var isConfirmingClear = false
@@ -166,25 +169,35 @@ struct PaletteModel: Equatable {
         leaveChat()
     }
 
-    /// Ignores a read sent before the latest edit.
-    mutating func read(dictionary words: [String]?, since edits: Int) {
-        guard edits == dictionaryEdits else { return }
+    mutating func beginDictionaryRead() -> Int {
+        dictionaryRead += 1
+        dictionaryReadState = .pending
+        return dictionaryRead
+    }
+
+    @discardableResult
+    mutating func read(dictionary words: [String]?, request: Int) -> Bool {
+        guard request == dictionaryRead, let state = dictionaryReadState else { return false }
+        if state == .edited {
+            // The snapshot may already include some edits. A fresh read gives their file order.
+            dictionaryReadState = .refreshingAfterEdit
+            return true
+        }
+        dictionaryReadState = nil
+        if words == nil && state == .refreshingAfterEdit { return false }
         keepingSelection { model in
             model.dictionary = words.map(ListedWords.init)
             model.matchWords()
         }
+        return false
     }
 
-    /// Keeps the words in step with an edit the daemon made, so the row flips.
     mutating func record(_ edit: DictionaryEdit) {
+        if dictionaryReadState != nil { dictionaryReadState = .edited }
         keepingSelection { model in
             var words = model.dictionary ?? ListedWords([])
-            switch edit {
-            case .added(let word), .alreadyListed(let word): words.insert(word)
-            case .removed(let word), .notListed(let word): words.remove(word)
-            }
+            words.apply(edit)
             model.dictionary = words
-            model.dictionaryEdits += 1
             model.matchWords()
         }
     }
@@ -721,11 +734,15 @@ private struct ListedWords: Equatable {
 
     func contains(_ word: String) -> Bool { lookup.contains(word) }
 
-    mutating func insert(_ word: String) {
-        if lookup.insert(word).inserted { words.append(word) }
+    mutating func apply(_ edit: DictionaryEdit) {
+        switch edit {
+        case .added(let word), .alreadyListed(let word): insert(word)
+        case .removed(let word), .notListed(let word):
+            if lookup.remove(word) != nil { words.removeAll { $0 == word } }
+        }
     }
 
-    mutating func remove(_ word: String) {
-        if lookup.remove(word) != nil { words.removeAll { $0 == word } }
+    private mutating func insert(_ word: String) {
+        if lookup.insert(word).inserted { words.append(word) }
     }
 }

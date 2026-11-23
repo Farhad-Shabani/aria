@@ -7,7 +7,7 @@ use crate::cancel::CancelToken;
 use super::super::claim::{Claimed, Word};
 use super::super::number_words::{is_up_to_twenty, word_for};
 use super::super::symbol_words::symbol;
-use super::fuzzy::{Fix, apply_fuzzy, begins_a_merge, best_term, capitals, is_token_char};
+use super::fuzzy::{AfterCut, apply_fuzzy, capitals, waiting_from};
 use super::{MatchError, is_word};
 
 /// What stored rules may cost in memory.
@@ -129,36 +129,96 @@ impl PersonalRules {
             .map(|(form, target)| (form.iter().collect(), target.as_str()))
     }
 
-    pub(super) fn respellings(&self) -> Respellings {
-        let mut spellings_of: HashMap<Vec<char>, Vec<Vec<char>>> = HashMap::new();
-        for (spoken, target) in self.forms.values().flatten() {
-            let spoken: Vec<char> = collapse(&spoken.iter().collect::<String>())
-                .chars()
-                .collect();
-            let target: Vec<char> = collapse(&target.to_lowercase()).chars().collect();
-            if !spoken.is_empty() && !target.is_empty() && spoken != target {
-                spellings_of.entry(target).or_default().push(spoken);
+    pub(super) fn respellings(
+        &self,
+        room: usize,
+        cancel: &CancelToken,
+    ) -> Result<Respellings, MatchError> {
+        let pairs = || self.forms.values().flatten();
+        let mut char_count = 0;
+        let mut count = 0;
+        let mut lowercase_peak = 0;
+        for (spoken, target) in pairs() {
+            if cancel.is_cancelled() {
+                return Err(MatchError::Cancelled);
+            }
+            count += 1;
+            char_count += spoken.len();
+            if target.is_ascii() {
+                char_count += target.len();
+                continue;
+            }
+            // Contextual final sigma has the same scalar count and UTF-8 width as σ.
+            let mut utf8_bytes = 0;
+            for c in target.chars().flat_map(char::to_lowercase) {
+                char_count += 1;
+                utf8_bytes += c.len_utf8();
+            }
+            // str::to_lowercase starts with the input's byte capacity. If it grows,
+            // the old buffer is smaller than the output and its replacement can
+            // double that capacity or take the byte vector's eight-byte minimum.
+            let peak = if utf8_bytes > target.len() {
+                utf8_bytes.saturating_add(utf8_bytes.saturating_mul(2).max(8))
+            } else {
+                target.len()
+            };
+            lowercase_peak = lowercase_peak.max(peak);
+        }
+        let index_bytes = count * size_of::<Spelling>() + char_count * size_of::<char>();
+        if index_bytes.saturating_add(lowercase_peak) > room {
+            return Err(MatchError::TooLarge);
+        }
+        // Both buffers are sized before allocation. Sorting the spans in place
+        // avoids a second lookup table living beside the first during a build.
+        let mut index = Respellings {
+            chars: Vec::with_capacity(char_count),
+            entries: Vec::with_capacity(count),
+        };
+        for (spoken, target) in pairs() {
+            if cancel.is_cancelled() {
+                return Err(MatchError::Cancelled);
+            }
+            let target = if target.is_ascii() {
+                index.push(target.chars().map(|c| c.to_ascii_lowercase()))
+            } else {
+                index.push(target.to_lowercase().chars())
+            };
+            let spoken = index.push(spoken.iter().copied());
+            if !target.is_empty()
+                && !spoken.is_empty()
+                && index.chars[target.clone()] != index.chars[spoken.clone()]
+            {
+                index.entries.push(Spelling { target, spoken });
             }
         }
-        let mut by_first: HashMap<char, Vec<Target>> = HashMap::new();
-        for (text, mut spellings) in spellings_of {
-            // Sorted, so the bound keeps the same respellings on every build.
-            // No form uses more spellings of one word than the bound.
-            spellings.sort_unstable();
-            spellings.dedup();
-            spellings.truncate(MAX_RESPELLINGS);
-            by_first
-                .entry(text[0])
-                .or_default()
-                .push(Target { text, spellings });
+        if index.entries.is_empty() {
+            return Ok(Respellings::default());
         }
-        for targets in by_first.values_mut() {
-            // Longest first, so "new york" is found before "new".
-            targets.sort_unstable_by(|a, b| {
-                (b.text.len().cmp(&a.text.len())).then_with(|| a.text.cmp(&b.text))
-            });
-        }
-        Respellings { by_first }
+        let chars = &index.chars;
+        index.entries.sort_unstable_by(|a, b| {
+            let left = &chars[a.target.clone()];
+            let right = &chars[b.target.clone()];
+            left[0]
+                .cmp(&right[0])
+                .then_with(|| right.len().cmp(&left.len()))
+                .then_with(|| left.cmp(right))
+                .then_with(|| chars[a.spoken.clone()].cmp(&chars[b.spoken.clone()]))
+        });
+        index.entries.dedup_by(|a, b| {
+            chars[a.target.clone()] == chars[b.target.clone()]
+                && chars[a.spoken.clone()] == chars[b.spoken.clone()]
+        });
+        let mut previous = 0..0;
+        let mut count = 0;
+        index.entries.retain(|entry| {
+            if chars[previous.clone()] != chars[entry.target.clone()] {
+                previous = entry.target.clone();
+                count = 0;
+            }
+            count += 1;
+            count <= MAX_RESPELLINGS
+        });
+        Ok(index)
     }
 
     #[cfg(test)]
@@ -285,22 +345,28 @@ impl PersonalRules {
         self.defer_an_unfinished_form(text, claimed);
     }
 
-    /// Defers the word before the cut when more speech may change it. A
-    /// listed word that would take its capitals may join a spoken symbol
-    /// into a written name, which keeps it as heard: "open aria" may go on
-    /// as "aria dot toml". A word that isn't real may merge with the next
-    /// word into a listed word: "use postgre" may go on as "postgre sql".
     fn defer_a_last_word(&self, text: &str, claimed: &mut Claimed<'_>) {
-        let before = text[..claimed.deferred_from()].trim_end();
-        let start = before.trim_end_matches(is_token_char).len();
-        let never = &|_| Ok::<_, std::convert::Infallible>(());
-        let word = &before[start..];
-        let capital =
-            best_term(word, &self.terms, &self.known, never).unwrap_or_else(|never| match never {});
-        if matches!(capital, Some(Fix::Capitals(_)))
-            || begins_a_merge(word, &self.terms, &self.known)
-        {
-            claimed.defer_at(start);
+        if self.terms.is_empty() {
+            return;
+        }
+        let cut = claimed.deferred_from();
+        let Some(gap) = unclaimed_around(claimed.words(), text.len(), cut) else {
+            return;
+        };
+        let before = text[gap.start..cut].trim_end();
+        let after = if cut == text.len() {
+            AfterCut::SegmentEnd
+        } else {
+            AfterCut::DeferredWords
+        };
+        if let Some(start) = waiting_from(before, after, &self.terms, &self.known) {
+            // Keep any opening punctuation with its word across delivery.
+            let start = text[..gap.start + start]
+                .trim_end_matches(|c: char| !c.is_whitespace())
+                .len();
+            if start >= gap.start {
+                claimed.defer_at(start);
+            }
         }
     }
 
@@ -524,22 +590,44 @@ const COMMON_TOKENS: &[&str] = &[
 
 #[derive(Default)]
 pub(super) struct Respellings {
-    by_first: HashMap<char, Vec<Target>>,
+    chars: Vec<char>,
+    entries: Vec<Spelling>,
 }
 
-struct Target {
-    text: Vec<char>,
-    spellings: Vec<Vec<char>>,
+struct Spelling {
+    target: Range<usize>,
+    spoken: Range<usize>,
 }
 
 struct TargetSpan<'a> {
     span: Range<usize>,
-    spellings: &'a [Vec<char>],
+    spellings: &'a [Spelling],
 }
 
 impl Respellings {
+    fn push(&mut self, word: impl Iterator<Item = char>) -> Range<usize> {
+        let start = self.chars.len();
+        let mut space = false;
+        for c in word {
+            if c.is_whitespace() {
+                space = self.chars.len() != start;
+            } else {
+                if space {
+                    self.chars.push(' ');
+                    space = false;
+                }
+                self.chars.push(c);
+            }
+        }
+        start..self.chars.len()
+    }
+
+    pub(super) fn estimated_bytes(&self) -> usize {
+        self.entries.capacity() * size_of::<Spelling>() + self.chars.capacity() * size_of::<char>()
+    }
+
     pub(super) fn is_empty(&self) -> bool {
-        self.by_first.is_empty()
+        self.entries.is_empty()
     }
 
     pub(super) fn of(&self, form: &str) -> Vec<String> {
@@ -555,18 +643,26 @@ impl Respellings {
         for nth in 0..MAX_RESPELLINGS {
             for target in &found {
                 if let Some(spoken) = target.spellings.get(nth) {
+                    let spoken = &self.chars[spoken.spoken.clone()];
                     respellings.extend(respell(&chars, &[(target.span.clone(), spoken)]));
+                    if respellings.len() == MAX_RESPELLINGS {
+                        return respellings;
+                    }
                 }
             }
         }
         if found.len() > 1 {
             let all: Vec<_> = found
                 .iter()
-                .map(|target| (target.span.clone(), &target.spellings[0]))
+                .map(|target| {
+                    (
+                        target.span.clone(),
+                        &self.chars[target.spellings[0].spoken.clone()],
+                    )
+                })
                 .collect();
             respellings.extend(respell(&chars, &all));
         }
-        respellings.truncate(MAX_RESPELLINGS);
         respellings
     }
 
@@ -576,10 +672,10 @@ impl Respellings {
         while position < chars.len() {
             match self.target_at(chars, position) {
                 Some(target) => {
-                    let end = position + target.text.len();
+                    let end = position + target[0].target.len();
                     found.push(TargetSpan {
                         span: position..end,
-                        spellings: &target.spellings,
+                        spellings: target,
                     });
                     position = end;
                 }
@@ -589,20 +685,27 @@ impl Respellings {
         found
     }
 
-    fn target_at(&self, chars: &[char], position: usize) -> Option<&Target> {
+    fn target_at(&self, chars: &[char], position: usize) -> Option<&[Spelling]> {
         let before = position.checked_sub(1).map(|index| chars[index]);
         if before.is_some_and(is_word) && is_word(chars[position]) {
             return None;
         }
-        let targets = self.by_first.get(&chars[position])?;
-        targets.iter().find(|target| {
-            let after = chars.get(position + target.text.len()).copied();
-            chars[position..].starts_with(&target.text)
-                && target
-                    .spellings
-                    .iter()
-                    .any(|spoken| fits(before, spoken, after))
-        })
+        let first = chars[position];
+        let start = self
+            .entries
+            .partition_point(|s| self.chars[s.target.start] < first);
+        let entries = &self.entries[start..];
+        let end = entries.partition_point(|s| self.chars[s.target.start] == first);
+        entries[..end]
+            .chunk_by(|a, b| self.chars[a.target.clone()] == self.chars[b.target.clone()])
+            .find(|group| {
+                let target = &self.chars[group[0].target.clone()];
+                let after = chars.get(position + target.len()).copied();
+                chars[position..].starts_with(target)
+                    && group
+                        .iter()
+                        .any(|s| fits(before, &self.chars[s.spoken.clone()], after))
+            })
     }
 }
 
@@ -613,7 +716,7 @@ fn fits(before: Option<char>, spoken: &[char], after: Option<char>) -> bool {
     word(before) != word(spoken.first().copied()) && word(spoken.last().copied()) != word(after)
 }
 
-fn respell(chars: &[char], replacements: &[(Range<usize>, &Vec<char>)]) -> Option<String> {
+fn respell(chars: &[char], replacements: &[(Range<usize>, &[char])]) -> Option<String> {
     let mut respelled = Vec::with_capacity(chars.len());
     let mut spans = Vec::new();
     let mut copied = 0;
@@ -831,12 +934,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_small_workspace_preserves_expanded_and_contextual_lowercase() {
+        let rules = PersonalRules::new(vec![], vec![("word".into(), "İΟΣ".into())]);
+        let index = rules.respellings(128, &CancelToken::never()).unwrap();
+        assert_eq!(index.of("i\u{307}ος dash kit"), ["word dash kit"]);
+    }
+
+    #[test]
     fn a_form_gets_at_most_the_bound_of_respellings() {
         let learned = (0..50)
             .map(|index| (format!("arya{index}"), "aria".to_owned()))
             .collect();
         let rules = PersonalRules::new(vec![], learned);
-        let respellings = rules.respellings().of("aria dash kit");
+        let respellings = rules
+            .respellings(usize::MAX, &CancelToken::never())
+            .unwrap()
+            .of("aria dash kit");
         assert_eq!(respellings.len(), MAX_RESPELLINGS);
     }
 
@@ -984,6 +1097,9 @@ mod tests {
         assert_eq!((text.as_str(), subs.len()), ("sp2 ok", 1));
         let (text, _) = apply_corrections("midb2 db2x", &pairs(&[("db2", "x")]), &[]);
         assert_eq!(text, "midb2 db2x");
+        let accented = "e\u{301}db2 db2e\u{301}";
+        let (text, _) = apply_corrections(accented, &pairs(&[("db2", "x")]), &[]);
+        assert_eq!(text, accented);
     }
 
     #[test]
@@ -1043,6 +1159,36 @@ mod tests {
         }
     }
 
+    #[rstest::rstest]
+    #[case("postgresql's config", "PostgreSQL's config")]
+    #[case("postgre SQL'S config", "PostgreSQL'S config")]
+    #[case("postgre's sql", "postgre's sql")]
+    #[case("use 'gitlab' now", "use 'GitLab' now")]
+    #[case("use ai, not aix", "use AI, not aix")]
+    #[case("an éclair", "an éclair")]
+    #[case("an e\u{301}clair", "an e\u{301}clair")]
+    #[case("épostgre sql", "épostgre sql")]
+    #[case("postgre sqlé", "postgre sqlé")]
+    #[case("postgresql-", "PostgreSQL-")]
+    #[case("a mcdonald's", "a McDonald's")]
+    fn a_correction_keeps_the_rest_of_the_word(#[case] heard: &str, #[case] expected: &str) {
+        let rules = PersonalRules::new(
+            strings(&["PostgreSQL", "GitLab", "AI", "Clair", "McDonald's"]),
+            vec![],
+        );
+        assert_eq!(rules.apply(heard).0, expected);
+    }
+
+    #[test]
+    fn a_short_listed_word_leaves_the_real_word_it_spells() {
+        let rules = PersonalRules::new(strings(&["IT", "US", "AI", "ID", "MS"]), vec![]);
+        assert_eq!(rules.apply("is it with us").0, "is it with us");
+        assert_eq!(
+            rules.apply("ask ai for my id in ms").0,
+            "ask AI for my ID in MS"
+        );
+    }
+
     #[test]
     fn a_short_word_never_merges_into_a_listed_word() {
         let rules = PersonalRules::new(strings(&["Postgres", "Atlas"]), vec![]);
@@ -1087,6 +1233,46 @@ mod tests {
             "in src/kubernets.yaml"
         );
         assert_eq!(rules.apply("kubernets rocks").0, "kubernetes rocks");
+    }
+
+    #[test]
+    fn a_near_miss_keeps_its_own_digits() {
+        let rules = PersonalRules::new(strings(&["db2", "Nvidia\u{ff12}"]), vec![]);
+        for heard in ["check db12 now", "install nvidia"] {
+            assert_eq!(rules.apply(heard).0, heard);
+        }
+    }
+
+    #[test]
+    fn a_fix_stays_out_of_flags_and_variables() {
+        let rules = PersonalRules::new(strings(&["ID", "Kubernetes"]), vec![]);
+        for heard in [
+            "pass --id to it",
+            "open src/-id",
+            "run -kubernets now",
+            "check $id",
+            "echo ${id}",
+            "pass --flag=id",
+            "set id=5 first",
+            "export id=\"abc\"",
+            "export id=",
+        ] {
+            assert_eq!(rules.apply(heard).0, heard);
+        }
+    }
+
+    #[test]
+    fn a_near_miss_equally_close_to_two_listed_words_stays_as_heard() {
+        let one = PersonalRules::new(strings(&["Lumenforge"]), vec![]);
+        assert_eq!(one.apply("call Lumenforg now").0, "call Lumenforge now");
+        for listed in [
+            ["Lumenforge", "Lumenforga"],
+            ["Lumenforge", "LumenForge"],
+            ["LumenForge", "Lumenforge"],
+        ] {
+            let two = PersonalRules::new(strings(&listed), vec![]);
+            assert_eq!(two.apply("call Lumenforg now").0, "call Lumenforg now");
+        }
     }
 
     #[test]

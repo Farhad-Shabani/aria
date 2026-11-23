@@ -18,9 +18,11 @@ pub(super) fn capitals<'a>(listed: &[&'a str]) -> Option<&'a str> {
 /// A word the user does not have in their list becomes the listed word it
 /// nearly is, unless it is a real English word. Two words heard for one
 /// listed word merge into it, unless both are real words. Tokens are ASCII
-/// words; a match must share its first letter and about its length before
-/// the ratio is consulted. A listed word heard in another case types its
-/// listed capitals. No fix reaches into a written name such as
+/// words; a match must share its first letter, its digits and about its
+/// length before the ratio is consulted, and a tie between two listed words
+/// fixes nothing. A listed word heard in another case types its
+/// listed capitals, unless it is an everyday short word, as "it" is for
+/// `IT`. No fix reaches into a written name such as
 /// `src/aria.toml`.
 pub(super) fn apply_fuzzy<E>(
     text: &str,
@@ -38,29 +40,11 @@ pub(super) fn apply_fuzzy<E>(
     while let Some((start, length)) = next_token(rest) {
         check(output.len().saturating_add(start))?;
         output.push_str(&rest[..start]);
-        let before = &rest[..start];
-        let token = &rest[start..start + length];
-        let after = &rest[start + length..];
-        let single = if in_a_written_name(before, after) {
-            None
-        } else {
-            best_term(token, terms, known, check)?
-        };
-        let merged = if single.is_none() {
-            merged_term(token, after, terms, known, check)?
-                .filter(|(_, second)| !in_a_written_name(before, &after[*second..]))
-        } else {
-            None
-        };
-        let (heard, typed) = match merged {
-            Some((typed, second)) => (&rest[start..start + length + second], Some(typed)),
-            None => (
-                token,
-                single.map(|(Fix::Capitals(term) | Fix::NearMiss(term))| term.to_owned()),
-            ),
-        };
-        match typed {
-            Some(typed) => {
+        let fix = replacement(rest, start, length, terms, known, check)?;
+        let end = start + fix.as_ref().map_or(length, |(length, _)| *length);
+        let heard = &rest[start..end];
+        match fix {
+            Some((_, Fix::Capitals(typed) | Fix::Spelling(typed))) => {
                 check(output.len().saturating_add(typed.len()))?;
                 output.push_str(&typed);
                 substitutions.push((heard.to_owned(), typed));
@@ -70,16 +54,78 @@ pub(super) fn apply_fuzzy<E>(
                 output.push_str(heard);
             }
         }
-        rest = &rest[start + heard.len()..];
+        rest = &rest[end..];
     }
     check(output.len().saturating_add(rest.len()))?;
     output.push_str(rest);
     Ok((output, substitutions))
 }
 
-/// SCOWL size 35, lowercase words and contractions of three or more
-/// letters, as an fst set. `scripts/english-words.sh` rebuilds it, and
-/// `THIRD-PARTY-NOTICES.md` names the source and its terms.
+fn replacement<E>(
+    text: &str,
+    start: usize,
+    length: usize,
+    terms: &[String],
+    known: &[Vec<char>],
+    check: &impl Fn(usize) -> Result<(), E>,
+) -> Result<Option<(usize, Fix)>, E> {
+    let before = &text[..start];
+    let word = &text[start..start + length];
+    let after = &text[start + length..];
+    if in_a_written_name(before, after) {
+        return Ok(None);
+    }
+    let (stem, ending) = possessive(word);
+    // An entry such as McDonald's owns its ending. Otherwise correct the stem.
+    if !ending.is_empty() {
+        let full = listed(&word.to_lowercase(), terms, known, check)?;
+        if !full.is_empty() {
+            return Ok(capitals(&full)
+                .filter(|&term| term != word)
+                .map(|term| (length, Fix::Capitals(term.to_owned()))));
+        }
+    }
+    match best_term(stem, terms, known, check)? {
+        Some(Match::Listed(capitals)) => {
+            return Ok(capitals
+                .filter(|&term| term != stem)
+                .map(|term| (length, Fix::Capitals(format!("{term}{ending}")))));
+        }
+        Some(Match::NearMiss(term)) => {
+            return Ok(Some((length, Fix::Spelling(format!("{term}{ending}")))));
+        }
+        None => {}
+    }
+    let merged = merged_term(word, after, terms, known, check)?
+        .filter(|(_, second)| !in_a_written_name(before, &after[*second..]));
+    Ok(merged.map(|(typed, second)| (length + second, Fix::Spelling(typed))))
+}
+
+/// What the fuzzy pass types in place of heard words.
+enum Fix {
+    /// The listed spelling of a word heard in another case.
+    Capitals(String),
+    /// The listed word heard as a near miss or as two words.
+    Spelling(String),
+}
+
+/// What the list makes of one heard word.
+enum Match<'a> {
+    /// A listed word, typed in its capitals where it has them to restore.
+    Listed(Option<&'a str>),
+    /// The listed word a heard word nearly is.
+    NearMiss(&'a str),
+}
+
+/// Short words too common to take a listed word's capitals: listing `IT`
+/// leaves "is it" alone. An abbreviation such as "id" or "ms" takes them.
+const EVERYDAY_WORDS: &[&str] = &[
+    "a", "am", "an", "as", "at", "be", "by", "do", "go", "he", "i", "if", "in", "is", "it", "me",
+    "my", "no", "of", "oh", "ok", "on", "or", "so", "to", "up", "us", "we",
+];
+
+/// SCOWL size 35, lowercase words and contractions, as an fst set.
+/// `scripts/english-words.sh` rebuilds it from the source in `THIRD-PARTY-NOTICES.md`.
 const ENGLISH_WORDS: &[u8] = include_bytes!("english.fst");
 
 /// "river's" and "red-shift" are real because "river", "red" and "shift"
@@ -97,39 +143,39 @@ fn english_words() -> &'static fst::Set<&'static [u8]> {
     WORDS.get_or_init(|| fst::Set::new(ENGLISH_WORDS).expect("the embedded words are an fst set"))
 }
 
-/// The next `[A-Za-z0-9][A-Za-z0-9'-]*` as byte offset and length.
+/// The next ASCII word, including its internal apostrophes and hyphens.
 fn next_token(text: &str) -> Option<(usize, usize)> {
     let start = text.find(|c: char| c.is_ascii_alphanumeric())?;
     let length = text[start..]
-        .find(|c: char| !is_token_char(c))
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '\'' || c == '-'))
         .unwrap_or(text.len() - start);
-    Some((start, length))
+    let word = text[start..start + length].trim_end_matches(['\'', '-']);
+    Some((start, word.len()))
 }
 
-pub(super) fn is_token_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '\'' || c == '-'
-}
-
-pub(super) fn best_term<'a, E>(
+fn best_term<'a, E>(
     token: &str,
     terms: &'a [String],
     known: &[Vec<char>],
     check: &impl Fn(usize) -> Result<(), E>,
-) -> Result<Option<Fix<'a>>, E> {
+) -> Result<Option<Match<'a>>, E> {
     check(0)?;
     let folded = token.to_lowercase();
-    if token.chars().count() < MIN_TOKEN_LEN {
-        return Ok(None);
-    }
     let listed = listed(&folded, terms, known, check)?;
+    let chars: Vec<char> = folded.chars().collect();
     // Listing `Linear` asks for its capitals, so a listed word takes them
     // even where it is also a real word, as in "a linear model".
     if !listed.is_empty() {
-        let capitals = capitals(&listed).filter(|term| *term != token);
-        return Ok(capitals.map(Fix::Capitals));
+        let capitals = (!EVERYDAY_WORDS.contains(&folded.as_str()))
+            .then(|| capitals(&listed))
+            .flatten();
+        return Ok(Some(Match::Listed(capitals)));
     }
-    let chars: Vec<char> = folded.chars().collect();
+    if chars.len() < MIN_TOKEN_LEN || is_english(&folded) {
+        return Ok(None);
+    }
     let mut best: Option<(&str, f64)> = None;
+    let mut tied = false;
     for (term, term_folded) in terms.iter().zip(known) {
         check(0)?;
         // "speaker" against "wespeaker" scores 0.875: the first letter is
@@ -137,22 +183,41 @@ pub(super) fn best_term<'a, E>(
         if term_folded.first() != chars.first() {
             continue;
         }
-        let longest = chars.len().max(term_folded.len());
-        let allowed = ((0.2 * longest as f64) as usize).max(1);
-        if chars.len().abs_diff(term_folded.len()) > allowed {
+        // A recognizer writes the digits it heard, so `db12` names another
+        // thing than `db2` rather than misspelling it.
+        if !digits(&chars).eq(digits(term_folded)) {
+            continue;
+        }
+        let shorter = chars.len().min(term_folded.len());
+        if chars.len().max(term_folded.len()) > max_match_len(shorter) {
             continue;
         }
         let ratio = ratio(&chars, term_folded, check)?;
-        if ratio >= FUZZY_RATIO && best.is_none_or(|(_, best_ratio)| ratio > best_ratio) {
-            best = Some((term, ratio));
+        if ratio < FUZZY_RATIO {
+            continue;
+        }
+        match best {
+            Some((best_term, best_ratio)) if ratio == best_ratio => {
+                tied |= best_term != term;
+            }
+            Some((_, best_ratio)) if ratio < best_ratio => {}
+            _ => {
+                best = Some((term, ratio));
+                tied = false;
+            }
         }
     }
-    // A real word the recognizer wrote is what was said: "flick" is not a
-    // near miss of "Flickr".
-    if best.is_some() && is_english(&folded) {
-        return Ok(None);
-    }
-    Ok(best.map(|(term, _)| Fix::NearMiss(term)))
+    // Two listed spellings equally near, even of one word, leave no one
+    // spelling it was heard for.
+    Ok(best
+        .filter(|_| !tied)
+        .map(|(term, _)| Match::NearMiss(term)))
+}
+
+/// The digits of a word in order, in any script: a listed `２` is a digit
+/// the heard word must have too.
+fn digits(word: &[char]) -> impl Iterator<Item = char> + '_ {
+    word.iter().copied().filter(|c| c.is_numeric())
 }
 
 /// The listed word that `first` and the word one space into `after` were
@@ -173,23 +238,16 @@ fn merged_term<E>(
     }
     // A word the list already knows keeps its own fix: with `kuber` listed,
     // "kuber netes" keeps its "kuber".
-    if !listed(first, terms, known, check)?.is_empty()
-        || !listed(second, terms, known, check)?.is_empty()
-        || best_term(second, terms, known, check)?.is_some()
-    {
+    if best_term(second, terms, known, check)?.is_some() {
         return Ok(None);
     }
     let merged = format!("{first}{second}").to_lowercase();
-    let listed = listed(&merged, terms, known, check)?;
-    let term = if listed.is_empty() {
-        match best_term(&merged, terms, known, check)? {
-            Some(Fix::NearMiss(term)) => term,
-            _ => return Ok(None),
-        }
-    } else {
-        capitals(&listed).unwrap_or(&merged)
+    let typed = match best_term(&merged, terms, known, check)? {
+        Some(Match::Listed(capitals)) => capitals.unwrap_or(&merged),
+        Some(Match::NearMiss(term)) => term,
+        None => return Ok(None),
     };
-    Ok(Some((format!("{term}{ending}"), 1 + length)))
+    Ok(Some((format!("{typed}{ending}"), 1 + length)))
 }
 
 /// Whether two heard words may be one listed word. A word under three
@@ -197,34 +255,122 @@ fn merged_term<E>(
 /// and two real words are what was said.
 fn may_merge(first: &str, second: &str) -> bool {
     let real = |word: &str| is_english(&word.to_lowercase());
-    first.len() >= MIN_TOKEN_LEN && second.len() >= MIN_TOKEN_LEN && !(real(first) && real(second))
+    first.len() >= MIN_TOKEN_LEN
+        && second.len() >= MIN_TOKEN_LEN
+        && possessive(first).1.is_empty()
+        && !(real(first) && real(second))
 }
 
-/// Whether more speech may merge `word` and the next word into a listed
-/// word. Only a word that isn't real waits, so "ads" ending a segment types
-/// at once, though "ads viser" merges within one.
-pub(super) fn begins_a_merge(word: &str, terms: &[String], known: &[Vec<char>]) -> bool {
+/// What follows the text a hold reads: the end of the segment, or the
+/// words another step already deferred.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum AfterCut {
+    SegmentEnd,
+    DeferredWords,
+}
+
+// Read the same replacements left to right as the typing pass. Overlapping
+// split-word candidates belong to the first one that matches.
+pub(super) fn waiting_from(
+    text: &str,
+    after: AfterCut,
+    terms: &[String],
+    known: &[Vec<char>],
+) -> Option<usize> {
     let never = &|_| Ok::<_, std::convert::Infallible>(());
-    let folded = word.to_lowercase();
-    let longer = |listed: &Vec<char>| {
-        listed.len() > folded.chars().count() && listed.first() == folded.chars().next().as_ref()
-    };
-    let fixed = || {
-        let listed = listed(word, terms, known, never).unwrap_or_else(|never| match never {});
-        let fix = best_term(word, terms, known, never).unwrap_or_else(|never| match never {});
-        !listed.is_empty() || fix.is_some()
-    };
-    word.len() >= MIN_TOKEN_LEN && !is_english(&folded) && known.iter().any(longer) && !fixed()
+    // An earlier word can change the last match only through consecutive
+    // possible merges. Ordinary prose usually stops at the previous space.
+    let mut words = text.rsplit(' ');
+    let mut right = words.next()?;
+    let mut from = text.len() - right.len();
+    for left in words {
+        if !may_merge(left, right) {
+            break;
+        }
+        from -= left.len() + 1;
+        right = left;
+    }
+    let mut rest = &text[from..];
+    while let Some((start, length)) = next_token(rest) {
+        let word = &rest[start..start + length];
+        let fix = replacement(rest, start, length, terms, known, never)
+            .unwrap_or_else(|never| match never {});
+        let consumed = fix.as_ref().map_or(length, |(length, _)| *length);
+        if start + consumed == rest.len() {
+            let waits = match fix {
+                // Before an already held join the near miss still types. At
+                // segment end the next word could claim it as part of a join.
+                Some((_, Fix::Capitals(_))) => true,
+                Some((_, Fix::Spelling(_))) => after == AfterCut::SegmentEnd,
+                None => !in_a_written_name(&rest[..start], "") && begins_a_merge(word, known),
+            };
+            return waits.then_some(text.len() - rest.len() + start);
+        }
+        rest = &rest[start + consumed..];
+    }
+    None
 }
 
-/// The spellings `terms` lists for `word`, in any case.
+fn begins_a_merge(word: &str, known: &[Vec<char>]) -> bool {
+    let folded = word.to_lowercase();
+    if folded.len() < MIN_TOKEN_LEN || !possessive(&folded).1.is_empty() || is_english(&folded) {
+        return false;
+    }
+    let mut letters = [0; 128];
+    for b in folded.bytes() {
+        letters[usize::from(b)] += 1;
+    }
+    let heard: Vec<char> = folded.chars().collect();
+    !known.contains(&heard)
+        && known.iter().any(|term| {
+            // More words only add digits after the fragment's own, and
+            // only ASCII ones.
+            let mut listed = digits(term);
+            term.first() == heard.first()
+                && digits(&heard).all(|digit| listed.next() == Some(digit))
+                && listed.all(|digit| digit.is_ascii_digit())
+                && can_complete(&letters, folded.len(), term)
+        })
+}
+
+// At each split in the term, count the letters the fragment could match in
+// the prefix, then give the unheard word every possible match in the suffix.
+// Ignoring letter order here can only overestimate the score.
+fn can_complete(letters: &[usize; 128], heard: usize, term: &[char]) -> bool {
+    let longest_second = max_match_len(term.len()).saturating_sub(heard);
+    if longest_second < MIN_TOKEN_LEN {
+        return false;
+    }
+    let mut unused = *letters;
+    let mut matched = 0;
+    for (i, &letter) in term.iter().enumerate() {
+        if letter.is_ascii() && unused[letter as usize] > 0 {
+            unused[letter as usize] -= 1;
+            matched += 1;
+        }
+        let suffix = term.len() - i - 1;
+        let second = suffix.clamp(MIN_TOKEN_LEN, longest_second);
+        let most = matched + second.min(suffix);
+        let score = 2.0 * most as f64 / (heard + second + term.len()) as f64;
+        if score >= FUZZY_RATIO {
+            return true;
+        }
+    }
+    false
+}
+
+// The lengths can differ by one character or a fifth of the longer word.
+fn max_match_len(shorter: usize) -> usize {
+    shorter + (shorter / 4).max(1)
+}
+
+/// The spellings `terms` lists for the lowercase word.
 fn listed<'a, E>(
-    word: &str,
+    folded: &str,
     terms: &'a [String],
     known: &[Vec<char>],
     check: &impl Fn(usize) -> Result<(), E>,
 ) -> Result<Vec<&'a str>, E> {
-    let folded = word.to_lowercase();
     let mut listed = Vec::new();
     for (term, listed_word) in terms.iter().zip(known) {
         check(0)?;
@@ -240,26 +386,31 @@ fn listed<'a, E>(
 fn possessive(word: &str) -> (&str, &str) {
     let stem = word
         .strip_suffix("'s")
+        .or_else(|| word.strip_suffix("'S"))
         .or_else(|| word.strip_suffix('\''))
         .unwrap_or(word);
     (stem, &word[stem.len()..])
 }
 
-/// What the fuzzy pass types in place of a heard word.
-pub(super) enum Fix<'a> {
-    /// The listed spelling of a word heard in another case.
-    Capitals(&'a str),
-    /// The listed word a heard word nearly is.
-    NearMiss(&'a str),
-}
-
 /// Whether a word sits inside a written name, as "aria" does in
-/// `src/aria.toml`, `aria_kit` and `@aria`. `before` and `after` are the
+/// `src/aria.toml`, `aria_kit`, `@aria`, `--aria`, `$aria` and `x=aria`. `before` and `after` are the
 /// text on either side of it.
 fn in_a_written_name(before: &str, after: &str) -> bool {
     const JOINS: [char; 6] = ['.', '/', '\\', '_', '@', ':'];
+    let continues = |c: char| !c.is_ascii() && super::is_word(c);
+    // An equals sign assigns on either side, even to a quote or to
+    // nothing: `id="x"` and `id=`. No sentence ends a word with one.
+    if before.ends_with('=') || after.starts_with('=') {
+        return true;
+    }
     let mut after = after.chars();
+    // A word holds its own hyphens, so one before it opens a flag: `--id`.
+    // A dollar sign opens a variable: `$id` or `${id}`.
     before.ends_with(JOINS)
+        || before.ends_with('-')
+        || before.trim_end_matches('{').ends_with('$')
+        || before.ends_with(continues)
+        || after.clone().next().is_some_and(continues)
         || (after.next().is_some_and(|next| JOINS.contains(&next))
             && after.next().is_some_and(char::is_alphanumeric))
 }
@@ -367,10 +518,10 @@ mod tests {
     #[test]
     fn the_english_words_are_folded_for_lookup() {
         use fst::Streamer;
+        assert!(is_english("on-call"));
         let mut words = english_words().stream();
         while let Some(word) = words.next() {
-            let shaped = word.len() >= MIN_TOKEN_LEN
-                && word[0].is_ascii_lowercase()
+            let shaped = word.first().is_some_and(u8::is_ascii_lowercase)
                 && word.iter().all(|b| b.is_ascii_lowercase() || *b == b'\'');
             assert!(shaped, "{:?}", String::from_utf8_lossy(word));
         }

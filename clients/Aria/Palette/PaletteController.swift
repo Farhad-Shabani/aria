@@ -740,10 +740,15 @@ final class PaletteController: ObservableObject {
     }
 
     /// On every open, since an editor can change the file between opens.
-    /// A failure leaves the words unread, and the transport logs it.
     private func readDictionary() {
-        let edits = model.dictionaryEdits
-        Task { model.read(dictionary: try? await VocabularyClient.words(), since: edits) }
+        let request = model.beginDictionaryRead()
+        Task {
+            var readAgain: Bool
+            repeat {
+                let words = try? await VocabularyClient.words()
+                readAgain = model.read(dictionary: words, request: request)
+            } while readAgain
+        }
     }
 
     private func editDictionary(_ change: @escaping @MainActor () async throws -> DictionaryEdit) {

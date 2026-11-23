@@ -31,6 +31,7 @@ fst             = "0.4"
 serde           = { workspace = true }
 thiserror       = { workspace = true }
 tracing         = { workspace = true }
+unicode-ident   = "1"
 
 # Audio capture, the on-disk recording, and the voice activity detector reach a
 # microphone, a filesystem, and ONNX Runtime, none of which a browser offers.

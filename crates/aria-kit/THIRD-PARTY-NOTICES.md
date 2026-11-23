@@ -1,8 +1,8 @@
 # Third-party notices
 
 `src/transcription/layer/vocabulary/english.fst` is a modified extract of
-SCOWL 2020.12.07 by Kevin Atkinson. It keeps the lowercase words of three or
-more ASCII letters from the `english-words`, `american-words` and
+SCOWL 2020.12.07 by Kevin Atkinson. It keeps the lowercase ASCII words
+from the `english-words`, `american-words` and
 `british-words` lists at sizes 10 through 35, adds the lowercased
 `english-contractions` at sizes 10 and 35, and stores them as an fst set.
 `scripts/english-words.sh` rebuilds it.
