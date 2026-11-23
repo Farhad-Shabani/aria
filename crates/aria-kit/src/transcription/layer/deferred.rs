@@ -8,7 +8,8 @@ const MAX_HELD_WORDS: usize = 8;
 
 /// Holds a segment's last words while the next segment may still change
 /// them: a spoken symbol it may join, a number it may go on, a name it may
-/// complete, or a fragment it may merge into a listed word.
+/// complete, a fragment it may merge into a listed word, or a quoted
+/// assignment its closing quote may complete.
 ///
 /// Streaming can split "user underscore id", "twenty one" or "aria hyphen
 /// kit" across segments. Correct what [`hold`](Self::hold) releases with
@@ -436,6 +437,33 @@ mod tests {
         let vocabulary = listing(&["ID", "Kubernetes"]);
         assert_eq!(whole(heard, &vocabulary), expected);
         assert_any_split_types_the_whole(heard, &vocabulary);
+    }
+
+    #[test]
+    fn an_unclosed_assignment_preserves_just_its_first_word() {
+        let vocabulary = listing(&["ID", "Kubernetes"]);
+        let heard = "set x='id then ask for id and kubernets";
+        let expected = "set x='id then ask for ID and Kubernetes";
+        assert_eq!(whole(heard, &vocabulary), expected);
+        assert_eq!(vocabulary.correct(heard).as_deref(), Some(expected));
+        assert_any_split_types_the_whole(heard, &vocabulary);
+        let next = vocabulary
+            .correct_spoken("for id and kubernets", "set x='id then ask")
+            .unwrap();
+        assert_eq!(next.text, "for ID and Kubernetes");
+    }
+
+    #[test]
+    fn an_unfinished_quote_obeys_the_stream_hold_limit() {
+        let vocabulary = listing(&["ID"]);
+        let mut words = DeferredWords::default();
+        assert_eq!(words.hold("set x='server", None, &vocabulary).text, "set");
+        let released = words.hold(
+            "one two three four five six seven eight nine",
+            None,
+            &vocabulary,
+        );
+        assert!(released.text.starts_with("x='server one two"));
     }
 
     #[test]

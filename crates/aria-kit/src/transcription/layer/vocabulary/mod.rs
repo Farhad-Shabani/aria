@@ -187,23 +187,24 @@ impl Vocabulary {
         Self::compile_within(terms, personal, usize::MAX, cancel)
     }
 
-    /// Compiles a matcher whose estimated bytes never pass `limit` while it
-    /// is built, nor the most any matcher may take.
+    /// The matcher and temporary respelling index share `build_budget` bytes.
+    /// The finished matcher also has its own snapshot size limit.
     pub fn compile_within(
         terms: &[Term],
         personal: PersonalRules,
-        limit: usize,
+        build_budget: usize,
         cancel: &CancelToken,
     ) -> Result<Self, MatchError> {
         if cancel.is_cancelled() {
             return Err(MatchError::Cancelled);
         }
+        let snapshot_limit = build_budget.min(MAX_SNAPSHOT_BYTES);
         let base = size_of::<Self>() + personal.estimated_bytes();
-        if terms.len() > MAX_TERMS || base > limit.min(MAX_SNAPSHOT_BYTES) {
+        if terms.len() > MAX_TERMS || base > snapshot_limit {
             return Err(MatchError::TooLarge);
         }
         let respellings = if terms.iter().any(|term| has_symbol(&term.canonical)) {
-            match personal.respellings(limit - base, cancel) {
+            match personal.respellings(build_budget - base, cancel) {
                 Ok(index) => index,
                 Err(MatchError::TooLarge) => Respellings::default(),
                 Err(error) => return Err(error),
@@ -211,8 +212,8 @@ impl Vocabulary {
         } else {
             Respellings::default()
         };
-        let snapshot_limit = (limit - respellings.estimated_bytes()).min(MAX_SNAPSHOT_BYTES);
-        let built = match Self::build(terms, &personal, &respellings, snapshot_limit, cancel) {
+        let limit_with_index = snapshot_limit.min(build_budget - respellings.estimated_bytes());
+        let built = match Self::build(terms, &personal, &respellings, limit_with_index, cancel) {
             // Free the optional index before giving the canonical names the full budget.
             Err(MatchError::TooLarge) if !respellings.is_empty() => {
                 drop(respellings);
@@ -220,7 +221,7 @@ impl Vocabulary {
                     terms,
                     &personal,
                     &Respellings::default(),
-                    limit.min(MAX_SNAPSHOT_BYTES),
+                    snapshot_limit,
                     cancel,
                 )
             }
@@ -356,7 +357,7 @@ impl Vocabulary {
     ) -> Result<Option<String>, E> {
         if self.index.is_empty() {
             check(text.len())?;
-            if !text.contains('=') {
+            if QuotedValues::opener(text).is_none() {
                 let (corrected, _) = self.personal.apply_checked(text, check)?;
                 return Ok((corrected != text).then_some(corrected));
             }
@@ -384,7 +385,7 @@ impl Vocabulary {
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Claimed<'a>, E> {
         check(text.len())?;
-        let mut claimed = Claimed::new(self.words(text, None, check)?, text.len());
+        let mut claimed = Claimed::new(self.words(text, check)?, text.len());
         claim(&mut claimed);
         Ok(claimed)
     }
@@ -395,10 +396,9 @@ impl Vocabulary {
         &'a self,
         text: &'a str,
         typed_len: usize,
-        open_quote: Option<char>,
         claim: impl FnOnce(&mut Claimed<'a>),
     ) -> Option<String> {
-        let claimed = self.claimed_spoken(text, typed_len, open_quote, claim);
+        let claimed = self.claimed_spoken(text, typed_len, claim);
         self.typed(text, claimed.words(), &no_check)
             .unwrap_or_else(|never| match never {})
     }
@@ -410,7 +410,6 @@ impl Vocabulary {
         &'a self,
         text: &'a str,
         typed_len: usize,
-        open_quote: Option<char>,
         claim: impl FnOnce(&mut Claimed<'a>),
     ) -> Claimed<'a> {
         let mut words = Vec::new();
@@ -421,7 +420,7 @@ impl Vocabulary {
             ));
         }
         let heard = self
-            .words(&text[typed_len..], open_quote, &no_check)
+            .words(&text[typed_len..], &no_check)
             .unwrap_or_else(|never| match never {});
         words.extend(heard.into_iter().map(|word| Word {
             span: word.span.start + typed_len..word.span.end + typed_len,
@@ -504,14 +503,13 @@ impl Vocabulary {
     fn words<'a, E>(
         &'a self,
         text: &'a str,
-        open_quote: Option<char>,
         check: &impl Fn(usize) -> Result<(), E>,
     ) -> Result<Vec<Word<'a>>, E> {
         let plain = Word::plain;
         let mut words = Vec::new();
         let mut word_start = None;
         let mut position = 0;
-        let mut values = QuotedValues::new(text, open_quote).peekable();
+        let mut values = QuotedValues::new(text).map(|value| value.span).peekable();
         while position < text.len() {
             check(0)?;
             if let Some(value) = values.next_if(|value| value.start == position) {
@@ -598,56 +596,69 @@ impl Vocabulary {
     }
 }
 
+struct QuotedValue {
+    span: std::ops::Range<usize>,
+    closed: bool,
+}
+
 struct QuotedValues<'a> {
     text: &'a str,
     position: usize,
-    open: Option<char>,
 }
 
 impl<'a> QuotedValues<'a> {
-    fn new(text: &'a str, open: Option<char>) -> Self {
-        Self {
-            text,
-            position: 0,
-            open,
-        }
+    fn new(text: &'a str) -> Self {
+        Self { text, position: 0 }
+    }
+
+    fn opener(text: &str) -> Option<(usize, char)> {
+        text.match_indices('=').find_map(|(equal, _)| {
+            let start = equal + 1;
+            let quote = text[start..].chars().next()?;
+            matches!(quote, '\'' | '"').then_some((start, quote))
+        })
     }
 }
 
 impl Iterator for QuotedValues<'_> {
-    type Item = std::ops::Range<usize>;
+    type Item = QuotedValue;
 
     fn next(&mut self) -> Option<Self::Item> {
         let rest = &self.text[self.position..];
-        if rest.is_empty() {
-            return None;
-        }
-        let (start, content, quote) = match self.open {
-            Some(quote) => (0, 0, quote),
-            None => rest.match_indices('=').find_map(|(equal, _)| {
-                let start = equal + 1;
-                let quote = rest[start..].chars().next()?;
-                matches!(quote, '\'' | '"').then_some((start, start + 1, quote))
-            })?,
-        };
-        // Inside double quotes a backslash can escape the closing quote.
+        let (start, quote) = Self::opener(rest)?;
+        let content = &rest[start + 1..];
         let mut escaped = false;
-        let close = rest[content..].char_indices().find(|&(_, c)| {
+        let close = content.char_indices().find(|&(_, c)| {
             let closes = !escaped && c == quote;
             escaped = !escaped && c == '\\' && quote == '"';
             closes
         });
-        self.open = close.is_none().then_some(quote);
+        // An unmatched opening quote protects its first token. The stream
+        // can still wait for a closing quote before it publishes that token.
+        let length = match close {
+            Some((end, _)) => end + 1,
+            None => content.find(char::is_whitespace).unwrap_or(content.len()),
+        };
         let start = self.position + start;
-        self.position += close.map_or(rest.len(), |(i, _)| content + i + 1);
-        Some(start..self.position)
+        self.position = start + 1 + length;
+        Some(QuotedValue {
+            span: start..self.position,
+            closed: close.is_some(),
+        })
     }
 }
 
-pub(super) fn open_assignment(before: &str) -> Option<char> {
-    let mut values = QuotedValues::new(before, None);
-    values.by_ref().for_each(drop);
-    values.open
+pub(super) fn defer_unclosed_assignment(text: &str, max_words: usize, claimed: &mut Claimed<'_>) {
+    for value in QuotedValues::new(text).filter(|value| !value.closed) {
+        // Keep the assignment name with its value across the segment join.
+        let start = text[..value.span.start]
+            .trim_end_matches(|c: char| !c.is_whitespace())
+            .len();
+        if text[start..].split_whitespace().nth(max_words).is_none() {
+            claimed.defer_at(start);
+            break;
+        }
+    }
 }
 
 fn validate_name(name: &str) -> Result<(), MatchError> {

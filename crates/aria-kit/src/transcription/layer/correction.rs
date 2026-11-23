@@ -122,13 +122,12 @@ impl Vocabulary {
     /// `before` is text already typed: a symbol `text` opens with joins its
     /// last word, unless whitespace ends it.
     pub fn correct_spoken(&self, text: &str, before: &str) -> Option<Corrected> {
-        let open_quote = super::vocabulary::open_assignment(before);
         let typed = before
             .split_whitespace()
             .next_back()
             .filter(|_| !before.ends_with(char::is_whitespace));
         let Some(typed) = typed else {
-            let text = self.spoken(text, 0, open_quote)?;
+            let text = self.spoken(text, 0)?;
             return Some(Corrected {
                 text,
                 joins_before: false,
@@ -138,7 +137,7 @@ impl Vocabulary {
         // it as it would any word. Whether a space still follows it says
         // whether one did.
         let read = format!("{typed} {text}");
-        let corrected = self.spoken(&read, typed.len(), open_quote)?;
+        let corrected = self.spoken(&read, typed.len())?;
         let after = &corrected[typed.len()..];
         let (after, joins_before) = match after.strip_prefix(' ') {
             Some(after) => (after, false),
@@ -152,8 +151,8 @@ impl Vocabulary {
 
     /// `text` corrected by every step, after its first `typed_len` bytes,
     /// a word already typed.
-    fn spoken(&self, text: &str, typed_len: usize, open_quote: Option<char>) -> Option<String> {
-        self.correct_spoken_with(text, typed_len, open_quote, |claimed| {
+    fn spoken(&self, text: &str, typed_len: usize) -> Option<String> {
+        self.correct_spoken_with(text, typed_len, |claimed| {
             claim_each(&SPOKEN, text, self, claimed);
         })
     }
@@ -169,10 +168,11 @@ impl Vocabulary {
     /// types rather than holds.
     pub(super) fn spoken_deferred_from(&self, text: &str, max_words: usize) -> usize {
         let unjoined = SPOKEN.iter().take_while(|step| !step.joins()).count();
-        let mut claimed = self.claimed_spoken(text, 0, None, |claimed| {
+        let mut claimed = self.claimed_spoken(text, 0, |claimed| {
             claim_each(&SPOKEN[..unjoined], text, self, claimed);
         });
         // Outside the loop: where a name starts doesn't move with the cut.
+        super::vocabulary::defer_unclosed_assignment(text, max_words, &mut claimed);
         self.defer_waiting_names(text, max_words, &mut claimed);
         loop {
             let from = claimed.deferred_from();

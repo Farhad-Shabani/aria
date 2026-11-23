@@ -135,29 +135,43 @@ impl PersonalRules {
         cancel: &CancelToken,
     ) -> Result<Respellings, MatchError> {
         let pairs = || self.forms.values().flatten();
-        let mut lengths = 0;
+        let mut char_count = 0;
         let mut count = 0;
-        let mut lowercase_bytes = 0;
+        let mut lowercase_peak = 0;
         for (spoken, target) in pairs() {
             if cancel.is_cancelled() {
                 return Err(MatchError::Cancelled);
             }
             count += 1;
-            lengths += spoken.len() + target.chars().flat_map(char::to_lowercase).count();
-            if !target.is_ascii() {
-                // A Unicode lowercase mapping has at most three scalars. Allow
-                // for the string's old and new buffers during a reallocation.
-                lowercase_bytes = lowercase_bytes.max(target.len().saturating_mul(36));
+            char_count += spoken.len();
+            if target.is_ascii() {
+                char_count += target.len();
+                continue;
             }
+            // Contextual final sigma has the same scalar count and UTF-8 width as σ.
+            let mut utf8_bytes = 0;
+            for c in target.chars().flat_map(char::to_lowercase) {
+                char_count += 1;
+                utf8_bytes += c.len_utf8();
+            }
+            // str::to_lowercase starts with the input's byte capacity. If it grows,
+            // the old buffer is smaller than the output and its replacement can
+            // double that capacity or take the byte vector's eight-byte minimum.
+            let peak = if utf8_bytes > target.len() {
+                utf8_bytes.saturating_add(utf8_bytes.saturating_mul(2).max(8))
+            } else {
+                target.len()
+            };
+            lowercase_peak = lowercase_peak.max(peak);
         }
-        let bytes = count * size_of::<Spelling>() + lengths * size_of::<char>();
-        if bytes.saturating_add(lowercase_bytes) > room {
+        let index_bytes = count * size_of::<Spelling>() + char_count * size_of::<char>();
+        if index_bytes.saturating_add(lowercase_peak) > room {
             return Err(MatchError::TooLarge);
         }
         // Both buffers are sized before allocation. Sorting the spans in place
         // avoids a second lookup table living beside the first during a build.
         let mut index = Respellings {
-            chars: Vec::with_capacity(lengths),
+            chars: Vec::with_capacity(char_count),
             entries: Vec::with_capacity(count),
         };
         for (spoken, target) in pairs() {
@@ -918,6 +932,13 @@ fn boundary(chars: &[char], position: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_small_workspace_preserves_expanded_and_contextual_lowercase() {
+        let rules = PersonalRules::new(vec![], vec![("word".into(), "İΟΣ".into())]);
+        let index = rules.respellings(128, &CancelToken::never()).unwrap();
+        assert_eq!(index.of("i\u{307}ος dash kit"), ["word dash kit"]);
+    }
 
     #[test]
     fn a_form_gets_at_most_the_bound_of_respellings() {
