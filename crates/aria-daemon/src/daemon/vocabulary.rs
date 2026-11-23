@@ -772,6 +772,13 @@ fn send_error<T>(error: mpsc::TrySendError<T>) -> Error {
     }
 }
 
+/// Whether `reservation` more fits the budget beside `used`.
+fn fits(used: usize, reservation: usize) -> bool {
+    LIVE_BYTES
+        .checked_sub(reservation)
+        .is_some_and(|room| used <= room)
+}
+
 fn overlaps(a: &Path, b: &Path) -> bool {
     a.starts_with(b) || b.starts_with(a)
 }
@@ -1024,10 +1031,13 @@ impl<C: Collector> Worker<C> {
     }
 
     fn reserve(&self, reservation: usize, protected: Option<&Directory>) -> Result<(), Error> {
+        if !fits(0, reservation) {
+            return Err(Error::TooLarge);
+        }
         loop {
             let mut registry = self.runtime.registry();
-            let bytes = self.personal.estimated_bytes() + registry.live_bytes();
-            if bytes <= LIVE_BYTES - reservation {
+            let used = self.personal.estimated_bytes() + registry.live_bytes();
+            if fits(used, reservation) {
                 return Ok(());
             }
             let oldest = registry
@@ -1127,15 +1137,19 @@ impl<C: Collector> Worker<C> {
     /// queue slot, so a refresh asked for meanwhile replaces it.
     fn recompile_stale(&self) {
         let stale = {
-            let registry = self.runtime.registry();
+            let mut registry = self.runtime.registry();
             if !registry.removals.is_empty() {
                 return;
             }
+            let used = self.personal.estimated_bytes() + registry.live_bytes();
+            // It evicts no other folder's list. One that can't fit stays stale
+            // until its own refresh.
             registry.entries.iter().find_map(|(directory, entry)| {
                 let live = entry.live.as_ref()?;
                 (entry.activity == Activity::Idle
                     && live.personal_revision != registry.personal_revision
-                    && !registry.pending.contains_key(&Some(directory.clone())))
+                    && !registry.pending.contains_key(&Some(directory.clone()))
+                    && fits(used, live.prepared.matcher.estimated_bytes()))
                 .then(|| (directory.clone(), live.prepared.clone()))
             })
         };
@@ -1148,16 +1162,15 @@ impl<C: Collector> Worker<C> {
         }
         let deadline = Deadline::after(REFRESH_BUDGET);
         let token = self.control(cancel, deadline);
-        let mut result = self
-            .reserve(prepared.matcher.estimated_bytes(), Some(&directory))
-            .and_then(|()| self.compile(&prepared.terms, &token))
-            .and_then(|matcher| {
+        let compiled = self.compile(&prepared.terms, &token);
+        let result = if deadline.expired() {
+            Err(Error::TooLarge)
+        } else {
+            compiled.and_then(|matcher| {
                 self.runtime
                     .republish(&directory, &prepared.matcher, matcher, &token)
-            });
-        if deadline.expired() {
-            result = Err(Error::TooLarge);
-        }
+            })
+        };
         // An interrupted one is still stale and runs again once idle.
         let Err(error) = result else { return };
         if matches!(error, Error::Busy) {
@@ -2077,6 +2090,62 @@ mod tests {
             registry.live_bytes(),
             before + personal + matcher.estimated_bytes()
         );
+    }
+
+    #[test]
+    fn a_background_recompile_evicts_no_other_list() {
+        let root = tempfile::tempdir().unwrap();
+        let folders = ["Aria-Kit", "Other-Kit"].map(|name| project(root.path(), name));
+        let (runtime, mut worker) = local_runtime(root.path());
+        for folder in &folders {
+            refresh_once(&runtime, &mut worker, folder).unwrap();
+        }
+        std::fs::write(root.path().join("dictionary.txt"), "db2\n").unwrap();
+        worker.refresh_personal().unwrap();
+        // Leave the budget one byte short of any recompile.
+        let filler: Arc<[Term]> = Arc::from([]);
+        {
+            let mut registry = runtime.registry();
+            let used = worker.personal.estimated_bytes() + registry.live_bytes();
+            let smallest = registry
+                .entries
+                .values()
+                .map(|entry| {
+                    entry
+                        .live
+                        .as_ref()
+                        .unwrap()
+                        .prepared
+                        .matcher
+                        .estimated_bytes()
+                })
+                .min()
+                .unwrap();
+            registry
+                .live_terms
+                .push((Arc::downgrade(&filler), LIVE_BYTES - used - smallest + 1));
+        }
+
+        worker.recompile_stale();
+        worker.recompile_stale();
+
+        for folder in &folders {
+            let status = runtime.catalog_status(Some(folder));
+            assert!(
+                matches!(&status, Status::Folder { list: Some(list), activity: Activity::Idle } if list.is_stale),
+                "{status:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reservation_over_the_budget_is_too_large() {
+        let root = tempfile::tempdir().unwrap();
+        let (_runtime, worker) = local_runtime(root.path());
+        assert!(matches!(
+            worker.reserve(LIVE_BYTES + 1, None),
+            Err(Error::TooLarge)
+        ));
     }
 
     #[tokio::test]
