@@ -1308,6 +1308,11 @@ impl<C: Collector> Worker<C> {
         if token.is_cancelled() {
             return Err(Error::Busy);
         }
+        // The matcher keeps its own copy of the rules, so a copy that
+        // cannot fit is never made.
+        if self.personal.estimated_bytes() > limit {
+            return Err(Error::TooLarge);
+        }
         let matcher = Arc::new(Vocabulary::compile_within(
             terms,
             self.personal.clone(),
