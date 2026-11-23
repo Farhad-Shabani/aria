@@ -442,7 +442,11 @@ impl AgreementState {
             segment.with_sentence_ended_before(ended_before)
         });
         if let Some(segment) = &mut segment {
-            segment.source_window = Some(self.buffer_start..self.decoded_end);
+            // A word kept from a lookback decode may open before the buffer.
+            let from = segment
+                .span()
+                .map_or(self.buffer_start, |span| span.start.min(self.buffer_start));
+            segment.source_window = Some(from..self.decoded_end);
             self.transcript.push(segment.as_str().to_owned());
         }
         segment
@@ -1445,6 +1449,12 @@ mod tests {
             let Some(step) = step else { break };
             run.steps += 1;
             if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
+                if let Some((span, window)) = segment.span().zip(segment.source_window()) {
+                    assert!(
+                        window.start <= span.start && span.end <= window.end,
+                        "segment {span:?} lies outside its source window {window:?}"
+                    );
+                }
                 run.ended_before.push(segment.sentence_ended_before());
                 run.segments.push(segment.into_text());
             }
