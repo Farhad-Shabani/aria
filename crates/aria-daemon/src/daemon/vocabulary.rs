@@ -201,6 +201,20 @@ impl Registry {
         self.live_terms.push((Arc::downgrade(terms), bytes));
     }
 
+    /// The folder's entry while `from` is still its list and no refresh or
+    /// removal has taken the folder over.
+    fn untouched(&mut self, directory: &Directory, from: &Arc<Vocabulary>) -> Option<&mut Entry> {
+        if !self.removals.is_empty() || self.pending.contains_key(&Some(directory.clone())) {
+            return None;
+        }
+        self.entries.get_mut(directory).filter(|entry| {
+            entry
+                .live
+                .as_ref()
+                .is_some_and(|live| Arc::ptr_eq(&live.prepared.matcher, from))
+        })
+    }
+
     fn live_bytes(&mut self) -> usize {
         self.live
             .retain(|(snapshot, _)| snapshot.strong_count() != 0);
@@ -658,16 +672,10 @@ impl Runtime {
         if token.is_cancelled() {
             return Err(Error::Busy);
         }
-        if !registry.removals.is_empty() || registry.pending.contains_key(&Some(directory.clone()))
-        {
-            return Ok(());
-        }
         let personal_revision = registry.personal_revision;
         let Some(live) = registry
-            .entries
-            .get_mut(directory)
+            .untouched(directory, from)
             .and_then(|entry| entry.live.as_mut())
-            .filter(|live| Arc::ptr_eq(&live.prepared.matcher, from))
         else {
             return Ok(());
         };
@@ -1167,6 +1175,11 @@ impl<C: Collector> Worker<C> {
             Err(Error::TooLarge)
         } else {
             compiled.and_then(|matcher| {
+                // New rules can grow a list past the size it was admitted at.
+                let used = self.personal.estimated_bytes() + self.runtime.registry().live_bytes();
+                if !fits(used, matcher.estimated_bytes()) {
+                    return Err(Error::TooLarge);
+                }
                 self.runtime
                     .republish(&directory, &prepared.matcher, matcher, &token)
             })
@@ -1180,7 +1193,11 @@ impl<C: Collector> Worker<C> {
             error = %error_chain(&error),
             "vocabulary recompile failed; retaining available snapshot"
         );
-        if let Some(entry) = self.runtime.registry().entries.get_mut(&directory) {
+        if let Some(entry) = self
+            .runtime
+            .registry()
+            .untouched(&directory, &prepared.matcher)
+        {
             entry.activity = Activity::Failed(if matches!(error, Error::TooLarge) {
                 Failure::Limit
             } else {
@@ -2136,6 +2153,67 @@ mod tests {
                 "{status:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_recompile_grown_past_the_budget_is_not_published() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = project(root.path(), "Aria-Kit");
+        let (runtime, mut worker) = local_runtime(root.path());
+        refresh_once(&runtime, &mut worker, &selected).unwrap();
+        let words: String = (100..300).map(|n| format!("vex{n}\n")).collect();
+        std::fs::write(root.path().join("dictionary.txt"), words).unwrap();
+        worker.refresh_personal().unwrap();
+        // Leave exactly the room the list took before the rules grew it.
+        let filler: Arc<[Term]> = Arc::from([]);
+        {
+            let mut registry = runtime.registry();
+            let used = worker.personal.estimated_bytes() + registry.live_bytes();
+            let admitted = registry.entries[&selected]
+                .live
+                .as_ref()
+                .unwrap()
+                .prepared
+                .matcher
+                .estimated_bytes();
+            registry
+                .live_terms
+                .push((Arc::downgrade(&filler), LIVE_BYTES - used - admitted));
+        }
+
+        worker.recompile_stale();
+
+        let used = worker.personal.estimated_bytes() + runtime.registry().live_bytes();
+        assert!(used <= LIVE_BYTES, "{used} bytes live");
+        let status = runtime.catalog_status(Some(&selected));
+        assert!(
+            matches!(&status, Status::Folder { list: Some(list), activity: Activity::Failed(Failure::Limit) } if list.is_stale),
+            "{status:?}"
+        );
+    }
+
+    #[test]
+    fn a_recompile_gives_way_to_a_refresh_that_waits() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = project(root.path(), "Aria-Kit");
+        let (runtime, mut worker) = local_runtime(root.path());
+        refresh_once(&runtime, &mut worker, &selected).unwrap();
+        let mut registry = runtime.registry();
+        let from = Arc::clone(
+            &registry.entries[&selected]
+                .live
+                .as_ref()
+                .unwrap()
+                .prepared
+                .matcher,
+        );
+        assert!(registry.untouched(&selected, &from).is_some());
+
+        runtime
+            .enqueue(&mut registry, Some(selected.clone()), None, Refresh::Now)
+            .unwrap();
+
+        assert!(registry.untouched(&selected, &from).is_none());
     }
 
     #[test]
