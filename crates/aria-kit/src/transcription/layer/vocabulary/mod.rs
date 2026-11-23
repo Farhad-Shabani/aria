@@ -184,18 +184,30 @@ impl Vocabulary {
         personal: PersonalRules,
         cancel: &CancelToken,
     ) -> Result<Self, MatchError> {
+        Self::compile_within(terms, personal, MAX_SNAPSHOT_BYTES, cancel)
+    }
+
+    /// Compiles a matcher whose estimated bytes never pass `limit` while it
+    /// is built, nor the most any matcher may take.
+    pub fn compile_within(
+        terms: &[Term],
+        personal: PersonalRules,
+        limit: usize,
+        cancel: &CancelToken,
+    ) -> Result<Self, MatchError> {
+        let limit = limit.min(MAX_SNAPSHOT_BYTES);
         if cancel.is_cancelled() {
             return Err(MatchError::Cancelled);
         }
-        if terms.len() > MAX_TERMS || personal.estimated_bytes() > MAX_SNAPSHOT_BYTES {
+        if terms.len() > MAX_TERMS {
             return Err(MatchError::TooLarge);
         }
         let respellings = personal.respellings();
-        let built = match Self::build(terms, &personal, &respellings, cancel) {
+        let built = match Self::build(terms, &personal, &respellings, limit, cancel) {
             // Respellings are optional, so names that fit without them
             // still match.
             Err(MatchError::TooLarge) if !respellings.is_empty() => {
-                Self::build(terms, &personal, &Respellings::default(), cancel)
+                Self::build(terms, &personal, &Respellings::default(), limit, cancel)
             }
             built => built,
         };
@@ -208,14 +220,19 @@ impl Vocabulary {
         terms: &[Term],
         personal: &PersonalRules,
         respellings: &Respellings,
+        limit: usize,
         cancel: &CancelToken,
     ) -> Result<Self, MatchError> {
         let mut matcher = Self {
             index: HashMap::new(),
             personal: PersonalRules::default(),
             term_count: terms.len(),
-            estimated_bytes: std::mem::size_of::<Self>() + personal.estimated_bytes(),
+            estimated_bytes: 0,
         };
+        matcher.grow(
+            std::mem::size_of::<Self>() + personal.estimated_bytes(),
+            limit,
+        )?;
         for term in terms {
             if cancel.is_cancelled() {
                 return Err(MatchError::Cancelled);
@@ -230,7 +247,7 @@ impl Vocabulary {
                 // name types as heard.
                 if symbolic {
                     for respelling in respellings.of(&form) {
-                        matcher.add(respelling, Candidate::new(term, Origin::Respelled))?;
+                        matcher.add(respelling, Candidate::new(term, Origin::Respelled), limit)?;
                     }
                 }
                 let origin = if index == 0 {
@@ -238,7 +255,7 @@ impl Vocabulary {
                 } else {
                     Origin::Spoken
                 };
-                matcher.add(form, Candidate::new(term, origin))?;
+                matcher.add(form, Candidate::new(term, origin), limit)?;
             }
         }
         matcher.share_with_pairs(personal, cancel)?;
@@ -248,15 +265,15 @@ impl Vocabulary {
         Ok(matcher)
     }
 
-    fn add(&mut self, form: String, candidate: Candidate) -> Result<(), MatchError> {
-        let Some(bucket) = self.add_bucket(&form)? else {
+    fn add(&mut self, form: String, candidate: Candidate, limit: usize) -> Result<(), MatchError> {
+        let Some(bucket) = self.add_bucket(&form, limit)? else {
             return Ok(());
         };
         let bytes = match bucket.aliases.get_mut(&form) {
             Some(existing) => existing.settle(candidate),
             None => bucket.insert(form, candidate),
         };
-        self.grow(bytes)
+        self.grow(bytes, limit)
     }
 
     fn share_with_pairs(
@@ -281,7 +298,7 @@ impl Vocabulary {
         Ok(())
     }
 
-    fn add_bucket(&mut self, alias: &str) -> Result<Option<&mut Bucket>, MatchError> {
+    fn add_bucket(&mut self, alias: &str, limit: usize) -> Result<Option<&mut Bucket>, MatchError> {
         let Some(first) = first_word(alias).map(Cow::into_owned) else {
             return Ok(None);
         };
@@ -293,13 +310,13 @@ impl Vocabulary {
         }
         bytes +=
             (self.index.capacity() - capacity) * 2 * (std::mem::size_of::<(String, Bucket)>() + 1);
-        self.grow(bytes)?;
+        self.grow(bytes, limit)?;
         Ok(self.index.get_mut(&first))
     }
 
-    fn grow(&mut self, bytes: usize) -> Result<(), MatchError> {
+    fn grow(&mut self, bytes: usize, limit: usize) -> Result<(), MatchError> {
         self.estimated_bytes += bytes;
-        if self.estimated_bytes > MAX_SNAPSHOT_BYTES {
+        if self.estimated_bytes > limit {
             return Err(MatchError::TooLarge);
         }
         Ok(())
@@ -1061,6 +1078,25 @@ mod tests {
             matcher.correct("db two and Vexe16"),
             Some("db9 and vex16".into())
         );
+    }
+
+    #[test]
+    fn a_matcher_compiles_only_within_its_byte_limit() {
+        let terms = [Term {
+            canonical: "aria-kit".into(),
+            priority: 1,
+        }];
+        let personal = || PersonalRules::new(vec!["db2".into()], vec![]);
+        let never = CancelToken::never();
+        let bytes = Vocabulary::compile(&terms, personal())
+            .unwrap()
+            .estimated_bytes();
+        assert!(matches!(
+            Vocabulary::compile_within(&terms, personal(), bytes - 1, &never),
+            Err(MatchError::TooLarge)
+        ));
+        let fitted = Vocabulary::compile_within(&terms, personal(), bytes, &never).unwrap();
+        assert_eq!(fitted.estimated_bytes(), bytes);
     }
 
     #[test]
