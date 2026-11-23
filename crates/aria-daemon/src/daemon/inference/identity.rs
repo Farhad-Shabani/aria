@@ -382,9 +382,7 @@ impl ClientIdentity {
 
     /// Reads the key, so only a connection calls it.
     pub(super) fn credentials(&self) -> Result<Credentials, Error> {
-        let key_pem = client_key(&self.path)
-            .read()?
-            .ok_or(Error::InvalidIdentity)?;
+        let key_pem = client_key(&self.path).read()?.ok_or(Error::KeyGone)?;
         let credentials = Credentials {
             certificate_pem: self.certificate_pem.clone(),
             key_pem,
@@ -464,7 +462,7 @@ fn load_or_create<T: Serialize + serde::de::DeserializeOwned>(
 ) -> Result<(T, Credentials), Error> {
     let document = PrivateDocument::new(path, MAX_DOCUMENT_BYTES);
     if let Some(stored) = read_current(&document, &credentials_of)? {
-        let key_pem = secret.read()?.ok_or(Error::InvalidIdentity)?;
+        let key_pem = secret.read()?.ok_or(Error::KeyGone)?;
         let certificate_pem = credentials_of(&stored).certificate_pem.clone();
         return Ok((
             stored,
@@ -512,6 +510,8 @@ pub enum Error {
     Document(#[from] DocumentError),
     #[error("the remote access key is not usable")]
     Key(#[from] SecretError),
+    #[error("the pairing key is gone; pair again")]
+    KeyGone,
     #[error(
         "the access was published, but durability is unconfirmed; authorization was not granted"
     )]
@@ -573,6 +573,7 @@ impl From<Error> for RpcFailure {
             Error::Stopped => (RpcErrorCode::ShuttingDown, "inference host is stopping"),
             Error::Document(_)
             | Error::Key(_)
+            | Error::KeyGone
             | Error::InvalidIdentity
             | Error::Certificate(_)
             | Error::Invite(_)
@@ -670,7 +671,7 @@ mod tests {
         std::fs::remove_file(&key).unwrap();
         assert!(matches!(
             ServerAccess::load_or_create(&path),
-            Err(Error::InvalidIdentity)
+            Err(Error::KeyGone)
         ));
         std::fs::create_dir(&key).unwrap();
         assert!(matches!(
