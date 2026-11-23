@@ -371,8 +371,8 @@ impl AgreementState {
                 self.lookback = None;
                 return Vec::new();
             }
-            let by_text = self.agreement.after_delivered_text(&words);
-            let buffer_words = by_text.unwrap_or_else(|| {
+            let by_word = self.agreement.after_last_delivered(&words);
+            let buffer_words = by_word.unwrap_or_else(|| {
                 words
                     .iter()
                     .position(|word| {
@@ -383,7 +383,7 @@ impl AgreementState {
                     .unwrap_or(words.len())
             });
             tracing::debug!(
-                by_text = by_text.is_some(),
+                by_word = by_word.is_some(),
                 before = buffer_words,
                 "lookback split"
             );
@@ -678,35 +678,20 @@ impl Agreement {
         }
     }
 
-    /// How many opening words of a lookback decode were delivered already,
-    /// going by their text. They run up to the latest, longest run of the
-    /// last delivered words that opens before the delivered end. Timings
-    /// only bound the run: an engine moves a word's start by up to a
-    /// second, most of all the first word after a pause.
+    /// How many opening words of a lookback decode were delivered already:
+    /// the words through the last delivered one, found by its text and its
+    /// audio. Text alone finds an earlier copy of a phrase when the decode
+    /// rewords the delivered one. The audio need only overlap, and no
+    /// timing says which words follow: an engine moves a word's start by up
+    /// to a second, most of all the first word after a pause.
     ///
-    /// `None` when no run turns up. `None` too when two earlier delivered
-    /// words follow the run: the decode reworded the delivered end, and the
-    /// run is an earlier copy of it.
-    fn after_delivered_text(&self, words: &[Word]) -> Option<usize> {
-        let through = self.delivered_through?;
-        let carried = &self.delivered[self.delivered.len().saturating_sub(CARRIED_WORDS)..];
-        let opens_before_end =
-            |word: &Word| word.span.as_ref().is_some_and(|span| span.start < through);
-        let end = (1..=carried.len().min(words.len()))
+    /// `None` when the decode holds no such word, or the last delivered
+    /// word is untimed.
+    fn after_last_delivered(&self, words: &[Word]) -> Option<usize> {
+        self.delivered.last()?.span.as_ref()?;
+        (1..=words.len())
             .rev()
-            .find_map(|count| {
-                let run = &carried[carried.len() - count..];
-                (count..=words.len()).rev().find(|&end| {
-                    lcp(run, &words[end - count..]) == count
-                        && opens_before_end(&words[end - count])
-                })
-            })?;
-        let earlier_copy = carried[..carried.len() - 1].windows(2).any(|pair| {
-            words[end..]
-                .windows(2)
-                .any(|later| lcp(pair, later) == 2 && opens_before_end(&later[0]))
-        });
-        (!earlier_copy).then_some(end)
+            .find(|&end| self.anchored_at(words, end))
     }
 
     /// The latest decode's words still waiting for a second decode.
@@ -2780,13 +2765,12 @@ mod tests {
         #[test]
         fn a_reworded_last_delivered_phrase_does_not_split_at_an_earlier_copy() {
             // Once "new" is heard, the decode merges the second "that was"
-            // into "that's". The first "that was" is not the delivered one:
-            // "there and" follows it, and those went out too.
-            const SPOKEN: [Spoken; 8] = [
+            // into "that's". The first "that was" reads the same as the
+            // delivered one, and sounds a second before it.
+            const SPOKEN: [Spoken; 7] = [
                 ("that", 8_000, 0.0, 0.3),
                 ("was", 7_900, 0.4, 0.7),
                 ("there", 7_800, 0.8, 1.1),
-                ("and", 7_700, 1.2, 1.4),
                 ("that", 7_600, 1.5, 1.7),
                 ("was", 7_500, 1.8, 2.1),
                 ("new", 7_400, 3.0, 3.3),
@@ -2812,7 +2796,7 @@ mod tests {
                 |_| {},
             );
 
-            assert_eq!(run.transcript(), "that was there and that was new words");
+            assert_eq!(run.transcript(), "that was there that was new words");
         }
 
         #[test]
