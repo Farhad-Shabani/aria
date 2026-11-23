@@ -419,6 +419,40 @@ mod tests {
         }
     }
 
+    #[rstest]
+    #[case("pass --flag='id' then ask for id", "pass --flag='id' then ask for ID")]
+    #[case("set title=\"id\" or say 'id'", "set title=\"id\" or say 'ID'")]
+    #[case(
+        "set x='server id' then open kubernets",
+        "set x='server id' then open Kubernetes"
+    )]
+    #[case("set x=\"id and kubernets\" now", "set x=\"id and kubernets\" now")]
+    #[case(r#"x="use \"id\" and id" then id"#, r#"x="use \"id\" and id" then ID"#)]
+    #[case(
+        "x='twenty one user underscore id' and twenty one",
+        "x='twenty one user underscore id' and 21"
+    )]
+    fn quoted_assignment_values_keep_their_words(#[case] heard: &str, #[case] expected: &str) {
+        let vocabulary = listing(&["ID", "Kubernetes"]);
+        assert_eq!(whole(heard, &vocabulary), expected);
+        assert_any_split_types_the_whole(heard, &vocabulary);
+    }
+
+    #[test]
+    fn written_values_survive_project_and_personal_correction() {
+        let terms = [Term {
+            canonical: "file.aria".into(),
+            priority: 1,
+        }];
+        let personal = PersonalRules::new(vec!["ID".into()], vec![("aye dee".into(), "ID".into())]);
+        let vocabulary = Vocabulary::compile(&terms, personal).unwrap();
+        let heard = "x='file dot aria aye dee' then file dot aria aye dee";
+        let expected = "x='file dot aria aye dee' then file.aria ID";
+        assert_eq!(vocabulary.correct(heard).as_deref(), Some(expected));
+        assert_eq!(whole(heard, &vocabulary), expected);
+        assert_any_split_types_the_whole(heard, &vocabulary);
+    }
+
     fn listing(words: &[&str]) -> Vocabulary {
         let listed = words.iter().map(|word| (*word).to_owned()).collect();
         Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap()
