@@ -154,18 +154,25 @@ impl AgreementState {
     /// The earliest position a reader may still need. Never decreases: a
     /// cut lands at or after the opening, so the next lookback starts no
     /// earlier. A cap-forced trim moves the opening past a segment nobody
-    /// has taken yet, whose reader still wants its audio.
+    /// has taken yet, whose reader still wants its audio. So does a word
+    /// that waits for a second decode: a lookback decode may time it
+    /// before the buffer, and an untimed decode then ends the lookback.
     pub(super) fn retained_from(&self) -> u64 {
         let pending = self
             .pending_segment
             .as_ref()
             .and_then(TranscriptSegment::source_window)
             .map(|span| span.start);
-        let opening = self.lookback_from();
-        match pending {
-            Some(start) => start.min(opening),
-            None => opening,
-        }
+        let waiting = self
+            .agreement
+            .waiting()
+            .iter()
+            .filter_map(|word| Some(word.span.as_ref()?.start))
+            .min();
+        [pending, waiting]
+            .into_iter()
+            .flatten()
+            .fold(self.lookback_from(), u64::min)
     }
 
     /// Where a lookback starts. The buffer's opening when the engine times
@@ -2842,6 +2849,54 @@ mod tests {
             );
 
             assert_eq!(run.transcript(), "one missing two three");
+        }
+
+        #[test]
+        fn a_word_waiting_from_before_the_buffer_keeps_its_audio() {
+            // The lookback decode times "two" where "one" ends, before the
+            // cut. The next decode is untimed, and capture ends with no
+            // more audio, so "two" goes out as the timed decode heard it.
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
+            let mut batches = strides(&spoken_audio(&SPOKEN, 2.1));
+            batches.push(Vec::new());
+            let (mut recording, pace) = paced(batches);
+            let mut state = AgreementState::new(cadence(20_000));
+            let mut heard_two = false;
+            let mut untimed = false;
+            let mut released_to = 0;
+            let mut segments = Vec::new();
+            while let Some(step) = state
+                .next_with(&mut recording, &CancelToken::never(), true, |window| {
+                    let (words, mut timings) = whole_words(&SPOKEN, window);
+                    if words == ["one", "two"] {
+                        if std::mem::replace(&mut heard_two, true) {
+                            untimed = true;
+                            return Ok(Hypothesis::new("one two"));
+                        }
+                        timings[1].start = timings[0].end;
+                    }
+                    pace.advance();
+                    Ok(Hypothesis::with_words(words.join(" "), timings))
+                })
+                .unwrap()
+            {
+                if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
+                    let span = segment.span().expect("both words are timed");
+                    assert!(
+                        released_to <= span.start,
+                        "segment {span:?} opens in audio released through {released_to}"
+                    );
+                    segments.push(segment.into_text());
+                }
+                // A reader releases audio on every update, as the remote
+                // client does.
+                released_to = state.retained_from();
+                if std::mem::take(&mut untimed) {
+                    pace.advance();
+                }
+            }
+
+            assert_eq!(segments, ["one", "two"]);
         }
 
         #[test]
