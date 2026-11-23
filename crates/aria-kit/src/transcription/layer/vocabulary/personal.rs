@@ -7,7 +7,7 @@ use crate::cancel::CancelToken;
 use super::super::claim::{Claimed, Word};
 use super::super::number_words::{is_up_to_twenty, word_for};
 use super::super::symbol_words::symbol;
-use super::fuzzy::{Cut, apply_fuzzy, capitals, waiting_from};
+use super::fuzzy::{AfterCut, apply_fuzzy, capitals, waiting_from};
 use super::{MatchError, is_word};
 
 /// What stored rules may cost in memory.
@@ -294,12 +294,12 @@ impl PersonalRules {
             return;
         };
         let before = text[gap.start..cut].trim_end();
-        let ends = if cut == text.len() {
-            Cut::SegmentEnd
+        let after = if cut == text.len() {
+            AfterCut::SegmentEnd
         } else {
-            Cut::BeforeDeferred
+            AfterCut::DeferredWords
         };
-        if let Some(start) = waiting_from(before, ends, &self.terms, &self.known) {
+        if let Some(start) = waiting_from(before, after, &self.terms, &self.known) {
             // Keep any opening punctuation with its word across delivery.
             let start = text[..gap.start + start]
                 .trim_end_matches(|c: char| !c.is_whitespace())

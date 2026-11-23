@@ -44,7 +44,7 @@ pub(super) fn apply_fuzzy<E>(
         let end = start + fix.as_ref().map_or(length, |(length, _)| *length);
         let heard = &rest[start..end];
         match fix {
-            Some((_, typed)) => {
+            Some((_, Fix::Capitals(typed) | Fix::Spelling(typed))) => {
                 check(output.len().saturating_add(typed.len()))?;
                 output.push_str(&typed);
                 substitutions.push((heard.to_owned(), typed));
@@ -68,7 +68,7 @@ fn replacement<E>(
     terms: &[String],
     known: &[Vec<char>],
     check: &impl Fn(usize) -> Result<(), E>,
-) -> Result<Option<(usize, String)>, E> {
+) -> Result<Option<(usize, Fix)>, E> {
     let before = &text[..start];
     let word = &text[start..start + length];
     let after = &text[start + length..];
@@ -82,15 +82,39 @@ fn replacement<E>(
         if !full.is_empty() {
             return Ok(capitals(&full)
                 .filter(|&term| term != word)
-                .map(|term| (length, term.to_owned())));
+                .map(|term| (length, Fix::Capitals(term.to_owned()))));
         }
     }
-    if let Some(typed) = best_term(stem, terms, known, check)? {
-        return Ok((typed != stem).then(|| (length, format!("{typed}{ending}"))));
+    match best_term(stem, terms, known, check)? {
+        Some(Match::Listed(capitals)) => {
+            return Ok(capitals
+                .filter(|&term| term != stem)
+                .map(|term| (length, Fix::Capitals(format!("{term}{ending}")))));
+        }
+        Some(Match::NearMiss(term)) => {
+            return Ok(Some((length, Fix::Spelling(format!("{term}{ending}")))));
+        }
+        None => {}
     }
     let merged = merged_term(word, after, terms, known, check)?
         .filter(|(_, second)| !in_a_written_name(before, &after[*second..]));
-    Ok(merged.map(|(typed, second)| (length + second, typed)))
+    Ok(merged.map(|(typed, second)| (length + second, Fix::Spelling(typed))))
+}
+
+/// What the fuzzy pass types in place of heard words.
+enum Fix {
+    /// The listed spelling of a word heard in another case.
+    Capitals(String),
+    /// The listed word heard as a near miss or as two words.
+    Spelling(String),
+}
+
+/// What the list makes of one heard word.
+enum Match<'a> {
+    /// A listed word, typed in its capitals where it has them to restore.
+    Listed(Option<&'a str>),
+    /// The listed word a heard word nearly is.
+    NearMiss(&'a str),
 }
 
 /// SCOWL size 35, lowercase words and contractions, as an fst set.
@@ -122,13 +146,12 @@ fn next_token(text: &str) -> Option<(usize, usize)> {
     Some((start, word.len()))
 }
 
-// Returning the input itself means it is listed and cannot enter a merge.
 fn best_term<'a, E>(
-    token: &'a str,
+    token: &str,
     terms: &'a [String],
     known: &[Vec<char>],
     check: &impl Fn(usize) -> Result<(), E>,
-) -> Result<Option<&'a str>, E> {
+) -> Result<Option<Match<'a>>, E> {
     check(0)?;
     let folded = token.to_lowercase();
     let listed = listed(&folded, terms, known, check)?;
@@ -138,12 +161,10 @@ fn best_term<'a, E>(
     // even where it is also a real word, as in "a linear model". A short
     // real word such as "it" for a listed `IT` is too common to take them.
     if !listed.is_empty() {
-        let typed = if is_short && is_english(&folded) {
-            None
-        } else {
-            capitals(&listed)
-        };
-        return Ok(Some(typed.unwrap_or(token)));
+        let capitals = (!is_short || !is_english(&folded))
+            .then(|| capitals(&listed))
+            .flatten();
+        return Ok(Some(Match::Listed(capitals)));
     }
     if is_short || is_english(&folded) {
         return Ok(None);
@@ -185,7 +206,9 @@ fn best_term<'a, E>(
         }
     }
     // Two listed words equally near leave no one word it was heard for.
-    Ok(best.filter(|_| !tied).map(|(term, ..)| term))
+    Ok(best
+        .filter(|_| !tied)
+        .map(|(term, ..)| Match::NearMiss(term)))
 }
 
 /// The listed word that `first` and the word one space into `after` were
@@ -210,10 +233,12 @@ fn merged_term<E>(
         return Ok(None);
     }
     let merged = format!("{first}{second}").to_lowercase();
-    let Some(term) = best_term(&merged, terms, known, check)? else {
-        return Ok(None);
+    let typed = match best_term(&merged, terms, known, check)? {
+        Some(Match::Listed(capitals)) => capitals.unwrap_or(&merged),
+        Some(Match::NearMiss(term)) => term,
+        None => return Ok(None),
     };
-    Ok(Some((format!("{term}{ending}"), 1 + length)))
+    Ok(Some((format!("{typed}{ending}"), 1 + length)))
 }
 
 /// Whether two heard words may be one listed word. A word under three
@@ -227,18 +252,19 @@ fn may_merge(first: &str, second: &str) -> bool {
         && !(real(first) && real(second))
 }
 
-/// What follows the text a hold reads.
+/// What follows the text a hold reads: the end of the segment, or the
+/// words another step already deferred.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Cut {
+pub(super) enum AfterCut {
     SegmentEnd,
-    BeforeDeferred,
+    DeferredWords,
 }
 
 // Read the same replacements left to right as the typing pass. Overlapping
 // split-word candidates belong to the first one that matches.
 pub(super) fn waiting_from(
     text: &str,
-    cut: Cut,
+    after: AfterCut,
     terms: &[String],
     known: &[Vec<char>],
 ) -> Option<usize> {
@@ -265,7 +291,8 @@ pub(super) fn waiting_from(
             let waits = match fix {
                 // Before an already held join the near miss still types. At
                 // segment end the next word could claim it as part of a join.
-                Some((_, typed)) => cut == Cut::SegmentEnd || typed.eq_ignore_ascii_case(word),
+                Some((_, Fix::Capitals(_))) => true,
+                Some((_, Fix::Spelling(_))) => after == AfterCut::SegmentEnd,
                 None => !in_a_written_name(&rest[..start], "") && begins_a_merge(word, known),
             };
             return waits.then_some(text.len() - rest.len() + start);
