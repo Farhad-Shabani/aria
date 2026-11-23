@@ -497,8 +497,9 @@ impl AgreementState {
     /// it is out and none past it is, so a cut there repeats and drops
     /// nothing, wherever the stride ends fall. Timings only bound the
     /// pause: a word's end often runs into the silence after it, and the
-    /// next word's start into the silence before it. `None` until this
-    /// buffer delivers a timed word.
+    /// next word's start into the silence before it. `None` unless the
+    /// last delivered word is timed inside the buffer: the loudness holds
+    /// no frame before the opening.
     fn pause_past_delivered(&self, loudness: &Loudness) -> Option<Pause> {
         let last = self
             .agreement
@@ -515,8 +516,7 @@ impl AgreementState {
             return None;
         }
         let frame = |at: u64| (at - self.buffer_start) as usize / TRIM_FRAME_SAMPLES;
-        let opens = frame(last.start) + 1..frame(last.end) + HEARD_MARGIN_FRAMES + 1;
-        loudness.pause_between(opens, frame(until))
+        loudness.pause_after(frame(last.start)..frame(last.end), frame(until))
     }
 
     /// The buffer must go whether or not the speaker paused. The unconfirmed
@@ -1300,38 +1300,42 @@ impl Loudness {
             return None;
         }
         let start = self.squares.len() - quiet;
-        Some(Pause {
-            at: (start + quiet / 2) * TRIM_FRAME_SAMPLES,
-            level: self.squares[start + quiet / 2..]
-                .iter()
-                .copied()
-                .fold(0.0_f32, f32::max),
-        })
+        Some(self.pause_in(start..self.squares.len()))
     }
 
-    /// The first pause that opens right after speech, at a frame in
-    /// `opens`, and holds no speech for long enough to trust before frame
-    /// `until`. Quiet beside the loudest frame is not enough here: a soft
-    /// word after a loud one reads as quiet, and a cut there splits it.
-    fn pause_between(&self, opens: std::ops::Range<usize>, until: usize) -> Option<Pause> {
+    /// The pause that follows a word timed over the frames `word`. It
+    /// opens right after speech, inside the timing or within
+    /// `HEARD_MARGIN_FRAMES` past it, stays quiet through the timing's end,
+    /// and holds no speech for long enough to trust before frame `until`.
+    /// Quiet that speech breaks inside the timing comes before the word's
+    /// sound, whose start was timed early. Quiet beside the loudest frame
+    /// is not enough here: a soft word after a loud one reads as quiet, and
+    /// a cut there splits it.
+    fn pause_after(&self, word: std::ops::Range<usize>, until: usize) -> Option<Pause> {
         let until = until.min(self.squares.len());
         let quiet_from = |start: usize| {
             (start..until)
                 .take_while(|&frame| !self.is_speech(frame))
                 .count()
         };
+        let opens = word.start + 1..word.end + HEARD_MARGIN_FRAMES + 1;
         let start = opens.take_while(|&frame| frame < until).find(|&frame| {
-            frame > 0 && self.is_speech(frame - 1) && quiet_from(frame) >= TRIM_SILENCE_FRAMES
+            let quiet = quiet_from(frame);
+            self.is_speech(frame - 1) && quiet >= TRIM_SILENCE_FRAMES && frame + quiet >= word.end
         })?;
-        let quiet = quiet_from(start);
-        let at = start + quiet / 2;
-        Some(Pause {
+        Some(self.pause_in(start..start + quiet_from(start)))
+    }
+
+    /// The pause a quiet run of frames makes: cut at its midpoint.
+    fn pause_in(&self, quiet: std::ops::Range<usize>) -> Pause {
+        let at = quiet.start + quiet.len() / 2;
+        Pause {
             at: at * TRIM_FRAME_SAMPLES,
-            level: self.squares[at..start + quiet]
+            level: self.squares[at..quiet.end]
                 .iter()
                 .copied()
                 .fold(0.0_f32, f32::max),
-        })
+        }
     }
 
     /// Where speech no heard word accounts for begins, at or after `from`:
@@ -2944,6 +2948,42 @@ mod tests {
         }
 
         #[test]
+        fn a_pause_inside_the_last_delivered_words_timing_is_not_cut() {
+            // "two" is timed from where "one" ends, across the silence
+            // before its sound. A cut in that silence leaves the sound in
+            // the next buffer, whose decode hears it as "too".
+            const SPOKEN: [Spoken; 5] = [
+                ("one", 8_000, 0.1, 0.4),
+                ("two", 7_000, 1.15, 1.35),
+                ("three", 6_000, 3.3, 3.5),
+                ("four", 5_000, 3.6, 3.8),
+                ("five", 4_000, 3.9, 4.1),
+            ];
+            let cadence = Cadence::from_millis(1_000, 20_000);
+            let audio = spoken_audio(&SPOKEN, 6.0);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            let run = run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                    if words.contains(&"three") {
+                        if let Some(two) = words.iter().position(|word| *word == "two") {
+                            words[two] = "too";
+                        }
+                    } else if words.len() == 2 {
+                        timings[1].start = timings[0].end;
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |_| {},
+            );
+
+            assert_eq!(run.transcript(), "one two three four five");
+        }
+
+        #[test]
         fn a_delayed_decode_cuts_the_same_pauses() {
             // Parakeet's 500 ms stride. Each pause runs longer than a cut
             // needs, and the last one runs to the end of the recording.
@@ -3345,26 +3385,26 @@ mod tests {
                 buffer.extend(frames_at(0.0, quiet));
                 Loudness::of(&buffer)
             };
-            let opens = 1..3 + HEARD_MARGIN_FRAMES + 1;
+            let word = 0..3;
 
             let cut = after(6, 16)
-                .pause_between(opens.clone(), 22)
+                .pause_after(word.clone(), 22)
                 .expect("the pause opens inside the word's edge");
             assert_eq!(cut.at, (6 + 16 / 2) * TRIM_FRAME_SAMPLES);
             assert!(
-                after(7, 16).pause_between(opens.clone(), 23).is_none(),
+                after(7, 16).pause_after(word.clone(), 23).is_none(),
                 "no word accounts for sound past the edge"
             );
-            assert!(after(3, 13).pause_between(opens.clone(), 16).is_some());
+            assert!(after(3, 13).pause_after(word.clone(), 16).is_some());
             assert!(
-                after(3, 13).pause_between(opens, 15).is_none(),
+                after(3, 13).pause_after(word, 15).is_none(),
                 "the next word arrives before the pause runs long enough"
             );
 
             // The word's timing ran seven frames into the silence after it.
-            let late = 1..10 + HEARD_MARGIN_FRAMES + 1;
+            let late = 0..10;
             let cut = after(3, 16)
-                .pause_between(late, 19)
+                .pause_after(late, 19)
                 .expect("a late timed end still finds the pause");
             assert_eq!(cut.at, (3 + 16 / 2) * TRIM_FRAME_SAMPLES);
         }
