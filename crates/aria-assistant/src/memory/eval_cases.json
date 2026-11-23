@@ -466,11 +466,11 @@
       "expected": "Lumenforge uses db2 and kubernetes."
     },
     {
-      "id": "case_only_unchanged",
+      "id": "case_listed_capitals",
       "terms": ["Lumenforge"],
       "pairs": [],
       "input": "LUMENFORGE",
-      "expected": "LUMENFORGE"
+      "expected": "Lumenforge"
     },
     {
       "id": "pair_word_boundaries",
