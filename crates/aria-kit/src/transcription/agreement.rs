@@ -57,9 +57,6 @@ const TRIM_QUIET_FRACTION: f32 = 0.05;
 /// Heard words a decode may lose and still count as a revision rather than
 /// a dropped window.
 const TOLERATED_LOSS: usize = 2;
-/// Words a decode may insert or drop ahead of the delivered words and
-/// still be placed by them.
-const PLACEMENT_SHIFT: usize = 2;
 /// Frames a word's timing reaches either side of itself. Timings are coarse,
 /// and a word's edges blur into its neighbours.
 const HEARD_MARGIN_FRAMES: usize = 3;
@@ -106,6 +103,12 @@ struct Lookback {
     sentence_ended_at_cut: Option<bool>,
 }
 
+#[derive(Clone, Copy)]
+struct LookbackWindow {
+    from: u64,
+    pause_end: Option<u64>,
+}
+
 /// Drives a growing buffer of audio through [`Agreement`] and delivers what
 /// it confirms, one segment per step.
 pub struct AgreementState {
@@ -117,8 +120,6 @@ pub struct AgreementState {
     /// The loudest frame of the pause the buffer opened in. While nothing
     /// since has broken that pause, its decode is ignored.
     pause_level: Option<f32>,
-    /// What this buffer's decodes have agreed on so far. Resets on a trim,
-    /// so nothing has to align across two buffers.
     agreement: Agreement,
     transcript: Vec<String>,
     /// A segment waiting for the next call, so a step carries one segment
@@ -152,27 +153,35 @@ impl AgreementState {
     /// The earliest position a reader may still need. Never decreases: a
     /// cut lands at or after the opening, so the next lookback starts no
     /// earlier. A cap-forced trim moves the opening past a segment nobody
-    /// has taken yet, whose reader still wants its audio.
+    /// has taken yet, whose reader still wants its audio. A reader also
+    /// wants the audio of a word waiting for a second decode, which a
+    /// lookback decode may time before the buffer.
     pub(super) fn retained_from(&self) -> u64 {
         let pending = self
             .pending_segment
             .as_ref()
             .and_then(TranscriptSegment::source_window)
             .map(|span| span.start);
-        let opening = self.lookback_from();
-        match pending {
-            Some(start) => start.min(opening),
-            None => opening,
-        }
+        let waiting = self
+            .agreement
+            .waiting()
+            .iter()
+            .filter_map(|word| word.span.as_ref())
+            .map(|span| span.start);
+        waiting.chain(pending).fold(self.lookback_from(), u64::min)
     }
 
     /// Where a lookback starts. The buffer's opening when the engine times
     /// no words.
     fn lookback_from(&self) -> u64 {
+        self.lookback_before(self.buffer_start)
+    }
+
+    fn lookback_before(&self, cut: u64) -> u64 {
         if self.untimed {
-            self.buffer_start
+            cut
         } else {
-            self.buffer_start.saturating_sub(LOOKBACK_SAMPLES)
+            cut.saturating_sub(LOOKBACK_SAMPLES)
         }
     }
 
@@ -311,7 +320,7 @@ impl AgreementState {
         let heard = self.hear(&hypothesis, &loudness, decode_from);
         let heard_count = heard.len();
         let skipped = self.skipped_speech(&loudness, &heard);
-        let (confirmed, settled) = self.agreement.agree(heard, skipped);
+        let (confirmed, standing) = self.agreement.agree(heard, skipped);
         let confirmed = self.commit(confirmed);
         // Relative to this decode's window, so it is read before the trim
         // moves the window on.
@@ -319,7 +328,7 @@ impl AgreementState {
         let step = if recording.reached_end() && available == recording.held_to() {
             self.finish_after(confirmed)?
         } else {
-            let tail = self.trim_when_due(&loudness, available, settled);
+            let tail = self.trim_when_due(&loudness, available, standing);
             self.one_at_a_time(confirmed, tail)
                 .map(|segment| ChunkStep {
                     update: Some(TranscriptUpdate::Finalized(segment)),
@@ -338,7 +347,7 @@ impl AgreementState {
             heard_count,
             skipped,
             [released, self.pending_segment.as_ref()],
-            settled,
+            standing == Standing::Settled,
         );
         Ok(step)
     }
@@ -348,10 +357,15 @@ impl AgreementState {
     /// and reads the cut from the one before them. Empty when none can go
     /// out.
     fn hear(&mut self, hypothesis: &Hypothesis, loudness: &Loudness, from: u64) -> Vec<Word> {
-        if self.pause_level.is_some_and(|level| loudness.within(level)) {
-            tracing::debug!("buffer holds only the pause; decode ignored");
-            return Vec::new();
-        }
+        let pause_end = if let Some(level) = self.pause_level {
+            let Some(offset) = loudness.end_of_pause(level) else {
+                tracing::debug!("buffer holds only the pause; decode ignored");
+                return Vec::new();
+            };
+            Some(self.buffer_start + offset as u64)
+        } else {
+            None
+        };
         let mut words = self.words_of(hypothesis, from);
         if let Some(lookback) = &mut self.lookback
             && from < self.buffer_start
@@ -362,14 +376,30 @@ impl AgreementState {
                 self.lookback = None;
                 return Vec::new();
             }
-            let buffer_words = words
-                .iter()
-                .position(|word| {
-                    word.span
-                        .as_ref()
-                        .is_some_and(|span| span.start >= self.buffer_start)
-                })
-                .unwrap_or(words.len());
+            // The delivered words place the split when the decode says
+            // them again. Otherwise only its timings are left.
+            let again = self
+                .agreement
+                .delivered_again(&words, Some(LookbackWindow { from, pause_end }));
+            if let Some(again) = &again {
+                self.agreement.remember(again, &words);
+            }
+            let by_text = again.map(|again| again.words);
+            let buffer_words = by_text.unwrap_or_else(|| {
+                words
+                    .iter()
+                    .position(|word| {
+                        word.span
+                            .as_ref()
+                            .is_some_and(|span| span.start >= self.buffer_start)
+                    })
+                    .unwrap_or(words.len())
+            });
+            tracing::debug!(
+                by_text = by_text.is_some(),
+                before = buffer_words,
+                "lookback split"
+            );
             let mut heard_before = words.drain(..buffer_words);
             lookback.sentence_ended_at_cut = heard_before
                 .next_back()
@@ -432,32 +462,72 @@ impl AgreementState {
             segment.with_sentence_ended_before(ended_before)
         });
         if let Some(segment) = &mut segment {
-            segment.source_window = Some(self.buffer_start..self.decoded_end);
+            // A word kept from a lookback decode may open before the buffer.
+            let from = segment
+                .span()
+                .map_or(self.buffer_start, |span| span.start.min(self.buffer_start));
+            segment.source_window = Some(from..self.decoded_end);
             self.transcript.push(segment.as_str().to_owned());
         }
         segment
     }
 
-    /// Cuts the buffer at a pause it ends in, or at the cap. Returns the
-    /// tail a cap cut delivers unconfirmed.
+    /// Returns the tail a cap cut delivers unconfirmed.
     fn trim_when_due(
         &mut self,
         loudness: &Loudness,
         available: u64,
-        settled: bool,
+        standing: Standing,
     ) -> Option<TranscriptSegment> {
-        if settled {
+        let pause = match standing {
+            Standing::Ignored => None,
+            Standing::Current => self.pause_past_delivered(loudness),
             // A further stride added no words: a pause, or a word the model
-            // holds back until it hears the end of it. Only a pause the
-            // buffer ends in tells the two apart, so anything else waits.
-            if let Some(pause) = loudness.pause_cut() {
-                return self.trim(self.buffer_start + pause.at as u64, None, Some(pause.level));
-            }
+            // holds back until it hears its end. Without a delivered word to
+            // place the pause, only a pause the buffer ends in tells them
+            // apart. Nothing waits to carry past it.
+            Standing::Settled => self
+                .pause_past_delivered(loudness)
+                .or_else(|| loudness.trailing_pause()),
+        };
+        if let Some(pause) = pause {
+            let cut = self.buffer_start + pause.at as u64;
+            let agreement = self
+                .agreement
+                .next_buffer_past_pause(cut, self.lookback_before(cut));
+            return self.trim(cut, agreement, None, Some(pause.level));
         }
         if available - self.buffer_start >= self.cadence.max_buffer_samples as u64 {
             return self.cap_cut(loudness, available);
         }
         None
+    }
+
+    /// The pause after the last delivered word's sound, ending before any
+    /// word still waiting. Every word before it is out and none after it
+    /// is, so a cut there repeats and drops nothing, wherever strides end.
+    /// Timings only bound the pause. A word's end often runs into the
+    /// silence after it, and the next word's start into the silence before
+    /// it. `None` unless the last delivered word is timed inside the
+    /// buffer, since the loudness holds no frame before the opening.
+    fn pause_past_delivered(&self, loudness: &Loudness) -> Option<Pause> {
+        let last = self
+            .agreement
+            .delivered
+            .last()?
+            .span
+            .as_ref()
+            .filter(|span| span.start >= self.buffer_start)?;
+        let until = match self.agreement.waiting().first() {
+            Some(word) => word.span.as_ref()?.start,
+            None => self.decoded_end,
+        };
+        if until < last.end {
+            return None;
+        }
+        let frame = |at: u64| (at - self.buffer_start) as usize / TRIM_FRAME_SAMPLES;
+        let past = (last.end - self.buffer_start).div_ceil(TRIM_FRAME_SAMPLES as u64);
+        loudness.pause_after(frame(last.start)..past as usize, frame(until))
     }
 
     /// The buffer must go whether or not the speaker paused. The unconfirmed
@@ -485,36 +555,42 @@ impl AgreementState {
         // that creeps up over many caps stays the pause.
         let pause_level = self
             .pause_level
-            .filter(|&level| loudness.within(level))
+            .filter(|&level| loudness.end_of_pause(level).is_none())
             .map(|level| level.max(loudness.loudest));
-        self.trim(cut, tail, pause_level)
+        let agreement = self.agreement.next_buffer(cut, self.lookback_before(cut));
+        self.trim(cut, agreement, tail, pause_level)
     }
 
     /// Where speech the model skipped begins, past what was delivered: the
-    /// first stretch of speech no word of `heard` covers. Nothing this close to
-    /// the buffer's opening counts, or a buffer the model keeps skipping
-    /// the start of would never move on.
+    /// first stretch of speech no word of `heard` covers. Nothing within a
+    /// stride of the opening counts, or a buffer the model keeps skipping
+    /// the start of would never move on. A buffer that opened in a pause
+    /// starts on no sound, so all its speech counts, or the words after a
+    /// skipped first word would go out ahead of it.
     fn skipped_speech(&self, loudness: &Loudness, heard: &[Word]) -> Option<u64> {
+        let opening = match self.pause_level {
+            Some(_) => self.buffer_start,
+            None => self.buffer_start + self.cadence.stride_samples as u64,
+        };
         let from = self
             .agreement
             .delivered_through
             .unwrap_or(self.buffer_start)
-            .max(self.buffer_start + self.cadence.stride_samples as u64);
+            .max(opening);
         loudness.unheard_speech(self.buffer_start, heard, from)
     }
 
-    /// Opens the next buffer at `cut`, forgetting what was heard so far,
-    /// and passes on the tail a cap cut delivered.
     fn trim(
         &mut self,
         cut: u64,
+        agreement: Agreement,
         tail: Option<TranscriptSegment>,
         pause_level: Option<f32>,
     ) -> Option<TranscriptSegment> {
         self.buffer_start = cut;
         self.pause_level = pause_level;
         self.lookback = Some(Lookback::default());
-        self.agreement = self.agreement.next_buffer();
+        self.agreement = agreement;
         tail
     }
 
@@ -563,11 +639,9 @@ impl AgreementState {
 /// LocalAgreement-2 over one buffer: a word leaves once two successive
 /// decodes agree on it.
 ///
-/// A decode's words are told from the delivered ones by their text, in
-/// order: the longest opening run that repeats the end of what was
-/// delivered is a repeat, whether the decode opened later than the last one
-/// or heard a word again across a cut. Timings place cuts and distinguish
-/// a later opening from a revision covering the same audio.
+/// Each decode is lined up by text with the delivered words its audio
+/// covers, and what follows them is new. Timings place cuts, and decide
+/// only what text leaves open.
 #[derive(Default)]
 struct Agreement {
     /// The latest hypothesis, including retained speech.
@@ -580,9 +654,13 @@ struct Agreement {
     /// text, so a later decode's new words begin right after the last
     /// delivered word, or else after the delivered audio.
     timing_recovery: bool,
-    /// The words delivered so far — the buffer's own, and the last few from
-    /// before its cut — which a decode may hear again.
+    /// Delivered words a decode may hear again: the last ones from before
+    /// the buffer's cut, then the buffer's own.
     delivered: Vec<Word>,
+    /// How many of `delivered` went out before the buffer's cut.
+    carried: usize,
+    /// Stream position the buffer opens at.
+    opening: u64,
     /// Where the last delivered word's audio ends. `None` until a timed
     /// word is delivered, and again once an untimed one is: its end is
     /// unknown, and a cut before it would deliver it twice.
@@ -590,19 +668,147 @@ struct Agreement {
 }
 
 impl Agreement {
-    /// The agreement for the buffer after this one, which keeps only the
-    /// last delivered words to recognise them again.
-    fn next_buffer(&mut self) -> Self {
-        let carried = self.delivered.len().saturating_sub(CARRIED_WORDS);
+    /// The agreement for the buffer after this one. It keeps the delivered
+    /// words a decode from `lookback` may hear again, never fewer than
+    /// `CARRIED_WORDS`.
+    fn next_buffer(&mut self, opening: u64, lookback: u64) -> Self {
+        let heard_again = self
+            .delivered
+            .iter()
+            .rposition(|word| word.span.as_ref().is_none_or(|span| span.end <= lookback))
+            .map_or(0, |before| before + 1);
+        let kept = heard_again.min(self.delivered.len().saturating_sub(CARRIED_WORDS));
+        let delivered = self.delivered.split_off(kept);
         Self {
-            delivered: self.delivered.split_off(carried),
+            carried: delivered.len(),
+            opening,
+            delivered,
             delivered_through: self.delivered_through,
             ..Self::default()
         }
     }
 
+    /// [`Self::next_buffer`], also keeping the words heard past the pause,
+    /// so the next decode confirms them rather than hearing them afresh.
+    fn next_buffer_past_pause(&mut self, opening: u64, lookback: u64) -> Self {
+        let waiting = self.waiting().to_vec();
+        Self {
+            candidate: waiting,
+            ..self.next_buffer(opening, lookback)
+        }
+    }
+
+    /// The opening words of a decode that say delivered words again, by
+    /// text and order. Two decodes time one word up to a second apart, so
+    /// timing can't tell a delivered word from a new one.
+    ///
+    /// A lookback decode opens at `lookback` and says every delivered word
+    /// from there on, the first maybe clipped. A buffer decode says the
+    /// buffer's own delivered words, after the carried ones whose audio
+    /// runs past the cut.
+    ///
+    /// `None` when the opening differs in more than `TOLERATED_LOSS` words
+    /// and keeps fewer than half of the last `CARRIED_WORDS`.
+    fn delivered_again(&self, words: &[Word], lookback: Option<LookbackWindow>) -> Option<Again> {
+        let (first, clipped) = match lookback {
+            Some(LookbackWindow { from, .. }) => {
+                let first = self
+                    .delivered
+                    .iter()
+                    .rposition(|word| word.span.as_ref().is_some_and(|span| span.end <= from))
+                    .map_or(0, |before| before + 1);
+                let clipped = self.delivered[first..]
+                    .first()
+                    .and_then(|word| word.span.as_ref())
+                    .is_some_and(|span| span.start < from);
+                (first, clipped)
+            }
+            None => {
+                let first = self.delivered[..self.carried]
+                    .iter()
+                    .rposition(|word| {
+                        word.span
+                            .as_ref()
+                            .is_none_or(|span| span.end <= self.opening)
+                    })
+                    .map_or(0, |before| before + 1);
+                (first, false)
+            }
+        };
+        let expected = &self.delivered[first..];
+        if expected.is_empty() {
+            return None;
+        }
+        let cut = lookback.map(|_| self.opening);
+        let opening = Opening::of(expected, clipped, self.waiting(), words, cut);
+        if let Some(window) = lookback
+            && let Some(span) = opening
+                .pairs
+                .first()
+                .and_then(|&(_, said)| words[said].span.as_ref())
+            && span.start >= self.opening
+        {
+            // A match wholly inside the opening silence cannot be a new utterance.
+            // A forced cut can land in speech, so only the waiting text can settle it.
+            let old = match window.pause_end {
+                Some(end) => span.start < end && span.end <= end,
+                None => {
+                    let by_timing = words
+                        .iter()
+                        .position(|word| {
+                            word.span
+                                .as_ref()
+                                .is_some_and(|span| span.start >= self.opening)
+                        })
+                        .unwrap_or(words.len());
+                    opening.unlike_next[opening.words] < opening.unlike_next[by_timing]
+                }
+            };
+            if !old {
+                return None;
+            }
+        }
+        let recent = expected.len().saturating_sub(CARRIED_WORDS);
+        let kept = opening
+            .pairs
+            .iter()
+            .filter(|&&(was, said)| was >= recent && lcp(&expected[was..], &words[said..]) > 0)
+            .count();
+        (opening.revised <= TOLERATED_LOSS || 2 * kept >= CARRIED_WORDS).then(|| Again {
+            words: opening.words,
+            pairs: opening
+                .pairs
+                .into_iter()
+                .map(|(was, said)| (first + was, said))
+                .collect(),
+        })
+    }
+
+    /// Takes the latest decode's timing for each delivered word it says
+    /// again unchanged. The decode that delivered a word heard it at its
+    /// window's edge, where timing is worst.
+    fn remember(&mut self, again: &Again, words: &[Word]) {
+        for &(delivered, said) in &again.pairs {
+            let Some(span) = &words[said].span else {
+                continue;
+            };
+            if lcp(&self.delivered[delivered..], &words[said..]) == 0 {
+                continue;
+            }
+            self.delivered[delivered].span = Some(span.clone());
+            if delivered + 1 == self.delivered.len() {
+                self.delivered_through = Some(span.end);
+            }
+        }
+    }
+
+    /// The latest decode's words still waiting for a second decode.
+    fn waiting(&self) -> &[Word] {
+        &self.candidate[self.emitted.min(self.candidate.len())..]
+    }
+
     /// Takes one decode. Returns the words it newly agrees on with the last
-    /// one, and whether it settled: identical to the last one.
+    /// one, and how the decode stands.
     ///
     /// With `skipped`, where speech the decode skipped begins, only the
     /// words before it go out: the ones past it would leave a hole behind.
@@ -610,12 +816,12 @@ impl Agreement {
         &mut self,
         mut current: Vec<Word>,
         skipped: Option<u64>,
-    ) -> (Option<TranscriptSegment>, bool) {
+    ) -> (Option<TranscriptSegment>, Standing) {
         // An empty decode — a dropped window, or one `hear` threw out —
         // leaves the last good decode in force, so the emptiness does not
         // stall the steps after it.
         if current.is_empty() {
-            return (None, false);
+            return (None, Standing::Ignored);
         }
         let retained_prefix_len = self.missing_prefix_len(&current);
         if let Some(count) = retained_prefix_len {
@@ -624,15 +830,23 @@ impl Agreement {
             current = retained;
         }
         if self.dropped_window(&current) {
-            return (None, false);
+            return (None, Standing::Ignored);
         }
-        let placement = self.placed(&current);
+        let again = if self.emitted > 0 {
+            self.delivered_again(&current, None)
+        } else {
+            None
+        };
+        let placement = self.placed(&current, again.as_ref().map(|again| again.words));
+        if let Some(again) = again.as_ref().filter(|_| placement.is_some()) {
+            self.remember(again, &current);
+        }
         let recovered = placement.is_none();
         let (start, emitted) = match placement {
             Some(placement) => placement,
             None => {
                 let Some(start) = self.after_delivered_audio(&current) else {
-                    return (None, false);
+                    return (None, Standing::Ignored);
                 };
                 self.timing_recovery = true;
                 (start, start)
@@ -643,10 +857,7 @@ impl Agreement {
             + if retained_prefix_len.is_some() {
                 0
             } else {
-                lcp(
-                    &self.candidate[self.emitted.min(self.candidate.len())..],
-                    &current[start..],
-                )
+                lcp(self.waiting(), &current[start..])
             };
         let deliverable = match skipped {
             Some(at) => heard_before(&current[..agreed], at),
@@ -664,7 +875,12 @@ impl Agreement {
             && current.len() == self.candidate.len()
             && skipped.is_none();
         self.candidate = current;
-        (confirmed, settled)
+        let standing = if settled {
+            Standing::Settled
+        } else {
+            Standing::Current
+        };
+        (confirmed, standing)
     }
 
     fn missing_prefix_len(&self, current: &[Word]) -> Option<usize> {
@@ -698,24 +914,22 @@ impl Agreement {
     }
 
     /// Where the decode's new words begin, and how many words count as out
-    /// once it stands as the last decode. A decode that opens where the
-    /// last one did is placed by [`Self::aligned`]. One that opens
-    /// elsewhere is counted afresh by the delivered words it repeats.
+    /// once it stands as the last decode. `again` counts its opening words
+    /// that say delivered words again. Without it, the delivered words it
+    /// repeats place it.
     ///
     /// `None` when no delivered text or anchored candidate locates the
     /// decode. Its word timings may still locate undelivered audio.
-    fn placed(&self, current: &[Word]) -> Option<(usize, usize)> {
+    fn placed(&self, current: &[Word], again: Option<usize>) -> Option<(usize, usize)> {
         // Once words are out, a lone repeated word is too little to place a
         // decode by: a heavily revised decode shows one by chance.
         let least = if self.emitted > 0 { 2 } else { 1 };
-        let placement = match self.aligned(current) {
-            Some(placed) if self.emitted > 0 => Some(placed),
-            _ => self
-                .repeated(current, least)
-                .map(|repeated| (repeated, repeated)),
-        };
+        let placement = again
+            .or_else(|| self.repeated(current, least))
+            .map(|repeated| (repeated, repeated));
+        let nothing_out = self.emitted == 0 || self.delivered.len() == self.carried;
         if let Some((start, emitted)) = placement
-            && (start > 0 || (self.emitted == 0 && !self.timing_recovery))
+            && (start > 0 || (nothing_out && !self.timing_recovery))
         {
             if self.timing_recovery && !self.anchored_at(current, start) {
                 let through = self.after_delivered_audio(current)?;
@@ -839,59 +1053,6 @@ impl Agreement {
         })
     }
 
-    /// Where a decode that opens like the last one begins its new words,
-    /// and how many words count as out.
-    ///
-    /// The last delivered words mark the place, since an inserted or
-    /// dropped word moves them. When they are gone, the decode revised
-    /// them. It still opens at the same place if it differs from the last
-    /// decode in at most `TOLERATED_LOSS` delivered words. The count then
-    /// stays put: a shorter decode holds nothing new, and lowering the count
-    /// would offer words a second time. `None` otherwise.
-    fn aligned(&self, words: &[Word]) -> Option<(usize, usize)> {
-        if let Some(end) = self.delivered_end(words) {
-            return Some((end, end));
-        }
-        let compared = self.emitted.min(words.len()).min(self.candidate.len());
-        let revised = self.candidate[..compared]
-            .iter()
-            .zip(&words[..compared])
-            .filter(|(heard, word)| spoken(&heard.text) != spoken(&word.text))
-            .count();
-        (revised <= TOLERATED_LOSS).then_some((self.emitted.min(words.len()), self.emitted))
-    }
-
-    /// Where the last delivered words end in `words`. Tries the last two,
-    /// then the last one alone, searching outward from the count by up to
-    /// `PLACEMENT_SHIFT` words. New audio must follow the match: a revised
-    /// delivered word looks like a dropped one, and only timing tells them
-    /// apart.
-    fn delivered_end(&self, words: &[Word]) -> Option<usize> {
-        let nearest_ends: Vec<usize> =
-            std::iter::once(Some(self.emitted))
-                .chain((1..=PLACEMENT_SHIFT).flat_map(|shift| {
-                    [Some(self.emitted + shift), self.emitted.checked_sub(shift)]
-                }))
-                .flatten()
-                .collect();
-        for count in [2, 1] {
-            let Some(from) = self.delivered.len().checked_sub(count) else {
-                continue;
-            };
-            let run = &self.delivered[from..];
-            let found = nearest_ends.iter().copied().find(|&end| {
-                end >= count
-                    && end <= words.len()
-                    && lcp(run, &words[end - count..]) == count
-                    && self.opens_new_audio(words, end)
-            });
-            if found.is_some() {
-                return found;
-            }
-        }
-        None
-    }
-
     /// Whether the word at `end` starts past the delivered audio, within
     /// `HEARD_MARGIN_FRAMES`. True when there is no such word or no timing
     /// to compare.
@@ -958,6 +1119,156 @@ impl Agreement {
         let tail: Vec<Word> = self.candidate.drain(range).collect();
         self.deliver(&tail, ended_before)
     }
+}
+
+/// The opening words of a decode that say delivered words again.
+struct Again {
+    words: usize,
+    /// Each delivered word said again, with the decode word saying it.
+    pairs: Vec<(usize, usize)>,
+}
+
+/// How a decode opens with words it was expected to say again.
+struct Opening {
+    words: usize,
+    /// How many words differ between those and the expected ones.
+    revised: usize,
+    /// Each expected word said again, with the decode word saying it.
+    pairs: Vec<(usize, usize)>,
+    /// `unlike_next[at]`: how many words differ between `next` and the
+    /// opening of the decode from word `at`. Decode words past it are free.
+    unlike_next: Vec<usize>,
+}
+
+impl Opening {
+    /// Lines `decode` up with `expected`, in order, so the fewest words
+    /// differ. A `clipped` first word may be missing at no cost.
+    ///
+    /// Ties go first to the new words closest to `next`, which tell a
+    /// reworded last word from a new one. Then to the fewest new words
+    /// ending before `cut`, since everything before a cut was delivered. Then to paired words
+    /// that share audio, give or take a word's drifting edges. Last, to
+    /// more words said again, since the decode heard that audio.
+    fn of(
+        expected: &[Word],
+        clipped: bool,
+        next: &[Word],
+        decode: &[Word],
+        cut: Option<u64>,
+    ) -> Self {
+        let spoken_of = |words: &[Word]| -> Vec<String> {
+            words.iter().map(|word| spoken(&word.text)).collect()
+        };
+        let (was, next, said) = (spoken_of(expected), spoken_of(next), spoken_of(decode));
+        let (rows, columns) = (was.len(), said.len());
+
+        let mut after = vec![0_usize; columns + 1];
+        for word in next.iter().rev() {
+            let mut row = vec![after[columns] + 1; columns + 1];
+            for at in (0..columns).rev() {
+                row[at] = (after[at + 1] + usize::from(*word != said[at]))
+                    .min(after[at] + 1)
+                    .min(row[at + 1] + 1);
+            }
+            after = row;
+        }
+
+        // early[at]: how many decode words from `at` on end before the cut.
+        let mut early = vec![0_usize; columns + 1];
+        for at in (0..columns).rev() {
+            let before_cut = decode[at]
+                .span
+                .as_ref()
+                .zip(cut)
+                .is_some_and(|(span, cut)| span.end <= cut);
+            early[at] = early[at + 1] + usize::from(before_cut);
+        }
+
+        // What one more step of a line-up adds: words that differ, then
+        // paired words that share no audio.
+        let unpaired = [1, 0];
+        let drift = (HEARD_MARGIN_FRAMES * TRIM_FRAME_SAMPLES) as u64;
+        let paired = |row: usize, column: usize| {
+            let apart = expected[row]
+                .span
+                .as_ref()
+                .zip(decode[column].span.as_ref())
+                .is_some_and(|(was, said)| {
+                    said.end + drift <= was.start || was.end + drift <= said.start
+                });
+            [usize::from(was[row] != said[column]), usize::from(apart)]
+        };
+        let add = |cost: [usize; 2], step: [usize; 2]| [cost[0] + step[0], cost[1] + step[1]];
+
+        // cost[row][column]: the cheapest line-up of the first `row`
+        // expected words with the first `column` decode words.
+        let mut cost = vec![vec![[0_usize; 2]; columns + 1]; rows + 1];
+        for column in 1..=columns {
+            cost[0][column] = add(cost[0][column - 1], unpaired);
+        }
+        for row in 1..=rows {
+            for column in 0..=columns {
+                let mut best = add(cost[row - 1][column], unpaired);
+                if column > 0 {
+                    best = best
+                        .min(add(cost[row - 1][column - 1], paired(row - 1, column - 1)))
+                        .min(add(cost[row][column - 1], unpaired));
+                }
+                if row == 1 && clipped {
+                    best = best.min(cost[0][column]);
+                }
+                cost[row][column] = best;
+            }
+        }
+        let words = (0..=columns)
+            .min_by_key(|&column| {
+                let [revised, apart] = cost[rows][column];
+                (
+                    revised,
+                    after[column],
+                    early[column],
+                    apart,
+                    std::cmp::Reverse(column),
+                )
+            })
+            .unwrap_or(0);
+
+        let mut pairs = Vec::new();
+        let (mut row, mut column) = (rows, words);
+        while row > 0 {
+            let here = cost[row][column];
+            if column > 0 && here == add(cost[row - 1][column - 1], paired(row - 1, column - 1)) {
+                row -= 1;
+                column -= 1;
+                pairs.push((row, column));
+            } else if row == 1 && clipped && here == cost[0][column] {
+                break;
+            } else if here == add(cost[row - 1][column], unpaired) {
+                row -= 1;
+            } else {
+                column -= 1;
+            }
+        }
+        pairs.reverse();
+        Self {
+            words,
+            revised: cost[rows][words][0],
+            pairs,
+            unlike_next: after,
+        }
+    }
+}
+
+/// How one decode stands in the agreement.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Standing {
+    /// It left the last decode in force.
+    Ignored,
+    /// It became the last decode.
+    Current,
+    /// It became the last decode. Past the delivered words, it says what
+    /// the one before said and no more.
+    Settled,
 }
 
 /// One decoded word and where its audio sits in the stream.
@@ -1094,7 +1405,6 @@ fn room_noise(squares: &[f32]) -> f32 {
     *noise
 }
 
-/// A pause a buffer ends in.
 struct Pause {
     /// Where to cut, as a sample offset into the buffer.
     at: usize,
@@ -1145,19 +1455,23 @@ impl Loudness {
         self.squares[frame] > self.speech
     }
 
-    /// Whether the buffer is still the pause whose loudest frame was
-    /// `level`. One frame over the floor breaks it. So does a run of frames
-    /// well over the pause, as a distant voice makes without reaching the
-    /// floor.
-    fn within(&self, level: f32) -> bool {
-        if self.loudest > SILENCE_FLOOR {
-            return false;
-        }
+    /// The first sample of the frame that breaks the opening pause. A run
+    /// above the room noise also counts when a distant voice stays below
+    /// the ordinary speech floor.
+    fn end_of_pause(&self, level: f32) -> Option<usize> {
         let ceiling = (level * SPEECH_OVER_NOISE).clamp(QUIETEST_SPEECH, SILENCE_FLOOR);
-        !self
-            .squares
-            .windows(PAUSE_BREAK_FRAMES)
-            .any(|run| run.iter().all(|&square| square > ceiling))
+        let mut run = 0;
+        for (frame, &power) in self.squares.iter().enumerate() {
+            if power > ceiling {
+                run += 1;
+                if power > SILENCE_FLOOR || run == PAUSE_BREAK_FRAMES {
+                    return Some((frame + 1 - run) * TRIM_FRAME_SAMPLES);
+                }
+            } else {
+                run = 0;
+            }
+        }
+        None
     }
 
     /// Where the buffer's tail opens onto a real pause, as a sample offset
@@ -1165,7 +1479,7 @@ impl Loudness {
     /// run followed by more speech is a dip inside a sentence, and cutting
     /// there would keep audio whose words were already delivered, which the
     /// next buffer would deliver again.
-    fn pause_cut(&self) -> Option<Pause> {
+    fn trailing_pause(&self) -> Option<Pause> {
         let quiet = (0..self.squares.len())
             .rev()
             .take_while(|&frame| !self.is_loud(frame))
@@ -1174,13 +1488,53 @@ impl Loudness {
             return None;
         }
         let start = self.squares.len() - quiet;
-        Some(Pause {
-            at: (start + quiet / 2) * TRIM_FRAME_SAMPLES,
-            level: self.squares[start + quiet / 2..]
+        Some(self.pause_in(start..self.squares.len()))
+    }
+
+    /// The pause after a word timed over frames `word`. It opens right
+    /// after speech, inside the timing or within `HEARD_MARGIN_FRAMES` past
+    /// it, and stays free of speech long enough to trust before `until`.
+    ///
+    /// The word must sound before the pause, though its timing may be off
+    /// at either end. An early start leaves only a neighbour's last frames
+    /// before the pause, with the word after it. A late end runs past the
+    /// pause into the next words. So the pause counts when the rest of the
+    /// timing is quiet, or when more speech precedes it than a neighbour
+    /// leaves.
+    ///
+    /// Quiet beside the loudest frame is not enough here. A soft word after
+    /// a loud one reads as quiet, and a cut there splits it.
+    fn pause_after(&self, word: std::ops::Range<usize>, until: usize) -> Option<Pause> {
+        let until = until.min(self.squares.len());
+        let quiet_from = |start: usize| {
+            (start..until)
+                .take_while(|&frame| !self.is_speech(frame))
+                .count()
+        };
+        let opens = word.start + 1..word.end + HEARD_MARGIN_FRAMES;
+        let start = opens.take_while(|&frame| frame < until).find(|&frame| {
+            let quiet = quiet_from(frame);
+            let sound = (word.start..frame)
+                .rev()
+                .take_while(|&frame| self.is_speech(frame))
+                .count();
+            let rest_is_quiet = frame + quiet >= word.end.min(until);
+            quiet >= TRIM_SILENCE_FRAMES
+                && sound > 0
+                && (rest_is_quiet || sound > HEARD_MARGIN_FRAMES)
+        })?;
+        Some(self.pause_in(start..start + quiet_from(start)))
+    }
+
+    fn pause_in(&self, quiet: std::ops::Range<usize>) -> Pause {
+        let at = quiet.start + quiet.len() / 2;
+        Pause {
+            at: at * TRIM_FRAME_SAMPLES,
+            level: self.squares[at..quiet.end]
                 .iter()
                 .copied()
                 .fold(0.0_f32, f32::max),
-        })
+        }
     }
 
     /// Where speech no heard word accounts for begins, at or after `from`:
@@ -1306,6 +1660,12 @@ mod tests {
             let Some(step) = step else { break };
             run.steps += 1;
             if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
+                if let Some((span, window)) = segment.span().zip(segment.source_window()) {
+                    assert!(
+                        window.start <= span.start && span.end <= window.end,
+                        "segment {span:?} lies outside its source window {window:?}"
+                    );
+                }
                 run.ended_before.push(segment.sentence_ended_before());
                 run.segments.push(segment.into_text());
             }
@@ -1554,6 +1914,287 @@ mod tests {
             segment.map(TranscriptSegment::into_text)
         }
 
+        /// Words with their start and end in seconds.
+        fn spoken_at(list: &[(&str, f32, f32)]) -> Vec<Word> {
+            let sample = |seconds: f32| (seconds * CANONICAL_SAMPLE_RATE as f32) as u64;
+            list.iter()
+                .map(|&(word, start, end)| Word {
+                    text: word.to_owned(),
+                    span: Some(sample(start)..sample(end)),
+                })
+                .collect()
+        }
+
+        #[test]
+        fn a_delivered_word_timed_late_does_not_hide_the_words_after_it() {
+            // The decode that delivers "curve" hears it at its window's
+            // edge and times it a second late. The next one times it where
+            // it sounds, and runs "to find" together.
+            let mut agreement = Agreement::default();
+            confirmed(
+                &mut agreement,
+                spoken_at(&[
+                    ("gray", 0.0, 0.3),
+                    ("to", 0.3, 0.4),
+                    ("find", 0.4, 0.7),
+                    ("the", 0.7, 0.8),
+                    ("outer", 0.8, 1.2),
+                    ("curve", 1.9, 2.5),
+                ]),
+            );
+            let later = spoken_at(&[
+                ("gray", 0.0, 0.3),
+                ("define", 0.3, 0.7),
+                ("the", 0.7, 0.8),
+                ("outer", 0.8, 1.2),
+                ("curve", 1.2, 1.5),
+                ("and", 1.6, 1.8),
+                ("one", 1.8, 2.0),
+                ("little", 2.1, 2.4),
+            ]);
+
+            assert_eq!(
+                text_of(confirmed(&mut agreement, later)).as_deref(),
+                Some("and one little")
+            );
+        }
+
+        #[test]
+        fn a_reworded_last_delivered_word_is_told_by_the_words_that_followed_it() {
+            // "read" is out, and "and of a" was heard after it. The next
+            // decode runs "cock robin" together and writes "read" as "red".
+            let mut agreement = Agreement::default();
+            confirmed(
+                &mut agreement,
+                timed(&["cock", "robin", "is", "to", "be", "read"]),
+            );
+            agreement.agree(
+                timed(&["cock", "robin", "is", "to", "be", "read", "and", "of", "a"]),
+                None,
+            );
+            let (confirmed, _) = agreement.agree(
+                timed(&[
+                    "cock-robin",
+                    "is",
+                    "to",
+                    "be",
+                    "red",
+                    "and",
+                    "of",
+                    "a",
+                    "grass",
+                ]),
+                None,
+            );
+
+            assert_eq!(text_of(confirmed).as_deref(), Some("and of a"));
+        }
+
+        #[test]
+        fn a_reworded_delivered_phrase_is_not_found_again_in_a_later_copy() {
+            // "we can" went out before a cut. The lookback decode writes it
+            // as "we can't", and the speaker says "we can" again later.
+            let mut agreement = Agreement::default();
+            confirmed(
+                &mut agreement,
+                spoken_at(&[("we", 0.0, 0.2), ("can", 0.2, 0.5)]),
+            );
+            let agreement = agreement.next_buffer(8_000, 0);
+            let decode = spoken_at(&[
+                ("we", 0.0, 0.2),
+                ("can't", 0.2, 0.5),
+                ("yes", 0.6, 0.8),
+                ("I", 0.8, 0.9),
+                ("think", 0.9, 1.1),
+                ("we", 1.1, 1.3),
+                ("can", 1.3, 1.5),
+                ("help", 1.5, 1.8),
+            ]);
+
+            let again = agreement.delivered_again(
+                &decode,
+                Some(LookbackWindow {
+                    from: 0,
+                    pause_end: None,
+                }),
+            );
+            assert_eq!(again.map(|again| again.words), Some(2));
+        }
+
+        #[test]
+        fn a_lookback_decode_is_not_held_to_words_from_before_it() {
+            // Only "four" sounds inside the lookback, and the decode
+            // rewords it. The three words before it are not missing.
+            let mut agreement = Agreement::default();
+            confirmed(&mut agreement, timed(&["one", "two", "three", "four"]));
+            let four = agreement.delivered[3].span.clone().unwrap();
+            let agreement = agreement.next_buffer(four.end, four.start);
+            let mut decode = timed(&["for", "five"]);
+            decode[0].span = Some(four.clone());
+            decode[1].span = Some(four.end..2 * four.end);
+
+            let again = agreement.delivered_again(
+                &decode,
+                Some(LookbackWindow {
+                    from: four.start,
+                    pause_end: None,
+                }),
+            );
+            assert_eq!(again.map(|again| again.words), Some(1));
+        }
+
+        #[test]
+        fn the_delivered_end_follows_the_latest_timing_of_the_last_delivered_word() {
+            // "two" goes out timed at its window's edge. The next decode
+            // times it where it sounds.
+            let mut agreement = Agreement::default();
+            confirmed(
+                &mut agreement,
+                spoken_at(&[("one", 0.0, 0.3), ("two", 1.0, 1.6)]),
+            );
+            let later = spoken_at(&[("one", 0.0, 0.3), ("two", 0.3, 0.6), ("three", 0.7, 1.0)]);
+            agreement.agree(later.clone(), None);
+
+            assert_eq!(
+                agreement.delivered_through,
+                later[1].span.as_ref().map(|span| span.end)
+            );
+        }
+
+        #[test]
+        fn a_decode_unlike_the_delivered_words_is_not_placed_by_them() {
+            let mut agreement = Agreement::default();
+            confirmed(
+                &mut agreement,
+                heard(&["one", "two", "three", "four", "five"]),
+            );
+            let kept = heard(&["one", "too", "tree", "four", "five", "six"]);
+            let lost = heard(&["won", "too", "tree", "for", "five", "six"]);
+
+            assert_eq!(
+                agreement
+                    .delivered_again(&kept, None)
+                    .map(|again| again.words),
+                Some(5)
+            );
+            assert!(agreement.delivered_again(&lost, None).is_none());
+        }
+
+        #[test]
+        fn the_next_buffer_keeps_every_delivered_word_its_lookback_may_hear() {
+            let mut agreement = Agreement::default();
+            confirmed(
+                &mut agreement,
+                timed(&[
+                    "one", "two", "three", "four", "five", "six", "seven", "eight",
+                ]),
+            );
+            let word = agreement.delivered[1].span.clone().unwrap();
+
+            let reaching = agreement.next_buffer(8 * word.end, word.start);
+            assert_eq!(reaching.delivered.len(), 7);
+
+            let mut agreement = Agreement::default();
+            confirmed(
+                &mut agreement,
+                timed(&[
+                    "one", "two", "three", "four", "five", "six", "seven", "eight",
+                ]),
+            );
+            let short = agreement.next_buffer(8 * word.end, 8 * word.end);
+            assert_eq!(short.delivered.len(), CARRIED_WORDS);
+        }
+
+        mod opening {
+            use super::*;
+
+            fn words_again(expected: &[Word], next: &[Word], decode: &[Word]) -> usize {
+                Opening::of(expected, false, next, decode, None).words
+            }
+
+            #[test]
+            fn decode_words_past_the_last_expected_word_are_new() {
+                let expected = heard(&["one", "two"]);
+
+                assert_eq!(
+                    words_again(&expected, &[], &heard(&["one", "two", "three"])),
+                    2
+                );
+                assert_eq!(
+                    words_again(&expected, &[], &heard(&["uh", "one", "two", "three"])),
+                    3
+                );
+                assert_eq!(words_again(&expected, &[], &heard(&["one", "three"])), 2);
+            }
+
+            #[test]
+            fn a_word_said_again_as_it_was_outranks_a_rewording() {
+                // Either "junk" rewords "two" and both "two" are new, or it
+                // is an extra word before "two".
+                let decode = heard(&["one", "junk", "two", "two"]);
+
+                assert_eq!(words_again(&heard(&["one", "two"]), &[], &decode), 3);
+            }
+
+            #[test]
+            fn a_rewording_shares_the_audio_of_the_word_it_replaces() {
+                // "that's" covers "that was". "new" sounds later than either.
+                let expected = spoken_at(&[("that", 1.5, 1.7), ("was", 1.8, 2.1)]);
+                let decode = spoken_at(&[("that's", 1.5, 2.1), ("new", 3.0, 3.3)]);
+
+                assert_eq!(words_again(&expected, &[], &decode), 1);
+                let untimed = heard(&["that's", "new"]);
+                assert_eq!(words_again(&expected, &[], &untimed), 2);
+            }
+
+            #[test]
+            fn the_words_that_should_follow_tell_a_reworded_word_from_a_new_one() {
+                let (expected, next) = (heard(&["be", "read"]), heard(&["and", "of"]));
+
+                assert_eq!(
+                    words_again(&expected, &next, &heard(&["be", "red", "and", "of"])),
+                    2
+                );
+                assert_eq!(
+                    words_again(&expected, &next, &heard(&["be", "and", "of"])),
+                    1
+                );
+            }
+
+            #[test]
+            fn the_words_that_should_follow_never_outweigh_a_word_said_again() {
+                // "men" went out timed at its window's edge, and the words
+                // heard after it were a stutter of it. The next decode
+                // times "men" where it sounds and drops the stutter.
+                let expected = spoken_at(&[("four", 2.6, 3.0), ("men", 3.4, 4.0)]);
+                let next = spoken_at(&[("two", 4.0, 4.0), ("men", 4.0, 4.0)]);
+                let decode =
+                    spoken_at(&[("four", 2.5, 2.7), ("men", 2.7, 2.9), ("Titian", 3.3, 4.4)]);
+
+                assert_eq!(words_again(&expected, &next, &decode), 2);
+            }
+
+            #[test]
+            fn the_words_that_should_follow_outrank_the_cut() {
+                // "and" was heard after "read". The lookback decode drops
+                // "read" and times "and" early, before the cut.
+                let (expected, next) = (heard(&["be", "read"]), heard(&["and"]));
+                let decode = spoken_at(&[("be", 0.1, 0.3), ("and", 0.4, 0.6), ("of", 1.2, 1.4)]);
+                let cut = Some(u64::from(CANONICAL_SAMPLE_RATE));
+
+                assert_eq!(Opening::of(&expected, false, &next, &decode, cut).words, 1);
+            }
+
+            #[test]
+            fn a_clipped_first_word_may_be_missing() {
+                let expected = heard(&["one", "two", "three"]);
+                let decode = heard(&["two", "three", "four"]);
+
+                assert_eq!(Opening::of(&expected, true, &[], &decode, None).revised, 0);
+                assert_eq!(Opening::of(&expected, false, &[], &decode, None).revised, 1);
+            }
+        }
+
         fn opening_loss() -> [Vec<Word>; 2] {
             let decodes: [Vec<(String, std::ops::Range<u64>)>; 2] =
                 serde_json::from_str(include_str!("opening-loss.json")).unwrap();
@@ -1577,12 +2218,12 @@ mod tests {
                 let mut agreement = Agreement::default();
                 agreement.agree(previous.clone(), None);
                 for _ in 0..repetitions {
-                    let (segment, settled) = agreement.agree(current.clone(), None);
+                    let (segment, standing) = agreement.agree(current.clone(), None);
                     assert!(
                         segment.is_none(),
                         "retained words are not a second observation"
                     );
-                    assert!(!settled);
+                    assert_ne!(standing, Standing::Settled);
                 }
                 assert_eq!(
                     text_of(agreement.take_tail(None)).as_deref(),
@@ -1624,9 +2265,9 @@ mod tests {
             let mut agreement = Agreement::default();
             agreement.agree(previous, None);
             agreement.agree(current.clone(), None);
-            let (confirmed, settled) = agreement.agree(current, None);
+            let (confirmed, standing) = agreement.agree(current, None);
             assert_eq!(text_of(confirmed), expected);
-            assert!(settled);
+            assert_eq!(standing, Standing::Settled);
         }
 
         #[test]
@@ -1859,9 +2500,9 @@ mod tests {
             let opening = timed(&["one", "two", "three", "four"]);
             confirmed(&mut agreement, opening);
             let revised = timed(&["a", "completely", "different", "opening", "new", "speech"]);
-            let (first, settled) = agreement.agree(revised.clone(), None);
+            let (first, standing) = agreement.agree(revised.clone(), None);
             assert!(first.is_none());
-            assert!(!settled);
+            assert_ne!(standing, Standing::Settled);
             assert_eq!(agreement.preview(), "new speech");
             let (confirmed, _) = agreement.agree(revised, None);
             assert_eq!(text_of(confirmed).as_deref(), Some("new speech"));
@@ -1927,7 +2568,7 @@ mod tests {
             let mut agreement = Agreement::default();
             agreement.agree(timed(&["a", "b", "c", "d"]), None);
             agreement.agree(timed(&["a", "b", "c", "d"]), None);
-            let mut agreement = agreement.next_buffer();
+            let mut agreement = agreement.next_buffer(0, u64::MAX);
 
             // The fresh buffer starts after "d" and hears the phrase again.
             let later = timed(&["a", "b", "c", "d", "e", "f", "g", "a", "b", "c", "d", "h"]);
@@ -1941,17 +2582,21 @@ mod tests {
         #[test]
         fn agreement_delivers_a_confirmed_prefix_once() {
             let mut agreement = Agreement::default();
-            let (first, settled) = agreement.agree(heard(&["one", "two"]), None);
+            let (first, standing) = agreement.agree(heard(&["one", "two"]), None);
             assert_eq!(text_of(first), None, "one decode confirms nothing");
-            assert!(!settled);
+            assert_ne!(standing, Standing::Settled);
 
-            let (second, settled) = agreement.agree(heard(&["one", "two", "three"]), None);
+            let (second, standing) = agreement.agree(heard(&["one", "two", "three"]), None);
             assert_eq!(text_of(second).as_deref(), Some("one two"));
-            assert!(!settled, "a decode that grew has not settled");
+            assert_ne!(
+                standing,
+                Standing::Settled,
+                "a decode that grew has not settled"
+            );
 
-            let (third, settled) = agreement.agree(heard(&["one", "two", "three"]), None);
+            let (third, standing) = agreement.agree(heard(&["one", "two", "three"]), None);
             assert_eq!(text_of(third).as_deref(), Some("three"));
-            assert!(settled, "two identical decodes settle");
+            assert_eq!(standing, Standing::Settled, "two identical decodes settle");
             assert_eq!(text_of(agreement.take_tail(None)), None);
         }
 
@@ -1959,9 +2604,9 @@ mod tests {
         fn an_empty_decode_keeps_the_last_one_in_force() {
             let mut agreement = Agreement::default();
             agreement.agree(heard(&["one", "two"]), None);
-            let (confirmed, settled) = agreement.agree(heard(&[]), None);
+            let (confirmed, standing) = agreement.agree(heard(&[]), None);
             assert_eq!(text_of(confirmed), None);
-            assert!(!settled);
+            assert_ne!(standing, Standing::Settled);
             assert_eq!(
                 text_of(agreement.take_tail(None)).as_deref(),
                 Some("one two")
@@ -2237,7 +2882,8 @@ mod tests {
             state.decoded_end = 10 * STRIDE as u64;
             let confirmed = state.commit(TranscriptSegment::spanned(&["owner".into()], None));
             let tail = state.commit(TranscriptSegment::spanned(&["guest".into()], None));
-            let tail = state.trim(state.decoded_end, tail, None);
+            let agreement = state.agreement.next_buffer(0, u64::MAX);
+            let tail = state.trim(state.decoded_end, agreement, tail, None);
             let first = state.one_at_a_time(confirmed, tail).unwrap();
             assert_eq!(first.span(), None);
             assert_eq!(
@@ -2460,8 +3106,39 @@ mod tests {
             audio
         }
 
+        fn whole_hypothesis(spoken: &[Spoken], window: &[f32]) -> Hypothesis {
+            let (words, timings) = whole_words(spoken, window);
+            Hypothesis::with_words(words.join(" "), timings)
+        }
+
+        /// A paced run over `seconds` of `spoken`: each decode hears one
+        /// stride more.
+        fn replay(
+            cadence: Cadence,
+            spoken: &[Spoken],
+            seconds: f32,
+            decode: impl FnMut(&[f32]) -> Hypothesis,
+        ) -> Run {
+            let audio = spoken_audio(spoken, seconds);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                decode,
+                |_| {},
+            )
+        }
+
         fn strides(audio: &[i16]) -> Vec<Vec<i16>> {
             audio.chunks(STRIDE).map(<[i16]>::to_vec).collect()
+        }
+
+        fn strides_of(cadence: Cadence, audio: &[i16]) -> Vec<Vec<i16>> {
+            audio
+                .chunks(cadence.stride_samples())
+                .map(<[i16]>::to_vec)
+                .collect()
         }
 
         /// The words whose audio lies whole inside `window`, timed from its
@@ -2498,6 +3175,38 @@ mod tests {
         }
 
         #[test]
+        fn a_pause_no_stride_ends_in_is_cut_and_keeps_the_words_heard_past_it() {
+            // At a 500 ms stride, the decode that confirms "one" already hears
+            // "two", so no settled decode ends inside the pause between them.
+            const SPOKEN: [Spoken; 3] = [
+                ("one", 8_000, 0.2, 0.5),
+                ("two", 7_000, 1.0, 1.2),
+                ("three", 6_000, 1.3, 1.5),
+            ];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let audio = spoken_audio(&SPOKEN, 2.5);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            let mut delivered = Vec::new();
+            let run = run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                |window| whole_hypothesis(&SPOKEN, window),
+                |state| delivered.push((state.decoded_end, state.transcript.len())),
+            );
+
+            // The pause runs from frame 16, past the frame "one" ends in, to
+            // frame 31, where "two" begins. The cut lands at its midpoint.
+            let cut = (16 + 15 / 2) * TRIM_FRAME_SAMPLES;
+            assert_eq!(run.windows, [8_000, 16_000, 24_000, 32_000, 40_000 - cut]);
+            assert_eq!(run.segments, ["one", "two", "three"]);
+            assert!(
+                delivered.contains(&(32_000, 2)),
+                "the decode after the cut confirms the word heard past the pause"
+            );
+        }
+
+        #[test]
         fn softer_speech_after_a_pause_is_preserved() {
             let mut batches = vec![loud_batch(); 3];
             batches.extend(vec![quiet_batch(); 6]);
@@ -2521,28 +3230,676 @@ mod tests {
             // before it, the model hears the sentence go on. The words
             // before the cut are not delivered again.
             const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
-            let audio = spoken_audio(&SPOKEN, 3.0);
-            let (mut recording, pace) = paced(strides(&audio));
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let (words, timings) = whole_words(&SPOKEN, window);
-                    let text = match words.as_slice() {
-                        ["one"] => "one.",
-                        ["one", "two"] => "one two",
-                        ["two"] => "Two.",
-                        _ => "",
-                    };
-                    Hypothesis::with_words(text, timings)
-                },
-                |_| {},
-            );
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (words, timings) = whole_words(&SPOKEN, window);
+                let text = match words.as_slice() {
+                    ["one"] => "one.",
+                    ["one", "two"] => "one two",
+                    ["two"] => "Two.",
+                    _ => "",
+                };
+                Hypothesis::with_words(text, timings)
+            });
 
             // Only a decode that heard "one" too writes "two" that way.
             assert_eq!(run.segments, ["one.", "two"]);
             assert_eq!(run.ended_before, [None, Some(false)]);
+        }
+
+        #[test]
+        fn a_buffer_word_the_lookback_decode_times_across_the_cut_goes_out() {
+            // Engines time the first word after a pause early. The decode
+            // that hears "one" again opens "two" where "one" ends, before
+            // the cut. "two" follows the delivered word, so it is new.
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["one", "two"] {
+                    timings[1].start = timings[0].end;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.segments, ["one", "two"]);
+        }
+
+        #[test]
+        fn a_delivered_word_the_lookback_decode_rewords_across_the_cut_stays_out() {
+            // The decode that hears "two" writes "one" as "won" and runs
+            // its end on to "two", past the cut. Nothing tells "won" from a
+            // new word but its start, which lies before the cut.
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["one", "two"] {
+                    words[0] = "won";
+                    timings[0].end = timings[1].start;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.segments, ["one", "two"]);
+        }
+
+        #[test]
+        fn a_word_said_again_after_the_pause_is_new_when_the_decode_drops_the_first() {
+            // The speaker says "yes", pauses, and says "yes please". Once it
+            // hears both, the decode writes one "yes", timed where the
+            // second sounds, past the cut.
+            const SPOKEN: [Spoken; 3] = [
+                ("yes", 8_000, 0.2, 0.5),
+                ("yes", 7_000, 1.5, 1.8),
+                ("please", 6_000, 1.9, 2.3),
+            ];
+            let run = replay(cadence(20_000), &SPOKEN, 3.5, |window| {
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                if words.len() > 1 {
+                    words.remove(0);
+                    timings.remove(0);
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "yes yes please");
+        }
+
+        #[test]
+        fn a_second_cap_lookback_keeps_its_waiting_word() {
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.10, 0.95), ("two", 7_000, 1.01, 1.08)];
+            let audio = spoken_audio(&SPOKEN, 1.6);
+            let (mut recording, pace) = paced(strides(&audio));
+            let mut cut = None;
+            let run = run(
+                AgreementState::new(cadence(1_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, mut timings) = whole_words(&SPOKEN, window);
+                    if words == ["one", "two"] && window.len() >= sample_at(1.15) {
+                        timings[0] = TimedWord {
+                            start: 0.96,
+                            end: 1.0,
+                        };
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |state| {
+                    if state.buffer_start > 0 && cut.is_none() {
+                        cut = Some((state.buffer_start, state.pause_level));
+                    }
+                },
+            );
+            assert_eq!(
+                cut,
+                Some((sample_at(0.95) as u64 - CUT_OVERLAP_SAMPLES, None))
+            );
+            assert_eq!(run.transcript(), "one two");
+        }
+
+        #[test]
+        fn a_recovered_repeat_before_a_waiting_word_goes_out() {
+            const SPOKEN: [Spoken; 3] = [
+                ("yes", 8_000, 0.2, 0.5),
+                ("yes", 7_000, 1.5, 1.68),
+                ("please", 6_000, 1.7, 1.88),
+            ];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let run = replay(cadence, &SPOKEN, 3.5, |window| {
+                let (words, timings) = whole_words(&SPOKEN, window);
+                // The first decode after "please" misses both copies of "yes".
+                // The next one recovers the second, where it was spoken.
+                let first = match words.len() {
+                    3 if window.len() == sample_at(2.0) => 2,
+                    3 => 1,
+                    _ => 0,
+                };
+                Hypothesis::with_words(words[first..].join(" "), timings[first..].to_vec())
+            });
+
+            assert_eq!(run.transcript(), "yes yes please");
+        }
+
+        #[test]
+        fn a_delivered_word_timed_in_the_pause_stays_out_with_no_word_waiting() {
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.55, 0.78), ("two", 7_000, 1.3, 1.64)];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let run = replay(cadence, &SPOKEN, 3.5, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                // "two" was unfinished at the cut. Once it is heard, the
+                // decode times the delivered "one" in the remaining silence.
+                if words == ["one", "two"] {
+                    timings[0] = TimedWord {
+                        start: 1.1,
+                        end: 1.25,
+                    };
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one two");
+        }
+
+        #[test]
+        fn a_delivered_word_the_lookback_decode_times_past_the_cut_stays_out() {
+            // "two" is heard past the pause. The next decode times "one"
+            // in the silence after the cut, before "two".
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.2, 0.5), ("two", 7_000, 1.5, 1.8)];
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["one", "two"] && window.len() > sample_at(1.95) {
+                    timings[0] = TimedWord {
+                        start: 1.2,
+                        end: 1.4,
+                    };
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one two");
+        }
+
+        #[test]
+        fn a_reworded_word_timed_just_after_it_sounded_stays_out() {
+            // No pause cuts the buffer. The decode that hears "two" writes
+            // "one" as "won", timed just after "one" sounded.
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.2, 0.5), ("two", 7_000, 0.7, 1.0)];
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["one", "two"] {
+                    words[0] = "won";
+                    timings[0] = TimedWord {
+                        start: 0.51,
+                        end: 0.65,
+                    };
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one two");
+        }
+
+        #[test]
+        fn a_reworded_word_timed_before_the_cut_stays_out_wherever_it_is_timed() {
+            // The decode that hears "two" writes "one" as "won", and times
+            // it after "one" sounded, still before the cut.
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.2, 0.5), ("two", 7_000, 1.5, 1.8)];
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["one", "two"] {
+                    words[0] = "won";
+                    timings[0] = TimedWord {
+                        start: 0.55,
+                        end: 0.7,
+                    };
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one two");
+        }
+
+        #[test]
+        fn words_carried_past_the_pause_go_out_when_the_lookback_decode_times_them_early() {
+            // "at most" is heard past the pause before the cut. The decode
+            // after it hears both again, timed before the cut.
+            const SPOKEN: [Spoken; 5] = [
+                ("one", 8_000, 0.1, 0.4),
+                ("at", 7_000, 1.3, 1.5),
+                ("most", 6_000, 1.6, 1.9),
+                ("we", 5_000, 2.4, 2.6),
+                ("know", 4_000, 2.7, 2.95),
+            ];
+            let cadence = Cadence::from_millis(1_000, 20_000);
+            let run = replay(cadence, &SPOKEN, 5.0, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                if words.first() == Some(&"one") && words.len() > 3 {
+                    timings[1] = TimedWord {
+                        start: 0.45,
+                        end: 0.6,
+                    };
+                    timings[2] = TimedWord {
+                        start: 0.6,
+                        end: 0.8,
+                    };
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one at most we know");
+        }
+
+        #[test]
+        fn a_carried_word_from_before_the_lookback_need_not_be_heard_again() {
+            // The lookback opens past "a". The decode repeats "b c d", all
+            // it could hear of the carried words, and times "e" from where
+            // "d" ends.
+            const SPOKEN: [Spoken; 6] = [
+                ("a", 8_000, 0.2, 0.5),
+                ("b", 7_000, 1.3, 1.6),
+                ("c", 6_000, 2.4, 2.7),
+                ("d", 5_000, 3.5, 3.8),
+                ("e", 4_000, 5.0, 5.3),
+                ("f", 3_000, 5.4, 5.6),
+            ];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let run = replay(cadence, &SPOKEN, 7.5, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                if let Some(e) = words.iter().position(|word| *word == "e")
+                    && e > 0
+                {
+                    timings[e].start = timings[e - 1].end;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "a b c d e f");
+        }
+
+        #[test]
+        fn a_reworded_last_delivered_phrase_does_not_split_at_an_earlier_copy() {
+            // Once "new" is heard, the decode merges the second "that was"
+            // into "that's". The first "that was" reads the same as the
+            // delivered one, and sounds earlier.
+            const SPOKEN: [Spoken; 7] = [
+                ("that", 8_000, 0.0, 0.3),
+                ("was", 7_900, 0.4, 0.7),
+                ("there", 7_800, 0.8, 1.1),
+                ("that", 7_600, 1.5, 1.7),
+                ("was", 7_500, 1.8, 2.1),
+                ("new", 7_400, 3.0, 3.3),
+                ("words", 7_300, 3.4, 3.7),
+            ];
+            let run = replay(cadence(20_000), &SPOKEN, 5.0, |window| {
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                if let Some(that) = words.iter().rposition(|word| *word == "that")
+                    && words.contains(&"new")
+                {
+                    words[that] = "that's";
+                    words.remove(that + 1);
+                    timings[that].end = timings.remove(that + 1).end;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "that was there that was new words");
+        }
+
+        #[test]
+        fn speech_the_model_skipped_after_a_cut_holds_the_words_after_it() {
+            // The cut comes when 140 ms of "missing" has arrived, too little
+            // to count as skipped. The buffer it opens must still notice
+            // the word, or "two" goes out ahead of it.
+            const SPOKEN: [Spoken; 4] = [
+                ("one", 8_000, 0.2, 0.5),
+                ("missing", 7_000, 1.36, 1.9),
+                ("two", 6_000, 2.05, 2.25),
+                ("three", 5_000, 2.35, 2.55),
+            ];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let audio = spoken_audio(&SPOKEN, 5.0);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            let mut heard_to = 0;
+            let mut cut_at = None;
+            let run = run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    heard_to += cadence.stride_samples();
+                    let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                    if heard_to < sample_at(3.5)
+                        && let Some(skipped) = words.iter().position(|word| *word == "missing")
+                    {
+                        words.remove(skipped);
+                        timings.remove(skipped);
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |state| {
+                    if state.buffer_start > 0 {
+                        cut_at.get_or_insert(state.decoded_end);
+                    }
+                },
+            );
+
+            assert_eq!(cut_at, Some(sample_at(1.5) as u64));
+            assert_eq!(run.transcript(), "one missing two three");
+        }
+
+        #[test]
+        fn a_word_waiting_from_before_the_buffer_keeps_its_audio() {
+            // The lookback decode times "two" where "one" ends, before the
+            // cut. The next decode is untimed, and capture ends with no
+            // more audio, so "two" goes out as the timed decode heard it.
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
+            let mut batches = strides(&spoken_audio(&SPOKEN, 2.1));
+            batches.push(Vec::new());
+            let (mut recording, pace) = paced(batches);
+            let mut state = AgreementState::new(cadence(20_000));
+            let mut heard_two = false;
+            let mut untimed = false;
+            let mut released_to = 0;
+            let mut segments = Vec::new();
+            while let Some(step) = state
+                .next_with(&mut recording, &CancelToken::never(), true, |window| {
+                    let (words, mut timings) = whole_words(&SPOKEN, window);
+                    if words == ["one", "two"] {
+                        if std::mem::replace(&mut heard_two, true) {
+                            untimed = true;
+                            return Ok(Hypothesis::new("one two"));
+                        }
+                        timings[1].start = timings[0].end;
+                    }
+                    pace.advance();
+                    Ok(Hypothesis::with_words(words.join(" "), timings))
+                })
+                .unwrap()
+            {
+                if let Some(TranscriptUpdate::Finalized(segment)) = step.update {
+                    let span = segment.span().expect("both words are timed");
+                    assert!(
+                        released_to <= span.start,
+                        "segment {span:?} opens in audio released through {released_to}"
+                    );
+                    segments.push(segment.into_text());
+                }
+                // A reader may release audio after every update.
+                released_to = state.retained_from();
+                if std::mem::take(&mut untimed) {
+                    pace.advance();
+                }
+            }
+
+            assert_eq!(segments, ["one", "two"]);
+        }
+
+        #[test]
+        fn a_later_copy_of_the_last_delivered_word_is_not_taken_for_it() {
+            // The delivered "now" is timed on into the pause. The lookback
+            // decode times the later "now" back into it, and writes "go" as
+            // "leave". The delivered words still line up with the opening,
+            // one reworded.
+            const SPOKEN: [Spoken; 9] = [
+                ("we", 8_000, 0.1, 0.3),
+                ("should", 7_900, 0.4, 0.7),
+                ("go", 7_800, 0.8, 1.0),
+                ("now", 7_700, 1.2, 1.4),
+                ("yes", 7_600, 3.1, 3.3),
+                ("I", 7_500, 3.35, 3.45),
+                ("think", 7_400, 3.5, 3.7),
+                ("now", 7_300, 3.8, 4.0),
+                ("works", 7_200, 4.1, 4.4),
+            ];
+            let cadence = Cadence::from_millis(1_000, 20_000);
+            let run = replay(cadence, &SPOKEN, 6.0, |window| {
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["we", "should", "go", "now"] {
+                    timings[3].end += 0.8;
+                }
+                if words.first() == Some(&"we") && words.len() > 7 {
+                    words[2] = "leave";
+                    timings[7].start = 2.1;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "we should go now yes I think now works");
+        }
+
+        #[test]
+        fn the_first_of_two_copies_of_a_delivered_word_is_the_delivered_one() {
+            // Only "now" has gone out, timed on into the pause. The decode
+            // after the cut times the later "now" back into it. Both copies
+            // read as the delivered word, and "yes I think" lies between.
+            const SPOKEN: [Spoken; 6] = [
+                ("now", 7_700, 0.2, 0.4),
+                ("yes", 7_600, 2.1, 2.3),
+                ("I", 7_500, 2.35, 2.45),
+                ("think", 7_400, 2.5, 2.7),
+                ("now", 7_300, 2.8, 3.0),
+                ("works", 7_200, 3.1, 3.4),
+            ];
+            let cadence = Cadence::from_millis(1_000, 20_000);
+            let run = replay(cadence, &SPOKEN, 5.0, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["now"] {
+                    timings[0].end += 0.8;
+                }
+                if words.first() == Some(&"now") && words.len() > 4 {
+                    timings[4].start = 1.1;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "now yes I think now works");
+        }
+
+        #[test]
+        fn a_run_that_opens_past_the_delivered_end_is_new_speech() {
+            // The speaker says "one two" again after the pause. The decode
+            // after the cut rewords the delivered copy, so the new copy is
+            // the only one that reads as the delivered words.
+            const SPOKEN: [Spoken; 5] = [
+                ("one", 8_000, 0.1, 0.4),
+                ("two", 7_000, 0.5, 0.8),
+                ("one", 6_000, 2.1, 2.4),
+                ("two", 5_000, 2.5, 2.8),
+                ("three", 4_000, 2.9, 3.2),
+            ];
+            let cadence = Cadence::from_millis(1_000, 20_000);
+            let run = replay(cadence, &SPOKEN, 5.0, |window| {
+                let (mut words, timings) = whole_words(&SPOKEN, window);
+                if words.len() > 2 {
+                    words[0] = "won";
+                    words[1] = "too";
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one two one two three");
+        }
+
+        #[test]
+        fn a_pause_inside_the_last_delivered_words_timing_is_not_cut() {
+            // "two" is timed from where "one" ends, across the silence
+            // before its sound, to the frame its sound begins in. A cut in
+            // that silence leaves the sound in the next buffer, whose
+            // decode hears it as "too".
+            const SPOKEN: [Spoken; 5] = [
+                ("one", 8_000, 0.1, 0.4),
+                ("two", 7_000, 1.155, 1.35),
+                ("three", 6_000, 3.3, 3.5),
+                ("four", 5_000, 3.6, 3.8),
+                ("five", 4_000, 3.9, 4.1),
+            ];
+            let cadence = Cadence::from_millis(1_000, 20_000);
+            let run = replay(cadence, &SPOKEN, 6.0, |window| {
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                if words.contains(&"three") {
+                    if let Some(two) = words.iter().position(|word| *word == "two") {
+                        words[two] = "too";
+                    }
+                } else if words.len() == 2 {
+                    timings[1] = TimedWord {
+                        start: timings[0].end,
+                        end: 1.18,
+                    };
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one two three four five");
+        }
+
+        #[test]
+        fn a_pause_is_cut_when_the_delivered_words_timing_runs_into_the_next_words() {
+            // The engine times the end of "weary" a second late, past the
+            // pause and into "the". The words after it are timed later still.
+            const SPOKEN: [Spoken; 3] = [
+                ("weary", 8_000, 0.2, 0.6),
+                ("the", 7_000, 1.3, 1.5),
+                ("dull", 6_000, 1.55, 1.8),
+            ];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let audio = spoken_audio(&SPOKEN, 3.0);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            let mut cuts = Vec::new();
+            let run = run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, mut timings) = whole_words(&SPOKEN, window);
+                    let mut late = 0.0_f32;
+                    for (index, timing) in timings.iter_mut().enumerate() {
+                        if index == 0 {
+                            timing.end = (timing.end + 1.0).min(seconds_at(window.len()));
+                        }
+                        timing.start = timing.start.max(late);
+                        timing.end = timing.end.max(timing.start);
+                        late = timing.end;
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |state| {
+                    if cuts.last() != Some(&state.buffer_start) {
+                        cuts.push(state.buffer_start);
+                    }
+                },
+            );
+
+            // The pause runs from frame 19, past the frame "weary" ends in,
+            // to frame 40, where "the" begins.
+            let pause = ((19 + 21 / 2) * TRIM_FRAME_SAMPLES) as u64;
+            assert_eq!(cuts.first(), Some(&pause));
+            assert_eq!(run.transcript(), "weary the dull");
+        }
+
+        #[test]
+        fn a_pause_is_found_once_a_later_decode_times_the_delivered_word_where_it_sounds() {
+            // The engine first writes "one" late, at its window's edge, with
+            // a stray word after it. It times "one" where it sounds only
+            // once it hears "two".
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.2, 0.5), ("two", 7_000, 1.4, 1.7)];
+            let cadence = cadence(20_000);
+            let audio = spoken_audio(&SPOKEN, 3.0);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            let mut cuts = Vec::new();
+            let run = run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (words, timings) = whole_words(&SPOKEN, window);
+                    let end = seconds_at(window.len());
+                    match words.as_slice() {
+                        ["one"] if end < 1.2 => Hypothesis::new(""),
+                        ["one"] => Hypothesis::with_words(
+                            format!("one stray{}", window.len()),
+                            vec![
+                                TimedWord {
+                                    start: end - 0.45,
+                                    end: end - 0.15,
+                                },
+                                TimedWord {
+                                    start: end - 0.15,
+                                    end: end - 0.01,
+                                },
+                            ],
+                        ),
+                        _ => Hypothesis::with_words(words.join(" "), timings),
+                    }
+                },
+                |state| {
+                    if cuts.last() != Some(&state.buffer_start) {
+                        cuts.push(state.buffer_start);
+                    }
+                },
+            );
+
+            // The pause runs from frame 16, past the frame "one" ends in,
+            // to frame 43, where "two" begins.
+            let pause = ((16 + 27 / 2) * TRIM_FRAME_SAMPLES) as u64;
+            assert_eq!(cuts.iter().find(|&&cut| cut > 0), Some(&pause));
+            assert_eq!(run.transcript(), "one two");
+        }
+
+        /// Which gap between words each pause cut lands in, and the
+        /// transcript. Decode `late` runs while two strides arrive.
+        fn pauses_cut(spoken: &[Spoken], late: Option<usize>) -> (Vec<usize>, String) {
+            let cadence = Cadence::from_millis(500, 20_000);
+            let audio = spoken_audio(spoken, 9.0);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            let mut step = 0;
+            let mut gaps = Vec::new();
+            let run = run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    if late == Some(step) {
+                        pace.advance();
+                    }
+                    step += 1;
+                    whole_hypothesis(spoken, window)
+                },
+                |state| {
+                    let gap = spoken
+                        .iter()
+                        .take_while(|word| sample_at(word.3) as u64 <= state.buffer_start)
+                        .count();
+                    if state.buffer_start > 0 && gaps.last() != Some(&gap) {
+                        gaps.push(gap);
+                    }
+                },
+            );
+            (gaps, run.transcript().to_owned())
+        }
+
+        #[test]
+        fn a_delayed_decode_cuts_the_same_pauses_when_words_go_out_one_at_a_time() {
+            // Each pause runs longer than a cut needs, and the last one
+            // runs to the end of the recording. A late decode may move a
+            // cut within its pause.
+            const SPOKEN: [Spoken; 6] = [
+                ("a", 8_000, 0.2, 0.5),
+                ("b", 7_000, 1.2, 1.5),
+                ("c", 6_000, 2.25, 2.55),
+                ("d", 5_000, 3.3, 3.6),
+                ("e", 4_000, 4.35, 4.65),
+                ("f", 3_000, 5.4, 5.7),
+            ];
+
+            let steady = pauses_cut(&SPOKEN, None);
+            assert_eq!(steady.0, [1, 2, 3, 4, 5, 6]);
+            for late in 0..18 {
+                assert_eq!(
+                    pauses_cut(&SPOKEN, Some(late)),
+                    steady,
+                    "decode {late} late"
+                );
+            }
+        }
+
+        #[test]
+        fn a_delayed_decode_that_delivers_two_words_together_cuts_no_pause_between_them() {
+            // The first decode runs late, so one decode confirms "a" and
+            // "b" together. The pause between them then lies before the
+            // last delivered word, where a cut would replay "b".
+            const SPOKEN: [Spoken; 6] = [
+                ("a", 8_000, 0.3, 0.6),
+                ("b", 7_000, 1.1, 1.3),
+                ("c", 6_000, 2.25, 2.55),
+                ("d", 5_000, 3.3, 3.6),
+                ("e", 4_000, 4.35, 4.65),
+                ("f", 3_000, 5.4, 5.7),
+            ];
+
+            let steady = pauses_cut(&SPOKEN, None);
+            let late = pauses_cut(&SPOKEN, Some(0));
+            assert_eq!(steady.0, [1, 2, 3, 4, 5, 6]);
+            assert_eq!(late.0, [2, 3, 4, 5, 6]);
+            assert_eq!(late.1, steady.1);
         }
 
         #[test]
@@ -2551,23 +3908,15 @@ mod tests {
             // timings, so its words can't be split at the cut. Nothing is
             // lost: the buffer decodes alone from then on.
             const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
-            let audio = spoken_audio(&SPOKEN, 3.0);
-            let (mut recording, pace) = paced(strides(&audio));
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let (words, timings) = whole_words(&SPOKEN, window);
-                    match words.as_slice() {
-                        ["one", "two"] => Hypothesis::new("one two"),
-                        ["one"] => Hypothesis::with_words("one.", timings),
-                        ["two"] => Hypothesis::with_words("Two.", timings),
-                        _ => Hypothesis::new(""),
-                    }
-                },
-                |_| {},
-            );
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (words, timings) = whole_words(&SPOKEN, window);
+                match words.as_slice() {
+                    ["one", "two"] => Hypothesis::new("one two"),
+                    ["one"] => Hypothesis::with_words("one.", timings),
+                    ["two"] => Hypothesis::with_words("Two.", timings),
+                    _ => Hypothesis::new(""),
+                }
+            });
 
             assert_eq!(run.segments, ["one.", "Two."]);
             assert_eq!(run.ended_before, [None, None]);
@@ -2818,10 +4167,7 @@ mod tests {
                 AgreementState::new(cadence(20_000)),
                 &mut recording,
                 Some(&pace),
-                |window| {
-                    let (words, timings) = whole_words(&SPOKEN, window);
-                    Hypothesis::with_words(words.join(" "), timings)
-                },
+                |window| whole_hypothesis(&SPOKEN, window),
                 |state| {
                     if state.transcript.len() == 2 && b_delivered_at.is_none() {
                         b_delivered_at = Some(state.decoded_end);
@@ -2883,14 +4229,69 @@ mod tests {
                 AgreementState::new(cadence(4_000)),
                 &mut recording,
                 Some(&pace),
-                |window| {
-                    let (words, timings) = whole_words(&SPOKEN, window);
-                    Hypothesis::with_words(words.join(" "), timings)
-                },
+                |window| whole_hypothesis(&SPOKEN, window),
                 |_| {},
             );
 
             assert_eq!(run.transcript(), "a b");
+        }
+
+        #[test]
+        fn a_pause_opens_after_the_last_delivered_words_sound() {
+            // A word timed from frame 0 into frame 3, whose sound runs on
+            // to frame `loud`, then silence.
+            let after = |loud: usize, quiet: usize| {
+                let mut buffer = loud_frames(loud);
+                buffer.extend(frames_at(0.0, quiet));
+                Loudness::of(&buffer)
+            };
+            let word = 0..4;
+
+            let cut = after(6, 16)
+                .pause_after(word.clone(), 22)
+                .expect("the pause opens inside the word's edge");
+            assert_eq!(cut.at, (6 + 16 / 2) * TRIM_FRAME_SAMPLES);
+            assert!(
+                after(7, 16).pause_after(word.clone(), 23).is_none(),
+                "no word accounts for sound past the edge"
+            );
+            assert!(after(3, 13).pause_after(word.clone(), 16).is_some());
+            assert!(
+                after(3, 13).pause_after(word, 15).is_none(),
+                "the next word arrives before the pause runs long enough"
+            );
+
+            // The word's timing ran on into the silence after it.
+            let late = 0..11;
+            let cut = after(3, 16)
+                .pause_after(late, 19)
+                .expect("a late timed end still finds the pause");
+            assert_eq!(cut.at, (3 + 16 / 2) * TRIM_FRAME_SAMPLES);
+            assert!(
+                after(3, 16).pause_after(0..20, 19).is_some(),
+                "a timing may end past the last whole frame decoded"
+            );
+        }
+
+        #[test]
+        fn speech_before_a_pause_is_the_words_own_past_a_neighbours_last_frames() {
+            // Speech, a pause, then speech again, all inside one word's
+            // timing. Only the length of the first speech tells which side
+            // of the pause the word sounds on.
+            let pause_after = |speech: usize| {
+                let mut buffer = loud_frames(speech);
+                buffer.extend(frames_at(0.0, 16));
+                buffer.extend(loud_frames(8));
+                Loudness::of(&buffer).pause_after(0..speech + 20, speech + 24)
+            };
+
+            assert!(pause_after(HEARD_MARGIN_FRAMES).is_none());
+            let cut =
+                pause_after(HEARD_MARGIN_FRAMES + 1).expect("the word sounds before the pause");
+            assert_eq!(
+                cut.at,
+                (HEARD_MARGIN_FRAMES + 1 + 16 / 2) * TRIM_FRAME_SAMPLES
+            );
         }
 
         #[test]
@@ -2905,7 +4306,7 @@ mod tests {
             buffer.extend_from_slice(&silence.repeat(16)[..]);
 
             let cut = Loudness::of(&buffer)
-                .pause_cut()
+                .trailing_pause()
                 .expect("five hundred ms of silence is a pause");
             assert_eq!(cut.at, (3 + 16 / 2) * TRIM_FRAME_SAMPLES);
 
@@ -2913,7 +4314,7 @@ mod tests {
             short.extend_from_slice(&speech);
             short.extend_from_slice(&silence.repeat(12)[..]);
             assert!(
-                Loudness::of(&short).pause_cut().is_none(),
+                Loudness::of(&short).trailing_pause().is_none(),
                 "300 ms is not a pause"
             );
 
@@ -2924,12 +4325,12 @@ mod tests {
             mid.extend_from_slice(&silence.repeat(16)[..]);
             mid.extend_from_slice(&speech);
             assert!(
-                Loudness::of(&mid).pause_cut().is_none(),
+                Loudness::of(&mid).trailing_pause().is_none(),
                 "a pause that does not reach the tail is not a stop"
             );
 
             assert!(
-                Loudness::of(&speech).pause_cut().is_none(),
+                Loudness::of(&speech).trailing_pause().is_none(),
                 "constant speech has no pause"
             );
         }
