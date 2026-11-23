@@ -117,8 +117,10 @@ pub struct AgreementState {
     /// The loudest frame of the pause the buffer opened in. While nothing
     /// since has broken that pause, its decode is ignored.
     pause_level: Option<f32>,
-    /// What this buffer's decodes have agreed on so far. Resets on a trim,
-    /// so nothing has to align across two buffers.
+    /// What this buffer's decodes have agreed on so far. A trim keeps only
+    /// the last delivered words, so the next buffer's decodes can tell them
+    /// apart when they hear them again. A pause cut also keeps the words
+    /// heard past the pause, which lie inside the next buffer.
     agreement: Agreement,
     transcript: Vec<String>,
     /// A segment waiting for the next call, so a step carries one segment
@@ -311,15 +313,15 @@ impl AgreementState {
         let heard = self.hear(&hypothesis, &loudness, decode_from);
         let heard_count = heard.len();
         let skipped = self.skipped_speech(&loudness, &heard);
-        let (confirmed, settled) = self.agreement.agree(heard, skipped);
+        let (confirmed, standing) = self.agreement.agree(heard, skipped);
         let confirmed = self.commit(confirmed);
         // Relative to this decode's window, so it is read before the trim
         // moves the window on.
-        let skipped = skipped.map(|at| at - self.buffer_start);
+        let skipped_in_window = skipped.map(|at| at - self.buffer_start);
         let step = if recording.reached_end() && available == recording.held_to() {
             self.finish_after(confirmed)?
         } else {
-            let tail = self.trim_when_due(&loudness, available, settled);
+            let tail = self.trim_when_due(&loudness, available, standing, skipped);
             self.one_at_a_time(confirmed, tail)
                 .map(|segment| ChunkStep {
                     update: Some(TranscriptUpdate::Finalized(segment)),
@@ -336,9 +338,9 @@ impl AgreementState {
             decode_ms,
             behind,
             heard_count,
-            skipped,
+            skipped_in_window,
             [released, self.pending_segment.as_ref()],
-            settled,
+            standing == Standing::Settled,
         );
         Ok(step)
     }
@@ -438,26 +440,67 @@ impl AgreementState {
         segment
     }
 
-    /// Cuts the buffer at a pause it ends in, or at the cap. Returns the
-    /// tail a cap cut delivers unconfirmed.
+    /// Cuts the buffer at a pause, or at the cap. Returns the tail a cap
+    /// cut delivers unconfirmed.
     fn trim_when_due(
         &mut self,
         loudness: &Loudness,
         available: u64,
-        settled: bool,
+        standing: Standing,
+        skipped: Option<u64>,
     ) -> Option<TranscriptSegment> {
-        if settled {
+        let pause = match standing {
+            Standing::Ignored => None,
+            Standing::Current => self.pause_past_delivered(loudness, skipped),
             // A further stride added no words: a pause, or a word the model
-            // holds back until it hears the end of it. Only a pause the
-            // buffer ends in tells the two apart, so anything else waits.
-            if let Some(pause) = loudness.pause_cut() {
-                return self.trim(self.buffer_start + pause.at as u64, None, Some(pause.level));
-            }
+            // holds back until it hears the end of it. When no delivered
+            // word places the pause, only one the buffer ends in tells the
+            // two apart.
+            Standing::Settled => self
+                .pause_past_delivered(loudness, skipped)
+                .or_else(|| loudness.trailing_pause()),
+        };
+        if let Some(pause) = pause {
+            let agreement = self.agreement.after_pause();
+            return self.trim(
+                self.buffer_start + pause.at as u64,
+                agreement,
+                None,
+                Some(pause.level),
+            );
         }
         if available - self.buffer_start >= self.cadence.max_buffer_samples as u64 {
             return self.cap_cut(loudness, available);
         }
         None
+    }
+
+    /// The pause that follows the last delivered word's sound. It ends
+    /// before any word still waiting for a second decode, and before speech
+    /// the model skipped. Every word before it is out and none past it is,
+    /// so a cut there repeats and drops nothing, wherever the stride ends
+    /// fall. Timings only bound the pause: a word's end often runs into the
+    /// silence after it, and the next word's start into the silence before
+    /// it. `None` until this buffer delivers a timed word.
+    fn pause_past_delivered(&self, loudness: &Loudness, skipped: Option<u64>) -> Option<Pause> {
+        let last = self
+            .agreement
+            .delivered
+            .last()?
+            .span
+            .as_ref()
+            .filter(|span| span.start >= self.buffer_start)?;
+        let waiting = match self.agreement.waiting().first() {
+            Some(word) => word.span.as_ref()?.start,
+            None => self.decoded_end,
+        };
+        let until = skipped.map_or(waiting, |at| at.min(waiting));
+        if until < last.end {
+            return None;
+        }
+        let frame = |at: u64| (at - self.buffer_start) as usize / TRIM_FRAME_SAMPLES;
+        let opens = frame(last.start) + 1..frame(last.end) + HEARD_MARGIN_FRAMES + 1;
+        loudness.pause_between(opens, frame(until))
     }
 
     /// The buffer must go whether or not the speaker paused. The unconfirmed
@@ -487,7 +530,8 @@ impl AgreementState {
             .pause_level
             .filter(|&level| loudness.within(level))
             .map(|level| level.max(loudness.loudest));
-        self.trim(cut, tail, pause_level)
+        let agreement = self.agreement.next_buffer();
+        self.trim(cut, agreement, tail, pause_level)
     }
 
     /// Where speech the model skipped begins, past what was delivered: the
@@ -503,18 +547,17 @@ impl AgreementState {
         loudness.unheard_speech(self.buffer_start, heard, from)
     }
 
-    /// Opens the next buffer at `cut`, forgetting what was heard so far,
-    /// and passes on the tail a cap cut delivered.
     fn trim(
         &mut self,
         cut: u64,
+        agreement: Agreement,
         tail: Option<TranscriptSegment>,
         pause_level: Option<f32>,
     ) -> Option<TranscriptSegment> {
         self.buffer_start = cut;
         self.pause_level = pause_level;
         self.lookback = Some(Lookback::default());
-        self.agreement = self.agreement.next_buffer();
+        self.agreement = agreement;
         tail
     }
 
@@ -601,8 +644,24 @@ impl Agreement {
         }
     }
 
+    /// The agreement for the buffer a pause cut opens. Beside the last
+    /// delivered words, it keeps the words heard past the pause, so the next
+    /// decode can confirm them rather than hear them afresh.
+    fn after_pause(&mut self) -> Self {
+        let waiting = self.waiting().to_vec();
+        Self {
+            candidate: waiting,
+            ..self.next_buffer()
+        }
+    }
+
+    /// The latest decode's words still waiting for a second decode.
+    fn waiting(&self) -> &[Word] {
+        &self.candidate[self.emitted.min(self.candidate.len())..]
+    }
+
     /// Takes one decode. Returns the words it newly agrees on with the last
-    /// one, and whether it settled: identical to the last one.
+    /// one, and how the decode stands.
     ///
     /// With `skipped`, where speech the decode skipped begins, only the
     /// words before it go out: the ones past it would leave a hole behind.
@@ -610,12 +669,12 @@ impl Agreement {
         &mut self,
         mut current: Vec<Word>,
         skipped: Option<u64>,
-    ) -> (Option<TranscriptSegment>, bool) {
+    ) -> (Option<TranscriptSegment>, Standing) {
         // An empty decode — a dropped window, or one `hear` threw out —
         // leaves the last good decode in force, so the emptiness does not
         // stall the steps after it.
         if current.is_empty() {
-            return (None, false);
+            return (None, Standing::Ignored);
         }
         let retained_prefix_len = self.missing_prefix_len(&current);
         if let Some(count) = retained_prefix_len {
@@ -624,7 +683,7 @@ impl Agreement {
             current = retained;
         }
         if self.dropped_window(&current) {
-            return (None, false);
+            return (None, Standing::Ignored);
         }
         let placement = self.placed(&current);
         let recovered = placement.is_none();
@@ -632,7 +691,7 @@ impl Agreement {
             Some(placement) => placement,
             None => {
                 let Some(start) = self.after_delivered_audio(&current) else {
-                    return (None, false);
+                    return (None, Standing::Ignored);
                 };
                 self.timing_recovery = true;
                 (start, start)
@@ -643,10 +702,7 @@ impl Agreement {
             + if retained_prefix_len.is_some() {
                 0
             } else {
-                lcp(
-                    &self.candidate[self.emitted.min(self.candidate.len())..],
-                    &current[start..],
-                )
+                lcp(self.waiting(), &current[start..])
             };
         let deliverable = match skipped {
             Some(at) => heard_before(&current[..agreed], at),
@@ -664,7 +720,12 @@ impl Agreement {
             && current.len() == self.candidate.len()
             && skipped.is_none();
         self.candidate = current;
-        (confirmed, settled)
+        let standing = if settled {
+            Standing::Settled
+        } else {
+            Standing::Current
+        };
+        (confirmed, standing)
     }
 
     fn missing_prefix_len(&self, current: &[Word]) -> Option<usize> {
@@ -960,6 +1021,18 @@ impl Agreement {
     }
 }
 
+/// How one decode stands in the agreement.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Standing {
+    /// It left the last decode in force.
+    Ignored,
+    /// It stands as the last decode.
+    Current,
+    /// It stands as the last decode, and says the same words as the one
+    /// before.
+    Settled,
+}
+
 /// One decoded word and where its audio sits in the stream.
 #[derive(Clone)]
 struct Word {
@@ -1094,7 +1167,7 @@ fn room_noise(squares: &[f32]) -> f32 {
     *noise
 }
 
-/// A pause a buffer ends in.
+/// A pause to cut the buffer at.
 struct Pause {
     /// Where to cut, as a sample offset into the buffer.
     at: usize,
@@ -1165,7 +1238,7 @@ impl Loudness {
     /// run followed by more speech is a dip inside a sentence, and cutting
     /// there would keep audio whose words were already delivered, which the
     /// next buffer would deliver again.
-    fn pause_cut(&self) -> Option<Pause> {
+    fn trailing_pause(&self) -> Option<Pause> {
         let quiet = (0..self.squares.len())
             .rev()
             .take_while(|&frame| !self.is_loud(frame))
@@ -1177,6 +1250,31 @@ impl Loudness {
         Some(Pause {
             at: (start + quiet / 2) * TRIM_FRAME_SAMPLES,
             level: self.squares[start + quiet / 2..]
+                .iter()
+                .copied()
+                .fold(0.0_f32, f32::max),
+        })
+    }
+
+    /// The first pause that opens right after speech, at a frame in
+    /// `opens`, and holds no speech for long enough to trust before frame
+    /// `until`. Quiet beside the loudest frame is not enough here: a soft
+    /// word after a loud one reads as quiet, and a cut there splits it.
+    fn pause_between(&self, opens: std::ops::Range<usize>, until: usize) -> Option<Pause> {
+        let until = until.min(self.squares.len());
+        let quiet_from = |start: usize| {
+            (start..until)
+                .take_while(|&frame| !self.is_speech(frame))
+                .count()
+        };
+        let start = opens.take_while(|&frame| frame < until).find(|&frame| {
+            frame > 0 && self.is_speech(frame - 1) && quiet_from(frame) >= TRIM_SILENCE_FRAMES
+        })?;
+        let quiet = quiet_from(start);
+        let at = start + quiet / 2;
+        Some(Pause {
+            at: at * TRIM_FRAME_SAMPLES,
+            level: self.squares[at..start + quiet]
                 .iter()
                 .copied()
                 .fold(0.0_f32, f32::max),
@@ -1577,12 +1675,12 @@ mod tests {
                 let mut agreement = Agreement::default();
                 agreement.agree(previous.clone(), None);
                 for _ in 0..repetitions {
-                    let (segment, settled) = agreement.agree(current.clone(), None);
+                    let (segment, standing) = agreement.agree(current.clone(), None);
                     assert!(
                         segment.is_none(),
                         "retained words are not a second observation"
                     );
-                    assert!(!settled);
+                    assert_ne!(standing, Standing::Settled);
                 }
                 assert_eq!(
                     text_of(agreement.take_tail(None)).as_deref(),
@@ -1624,9 +1722,9 @@ mod tests {
             let mut agreement = Agreement::default();
             agreement.agree(previous, None);
             agreement.agree(current.clone(), None);
-            let (confirmed, settled) = agreement.agree(current, None);
+            let (confirmed, standing) = agreement.agree(current, None);
             assert_eq!(text_of(confirmed), expected);
-            assert!(settled);
+            assert_eq!(standing, Standing::Settled);
         }
 
         #[test]
@@ -1859,9 +1957,9 @@ mod tests {
             let opening = timed(&["one", "two", "three", "four"]);
             confirmed(&mut agreement, opening);
             let revised = timed(&["a", "completely", "different", "opening", "new", "speech"]);
-            let (first, settled) = agreement.agree(revised.clone(), None);
+            let (first, standing) = agreement.agree(revised.clone(), None);
             assert!(first.is_none());
-            assert!(!settled);
+            assert_ne!(standing, Standing::Settled);
             assert_eq!(agreement.preview(), "new speech");
             let (confirmed, _) = agreement.agree(revised, None);
             assert_eq!(text_of(confirmed).as_deref(), Some("new speech"));
@@ -1941,17 +2039,21 @@ mod tests {
         #[test]
         fn agreement_delivers_a_confirmed_prefix_once() {
             let mut agreement = Agreement::default();
-            let (first, settled) = agreement.agree(heard(&["one", "two"]), None);
+            let (first, standing) = agreement.agree(heard(&["one", "two"]), None);
             assert_eq!(text_of(first), None, "one decode confirms nothing");
-            assert!(!settled);
+            assert_ne!(standing, Standing::Settled);
 
-            let (second, settled) = agreement.agree(heard(&["one", "two", "three"]), None);
+            let (second, standing) = agreement.agree(heard(&["one", "two", "three"]), None);
             assert_eq!(text_of(second).as_deref(), Some("one two"));
-            assert!(!settled, "a decode that grew has not settled");
+            assert_ne!(
+                standing,
+                Standing::Settled,
+                "a decode that grew has not settled"
+            );
 
-            let (third, settled) = agreement.agree(heard(&["one", "two", "three"]), None);
+            let (third, standing) = agreement.agree(heard(&["one", "two", "three"]), None);
             assert_eq!(text_of(third).as_deref(), Some("three"));
-            assert!(settled, "two identical decodes settle");
+            assert_eq!(standing, Standing::Settled, "two identical decodes settle");
             assert_eq!(text_of(agreement.take_tail(None)), None);
         }
 
@@ -1959,9 +2061,9 @@ mod tests {
         fn an_empty_decode_keeps_the_last_one_in_force() {
             let mut agreement = Agreement::default();
             agreement.agree(heard(&["one", "two"]), None);
-            let (confirmed, settled) = agreement.agree(heard(&[]), None);
+            let (confirmed, standing) = agreement.agree(heard(&[]), None);
             assert_eq!(text_of(confirmed), None);
-            assert!(!settled);
+            assert_ne!(standing, Standing::Settled);
             assert_eq!(
                 text_of(agreement.take_tail(None)).as_deref(),
                 Some("one two")
@@ -2237,7 +2339,8 @@ mod tests {
             state.decoded_end = 10 * STRIDE as u64;
             let confirmed = state.commit(TranscriptSegment::spanned(&["owner".into()], None));
             let tail = state.commit(TranscriptSegment::spanned(&["guest".into()], None));
-            let tail = state.trim(state.decoded_end, tail, None);
+            let agreement = state.agreement.next_buffer();
+            let tail = state.trim(state.decoded_end, agreement, tail, None);
             let first = state.one_at_a_time(confirmed, tail).unwrap();
             assert_eq!(first.span(), None);
             assert_eq!(
@@ -2460,6 +2563,11 @@ mod tests {
             audio
         }
 
+        fn whole_hypothesis(spoken: &[Spoken], window: &[f32]) -> Hypothesis {
+            let (words, timings) = whole_words(spoken, window);
+            Hypothesis::with_words(words.join(" "), timings)
+        }
+
         fn strides(audio: &[i16]) -> Vec<Vec<i16>> {
             audio.chunks(STRIDE).map(<[i16]>::to_vec).collect()
         }
@@ -2495,6 +2603,42 @@ mod tests {
                 text: "word".to_owned(),
                 span: Some(start..start + (frames * TRIM_FRAME_SAMPLES) as u64),
             }
+        }
+
+        #[test]
+        fn a_pause_no_stride_ends_in_is_cut_and_keeps_the_words_heard_past_it() {
+            // At a 500 ms stride, the decode that confirms "one" already hears
+            // "two", so no settled decode ends inside the pause between them.
+            const SPOKEN: [Spoken; 3] = [
+                ("one", 8_000, 0.2, 0.5),
+                ("two", 7_000, 1.0, 1.2),
+                ("three", 6_000, 1.3, 1.5),
+            ];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let audio = spoken_audio(&SPOKEN, 2.5);
+            let batches = audio
+                .chunks(cadence.stride_samples())
+                .map(<[i16]>::to_vec)
+                .collect();
+            let (mut recording, pace) = paced(batches);
+            let mut delivered = Vec::new();
+            let run = run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                |window| whole_hypothesis(&SPOKEN, window),
+                |state| delivered.push((state.decoded_end, state.transcript.len())),
+            );
+
+            // The pause runs from frame 16, past the frame "one" ends in, to
+            // frame 31, where "two" begins. The cut lands at its midpoint.
+            let cut = (16 + 15 / 2) * TRIM_FRAME_SAMPLES;
+            assert_eq!(run.windows, [8_000, 16_000, 24_000, 32_000, 40_000 - cut]);
+            assert_eq!(run.segments, ["one", "two", "three"]);
+            assert!(
+                delivered.contains(&(32_000, 2)),
+                "the decode after the cut confirms the word heard past the pause"
+            );
         }
 
         #[test]
@@ -2543,6 +2687,62 @@ mod tests {
             // Only a decode that heard "one" too writes "two" that way.
             assert_eq!(run.segments, ["one.", "two"]);
             assert_eq!(run.ended_before, [None, Some(false)]);
+        }
+
+        #[test]
+        fn a_delayed_decode_cuts_the_same_pauses() {
+            // Parakeet's 500 ms stride. Each pause runs longer than a cut
+            // needs, and the last one runs to the end of the recording.
+            const SPOKEN: [Spoken; 6] = [
+                ("a", 8_000, 0.2, 0.5),
+                ("b", 7_000, 1.2, 1.5),
+                ("c", 6_000, 2.25, 2.55),
+                ("d", 5_000, 3.3, 3.6),
+                ("e", 4_000, 4.35, 4.65),
+                ("f", 3_000, 5.4, 5.7),
+            ];
+            let cadence = Cadence::from_millis(500, 20_000);
+            let audio = spoken_audio(&SPOKEN, 9.0);
+            // Which gap between words each cut lands in. A late decode may
+            // move a cut within its pause, never to another one.
+            let pauses_cut = |late: Option<usize>| {
+                let (mut recording, pace) = paced(
+                    audio
+                        .chunks(cadence.stride_samples())
+                        .map(<[i16]>::to_vec)
+                        .collect(),
+                );
+                let mut step = 0;
+                let mut gaps = Vec::new();
+                let run = run(
+                    AgreementState::new(cadence),
+                    &mut recording,
+                    Some(&pace),
+                    |window| {
+                        if late == Some(step) {
+                            pace.advance();
+                        }
+                        step += 1;
+                        whole_hypothesis(&SPOKEN, window)
+                    },
+                    |state| {
+                        let gap = SPOKEN
+                            .iter()
+                            .take_while(|word| sample_at(word.3) as u64 <= state.buffer_start)
+                            .count();
+                        if state.buffer_start > 0 && gaps.last() != Some(&gap) {
+                            gaps.push(gap);
+                        }
+                    },
+                );
+                (gaps, run.transcript().to_owned())
+            };
+
+            let steady = pauses_cut(None);
+            assert_eq!(steady.0, [1, 2, 3, 4, 5, 6]);
+            for late in 0..audio.len() / cadence.stride_samples() {
+                assert_eq!(pauses_cut(Some(late)), steady, "decode {late} late");
+            }
         }
 
         #[test]
@@ -2818,10 +3018,7 @@ mod tests {
                 AgreementState::new(cadence(20_000)),
                 &mut recording,
                 Some(&pace),
-                |window| {
-                    let (words, timings) = whole_words(&SPOKEN, window);
-                    Hypothesis::with_words(words.join(" "), timings)
-                },
+                |window| whole_hypothesis(&SPOKEN, window),
                 |state| {
                     if state.transcript.len() == 2 && b_delivered_at.is_none() {
                         b_delivered_at = Some(state.decoded_end);
@@ -2883,14 +3080,44 @@ mod tests {
                 AgreementState::new(cadence(4_000)),
                 &mut recording,
                 Some(&pace),
-                |window| {
-                    let (words, timings) = whole_words(&SPOKEN, window);
-                    Hypothesis::with_words(words.join(" "), timings)
-                },
+                |window| whole_hypothesis(&SPOKEN, window),
                 |_| {},
             );
 
             assert_eq!(run.transcript(), "a b");
+        }
+
+        #[test]
+        fn a_pause_opens_after_the_last_delivered_words_sound() {
+            // A word timed from frame 0 to frame 3, whose sound runs on to
+            // frame `loud`, then silence.
+            let after = |loud: usize, quiet: usize| {
+                let mut buffer = loud_frames(loud);
+                buffer.extend(frames_at(0.0, quiet));
+                Loudness::of(&buffer)
+            };
+            let opens = 1..3 + HEARD_MARGIN_FRAMES + 1;
+
+            let cut = after(6, 16)
+                .pause_between(opens.clone(), 22)
+                .expect("the pause opens inside the word's edge");
+            assert_eq!(cut.at, (6 + 16 / 2) * TRIM_FRAME_SAMPLES);
+            assert!(
+                after(7, 16).pause_between(opens.clone(), 23).is_none(),
+                "no word accounts for sound past the edge"
+            );
+            assert!(after(3, 13).pause_between(opens.clone(), 16).is_some());
+            assert!(
+                after(3, 13).pause_between(opens, 15).is_none(),
+                "the next word arrives before the pause runs long enough"
+            );
+
+            // The word's timing ran seven frames into the silence after it.
+            let late = 1..10 + HEARD_MARGIN_FRAMES + 1;
+            let cut = after(3, 16)
+                .pause_between(late, 19)
+                .expect("a late timed end still finds the pause");
+            assert_eq!(cut.at, (3 + 16 / 2) * TRIM_FRAME_SAMPLES);
         }
 
         #[test]
@@ -2905,7 +3132,7 @@ mod tests {
             buffer.extend_from_slice(&silence.repeat(16)[..]);
 
             let cut = Loudness::of(&buffer)
-                .pause_cut()
+                .trailing_pause()
                 .expect("five hundred ms of silence is a pause");
             assert_eq!(cut.at, (3 + 16 / 2) * TRIM_FRAME_SAMPLES);
 
@@ -2913,7 +3140,7 @@ mod tests {
             short.extend_from_slice(&speech);
             short.extend_from_slice(&silence.repeat(12)[..]);
             assert!(
-                Loudness::of(&short).pause_cut().is_none(),
+                Loudness::of(&short).trailing_pause().is_none(),
                 "300 ms is not a pause"
             );
 
@@ -2924,12 +3151,12 @@ mod tests {
             mid.extend_from_slice(&silence.repeat(16)[..]);
             mid.extend_from_slice(&speech);
             assert!(
-                Loudness::of(&mid).pause_cut().is_none(),
+                Loudness::of(&mid).trailing_pause().is_none(),
                 "a pause that does not reach the tail is not a stop"
             );
 
             assert!(
-                Loudness::of(&speech).pause_cut().is_none(),
+                Loudness::of(&speech).trailing_pause().is_none(),
                 "constant speech has no pause"
             );
         }
