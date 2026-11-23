@@ -757,6 +757,7 @@ final class PaletteController: ObservableObject {
                 model.record(edit)
                 notice = .done(edit)
             } catch {
+                log.error("Editing the dictionary failed: \(String(describing: error), privacy: .private)")
                 notice = .failed(VocabularyClient.failureMessage(for: error))
             }
             if opening == openings { model.dictionaryNotice = notice }
