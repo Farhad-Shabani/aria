@@ -252,7 +252,6 @@ enum Refresh {
 
 enum Command {
     Refresh {
-        kind: Refresh,
         directory: Option<Directory>,
         cancel: Arc<AtomicBool>,
         reply: Option<Reply>,
@@ -725,7 +724,6 @@ impl Runtime {
         let cancel = Arc::new(AtomicBool::new(false));
         self.requests
             .try_send(Command::Refresh {
-                kind,
                 directory: directory.clone(),
                 cancel: Arc::clone(&cancel),
                 reply,
@@ -848,7 +846,6 @@ impl<C: Collector> Worker<C> {
             let (_, command) = deferred.remove(index).expect("selected command");
             match command {
                 Command::Refresh {
-                    kind,
                     directory,
                     cancel,
                     reply,
@@ -902,7 +899,6 @@ impl<C: Collector> Worker<C> {
                         deferred.push_back((
                             Instant::now() + REFRESH_INTERVAL,
                             Command::Refresh {
-                                kind,
                                 directory,
                                 cancel,
                                 reply,
