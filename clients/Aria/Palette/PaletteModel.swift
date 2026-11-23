@@ -64,8 +64,10 @@ struct PaletteModel: Equatable {
     /// search every word again.
     private var matchingWords: [PaletteCommand] = []
     private var dictionaryRead = 0
-    /// The daemon may have taken the list snapshot before these edits landed.
-    private var editsDuringRead: [DictionaryEdit]?
+    private enum DictionaryReadState {
+        case pending, edited, refreshingAfterEdit
+    }
+    private var dictionaryReadState: DictionaryReadState?
     /// Shown until the search changes.
     var dictionaryNotice: DictionaryNotice?
     var isConfirmingClear = false
@@ -169,24 +171,29 @@ struct PaletteModel: Equatable {
 
     mutating func beginDictionaryRead() -> Int {
         dictionaryRead += 1
-        editsDuringRead = []
+        dictionaryReadState = .pending
         return dictionaryRead
     }
 
-    mutating func read(dictionary words: [String]?, request: Int) {
-        guard request == dictionaryRead, let edits = editsDuringRead else { return }
-        editsDuringRead = nil
-        if words == nil && !edits.isEmpty { return }
-        var listed = words.map(ListedWords.init)
-        for edit in edits { listed?.apply(edit) }
+    @discardableResult
+    mutating func read(dictionary words: [String]?, request: Int) -> Bool {
+        guard request == dictionaryRead, let state = dictionaryReadState else { return false }
+        if state == .edited {
+            // The snapshot may already include some edits. A fresh read gives their file order.
+            dictionaryReadState = .refreshingAfterEdit
+            return true
+        }
+        dictionaryReadState = nil
+        if words == nil && state == .refreshingAfterEdit { return false }
         keepingSelection { model in
-            model.dictionary = listed
+            model.dictionary = words.map(ListedWords.init)
             model.matchWords()
         }
+        return false
     }
 
     mutating func record(_ edit: DictionaryEdit) {
-        editsDuringRead?.append(edit)
+        if dictionaryReadState != nil { dictionaryReadState = .edited }
         keepingSelection { model in
             var words = model.dictionary ?? ListedWords([])
             words.apply(edit)

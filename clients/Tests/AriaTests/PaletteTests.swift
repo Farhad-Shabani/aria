@@ -941,9 +941,21 @@ final class PaletteTests: XCTestCase {
         model.query = "Adzviser"
         let sent = model.beginDictionaryRead()
         model.record(.added("Adzviser"))
-        model.read(dictionary: ["Vex"], request: sent)
+        XCTAssertTrue(model.read(dictionary: ["Vex"], request: sent))
+        XCTAssertFalse(model.read(dictionary: ["Vex", "Adzviser"], request: sent))
         XCTAssertEqual(model.dictionaryWords, ["Vex", "Adzviser"])
         XCTAssertNil(addAction(model))
+    }
+
+    func testAReadThatIncludesTheEditsKeepsTheDaemonFileOrder() {
+        var model = dictionaryModel(["A", "X"])
+        let request = model.beginDictionaryRead()
+        model.record(.removed("A"))
+        model.record(.added("A"))
+        model.record(.added("B"))
+        XCTAssertTrue(model.read(dictionary: ["X", "A", "B"], request: request))
+        XCTAssertEqual(model.dictionaryWords, ["X", "A", "B"])
+        XCTAssertFalse(model.read(dictionary: ["X", "A", "B"], request: request))
     }
 
     func testOnlyTheLatestDictionaryReadCanPublish() {
@@ -951,9 +963,22 @@ final class PaletteTests: XCTestCase {
         let older = model.beginDictionaryRead()
         let newer = model.beginDictionaryRead()
         model.record(.removed("Vex"))
-        model.read(dictionary: ["Vex", "db2"], request: newer)
-        model.read(dictionary: ["Vex"], request: older)
+        XCTAssertTrue(model.read(dictionary: ["Vex", "db2"], request: newer))
+        XCTAssertFalse(model.read(dictionary: ["Vex"], request: older))
+        XCTAssertFalse(model.read(dictionary: ["db2"], request: newer))
         XCTAssertEqual(model.dictionaryWords, ["db2"])
+    }
+
+    func testAFailedReadAfterAnEditKeepsTheKnownWords() {
+        var model = dictionaryModel(["Vex"])
+        let request = model.beginDictionaryRead()
+        model.record(.added("db2"))
+        XCTAssertTrue(model.read(dictionary: ["Vex"], request: request))
+        XCTAssertFalse(model.read(dictionary: nil, request: request))
+        XCTAssertEqual(model.dictionaryWords, ["Vex", "db2"])
+
+        model.read(dictionary: nil, request: model.beginDictionaryRead())
+        XCTAssertNil(model.dictionaryWords)
     }
 
     private func dictionaryModel(_ words: [String]) -> PaletteModel {
