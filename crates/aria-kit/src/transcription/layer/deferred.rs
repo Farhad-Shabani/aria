@@ -415,6 +415,13 @@ mod tests {
         for name in ["Pablo", "Priya", "PyTorch", "postgr2"] {
             assert_eq!(DeferredWords::default().hold(name, None, &v).text, name);
         }
+        // No ASCII word can supply a listed word's full-width digit.
+        let wide = PersonalRules::new(vec!["Nvidia\u{ff12}".into()], vec![]);
+        let wide = Vocabulary::compile(&[], wide).unwrap();
+        assert_eq!(
+            DeferredWords::default().hold("nvid", None, &wide).text,
+            "nvid"
+        );
         for (start, end) in [("use postgre", "sql"), ("use pyst", "gresql")] {
             assert_eq!(
                 streamed(&[(start, None), (end, None)], &v),

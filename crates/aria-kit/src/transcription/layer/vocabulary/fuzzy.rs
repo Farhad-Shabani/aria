@@ -323,10 +323,12 @@ fn begins_a_merge(word: &str, known: &[Vec<char>]) -> bool {
     let heard: Vec<char> = folded.chars().collect();
     !known.contains(&heard)
         && known.iter().any(|term| {
-            // More words only add digits after the fragment's own.
+            // More words only add digits after the fragment's own, and
+            // only ASCII ones.
             let mut listed = digits(term);
             term.first() == heard.first()
                 && digits(&heard).all(|digit| listed.next() == Some(digit))
+                && listed.all(|digit| digit.is_ascii_digit())
                 && can_complete(&letters, folded.len(), term)
         })
 }
@@ -391,15 +393,17 @@ fn possessive(word: &str) -> (&str, &str) {
 }
 
 /// Whether a word sits inside a written name, as "aria" does in
-/// `src/aria.toml`, `aria_kit`, `@aria` and `--aria`. `before` and `after` are the
+/// `src/aria.toml`, `aria_kit`, `@aria`, `--aria`, `$aria` and `x=aria`. `before` and `after` are the
 /// text on either side of it.
 fn in_a_written_name(before: &str, after: &str) -> bool {
-    const JOINS: [char; 6] = ['.', '/', '\\', '_', '@', ':'];
+    const JOINS: [char; 7] = ['.', '/', '\\', '_', '@', ':', '='];
     let continues = |c: char| !c.is_ascii() && super::is_word(c);
     let mut after = after.chars();
     // A word holds its own hyphens, so one before it opens a flag: `--id`.
+    // A dollar sign opens a variable: `$id` or `${id}`.
     before.ends_with(JOINS)
         || before.ends_with('-')
+        || before.trim_end_matches('{').ends_with('$')
         || before.ends_with(continues)
         || after.clone().next().is_some_and(continues)
         || (after.next().is_some_and(|next| JOINS.contains(&next))

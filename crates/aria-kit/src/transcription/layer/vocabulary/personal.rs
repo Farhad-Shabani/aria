@@ -1137,9 +1137,17 @@ mod tests {
     }
 
     #[test]
-    fn a_fix_stays_out_of_a_flag() {
+    fn a_fix_stays_out_of_flags_and_variables() {
         let rules = PersonalRules::new(strings(&["ID", "Kubernetes"]), vec![]);
-        for heard in ["pass --id to it", "open src/-id", "run -kubernets now"] {
+        for heard in [
+            "pass --id to it",
+            "open src/-id",
+            "run -kubernets now",
+            "check $id",
+            "echo ${id}",
+            "pass --flag=id",
+            "set id=5 first",
+        ] {
             assert_eq!(rules.apply(heard).0, heard);
         }
     }
