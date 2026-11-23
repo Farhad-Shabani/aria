@@ -175,8 +175,44 @@ struct Registry {
     personal: Arc<Vocabulary>,
     personal_revision: u64,
     live: Vec<(Weak<Vocabulary>, usize)>,
+    /// Counted apart from `live`: a recompiled list keeps its terms while
+    /// recordings may still hold the matcher it replaced.
+    live_terms: Vec<(Weak<[Term]>, usize)>,
     removals: HashMap<Directory, RemovalState>,
     retired: Vec<Prepared>,
+}
+
+impl Registry {
+    fn track(&mut self, matcher: &Arc<Vocabulary>) {
+        self.live
+            .retain(|(snapshot, _)| snapshot.strong_count() != 0);
+        self.live
+            .push((Arc::downgrade(matcher), matcher.estimated_bytes()));
+    }
+
+    fn track_terms(&mut self, terms: &Arc<[Term]>) {
+        self.live_terms
+            .retain(|(terms, _)| terms.strong_count() != 0);
+        let bytes = std::mem::size_of_val(terms.as_ref())
+            + terms
+                .iter()
+                .map(|term| term.canonical.capacity())
+                .sum::<usize>();
+        self.live_terms.push((Arc::downgrade(terms), bytes));
+    }
+
+    fn live_bytes(&mut self) -> usize {
+        self.live
+            .retain(|(snapshot, _)| snapshot.strong_count() != 0);
+        self.live_terms
+            .retain(|(terms, _)| terms.strong_count() != 0);
+        self.live.iter().map(|(_, bytes)| bytes).sum::<usize>()
+            + self
+                .live_terms
+                .iter()
+                .map(|(_, bytes)| bytes)
+                .sum::<usize>()
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -212,7 +248,6 @@ impl Drop for Snapshot {
 enum Refresh {
     IfDue,
     Now,
-    Recompile,
 }
 
 enum Command {
@@ -319,6 +354,7 @@ impl Runtime {
                 personal: Arc::clone(&empty),
                 personal_revision: 0,
                 live: Vec::new(),
+                live_terms: Vec::new(),
                 removals: HashMap::new(),
                 retired: Vec::new(),
             }),
@@ -563,13 +599,6 @@ impl Runtime {
         prepared: Prepared,
         cancel: &AtomicBool,
     ) -> Result<(), Error> {
-        let bytes = prepared.matcher.estimated_bytes()
-            + std::mem::size_of_val(prepared.terms.as_ref())
-            + prepared
-                .terms
-                .iter()
-                .map(|term| term.canonical.capacity())
-                .sum::<usize>();
         self.interrupted(cancel)?;
         let mut registry = self.registry();
         self.interrupted(cancel)?;
@@ -584,10 +613,8 @@ impl Runtime {
             return Err(Error::Unavailable(None));
         }
         let personal_revision = registry.personal_revision;
-        registry.live.retain(|(entry, _)| entry.strong_count() != 0);
-        registry
-            .live
-            .push((Arc::downgrade(&prepared.matcher), bytes));
+        registry.track(&prepared.matcher);
+        registry.track_terms(&prepared.terms);
         let evicted = if registry.entries.len() >= QUEUE_CAPACITY
             && !registry.entries.contains_key(directory)
         {
@@ -615,6 +642,41 @@ impl Runtime {
         drop(registry);
         drop(retired);
         drop(evicted);
+        Ok(())
+    }
+
+    /// Swaps in `matcher`, compiled from the folder's own terms, unless the
+    /// folder changed since `from` was its list or a refresh for it waits.
+    /// Its use, activity and catalog revision stay as they were.
+    fn republish(
+        &self,
+        directory: &Directory,
+        from: &Arc<Vocabulary>,
+        matcher: Arc<Vocabulary>,
+        token: &CancelToken,
+    ) -> Result<(), Error> {
+        let mut registry = self.registry();
+        if token.is_cancelled() {
+            return Err(Error::Busy);
+        }
+        if !registry.removals.is_empty() || registry.pending.contains_key(&Some(directory.clone()))
+        {
+            return Ok(());
+        }
+        let personal_revision = registry.personal_revision;
+        let Some(live) = registry
+            .entries
+            .get_mut(directory)
+            .and_then(|entry| entry.live.as_mut())
+            .filter(|live| Arc::ptr_eq(&live.prepared.matcher, from))
+        else {
+            return Ok(());
+        };
+        let retired = std::mem::replace(&mut live.prepared.matcher, Arc::clone(&matcher));
+        live.personal_revision = personal_revision;
+        registry.track(&matcher);
+        drop(registry);
+        drop(retired);
         Ok(())
     }
 
@@ -670,21 +732,19 @@ impl Runtime {
             })
             .map_err(send_error)?;
         registry.pending.insert(directory.clone(), cancel);
-        if kind != Refresh::Recompile {
-            if registry.last_attempt.len() >= QUEUE_CAPACITY
-                && !registry.last_attempt.contains_key(&directory)
-                && let Some(oldest) = registry
-                    .last_attempt
-                    .iter()
-                    .min_by_key(|(_, at)| **at)
-                    .map(|(key, _)| key.clone())
-            {
-                registry.last_attempt.remove(&oldest);
-            }
-            registry
+        if registry.last_attempt.len() >= QUEUE_CAPACITY
+            && !registry.last_attempt.contains_key(&directory)
+            && let Some(oldest) = registry
                 .last_attempt
-                .insert(directory.clone(), Instant::now());
+                .iter()
+                .min_by_key(|(_, at)| **at)
+                .map(|(key, _)| key.clone())
+        {
+            registry.last_attempt.remove(&oldest);
         }
+        registry
+            .last_attempt
+            .insert(directory.clone(), Instant::now());
         if let Some(directory) = directory
             && (registry.entries.len() < QUEUE_CAPACITY
                 || registry.entries.contains_key(&directory))
@@ -782,6 +842,7 @@ impl<C: Collector> Worker<C> {
                 .iter()
                 .position(|(ready, _)| *ready <= Instant::now())
             else {
+                self.recompile_stale();
                 continue;
             };
             let (_, command) = deferred.remove(index).expect("selected command");
@@ -816,11 +877,6 @@ impl<C: Collector> Worker<C> {
                     let mut result = self
                         .reserve(DISCOVERY_RESERVE, directory.as_ref())
                         .and_then(|()| {
-                            if let Some(directory) = &directory
-                                && kind == Refresh::Recompile
-                            {
-                                return self.recompile(directory, &cancel, &token);
-                            }
                             self.refresh_personal()?;
                             match directory.as_ref() {
                                 Some(directory) => self.refresh_project(
@@ -974,9 +1030,7 @@ impl<C: Collector> Worker<C> {
     fn reserve(&self, reservation: usize, protected: Option<&Directory>) -> Result<(), Error> {
         loop {
             let mut registry = self.runtime.registry();
-            registry.live.retain(|(entry, _)| entry.strong_count() != 0);
-            let bytes = self.personal.estimated_bytes()
-                + registry.live.iter().map(|(_, bytes)| bytes).sum::<usize>();
+            let bytes = self.personal.estimated_bytes() + registry.live_bytes();
             if bytes <= LIVE_BYTES - reservation {
                 return Ok(());
             }
@@ -1032,7 +1086,6 @@ impl<C: Collector> Worker<C> {
         if self.sources.dictionary.stamp() != self.stamp {
             self.runtime.prepare(None);
         }
-        self.prepare_stale(&mut self.runtime.registry());
     }
 
     /// A failed refresh keeps the stamp, so the poll waits for the next save
@@ -1064,60 +1117,67 @@ impl<C: Collector> Worker<C> {
         if self.runtime.interrupt.load(Ordering::Acquire) {
             return Err(Error::Busy);
         }
-        registry
-            .live
-            .retain(|(snapshot, _)| snapshot.strong_count() != 0);
-        registry
-            .live
-            .push((Arc::downgrade(&matcher), matcher.estimated_bytes()));
+        registry.track(&matcher);
         let retired = std::mem::replace(&mut registry.personal, matcher);
         registry.personal_revision = registry.personal_revision.wrapping_add(1);
-        self.prepare_stale(&mut registry);
         drop(registry);
         drop(retired);
         self.personal = rules;
         Ok(())
     }
 
-    fn prepare_stale(&self, registry: &mut Registry) {
-        let stale: Vec<_> = registry
-            .entries
-            .iter()
-            .filter_map(|(directory, entry)| {
+    /// Recompiles one folder whose list predates the personal rules, from the
+    /// terms it already has. It runs only while no request waits and holds no
+    /// queue slot, so a refresh asked for meanwhile replaces it.
+    fn recompile_stale(&self) {
+        let stale = {
+            let registry = self.runtime.registry();
+            if !registry.removals.is_empty() {
+                return;
+            }
+            registry.entries.iter().find_map(|(directory, entry)| {
                 let live = entry.live.as_ref()?;
                 (entry.activity == Activity::Idle
-                    && live.personal_revision != registry.personal_revision)
-                    .then(|| directory.clone())
+                    && live.personal_revision != registry.personal_revision
+                    && !registry.pending.contains_key(&Some(directory.clone())))
+                .then(|| (directory.clone(), live.prepared.clone()))
             })
-            .collect();
-        for directory in stale {
-            if self
-                .runtime
-                .enqueue(registry, Some(directory), None, Refresh::Recompile)
-                .is_err()
-            {
-                break;
-            }
+        };
+        let Some((directory, prepared)) = stale else {
+            return;
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        if self.await_idle(&cancel).is_err() {
+            return;
         }
-    }
-
-    fn recompile(
-        &self,
-        directory: &Directory,
-        cancel: &AtomicBool,
-        token: &CancelToken,
-    ) -> Result<Status, Error> {
-        let current = self
-            .runtime
-            .registry()
-            .entries
-            .get(directory)
-            .and_then(|entry| Some((entry.root.clone()?, entry.live.as_ref()?.prepared.clone())));
-        if let Some((root, mut prepared)) = current {
-            prepared.matcher = self.compile(&prepared.terms, token)?;
-            self.runtime.publish(directory, &root, prepared, cancel)?;
+        let deadline = Deadline::after(REFRESH_BUDGET);
+        let token = self.control(cancel, deadline);
+        let mut result = self
+            .reserve(prepared.matcher.estimated_bytes(), Some(&directory))
+            .and_then(|()| self.compile(&prepared.terms, &token))
+            .and_then(|matcher| {
+                self.runtime
+                    .republish(&directory, &prepared.matcher, matcher, &token)
+            });
+        if deadline.expired() {
+            result = Err(Error::TooLarge);
         }
-        Ok(self.runtime.catalog_status(Some(directory)))
+        // An interrupted one is still stale and runs again once idle.
+        let Err(error) = result else { return };
+        if matches!(error, Error::Busy) {
+            return;
+        }
+        tracing::warn!(
+            error = %error_chain(&error),
+            "vocabulary recompile failed; retaining available snapshot"
+        );
+        if let Some(entry) = self.runtime.registry().entries.get_mut(&directory) {
+            entry.activity = Activity::Failed(if matches!(error, Error::TooLarge) {
+                Failure::Limit
+            } else {
+                Failure::Refresh
+            });
+        }
     }
 
     fn refresh_project(
@@ -1484,9 +1544,9 @@ mod tests {
         )
     }
 
-    fn refresh_once(
+    fn refresh_once<C: Collector>(
         runtime: &Runtime,
-        worker: &mut Worker<StaticCollector>,
+        worker: &mut Worker<C>,
         selected: &Directory,
     ) -> Result<Status, Error> {
         runtime.prepare(Some(selected.clone()));
@@ -1913,7 +1973,15 @@ mod tests {
             loop {
                 {
                     let registry = runtime.registry();
-                    if registry.personal_revision > 0 && registry.pending.is_empty() {
+                    let revision = registry.personal_revision;
+                    if revision > 0
+                        && registry.entries.values().all(|entry| {
+                            entry
+                                .live
+                                .as_ref()
+                                .is_some_and(|live| live.personal_revision == revision)
+                        })
+                    {
                         break;
                     }
                 }
@@ -1938,6 +2006,80 @@ mod tests {
         assert_eq!(
             second,
             (second_ready, Some("use Other-Kit with db2".into()))
+        );
+    }
+
+    #[test]
+    fn a_dictionary_edit_leaves_the_queue_and_folder_use_to_requests() {
+        let root = tempfile::tempdir().unwrap();
+        let [first, second] = ["Aria-Kit", "Other-Kit"].map(|name| project(root.path(), name));
+        let (runtime, mut worker) = local_runtime(root.path());
+        let second_ready = refresh_once(&runtime, &mut worker, &second).unwrap();
+        refresh_once(&runtime, &mut worker, &first).unwrap();
+        let used = |folder: &Directory| runtime.registry().entries[folder].used;
+        let second_used = used(&second);
+        std::fs::write(root.path().join("dictionary.txt"), "db2\n").unwrap();
+
+        worker.refresh_personal().unwrap();
+
+        assert!(matches!(
+            runtime.catalog_status(Some(&first)),
+            Status::Folder {
+                activity: Activity::Idle,
+                ..
+            }
+        ));
+        let (reply, _response) = oneshot::channel();
+        runtime
+            .enqueue(
+                &mut runtime.registry(),
+                Some(first.clone()),
+                Some(reply),
+                Refresh::Now,
+            )
+            .unwrap();
+        worker.recompile_stale();
+        worker.recompile_stale();
+        assert_eq!(runtime.catalog_status(Some(&second)), second_ready);
+        assert_eq!(used(&second), second_used);
+        assert!(list(&runtime.catalog_status(Some(&first))).is_stale);
+    }
+
+    #[test]
+    fn a_recompiled_list_counts_its_shared_terms_once() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = project(root.path(), "Aria-Kit");
+        let (runtime, mut worker) = local_runtime(root.path());
+        refresh_once(&runtime, &mut worker, &selected).unwrap();
+        // A recording still holds the list being replaced.
+        let held = Arc::clone(
+            &runtime.registry().entries[&selected]
+                .live
+                .as_ref()
+                .unwrap()
+                .prepared
+                .matcher,
+        );
+        let before = runtime.registry().live_bytes();
+        std::fs::write(root.path().join("dictionary.txt"), "db2\n").unwrap();
+        worker.refresh_personal().unwrap();
+        let personal = runtime.registry().personal.estimated_bytes();
+
+        worker.recompile_stale();
+
+        let mut registry = runtime.registry();
+        let matcher = Arc::clone(
+            &registry.entries[&selected]
+                .live
+                .as_ref()
+                .unwrap()
+                .prepared
+                .matcher,
+        );
+        assert!(!Arc::ptr_eq(&matcher, &held));
+        assert_eq!(
+            registry.live_bytes(),
+            before + personal + matcher.estimated_bytes()
         );
     }
 
