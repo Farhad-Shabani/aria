@@ -673,34 +673,32 @@ impl Agreement {
     /// How many opening words of a lookback decode were delivered already,
     /// going by their text. They run up to the latest, longest run of the
     /// last delivered words that opens before the delivered end. Timings
-    /// only bound the run: an engine moves a word's start by up
-    /// to a second, most of all the first word after a pause. A lone word
-    /// must also overlap the last delivered word, or an earlier copy of it
-    /// would pass for it once the decode rewords it. `None` when no run
-    /// turns up.
+    /// only bound the run: an engine moves a word's start by up to a
+    /// second, most of all the first word after a pause.
+    ///
+    /// `None` when no run turns up. `None` too when two earlier delivered
+    /// words follow the run: the decode reworded the delivered end, and the
+    /// run is an earlier copy of it.
     fn after_delivered_text(&self, words: &[Word]) -> Option<usize> {
         let through = self.delivered_through?;
-        let last = self.delivered.last()?.span.as_ref();
         let carried = &self.delivered[self.delivered.len().saturating_sub(CARRIED_WORDS)..];
-        let overlaps_last = |word: &Word| {
-            word.span
-                .as_ref()
-                .zip(last)
-                .is_some_and(|(word, last)| word.start < last.end && last.start < word.end)
-        };
-        (1..=carried.len().min(words.len()))
+        let opens_before_end =
+            |word: &Word| word.span.as_ref().is_some_and(|span| span.start < through);
+        let end = (1..=carried.len().min(words.len()))
             .rev()
             .find_map(|count| {
                 let run = &carried[carried.len() - count..];
                 (count..=words.len()).rev().find(|&end| {
                     lcp(run, &words[end - count..]) == count
-                        && words[end - count]
-                            .span
-                            .as_ref()
-                            .is_some_and(|span| span.start < through)
-                        && (count > 1 || overlaps_last(&words[end - 1]))
+                        && opens_before_end(&words[end - count])
                 })
-            })
+            })?;
+        let earlier_copy = carried[..carried.len() - 1].windows(2).any(|pair| {
+            words[end..]
+                .windows(2)
+                .any(|later| lcp(pair, later) == 2 && opens_before_end(&later[0]))
+        });
+        (!earlier_copy).then_some(end)
     }
 
     /// The latest decode's words still waiting for a second decode.
@@ -2807,6 +2805,44 @@ mod tests {
         }
 
         #[test]
+        fn a_reworded_last_delivered_phrase_does_not_split_at_an_earlier_copy() {
+            // Once "new" is heard, the decode merges the second "that was"
+            // into "that's". The first "that was" is not the delivered one:
+            // "there and" follows it, and those went out too.
+            const SPOKEN: [Spoken; 8] = [
+                ("that", 8_000, 0.0, 0.3),
+                ("was", 7_900, 0.4, 0.7),
+                ("there", 7_800, 0.8, 1.1),
+                ("and", 7_700, 1.2, 1.4),
+                ("that", 7_600, 1.5, 1.7),
+                ("was", 7_500, 1.8, 2.1),
+                ("new", 7_400, 3.0, 3.3),
+                ("words", 7_300, 3.4, 3.7),
+            ];
+            let audio = spoken_audio(&SPOKEN, 5.0);
+            let (mut recording, pace) = paced(strides(&audio));
+            let run = run(
+                AgreementState::new(cadence(20_000)),
+                &mut recording,
+                Some(&pace),
+                |window| {
+                    let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                    if let Some(that) = words.iter().rposition(|word| *word == "that")
+                        && words.contains(&"new")
+                    {
+                        words[that] = "that's";
+                        words.remove(that + 1);
+                        timings[that].end = timings.remove(that + 1).end;
+                    }
+                    Hypothesis::with_words(words.join(" "), timings)
+                },
+                |_| {},
+            );
+
+            assert_eq!(run.transcript(), "that was there and that was new words");
+        }
+
+        #[test]
         fn speech_the_model_skipped_is_not_cut_away_from_the_words_after_it() {
             // The model skips "missing" until it has heard three seconds.
             // A cut in the pause before it would open a buffer on the
@@ -2863,7 +2899,7 @@ mod tests {
             let cadence = Cadence::from_millis(500, 20_000);
             let audio = spoken_audio(&SPOKEN, 9.0);
             // Which gap between words each cut lands in. A late decode may
-            // move a cut within its pause, never to another one.
+            // move a cut within its pause.
             let pauses_cut = |late: Option<usize>| {
                 let (mut recording, pace) = paced(
                     audio
