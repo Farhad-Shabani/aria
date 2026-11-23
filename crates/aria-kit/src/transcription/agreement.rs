@@ -167,12 +167,9 @@ impl AgreementState {
             .agreement
             .waiting()
             .iter()
-            .filter_map(|word| Some(word.span.as_ref()?.start))
-            .min();
-        [pending, waiting]
-            .into_iter()
-            .flatten()
-            .fold(self.lookback_from(), u64::min)
+            .filter_map(|word| word.span.as_ref())
+            .map(|span| span.start);
+        waiting.chain(pending).fold(self.lookback_from(), u64::min)
     }
 
     /// Where a lookback starts. The buffer's opening when the engine times
