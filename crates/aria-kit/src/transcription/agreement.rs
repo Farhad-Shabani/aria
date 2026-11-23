@@ -2624,6 +2624,13 @@ mod tests {
             audio.chunks(STRIDE).map(<[i16]>::to_vec).collect()
         }
 
+        fn strides_of(cadence: Cadence, audio: &[i16]) -> Vec<Vec<i16>> {
+            audio
+                .chunks(cadence.stride_samples())
+                .map(<[i16]>::to_vec)
+                .collect()
+        }
+
         /// The words whose audio lies whole inside `window`, timed from its
         /// opening.
         fn whole_words(spoken: &[Spoken], window: &[f32]) -> (Vec<&'static str>, Vec<TimedWord>) {
@@ -2668,11 +2675,7 @@ mod tests {
             ];
             let cadence = Cadence::from_millis(500, 20_000);
             let audio = spoken_audio(&SPOKEN, 2.5);
-            let batches = audio
-                .chunks(cadence.stride_samples())
-                .map(<[i16]>::to_vec)
-                .collect();
-            let (mut recording, pace) = paced(batches);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
             let mut delivered = Vec::new();
             let run = run(
                 AgreementState::new(cadence),
@@ -2767,44 +2770,6 @@ mod tests {
         }
 
         #[test]
-        fn a_reworded_last_delivered_word_does_not_split_at_an_earlier_copy() {
-            // Once "new" is heard, the decode merges "that was" into
-            // "that's". The only "was" left is the one after "she", which is
-            // not the delivered one.
-            const SPOKEN: [Spoken; 8] = [
-                ("she", 8_000, 0.0, 0.3),
-                ("was", 7_900, 0.4, 0.7),
-                ("there", 7_800, 0.8, 1.1),
-                ("and", 7_700, 1.2, 1.4),
-                ("that", 7_600, 1.5, 1.7),
-                ("was", 7_500, 1.8, 2.1),
-                ("new", 7_400, 3.0, 3.3),
-                ("words", 7_300, 3.4, 3.7),
-            ];
-            let audio = spoken_audio(&SPOKEN, 5.0);
-            let (mut recording, pace) = paced(strides(&audio));
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let (mut words, mut timings) = whole_words(&SPOKEN, window);
-                    if let Some(that) = words.iter().position(|word| *word == "that")
-                        && words.contains(&"new")
-                    {
-                        words[that] = "that's";
-                        words.remove(that + 1);
-                        timings[that].end = timings.remove(that + 1).end;
-                    }
-                    Hypothesis::with_words(words.join(" "), timings)
-                },
-                |_| {},
-            );
-
-            assert_eq!(run.transcript(), "she was there and that was new words");
-        }
-
-        #[test]
         fn a_reworded_last_delivered_phrase_does_not_split_at_an_earlier_copy() {
             // Once "new" is heard, the decode merges the second "that was"
             // into "that's". The first "that was" is not the delivered one:
@@ -2856,12 +2821,7 @@ mod tests {
             ];
             let cadence = Cadence::from_millis(500, 20_000);
             let audio = spoken_audio(&SPOKEN, 4.5);
-            let (mut recording, pace) = paced(
-                audio
-                    .chunks(cadence.stride_samples())
-                    .map(<[i16]>::to_vec)
-                    .collect(),
-            );
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
             let mut heard_to = 0;
             let run = run(
                 AgreementState::new(cadence),
@@ -2901,12 +2861,7 @@ mod tests {
             // Which gap between words each cut lands in. A late decode may
             // move a cut within its pause.
             let pauses_cut = |late: Option<usize>| {
-                let (mut recording, pace) = paced(
-                    audio
-                        .chunks(cadence.stride_samples())
-                        .map(<[i16]>::to_vec)
-                        .collect(),
-                );
+                let (mut recording, pace) = paced(strides_of(cadence, &audio));
                 let mut step = 0;
                 let mut gaps = Vec::new();
                 let run = run(
