@@ -101,7 +101,10 @@ impl AtRest {
         });
         item.set_service(SERVICE).set_account_name(ACCOUNT);
         match item.add() {
-            Ok(()) => Ok(Self { key }),
+            Ok(()) => {
+                tracing::info!("created a new storage key");
+                Ok(Self { key })
+            }
             Err(error) if error.code() == errSecDuplicateItem => {
                 Self::find()?.ok_or_else(|| keychain_error(error))
             }

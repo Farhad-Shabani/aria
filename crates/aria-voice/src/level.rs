@@ -73,8 +73,10 @@ impl Drop for Meter {
     /// The recording is over, so the last level is already stale. Joining
     /// keeps the thread from outliving the recording it reads.
     fn drop(&mut self) {
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err()
+        {
+            tracing::error!("the level meter thread panicked; levels stopped early");
         }
     }
 }

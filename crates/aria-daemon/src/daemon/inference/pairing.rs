@@ -352,7 +352,7 @@ mod tests {
 
         assert!(matches!(
             identity.credentials(),
-            Err(super::super::identity::Error::InvalidIdentity)
+            Err(super::super::identity::Error::KeyGone)
         ));
     }
 

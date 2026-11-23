@@ -567,6 +567,7 @@ mod tests {
     #[case::whole_name("open aria dash kit", "open aria dash kit")]
     #[case::through_a_pair("open arya", "open ")]
     #[case::no_name_starts("open area", "open area")]
+    #[case::ends_on_a_multibyte_letter("open café", "open café")]
     fn a_segment_holds_the_start_of_a_spelled_name(#[case] heard: &str, #[case] typed: &str) {
         let vocabulary = names();
         let from = vocabulary.spoken_deferred_from(heard, MAX_HELD_WORDS);

@@ -152,6 +152,9 @@ impl<V: VoiceActivityDetector, I: IdleMonitor> Worker<V, I> {
                 Ok(Command::Record(request)) => self.handle(request),
                 Ok(Command::UseInput(input)) => self.use_input(input),
                 Ok(Command::UseIdle(idle)) => {
+                    if idle != self.idle {
+                        tracing::info!(?idle, "the microphone's idle stream changed");
+                    }
                     self.idle = idle;
                     self.settle_idle();
                 }

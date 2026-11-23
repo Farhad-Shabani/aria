@@ -101,9 +101,13 @@ fn english_words() -> &'static fst::Set<&'static [u8]> {
 fn next_token(text: &str) -> Option<(usize, usize)> {
     let start = text.find(|c: char| c.is_ascii_alphanumeric())?;
     let length = text[start..]
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '\'' || c == '-'))
+        .find(|c: char| !is_token_char(c))
         .unwrap_or(text.len() - start);
     Some((start, length))
+}
+
+pub(super) fn is_token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '\'' || c == '-'
 }
 
 pub(super) fn best_term<'a, E>(
