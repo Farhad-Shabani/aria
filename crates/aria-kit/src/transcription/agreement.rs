@@ -518,7 +518,8 @@ impl AgreementState {
             return None;
         }
         let frame = |at: u64| (at - self.buffer_start) as usize / TRIM_FRAME_SAMPLES;
-        loudness.pause_after(frame(last.start)..frame(last.end), frame(until))
+        let past = (last.end - self.buffer_start).div_ceil(TRIM_FRAME_SAMPLES as u64);
+        loudness.pause_after(frame(last.start)..past as usize, frame(until))
     }
 
     /// The buffer must go whether or not the speaker paused. The unconfirmed
@@ -1284,8 +1285,8 @@ impl Loudness {
         Some(self.pause_in(start..self.squares.len()))
     }
 
-    /// The pause that follows a word timed over the frames `word`. It
-    /// opens right after speech, inside the timing or within
+    /// The pause that follows a word whose timing touches the frames
+    /// `word`. It opens right after speech, inside the timing or within
     /// `HEARD_MARGIN_FRAMES` past it, stays quiet through the timing's end,
     /// and holds no speech for long enough to trust before frame `until`.
     /// Quiet that speech breaks inside the timing comes before the word's
@@ -1299,7 +1300,7 @@ impl Loudness {
                 .take_while(|&frame| !self.is_speech(frame))
                 .count()
         };
-        let opens = word.start + 1..word.end + HEARD_MARGIN_FRAMES + 1;
+        let opens = word.start + 1..word.end + HEARD_MARGIN_FRAMES;
         let start = opens.take_while(|&frame| frame < until).find(|&frame| {
             let quiet = quiet_from(frame);
             self.is_speech(frame - 1) && quiet >= TRIM_SILENCE_FRAMES && frame + quiet >= word.end
@@ -2937,11 +2938,12 @@ mod tests {
         #[test]
         fn a_pause_inside_the_last_delivered_words_timing_is_not_cut() {
             // "two" is timed from where "one" ends, across the silence
-            // before its sound. A cut in that silence leaves the sound in
-            // the next buffer, whose decode hears it as "too".
+            // before its sound, to the frame its sound begins in. A cut in
+            // that silence leaves the sound in the next buffer, whose
+            // decode hears it as "too".
             const SPOKEN: [Spoken; 5] = [
                 ("one", 8_000, 0.1, 0.4),
-                ("two", 7_000, 1.15, 1.35),
+                ("two", 7_000, 1.155, 1.35),
                 ("three", 6_000, 3.3, 3.5),
                 ("four", 5_000, 3.6, 3.8),
                 ("five", 4_000, 3.9, 4.1),
@@ -2954,7 +2956,10 @@ mod tests {
                         words[two] = "too";
                     }
                 } else if words.len() == 2 {
-                    timings[1].start = timings[0].end;
+                    timings[1] = TimedWord {
+                        start: timings[0].end,
+                        end: 1.18,
+                    };
                 }
                 Hypothesis::with_words(words.join(" "), timings)
             });
@@ -3377,14 +3382,14 @@ mod tests {
 
         #[test]
         fn a_pause_opens_after_the_last_delivered_words_sound() {
-            // A word timed from frame 0 to frame 3, whose sound runs on to
-            // frame `loud`, then silence.
+            // A word timed from frame 0 into frame 3, whose sound runs on
+            // to frame `loud`, then silence.
             let after = |loud: usize, quiet: usize| {
                 let mut buffer = loud_frames(loud);
                 buffer.extend(frames_at(0.0, quiet));
                 Loudness::of(&buffer)
             };
-            let word = 0..3;
+            let word = 0..4;
 
             let cut = after(6, 16)
                 .pause_after(word.clone(), 22)
@@ -3401,7 +3406,7 @@ mod tests {
             );
 
             // The word's timing ran seven frames into the silence after it.
-            let late = 0..10;
+            let late = 0..11;
             let cut = after(3, 16)
                 .pause_after(late, 19)
                 .expect("a late timed end still finds the pause");
