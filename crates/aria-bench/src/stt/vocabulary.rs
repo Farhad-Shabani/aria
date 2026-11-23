@@ -704,6 +704,13 @@ pub fn microbench(output: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn evaluated(suite: &Suite) -> Value {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("result.json");
+        evaluate(suite, &path).unwrap();
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
     #[test]
     fn introduced_harm_is_visible_beside_recovered_targets_and_old_errors() {
         let mut case = fixtures().unwrap().cases.remove(0);
@@ -814,10 +821,7 @@ mod tests {
         case.personal_terms.clear();
         case.legacy_whole = Some(case.written_reference.clone());
         case.legacy_segments = Some(vec![case.written_reference.clone()]);
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("result.json");
-        evaluate(&suite, &path).unwrap();
-        let report: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let report = evaluated(&suite);
         for row in report["rows"].as_array().unwrap() {
             let expected = if row["condition"] == "baseline" {
                 "Hello, Lumenforge!"
@@ -840,10 +844,7 @@ mod tests {
             "There are twelve boxes and one spare."
         );
         assert_eq!(case.written_reference, "There are 12 boxes and one spare.");
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("result.json");
-        evaluate(&suite, &path).unwrap();
-        let report: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let report = evaluated(&suite);
         for row in report["rows"].as_array().unwrap() {
             assert_eq!(row["metrics"]["counts"]["introduced_errors"], 0, "{row}");
         }
@@ -885,10 +886,7 @@ mod tests {
             .unwrap()
             .clone();
         suite.cases = vec![case];
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("result.json");
-        evaluate(&suite, &path).unwrap();
-        let report: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let report = evaluated(&suite);
         let rows = report["rows"].as_array().unwrap();
         let whole = rows
             .iter()

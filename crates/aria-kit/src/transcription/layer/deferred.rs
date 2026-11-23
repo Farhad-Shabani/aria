@@ -279,8 +279,7 @@ mod tests {
 
     #[test]
     fn words_a_personal_rule_uses_are_released() {
-        let personal = PersonalRules::new(vec!["db2".into()], vec![]);
-        let vocabulary = Vocabulary::compile(&[], personal).unwrap();
+        let vocabulary = listing(&["db2"]);
         let mut words = DeferredWords::default();
         assert_eq!(
             words.hold("run d b two", None, &vocabulary).text,
@@ -358,20 +357,13 @@ mod tests {
     #[case("use i eighteen n now")]
     #[case("open aria dot toml now")]
     fn any_split_types_a_spoken_form_whole(#[case] heard: &str) {
-        let listed = vec![
-            "db1".into(),
-            "db1-backup".into(),
-            "i18n".into(),
-            "Aria".into(),
-        ];
-        let vocabulary = Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap();
+        let vocabulary = listing(&["db1", "db1-backup", "i18n", "Aria"]);
         assert_any_split_types_the_whole(heard, &vocabulary);
     }
 
     #[test]
     fn any_split_types_a_merged_word_whole() {
-        let listed = vec!["PostgreSQL".into()];
-        let vocabulary = Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap();
+        let vocabulary = listing(&["PostgreSQL"]);
         assert_any_split_types_the_whole("use postgre sql now", &vocabulary);
     }
 
@@ -402,22 +394,19 @@ mod tests {
         #[case] segments: &[&str],
         #[case] expected: &str,
     ) {
-        let personal = PersonalRules::new(vec!["PostgreSQL".into(), "Kubernetes".into()], vec![]);
-        let vocabulary = Vocabulary::compile(&[], personal).unwrap();
+        let vocabulary = listing(&["PostgreSQL", "Kubernetes"]);
         let pieces: Vec<_> = segments.iter().map(|s| (*s, None)).collect();
         assert_eq!(streamed(&pieces, &vocabulary), expected);
     }
 
     #[test]
     fn only_fragments_that_can_reach_a_listed_word_wait() {
-        let personal = PersonalRules::new(vec!["PostgreSQL".into()], vec![]);
-        let v = Vocabulary::compile(&[], personal).unwrap();
+        let v = listing(&["PostgreSQL"]);
         for name in ["Pablo", "Priya", "PyTorch", "postgr2"] {
             assert_eq!(DeferredWords::default().hold(name, None, &v).text, name);
         }
         // No ASCII word can supply a listed word's full-width digit.
-        let wide = PersonalRules::new(vec!["Nvidia\u{ff12}".into()], vec![]);
-        let wide = Vocabulary::compile(&[], wide).unwrap();
+        let wide = listing(&["Nvidia\u{ff12}"]);
         assert_eq!(
             DeferredWords::default().hold("nvid", None, &wide).text,
             "nvid"
@@ -428,6 +417,11 @@ mod tests {
                 "use PostgreSQL"
             );
         }
+    }
+
+    fn listing(words: &[&str]) -> Vocabulary {
+        let listed = words.iter().map(|word| (*word).to_owned()).collect();
+        Vocabulary::compile(&[], PersonalRules::new(listed, vec![])).unwrap()
     }
 
     /// Cuts `heard` at its spaces into two or three segments, every way.
@@ -489,8 +483,7 @@ mod tests {
     /// segment completes, where the whole text keeps it inside the join.
     #[test]
     fn a_fuzzy_fix_beside_a_held_join_applies() {
-        let personal = PersonalRules::new(vec!["Kubernetes".into()], vec![]);
-        let vocabulary = Vocabulary::compile(&[], personal).unwrap();
+        let vocabulary = listing(&["Kubernetes"]);
         assert_eq!(
             streamed(
                 &[("kubernets dot twenty", None), ("one", None)],

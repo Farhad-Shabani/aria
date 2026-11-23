@@ -1474,6 +1474,22 @@ mod tests {
         directory(&path)
     }
 
+    fn edit_dictionary(root: &Path, worker: &mut Worker<impl Collector>, words: &str) {
+        std::fs::write(root.join("dictionary.txt"), words).unwrap();
+        worker.refresh_personal().unwrap();
+    }
+
+    fn live_matcher(registry: &Registry, folder: &Directory) -> Arc<Vocabulary> {
+        Arc::clone(
+            &registry.entries[folder]
+                .live
+                .as_ref()
+                .unwrap()
+                .prepared
+                .matcher,
+        )
+    }
+
     struct StaticCollector {
         root: PathBuf,
         previous_counts: Vec<usize>,
@@ -2058,9 +2074,8 @@ mod tests {
         refresh_once(&runtime, &mut worker, &first).unwrap();
         let used = |folder: &Directory| runtime.registry().entries[folder].used;
         let second_used = used(&second);
-        std::fs::write(root.path().join("dictionary.txt"), "db2\n").unwrap();
 
-        worker.refresh_personal().unwrap();
+        edit_dictionary(root.path(), &mut worker, "db2\n");
 
         assert!(matches!(
             runtime.catalog_status(Some(&first)),
@@ -2092,30 +2107,15 @@ mod tests {
         let (runtime, mut worker) = local_runtime(root.path());
         refresh_once(&runtime, &mut worker, &selected).unwrap();
         // A recording still holds the list being replaced.
-        let held = Arc::clone(
-            &runtime.registry().entries[&selected]
-                .live
-                .as_ref()
-                .unwrap()
-                .prepared
-                .matcher,
-        );
+        let held = live_matcher(&runtime.registry(), &selected);
         let before = runtime.registry().live_bytes();
-        std::fs::write(root.path().join("dictionary.txt"), "db2\n").unwrap();
-        worker.refresh_personal().unwrap();
+        edit_dictionary(root.path(), &mut worker, "db2\n");
         let personal = runtime.registry().personal.estimated_bytes();
 
         worker.recompile_stale();
 
         let mut registry = runtime.registry();
-        let matcher = Arc::clone(
-            &registry.entries[&selected]
-                .live
-                .as_ref()
-                .unwrap()
-                .prepared
-                .matcher,
-        );
+        let matcher = live_matcher(&registry, &selected);
         assert!(!Arc::ptr_eq(&matcher, &held));
         assert_eq!(
             registry.live_bytes(),
@@ -2131,8 +2131,7 @@ mod tests {
         for folder in &folders {
             refresh_once(&runtime, &mut worker, folder).unwrap();
         }
-        std::fs::write(root.path().join("dictionary.txt"), "db2\n").unwrap();
-        worker.refresh_personal().unwrap();
+        edit_dictionary(root.path(), &mut worker, "db2\n");
         // Leave the budget one byte short of any recompile.
         let filler: Arc<[Term]> = Arc::from([]);
         {
@@ -2176,20 +2175,13 @@ mod tests {
         let (runtime, mut worker) = local_runtime(root.path());
         refresh_once(&runtime, &mut worker, &selected).unwrap();
         let words: String = (100..300).map(|n| format!("vex{n}\n")).collect();
-        std::fs::write(root.path().join("dictionary.txt"), words).unwrap();
-        worker.refresh_personal().unwrap();
+        edit_dictionary(root.path(), &mut worker, &words);
         // Leave exactly the room the list took before the rules grew it.
         let filler: Arc<[Term]> = Arc::from([]);
         {
             let mut registry = runtime.registry();
             let used = worker.personal.estimated_bytes() + registry.live_bytes();
-            let admitted = registry.entries[&selected]
-                .live
-                .as_ref()
-                .unwrap()
-                .prepared
-                .matcher
-                .estimated_bytes();
+            let admitted = live_matcher(&registry, &selected).estimated_bytes();
             registry
                 .live_terms
                 .push((Arc::downgrade(&filler), LIVE_BYTES - used - admitted));
@@ -2213,14 +2205,7 @@ mod tests {
         let (runtime, mut worker) = local_runtime(root.path());
         refresh_once(&runtime, &mut worker, &selected).unwrap();
         let mut registry = runtime.registry();
-        let from = Arc::clone(
-            &registry.entries[&selected]
-                .live
-                .as_ref()
-                .unwrap()
-                .prepared
-                .matcher,
-        );
+        let from = live_matcher(&registry, &selected);
         assert!(registry.untouched(&selected, &from).is_some());
 
         runtime
