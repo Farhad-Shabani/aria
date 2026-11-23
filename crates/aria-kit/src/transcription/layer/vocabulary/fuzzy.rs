@@ -321,7 +321,7 @@ fn begins_a_merge(word: &str, known: &[Vec<char>]) -> bool {
         letters[usize::from(b)] += 1;
     }
     let heard: Vec<char> = folded.chars().collect();
-    !known.iter().any(|term| *term == heard)
+    !known.contains(&heard)
         && known.iter().any(|term| {
             // More words only add digits after the fragment's own.
             let mut listed = digits(term);
