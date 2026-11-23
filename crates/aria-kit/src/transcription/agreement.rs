@@ -2631,6 +2631,25 @@ mod tests {
             Hypothesis::with_words(words.join(" "), timings)
         }
 
+        /// A paced run over `seconds` of `spoken`: each decode hears one
+        /// stride more.
+        fn replay(
+            cadence: Cadence,
+            spoken: &[Spoken],
+            seconds: f32,
+            decode: impl FnMut(&[f32]) -> Hypothesis,
+        ) -> Run {
+            let audio = spoken_audio(spoken, seconds);
+            let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            run(
+                AgreementState::new(cadence),
+                &mut recording,
+                Some(&pace),
+                decode,
+                |_| {},
+            )
+        }
+
         fn strides(audio: &[i16]) -> Vec<Vec<i16>> {
             audio.chunks(STRIDE).map(<[i16]>::to_vec).collect()
         }
@@ -2731,24 +2750,16 @@ mod tests {
             // before it, the model hears the sentence go on. The words
             // before the cut are not delivered again.
             const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
-            let audio = spoken_audio(&SPOKEN, 3.0);
-            let (mut recording, pace) = paced(strides(&audio));
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let (words, timings) = whole_words(&SPOKEN, window);
-                    let text = match words.as_slice() {
-                        ["one"] => "one.",
-                        ["one", "two"] => "one two",
-                        ["two"] => "Two.",
-                        _ => "",
-                    };
-                    Hypothesis::with_words(text, timings)
-                },
-                |_| {},
-            );
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (words, timings) = whole_words(&SPOKEN, window);
+                let text = match words.as_slice() {
+                    ["one"] => "one.",
+                    ["one", "two"] => "one two",
+                    ["two"] => "Two.",
+                    _ => "",
+                };
+                Hypothesis::with_words(text, timings)
+            });
 
             // Only a decode that heard "one" too writes "two" that way.
             assert_eq!(run.segments, ["one.", "two"]);
@@ -2761,21 +2772,13 @@ mod tests {
             // that hears "one" again opens "two" where "one" ends, before
             // the cut, yet "two" follows the delivered word.
             const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
-            let audio = spoken_audio(&SPOKEN, 3.0);
-            let (mut recording, pace) = paced(strides(&audio));
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let (words, mut timings) = whole_words(&SPOKEN, window);
-                    if words == ["one", "two"] {
-                        timings[1].start = timings[0].end;
-                    }
-                    Hypothesis::with_words(words.join(" "), timings)
-                },
-                |_| {},
-            );
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["one", "two"] {
+                    timings[1].start = timings[0].end;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
 
             assert_eq!(run.segments, ["one", "two"]);
         }
@@ -2794,25 +2797,17 @@ mod tests {
                 ("new", 7_400, 3.0, 3.3),
                 ("words", 7_300, 3.4, 3.7),
             ];
-            let audio = spoken_audio(&SPOKEN, 5.0);
-            let (mut recording, pace) = paced(strides(&audio));
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let (mut words, mut timings) = whole_words(&SPOKEN, window);
-                    if let Some(that) = words.iter().rposition(|word| *word == "that")
-                        && words.contains(&"new")
-                    {
-                        words[that] = "that's";
-                        words.remove(that + 1);
-                        timings[that].end = timings.remove(that + 1).end;
-                    }
-                    Hypothesis::with_words(words.join(" "), timings)
-                },
-                |_| {},
-            );
+            let run = replay(cadence(20_000), &SPOKEN, 5.0, |window| {
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                if let Some(that) = words.iter().rposition(|word| *word == "that")
+                    && words.contains(&"new")
+                {
+                    words[that] = "that's";
+                    words.remove(that + 1);
+                    timings[that].end = timings.remove(that + 1).end;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
 
             assert_eq!(run.transcript(), "that was there that was new words");
         }
@@ -2925,24 +2920,16 @@ mod tests {
                 ("works", 7_200, 4.1, 4.4),
             ];
             let cadence = Cadence::from_millis(1_000, 20_000);
-            let audio = spoken_audio(&SPOKEN, 6.0);
-            let (mut recording, pace) = paced(strides_of(cadence, &audio));
-            let run = run(
-                AgreementState::new(cadence),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let (words, mut timings) = whole_words(&SPOKEN, window);
-                    if words == ["we", "should", "go", "now"] {
-                        timings[3].end += 0.8;
-                    }
-                    if words.first() == Some(&"we") && words.len() > 7 {
-                        timings[7].start = 2.1;
-                    }
-                    Hypothesis::with_words(words.join(" "), timings)
-                },
-                |_| {},
-            );
+            let run = replay(cadence, &SPOKEN, 6.0, |window| {
+                let (words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["we", "should", "go", "now"] {
+                    timings[3].end += 0.8;
+                }
+                if words.first() == Some(&"we") && words.len() > 7 {
+                    timings[7].start = 2.1;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
 
             assert_eq!(run.transcript(), "we should go now yes I think now works");
         }
@@ -2960,33 +2947,59 @@ mod tests {
                 ("five", 4_000, 3.9, 4.1),
             ];
             let cadence = Cadence::from_millis(1_000, 20_000);
-            let audio = spoken_audio(&SPOKEN, 6.0);
+            let run = replay(cadence, &SPOKEN, 6.0, |window| {
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                if words.contains(&"three") {
+                    if let Some(two) = words.iter().position(|word| *word == "two") {
+                        words[two] = "too";
+                    }
+                } else if words.len() == 2 {
+                    timings[1].start = timings[0].end;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.transcript(), "one two three four five");
+        }
+
+        /// Which gap between words each pause cut lands in, and the
+        /// transcript, at Parakeet's 500 ms stride. Decode `late` runs
+        /// while two strides arrive.
+        fn pauses_cut(spoken: &[Spoken], late: Option<usize>) -> (Vec<usize>, String) {
+            let cadence = Cadence::from_millis(500, 20_000);
+            let audio = spoken_audio(spoken, 9.0);
             let (mut recording, pace) = paced(strides_of(cadence, &audio));
+            let mut step = 0;
+            let mut gaps = Vec::new();
             let run = run(
                 AgreementState::new(cadence),
                 &mut recording,
                 Some(&pace),
                 |window| {
-                    let (mut words, mut timings) = whole_words(&SPOKEN, window);
-                    if words.contains(&"three") {
-                        if let Some(two) = words.iter().position(|word| *word == "two") {
-                            words[two] = "too";
-                        }
-                    } else if words.len() == 2 {
-                        timings[1].start = timings[0].end;
+                    if late == Some(step) {
+                        pace.advance();
                     }
-                    Hypothesis::with_words(words.join(" "), timings)
+                    step += 1;
+                    whole_hypothesis(spoken, window)
                 },
-                |_| {},
+                |state| {
+                    let gap = spoken
+                        .iter()
+                        .take_while(|word| sample_at(word.3) as u64 <= state.buffer_start)
+                        .count();
+                    if state.buffer_start > 0 && gaps.last() != Some(&gap) {
+                        gaps.push(gap);
+                    }
+                },
             );
-
-            assert_eq!(run.transcript(), "one two three four five");
+            (gaps, run.transcript().to_owned())
         }
 
         #[test]
-        fn a_delayed_decode_cuts_the_same_pauses() {
-            // Parakeet's 500 ms stride. Each pause runs longer than a cut
-            // needs, and the last one runs to the end of the recording.
+        fn a_delayed_decode_cuts_the_same_pauses_when_words_go_out_one_at_a_time() {
+            // Each pause runs longer than a cut needs, and the last one
+            // runs to the end of the recording. A late decode may move a
+            // cut within its pause.
             const SPOKEN: [Spoken; 6] = [
                 ("a", 8_000, 0.2, 0.5),
                 ("b", 7_000, 1.2, 1.5),
@@ -2995,43 +3008,37 @@ mod tests {
                 ("e", 4_000, 4.35, 4.65),
                 ("f", 3_000, 5.4, 5.7),
             ];
-            let cadence = Cadence::from_millis(500, 20_000);
-            let audio = spoken_audio(&SPOKEN, 9.0);
-            // Which gap between words each cut lands in. A late decode may
-            // move a cut within its pause.
-            let pauses_cut = |late: Option<usize>| {
-                let (mut recording, pace) = paced(strides_of(cadence, &audio));
-                let mut step = 0;
-                let mut gaps = Vec::new();
-                let run = run(
-                    AgreementState::new(cadence),
-                    &mut recording,
-                    Some(&pace),
-                    |window| {
-                        if late == Some(step) {
-                            pace.advance();
-                        }
-                        step += 1;
-                        whole_hypothesis(&SPOKEN, window)
-                    },
-                    |state| {
-                        let gap = SPOKEN
-                            .iter()
-                            .take_while(|word| sample_at(word.3) as u64 <= state.buffer_start)
-                            .count();
-                        if state.buffer_start > 0 && gaps.last() != Some(&gap) {
-                            gaps.push(gap);
-                        }
-                    },
-                );
-                (gaps, run.transcript().to_owned())
-            };
 
-            let steady = pauses_cut(None);
+            let steady = pauses_cut(&SPOKEN, None);
             assert_eq!(steady.0, [1, 2, 3, 4, 5, 6]);
-            for late in 0..audio.len() / cadence.stride_samples() {
-                assert_eq!(pauses_cut(Some(late)), steady, "decode {late} late");
+            for late in 0..18 {
+                assert_eq!(
+                    pauses_cut(&SPOKEN, Some(late)),
+                    steady,
+                    "decode {late} late"
+                );
             }
+        }
+
+        #[test]
+        fn a_delayed_decode_that_delivers_two_words_together_cuts_no_pause_between_them() {
+            // The first decode runs late, so one decode confirms "a" and
+            // "b" together. The pause between them then lies before the
+            // last delivered word, where a cut would replay "b".
+            const SPOKEN: [Spoken; 6] = [
+                ("a", 8_000, 0.3, 0.6),
+                ("b", 7_000, 1.1, 1.3),
+                ("c", 6_000, 2.25, 2.55),
+                ("d", 5_000, 3.3, 3.6),
+                ("e", 4_000, 4.35, 4.65),
+                ("f", 3_000, 5.4, 5.7),
+            ];
+
+            let steady = pauses_cut(&SPOKEN, None);
+            let late = pauses_cut(&SPOKEN, Some(0));
+            assert_eq!(steady.0, [1, 2, 3, 4, 5, 6]);
+            assert_eq!(late.0, [2, 3, 4, 5, 6]);
+            assert_eq!(late.1, steady.1);
         }
 
         #[test]
@@ -3040,23 +3047,15 @@ mod tests {
             // timings, so its words can't be split at the cut. Nothing is
             // lost: the buffer decodes alone from then on.
             const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
-            let audio = spoken_audio(&SPOKEN, 3.0);
-            let (mut recording, pace) = paced(strides(&audio));
-            let run = run(
-                AgreementState::new(cadence(20_000)),
-                &mut recording,
-                Some(&pace),
-                |window| {
-                    let (words, timings) = whole_words(&SPOKEN, window);
-                    match words.as_slice() {
-                        ["one", "two"] => Hypothesis::new("one two"),
-                        ["one"] => Hypothesis::with_words("one.", timings),
-                        ["two"] => Hypothesis::with_words("Two.", timings),
-                        _ => Hypothesis::new(""),
-                    }
-                },
-                |_| {},
-            );
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (words, timings) = whole_words(&SPOKEN, window);
+                match words.as_slice() {
+                    ["one", "two"] => Hypothesis::new("one two"),
+                    ["one"] => Hypothesis::with_words("one.", timings),
+                    ["two"] => Hypothesis::with_words("Two.", timings),
+                    _ => Hypothesis::new(""),
+                }
+            });
 
             assert_eq!(run.segments, ["one.", "Two."]);
             assert_eq!(run.ended_before, [None, None]);
