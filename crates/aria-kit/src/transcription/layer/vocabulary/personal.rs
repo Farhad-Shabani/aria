@@ -7,7 +7,7 @@ use crate::cancel::CancelToken;
 use super::super::claim::{Claimed, Word};
 use super::super::number_words::{is_up_to_twenty, word_for};
 use super::super::symbol_words::symbol;
-use super::fuzzy::{Fix, apply_fuzzy, begins_a_merge, best_term, capitals};
+use super::fuzzy::{Fix, apply_fuzzy, begins_a_merge, best_term, capitals, is_token_char};
 use super::{MatchError, is_word};
 
 /// What stored rules may cost in memory.
@@ -292,9 +292,7 @@ impl PersonalRules {
     /// word into a listed word: "use postgre" may go on as "postgre sql".
     fn defer_a_last_word(&self, text: &str, claimed: &mut Claimed<'_>) {
         let before = text[..claimed.deferred_from()].trim_end();
-        let start = before
-            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '\'' || c == '-'))
-            .map_or(0, |end| end + 1);
+        let start = before.trim_end_matches(is_token_char).len();
         let never = &|_| Ok::<_, std::convert::Infallible>(());
         let word = &before[start..];
         let capital =
