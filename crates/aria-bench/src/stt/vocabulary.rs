@@ -479,18 +479,18 @@ pub fn fixtures() -> Result<Suite> {
             .as_str()
             .ok_or("missing lexicon input")?
             .to_owned();
+        let expected = value["expected"].as_str().ok_or("missing expected text")?;
+        // Memory expects what the personal words alone change. Dictation
+        // also writes that text's spoken numbers and symbols.
+        let written = Vocabulary::default()
+            .correct_spoken(expected, "")
+            .map_or_else(|| expected.to_owned(), |corrected| corrected.text);
         suite.cases.push(Case {
             id: format!("personal/{id}"),
             group: format!("personal/{id}"),
             category: "personal_regression".into(),
-            spoken_reference: value["expected"]
-                .as_str()
-                .ok_or("missing expected text")?
-                .into(),
-            written_reference: value["expected"]
-                .as_str()
-                .ok_or("missing expected text")?
-                .into(),
+            spoken_reference: expected.to_owned(),
+            written_reference: written,
             whole_input: Some(input.clone()),
             segments: (!input.trim().is_empty()).then(|| vec![input]),
             sentence_ended_before: Vec::new(),
@@ -528,7 +528,7 @@ pub fn apply_legacy_report(suite: &mut Suite, path: &Path) -> Result<()> {
             .find(|case| case.id == format!("personal/{id}"))
             .ok_or("legacy case absent from suite")?;
         if row["case"]["input"].as_str() != case.whole_input.as_deref()
-            || row["case"]["expected"] != case.written_reference
+            || row["case"]["expected"] != case.spoken_reference
             || row["case"]["terms"] != json!(case.personal_terms)
             || row["case"].get("pairs").cloned().unwrap_or(json!([])) != json!(case.personal_pairs)
         {
@@ -818,6 +818,27 @@ mod tests {
                 "Hello, lumen forge!"
             };
             assert_eq!(row["output"], expected);
+        }
+    }
+
+    #[test]
+    fn a_personal_fixture_is_scored_against_what_dictation_writes() {
+        let mut suite = fixtures().unwrap();
+        suite
+            .cases
+            .retain(|case| case.id == "personal/adversarial_numeric_sentence");
+        let case = &suite.cases[0];
+        assert_eq!(
+            case.spoken_reference,
+            "There are twelve boxes and one spare."
+        );
+        assert_eq!(case.written_reference, "There are 12 boxes and one spare.");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("result.json");
+        evaluate(&suite, &path).unwrap();
+        let report: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        for row in report["rows"].as_array().unwrap() {
+            assert_eq!(row["metrics"]["counts"]["introduced_errors"], 0, "{row}");
         }
     }
 
