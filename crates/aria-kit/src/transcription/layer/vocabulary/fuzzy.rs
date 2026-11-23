@@ -227,11 +227,18 @@ fn may_merge(first: &str, second: &str) -> bool {
         && !(real(first) && real(second))
 }
 
+/// What follows the text a hold reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Cut {
+    SegmentEnd,
+    BeforeDeferred,
+}
+
 // Read the same replacements left to right as the typing pass. Overlapping
 // split-word candidates belong to the first one that matches.
 pub(super) fn waiting_from(
     text: &str,
-    at_segment_end: bool,
+    cut: Cut,
     terms: &[String],
     known: &[Vec<char>],
 ) -> Option<usize> {
@@ -258,7 +265,7 @@ pub(super) fn waiting_from(
             let waits = match fix {
                 // Before an already held join the near miss still types. At
                 // segment end the next word could claim it as part of a join.
-                Some((_, typed)) => at_segment_end || typed.eq_ignore_ascii_case(word),
+                Some((_, typed)) => cut == Cut::SegmentEnd || typed.eq_ignore_ascii_case(word),
                 None => !in_a_written_name(&rest[..start], "") && begins_a_merge(word, known),
             };
             return waits.then_some(text.len() - rest.len() + start);
