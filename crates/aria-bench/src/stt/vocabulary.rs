@@ -467,6 +467,13 @@ pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
     Ok(())
 }
 
+/// What dictation writes for a personal case whose expected text holds a
+/// spoken number or symbol. Memory expects the personal words' effect alone.
+const DICTATED: &[(&str, &str)] = &[(
+    "adversarial_numeric_sentence",
+    "There are 12 boxes and one spare.",
+)];
+
 pub fn fixtures() -> Result<Suite> {
     let mut suite: Suite = serde_json::from_str(include_str!("vocabulary-cases.json"))?;
     let memory: Value = serde_json::from_str(aria_assistant::memory::EVAL_CASES)?;
@@ -480,11 +487,11 @@ pub fn fixtures() -> Result<Suite> {
             .ok_or("missing lexicon input")?
             .to_owned();
         let expected = value["expected"].as_str().ok_or("missing expected text")?;
-        // Memory expects what the personal words alone change. Dictation
-        // also writes that text's spoken numbers and symbols.
-        let written = Vocabulary::default()
-            .correct_spoken(expected, "")
-            .map_or_else(|| expected.to_owned(), |corrected| corrected.text);
+        let written = DICTATED
+            .iter()
+            .find(|(case, _)| *case == id)
+            .map_or(expected, |(_, written)| written)
+            .to_owned();
         suite.cases.push(Case {
             id: format!("personal/{id}"),
             group: format!("personal/{id}"),
@@ -839,6 +846,20 @@ mod tests {
         let report: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         for row in report["rows"].as_array().unwrap() {
             assert_eq!(row["metrics"]["counts"]["introduced_errors"], 0, "{row}");
+        }
+    }
+
+    #[test]
+    fn a_personal_reference_is_what_dictation_writes_without_vocabulary() {
+        let suite = fixtures().unwrap();
+        for case in &suite.cases {
+            if case.category != "personal_regression" {
+                continue;
+            }
+            let dictated = Vocabulary::default()
+                .correct_spoken(&case.spoken_reference, "")
+                .map_or_else(|| case.spoken_reference.clone(), |corrected| corrected.text);
+            assert_eq!(case.written_reference, dictated, "{}", case.id);
         }
     }
 

@@ -18,8 +18,9 @@ cargo test --locked -p aria-bench vocabulary
 
 The frozen memory report is optional. With it, every personal lexicon case
 compares against its saved legacy output after input/rule identity checks.
-A personal lexicon case's written reference is memory's expected text as
-dictation writes its spoken numbers and symbols, so "twelve boxes" scores as `12 boxes`.
+A personal lexicon case's written reference is memory's expected text. Where
+dictation writes a spoken number or symbol in it differently, `DICTATED` lists
+the written text, so "twelve boxes" scores as `12 boxes`.
 Without it, the baseline is labeled uncorrected input. The fixture set is a
 deterministic contract check, not held-out audio or a population accuracy estimate.
 
