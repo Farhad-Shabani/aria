@@ -368,24 +368,26 @@ impl AgreementState {
                 self.lookback = None;
                 return Vec::new();
             }
-            let by_word = self.agreement.after_last_delivered(&words);
-            // With no delivered word to go by, the decode reworded it or
-            // it was untimed, and only the timings are left.
-            let buffer_words = by_word.unwrap_or_else(|| {
-                words
-                    .iter()
-                    .position(|word| {
-                        word.span
-                            .as_ref()
-                            .is_some_and(|span| span.start >= self.buffer_start)
-                    })
-                    .unwrap_or(words.len())
-            });
-            tracing::debug!(
-                by_word = by_word.is_some(),
-                before = buffer_words,
-                "lookback split"
-            );
+            let cut = self.buffer_start;
+            let mut buffer_words = words
+                .iter()
+                .position(|word| word.span.as_ref().is_some_and(|span| span.start >= cut))
+                .unwrap_or(words.len());
+            // One word may lie across the cut: the last delivered word,
+            // timed on into the pause, or the buffer's first, timed back
+            // into it. An engine moves a start by up to a second. The word
+            // is the buffer's when the delivered words end before it.
+            if let Some(across) = buffer_words.checked_sub(1)
+                && words[across]
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.end > cut)
+                && self.agreement.delivered_run(&words[..across])
+                    > self.agreement.delivered_run(&words[..=across])
+            {
+                tracing::debug!("the word across the cut is the buffer's");
+                buffer_words = across;
+            }
             let mut heard_before = words.drain(..buffer_words);
             lookback.sentence_ended_at_cut = heard_before
                 .next_back()
@@ -677,32 +679,14 @@ impl Agreement {
         }
     }
 
-    /// How many opening words of a lookback decode were delivered already:
-    /// the words through the latest, longest run of the last delivered
-    /// words that ends where the last one sounded. Text alone finds an
-    /// earlier copy of a phrase when the decode rewords the delivered one,
-    /// and audio alone a later copy of the word timed back into the pause.
-    /// The audio need only overlap, and no timing says which words follow:
-    /// an engine moves a word's start by up to a second, most of all the
-    /// first word after a pause.
-    ///
-    /// `None` when the decode holds no such run, or the last delivered word
-    /// is untimed.
-    fn after_last_delivered(&self, words: &[Word]) -> Option<usize> {
-        let carried = &self.delivered[self.delivered.len().saturating_sub(CARRIED_WORDS)..];
-        let sounded = carried.last()?.span.as_ref()?;
-        (1..=carried.len().min(words.len()))
+    /// How many of the last delivered words `words` ends with.
+    fn delivered_run(&self, words: &[Word]) -> usize {
+        self.delivered
+            .iter()
             .rev()
-            .find_map(|count| {
-                let run = &carried[carried.len() - count..];
-                (count..=words.len()).rev().find(|&end| {
-                    lcp(run, &words[end - count..]) == count
-                        && words[end - 1]
-                            .span
-                            .as_ref()
-                            .is_some_and(|span| same_audio(span, sounded))
-                })
-            })
+            .zip(words.iter().rev())
+            .take_while(|(delivered, word)| spoken(&delivered.text) == spoken(&word.text))
+            .count()
     }
 
     /// The latest decode's words still waiting for a second decode.
@@ -854,7 +838,9 @@ impl Agreement {
             return false;
         }
         match (&word.span, &delivered.span) {
-            (Some(word), Some(delivered)) => same_audio(word, delivered),
+            (Some(word), Some(delivered)) => {
+                word == delivered || (word.start < delivered.end && delivered.start < word.end)
+            }
             _ => {
                 end >= 2
                     && self.delivered.len() >= 2
@@ -1128,11 +1114,6 @@ fn lcp(previous: &[Word], current: &[Word]) -> usize {
 fn ended_before(words: &[Word], at: usize) -> Option<bool> {
     at.checked_sub(1)
         .map(|before| ends_sentence(&words[before].text))
-}
-
-/// Whether two timings of a word overlap. Two empty timings must match.
-fn same_audio(one: &std::ops::Range<u64>, other: &std::ops::Range<u64>) -> bool {
-    one == other || (one.start < other.end && other.start < one.end)
 }
 
 /// Ignores case and punctuation when comparing successive decodes.
@@ -2767,15 +2748,33 @@ mod tests {
         }
 
         #[test]
-        fn a_buffer_word_the_lookback_decode_times_before_the_cut_goes_out() {
+        fn a_buffer_word_the_lookback_decode_times_across_the_cut_goes_out() {
             // Engines time the first word after a pause early. The decode
             // that hears "one" again opens "two" where "one" ends, before
-            // the cut, yet "two" follows the delivered word.
+            // the cut. "two" follows the delivered word, so it is new.
             const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
             let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
                 let (words, mut timings) = whole_words(&SPOKEN, window);
                 if words == ["one", "two"] {
                     timings[1].start = timings[0].end;
+                }
+                Hypothesis::with_words(words.join(" "), timings)
+            });
+
+            assert_eq!(run.segments, ["one", "two"]);
+        }
+
+        #[test]
+        fn a_delivered_word_the_lookback_decode_rewords_across_the_cut_stays_out() {
+            // The decode that hears "two" writes "one" as "won" and runs
+            // its end on to "two", past the cut. Nothing tells "won" from a
+            // new word but its start, which lies before the cut.
+            const SPOKEN: [Spoken; 2] = [("one", 8_000, 0.0, 0.4), ("two", 7_000, 1.5, 1.9)];
+            let run = replay(cadence(20_000), &SPOKEN, 3.0, |window| {
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
+                if words == ["one", "two"] {
+                    words[0] = "won";
+                    timings[0].end = timings[1].start;
                 }
                 Hypothesis::with_words(words.join(" "), timings)
             });
@@ -2904,10 +2903,10 @@ mod tests {
 
         #[test]
         fn a_later_copy_of_the_last_delivered_word_is_not_taken_for_it() {
-            // The delivered "now" is timed on into the pause, and the
-            // lookback decode times the later "now" back into it, so both
-            // sound where the delivered one did. Only the first follows
-            // "we should go".
+            // The delivered "now" is timed on into the pause. The lookback
+            // decode times the later "now" back into it, and writes "go" as
+            // "leave". Neither copy of "now" lies across the cut, so the
+            // timings alone split the decode.
             const SPOKEN: [Spoken; 9] = [
                 ("we", 8_000, 0.1, 0.3),
                 ("should", 7_900, 0.4, 0.7),
@@ -2921,11 +2920,12 @@ mod tests {
             ];
             let cadence = Cadence::from_millis(1_000, 20_000);
             let run = replay(cadence, &SPOKEN, 6.0, |window| {
-                let (words, mut timings) = whole_words(&SPOKEN, window);
+                let (mut words, mut timings) = whole_words(&SPOKEN, window);
                 if words == ["we", "should", "go", "now"] {
                     timings[3].end += 0.8;
                 }
                 if words.first() == Some(&"we") && words.len() > 7 {
+                    words[2] = "leave";
                     timings[7].start = 2.1;
                 }
                 Hypothesis::with_words(words.join(" "), timings)
