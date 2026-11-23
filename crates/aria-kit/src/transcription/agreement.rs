@@ -630,10 +630,9 @@ impl AgreementState {
 /// decodes agree on it.
 ///
 /// A decode's words are told from the delivered ones by their text, in
-/// order: the longest opening run that repeats the end of what was
-/// delivered is a repeat, whether the decode opened later than the last one
-/// or heard a word again across a cut. Timings place cuts and distinguish
-/// a later opening from a revision covering the same audio.
+/// order: the decode is lined up with the delivered words its audio
+/// covers, and what follows them is new. Timings place cuts, and decide
+/// only what text leaves open.
 #[derive(Default)]
 struct Agreement {
     /// The latest hypothesis, including retained speech.
@@ -881,9 +880,9 @@ impl Agreement {
     }
 
     /// Where the decode's new words begin, and how many words count as out
-    /// once it stands as the last decode. A decode that opens where the
-    /// last one did is placed by [`Self::aligned`]. One that opens
-    /// elsewhere is counted afresh by the delivered words it repeats.
+    /// once it stands as the last decode. `again` counts its opening words
+    /// that say the buffer's delivered words again. Without it, the decode
+    /// is counted afresh by the delivered words it repeats.
     ///
     /// `None` when no delivered text or anchored candidate locates the
     /// decode. Its word timings may still locate undelivered audio.
@@ -1956,12 +1955,13 @@ mod tests {
 
         #[test]
         fn a_lookback_decode_is_not_held_to_words_from_before_it() {
-            // Only "four" sounds inside the lookback.
+            // Only "four" sounds inside the lookback, and the decode
+            // rewords it. The three words before it are not missing.
             let mut agreement = Agreement::default();
             confirmed(&mut agreement, timed(&["one", "two", "three", "four"]));
             let four = agreement.delivered[3].span.clone().unwrap();
             let agreement = agreement.next_buffer(four.end, four.start);
-            let mut decode = timed(&["four", "five"]);
+            let mut decode = timed(&["for", "five"]);
             decode[0].span = Some(four.clone());
             decode[1].span = Some(four.end..2 * four.end);
 
@@ -3357,8 +3357,8 @@ mod tests {
         fn a_later_copy_of_the_last_delivered_word_is_not_taken_for_it() {
             // The delivered "now" is timed on into the pause. The lookback
             // decode times the later "now" back into it, and writes "go" as
-            // "leave". With a carried word reworded, neither "now" places
-            // the split, and the timings do.
+            // "leave". The delivered words still line up with the opening,
+            // one reworded.
             const SPOKEN: [Spoken; 9] = [
                 ("we", 8_000, 0.1, 0.3),
                 ("should", 7_900, 0.4, 0.7),
@@ -3387,7 +3387,7 @@ mod tests {
         }
 
         #[test]
-        fn two_copies_of_every_delivered_word_leave_the_split_to_the_timings() {
+        fn the_first_of_two_copies_of_a_delivered_word_is_the_delivered_one() {
             // Only "now" has gone out, timed on into the pause. The decode
             // after the cut times the later "now" back into it. Both copies
             // read as the delivered word, and "yes I think" lies between.
