@@ -472,13 +472,13 @@ impl AgreementState {
             // A further stride added no words: a pause, or a word the model
             // holds back until it hears the end of it. When no delivered
             // word places the pause, only one the buffer ends in tells the
-            // two apart.
+            // two apart. No word is left waiting to carry past it.
             Standing::Settled => self
                 .pause_past_delivered(loudness)
                 .or_else(|| loudness.trailing_pause()),
         };
         if let Some(pause) = pause {
-            let agreement = self.agreement.after_pause();
+            let agreement = self.agreement.next_buffer_past_pause();
             return self.trim(
                 self.buffer_start + pause.at as u64,
                 agreement,
@@ -552,10 +552,10 @@ impl AgreementState {
 
     /// Where speech the model skipped begins, past what was delivered: the
     /// first stretch of speech no word of `heard` covers. Nothing within a
-    /// stride of a cap cut counts, or a buffer the model keeps skipping the
-    /// start of would never move on. A buffer that opened in a pause opens
-    /// on no sound, so all its speech counts: the words past a skipped
-    /// first word would go out ahead of it.
+    /// stride of the opening counts, or a buffer the model keeps skipping
+    /// the start of would never move on. A buffer that opened in a pause
+    /// opens on no sound, so all its speech counts: the words past a
+    /// skipped first word would go out ahead of it.
     fn skipped_speech(&self, loudness: &Loudness, heard: &[Word]) -> Option<u64> {
         let opening = match self.pause_level {
             Some(_) => self.buffer_start,
@@ -669,7 +669,7 @@ impl Agreement {
     /// The agreement for the buffer a pause cut opens. Beside the last
     /// delivered words, it keeps the words heard past the pause, so the next
     /// decode can confirm them rather than hear them afresh.
-    fn after_pause(&mut self) -> Self {
+    fn next_buffer_past_pause(&mut self) -> Self {
         let waiting = self.waiting().to_vec();
         Self {
             candidate: waiting,
