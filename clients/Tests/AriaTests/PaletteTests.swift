@@ -890,7 +890,7 @@ final class PaletteTests: XCTestCase {
         model.query = "db2"
         XCTAssertEqual(addAction(model)?.kind, .addWord("db2"))
 
-        model.read(dictionary: ["db2"], since: model.dictionaryEdits)
+        model.read(dictionary: ["db2"], request: model.beginDictionaryRead())
         XCTAssertNil(addAction(model))
         XCTAssertNil(model.selected)
     }
@@ -936,18 +936,29 @@ final class PaletteTests: XCTestCase {
         XCTAssertNil(model.dictionaryNotice)
     }
 
-    func testAReadSentBeforeAnEditLeavesTheEditInPlace() {
+    func testAnEditDuringTheInitialReadPreservesOtherDictionaryWords() {
         var model = openModel()
         model.query = "Adzviser"
-        let sent = model.dictionaryEdits
+        let sent = model.beginDictionaryRead()
         model.record(.added("Adzviser"))
-        model.read(dictionary: [], since: sent)
+        model.read(dictionary: ["Vex"], request: sent)
+        XCTAssertEqual(model.dictionaryWords, ["Vex", "Adzviser"])
         XCTAssertNil(addAction(model))
+    }
+
+    func testOnlyTheLatestDictionaryReadCanPublish() {
+        var model = openModel()
+        let older = model.beginDictionaryRead()
+        let newer = model.beginDictionaryRead()
+        model.record(.removed("Vex"))
+        model.read(dictionary: ["Vex", "db2"], request: newer)
+        model.read(dictionary: ["Vex"], request: older)
+        XCTAssertEqual(model.dictionaryWords, ["db2"])
     }
 
     private func dictionaryModel(_ words: [String]) -> PaletteModel {
         var model = openModel(history: [Self.entry(1, at: 100)])
-        model.read(dictionary: words, since: model.dictionaryEdits)
+        model.read(dictionary: words, request: model.beginDictionaryRead())
         model.listDictionary()
         return model
     }
@@ -989,7 +1000,7 @@ final class PaletteTests: XCTestCase {
     func testAReadOrAnAddWhileListingShowsInTheList() {
         var model = openModel()
         model.listDictionary()
-        model.read(dictionary: ["db2"], since: model.dictionaryEdits)
+        model.read(dictionary: ["db2"], request: model.beginDictionaryRead())
         model.record(.added("Adzviser"))
         XCTAssertEqual(model.items.compactMap(\.command?.action), [.listedWord("db2"), .listedWord("Adzviser")])
     }
@@ -1004,7 +1015,7 @@ final class PaletteTests: XCTestCase {
 
     func testEscapeClearsTheSearchThenLeavesTheDictionaryOnItsCommand() {
         var model = openModel()
-        model.read(dictionary: ["db2"], since: model.dictionaryEdits)
+        model.read(dictionary: ["db2"], request: model.beginDictionaryRead())
         model.listDictionary()
         model.query = "db"
         XCTAssertFalse(model.escape())
