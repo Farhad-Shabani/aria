@@ -7,7 +7,7 @@ use crate::cancel::CancelToken;
 use super::super::claim::{Claimed, Word};
 use super::super::number_words::{is_up_to_twenty, word_for};
 use super::super::symbol_words::symbol;
-use super::fuzzy::{Fix, apply_fuzzy, begins_a_merge, best_term, capitals, is_token_char};
+use super::fuzzy::{apply_fuzzy, capitals, waiting_from};
 use super::{MatchError, is_word};
 
 /// What stored rules may cost in memory.
@@ -285,22 +285,23 @@ impl PersonalRules {
         self.defer_an_unfinished_form(text, claimed);
     }
 
-    /// Defers the word before the cut when more speech may change it. A
-    /// listed word that would take its capitals may join a spoken symbol
-    /// into a written name, which keeps it as heard: "open aria" may go on
-    /// as "aria dot toml". A word that isn't real may merge with the next
-    /// word into a listed word: "use postgre" may go on as "postgre sql".
     fn defer_a_last_word(&self, text: &str, claimed: &mut Claimed<'_>) {
-        let before = text[..claimed.deferred_from()].trim_end();
-        let start = before.trim_end_matches(is_token_char).len();
-        let never = &|_| Ok::<_, std::convert::Infallible>(());
-        let word = &before[start..];
-        let capital =
-            best_term(word, &self.terms, &self.known, never).unwrap_or_else(|never| match never {});
-        if matches!(capital, Some(Fix::Capitals(_)))
-            || begins_a_merge(word, &self.terms, &self.known)
-        {
-            claimed.defer_at(start);
+        if self.terms.is_empty() {
+            return;
+        }
+        let cut = claimed.deferred_from();
+        let Some(gap) = unclaimed_around(claimed.words(), text.len(), cut) else {
+            return;
+        };
+        let before = text[gap.start..cut].trim_end();
+        if let Some(start) = waiting_from(before, cut == text.len(), &self.terms, &self.known) {
+            // Keep any opening punctuation with its word across delivery.
+            let start = text[..gap.start + start]
+                .trim_end_matches(|c: char| !c.is_whitespace())
+                .len();
+            if start >= gap.start {
+                claimed.defer_at(start);
+            }
         }
     }
 
@@ -1041,6 +1042,26 @@ mod tests {
         for (input, expected) in cases {
             assert_eq!(rules.apply(input).0, expected, "{input}");
         }
+    }
+
+    #[rstest::rstest]
+    #[case("postgresql's config", "PostgreSQL's config")]
+    #[case("postgre SQL'S config", "PostgreSQL'S config")]
+    #[case("postgre's sql", "postgre's sql")]
+    #[case("use 'gitlab' now", "use 'GitLab' now")]
+    #[case("use ai, not aix", "use AI, not aix")]
+    #[case("an éclair", "an éclair")]
+    #[case("an e\u{301}clair", "an e\u{301}clair")]
+    #[case("épostgre sql", "épostgre sql")]
+    #[case("postgre sqlé", "postgre sqlé")]
+    #[case("postgresql-", "PostgreSQL-")]
+    #[case("a mcdonald's", "a McDonald's")]
+    fn a_correction_keeps_the_rest_of_the_word(#[case] heard: &str, #[case] expected: &str) {
+        let rules = PersonalRules::new(
+            strings(&["PostgreSQL", "GitLab", "AI", "Clair", "McDonald's"]),
+            vec![],
+        );
+        assert_eq!(rules.apply(heard).0, expected);
     }
 
     #[test]

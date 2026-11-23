@@ -375,6 +375,54 @@ mod tests {
         assert_any_split_types_the_whole("use postgre sql now", &vocabulary);
     }
 
+    #[rstest]
+    #[case("open test_aria", "open test_aria")]
+    #[case("open src/aria", "open src/aria")]
+    #[case("open file dot aria", "open file.aria")]
+    #[case("say my aria", "say Alias")]
+    #[case("an éclair", "an éclair")]
+    fn fuzzy_holds_respect_the_words_other_steps_read(#[case] heard: &str, #[case] expected: &str) {
+        let project = Term {
+            canonical: "file.aria".into(),
+            priority: 1,
+        };
+        let personal = PersonalRules::new(
+            vec!["Aria".into(), "Clair".into(), "Alias".into()],
+            vec![("my aria".into(), "Alias".into())],
+        );
+        let vocabulary = Vocabulary::compile(&[project], personal).unwrap();
+        assert_eq!(streamed(&[(heard, None)], &vocabulary), expected);
+        assert_any_split_types_the_whole(heard, &vocabulary);
+    }
+
+    #[rstest]
+    #[case(&["open kubernets", "dot yaml"], "open kubernets.yaml")]
+    #[case(&["use postgre sql", "dot conf"], "use postgre sql.conf")]
+    fn a_fuzzy_word_at_segment_end_may_join_a_symbol(
+        #[case] segments: &[&str],
+        #[case] expected: &str,
+    ) {
+        let personal = PersonalRules::new(vec!["PostgreSQL".into(), "Kubernetes".into()], vec![]);
+        let vocabulary = Vocabulary::compile(&[], personal).unwrap();
+        let pieces: Vec<_> = segments.iter().map(|s| (*s, None)).collect();
+        assert_eq!(streamed(&pieces, &vocabulary), expected);
+    }
+
+    #[test]
+    fn only_fragments_that_can_reach_a_listed_word_wait() {
+        let personal = PersonalRules::new(vec!["PostgreSQL".into()], vec![]);
+        let v = Vocabulary::compile(&[], personal).unwrap();
+        for name in ["Pablo", "Priya", "PyTorch"] {
+            assert_eq!(DeferredWords::default().hold(name, None, &v).text, name);
+        }
+        for (start, end) in [("use postgre", "sql"), ("use pyst", "gresql")] {
+            assert_eq!(
+                streamed(&[(start, None), (end, None)], &v),
+                "use PostgreSQL"
+            );
+        }
+    }
+
     /// Cuts `heard` at its spaces into two or three segments, every way.
     fn assert_any_split_types_the_whole(heard: &str, vocabulary: &Vocabulary) {
         let whole = whole(heard, vocabulary);
