@@ -199,7 +199,7 @@ impl Vocabulary {
         if cancel.is_cancelled() {
             return Err(MatchError::Cancelled);
         }
-        if terms.len() > MAX_TERMS {
+        if terms.len() > MAX_TERMS || personal.estimated_bytes() > limit {
             return Err(MatchError::TooLarge);
         }
         let respellings = personal.respellings();
