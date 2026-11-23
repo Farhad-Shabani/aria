@@ -122,7 +122,9 @@ impl From<MatchError> for Error {
 }
 
 /// A compiled list and what status reports about it.
+#[derive(Clone)]
 struct Prepared {
+    terms: Arc<[Term]>,
     matcher: Arc<Vocabulary>,
     catalog_revision: Option<u64>,
     found: usize,
@@ -131,21 +133,18 @@ struct Prepared {
 
 /// The list dictation uses for a folder.
 struct Live {
-    matcher: Arc<Vocabulary>,
+    prepared: Prepared,
     /// The personal rules revision it was compiled with.
     personal_revision: u64,
-    catalog_revision: Option<u64>,
-    found: usize,
-    completeness: Option<Completeness>,
 }
 
 impl Live {
     fn list(&self, personal_revision: u64) -> List {
         List {
-            catalog_revision: self.catalog_revision,
-            terms: self.matcher.term_count(),
-            found: self.found,
-            completeness: self.completeness,
+            catalog_revision: self.prepared.catalog_revision,
+            terms: self.prepared.matcher.term_count(),
+            found: self.prepared.found,
+            completeness: self.prepared.completeness,
             is_stale: self.personal_revision != personal_revision,
         }
     }
@@ -177,7 +176,7 @@ struct Registry {
     personal_revision: u64,
     live: Vec<(Weak<Vocabulary>, usize)>,
     removals: HashMap<Directory, RemovalState>,
-    retired: Vec<Arc<Vocabulary>>,
+    retired: Vec<Prepared>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -209,8 +208,16 @@ impl Drop for Snapshot {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Refresh {
+    IfDue,
+    Now,
+    Recompile,
+}
+
 enum Command {
     Refresh {
+        kind: Refresh,
         directory: Option<Directory>,
         cancel: Arc<AtomicBool>,
         reply: Option<Reply>,
@@ -361,10 +368,12 @@ impl Runtime {
                         .live
                         .as_ref()
                         .filter(|live| live.personal_revision == revision)
-                        .map(|live| Arc::clone(&live.matcher))
+                        .map(|live| Arc::clone(&live.prepared.matcher))
                 })
                 .unwrap_or_else(|| Arc::clone(&registry.personal));
-            if let Err(error) = self.enqueue(&mut registry, directory.cloned(), None, false) {
+            if let Err(error) =
+                self.enqueue(&mut registry, directory.cloned(), None, Refresh::IfDue)
+            {
                 tracing::debug!(%error, "vocabulary recording refresh not queued");
             }
             matcher
@@ -400,7 +409,7 @@ impl Runtime {
     }
 
     pub(super) fn prepare(&self, directory: Option<Directory>) {
-        if let Err(error) = self.enqueue(&mut self.registry(), directory, None, true) {
+        if let Err(error) = self.enqueue(&mut self.registry(), directory, None, Refresh::Now) {
             tracing::debug!(%error, "vocabulary preparation not queued");
         }
     }
@@ -484,7 +493,7 @@ impl Runtime {
         let (reply, response) = oneshot::channel();
         {
             let mut registry = self.registry();
-            self.enqueue(&mut registry, Some(directory), Some(reply), true)?;
+            self.enqueue(&mut registry, Some(directory), Some(reply), Refresh::Now)?;
         }
         response.await.map_err(|_| Error::Unavailable(None))?
     }
@@ -540,7 +549,7 @@ impl Runtime {
             registry.retired.extend(
                 retired
                     .into_iter()
-                    .filter_map(|entry| entry.live.map(|live| live.matcher)),
+                    .filter_map(|entry| entry.live.map(|live| live.prepared)),
             );
             self.interrupt.store(true, Ordering::Release);
         };
@@ -554,12 +563,13 @@ impl Runtime {
         prepared: Prepared,
         cancel: &AtomicBool,
     ) -> Result<(), Error> {
-        let Prepared {
-            matcher,
-            catalog_revision,
-            found,
-            completeness,
-        } = prepared;
+        let bytes = prepared.matcher.estimated_bytes()
+            + std::mem::size_of_val(prepared.terms.as_ref())
+            + prepared
+                .terms
+                .iter()
+                .map(|term| term.canonical.capacity())
+                .sum::<usize>();
         self.interrupted(cancel)?;
         let mut registry = self.registry();
         self.interrupted(cancel)?;
@@ -577,7 +587,7 @@ impl Runtime {
         registry.live.retain(|(entry, _)| entry.strong_count() != 0);
         registry
             .live
-            .push((Arc::downgrade(&matcher), matcher.estimated_bytes()));
+            .push((Arc::downgrade(&prepared.matcher), bytes));
         let evicted = if registry.entries.len() >= QUEUE_CAPACITY
             && !registry.entries.contains_key(directory)
         {
@@ -594,11 +604,8 @@ impl Runtime {
             directory.clone(),
             Entry {
                 live: Some(Live {
-                    matcher,
+                    prepared,
                     personal_revision,
-                    catalog_revision,
-                    found,
-                    completeness,
                 }),
                 root: Some(root.to_path_buf()),
                 activity: Activity::Idle,
@@ -627,7 +634,7 @@ impl Runtime {
         registry: &mut Registry,
         directory: Option<Directory>,
         reply: Option<Reply>,
-        force: bool,
+        kind: Refresh,
     ) -> Result<(), Error> {
         if self.stopping.load(Ordering::Acquire) {
             return Err(Error::Unavailable(None));
@@ -642,7 +649,7 @@ impl Runtime {
                 Ok(())
             };
         }
-        if !force
+        if kind == Refresh::IfDue
             && registry
                 .last_attempt
                 .get(&directory)
@@ -656,25 +663,28 @@ impl Runtime {
         let cancel = Arc::new(AtomicBool::new(false));
         self.requests
             .try_send(Command::Refresh {
+                kind,
                 directory: directory.clone(),
                 cancel: Arc::clone(&cancel),
                 reply,
             })
             .map_err(send_error)?;
         registry.pending.insert(directory.clone(), cancel);
-        if registry.last_attempt.len() >= QUEUE_CAPACITY
-            && !registry.last_attempt.contains_key(&directory)
-            && let Some(oldest) = registry
+        if kind != Refresh::Recompile {
+            if registry.last_attempt.len() >= QUEUE_CAPACITY
+                && !registry.last_attempt.contains_key(&directory)
+                && let Some(oldest) = registry
+                    .last_attempt
+                    .iter()
+                    .min_by_key(|(_, at)| **at)
+                    .map(|(key, _)| key.clone())
+            {
+                registry.last_attempt.remove(&oldest);
+            }
+            registry
                 .last_attempt
-                .iter()
-                .min_by_key(|(_, at)| **at)
-                .map(|(key, _)| key.clone())
-        {
-            registry.last_attempt.remove(&oldest);
+                .insert(directory.clone(), Instant::now());
         }
-        registry
-            .last_attempt
-            .insert(directory.clone(), Instant::now());
         if let Some(directory) = directory
             && (registry.entries.len() < QUEUE_CAPACITY
                 || registry.entries.contains_key(&directory))
@@ -777,6 +787,7 @@ impl<C: Collector> Worker<C> {
             let (_, command) = deferred.remove(index).expect("selected command");
             match command {
                 Command::Refresh {
+                    kind,
                     directory,
                     cancel,
                     reply,
@@ -804,15 +815,26 @@ impl<C: Collector> Worker<C> {
                     let token = self.control(Arc::clone(&cancel), deadline);
                     let mut result = self
                         .reserve(DISCOVERY_RESERVE, directory.as_ref())
-                        .and_then(|()| self.refresh_personal())
-                        .and_then(|()| match directory.as_ref() {
-                            Some(directory) => {
-                                self.refresh_project(directory, scan, &cancel, &token, &mut catalog)
+                        .and_then(|()| {
+                            if let Some(directory) = &directory
+                                && kind == Refresh::Recompile
+                            {
+                                return self.recompile(directory, &cancel, &token);
                             }
-                            None => Ok(Status::Folder {
-                                list: None,
-                                activity: Activity::Idle,
-                            }),
+                            self.refresh_personal()?;
+                            match directory.as_ref() {
+                                Some(directory) => self.refresh_project(
+                                    directory,
+                                    scan,
+                                    &cancel,
+                                    &token,
+                                    &mut catalog,
+                                ),
+                                None => Ok(Status::Folder {
+                                    list: None,
+                                    activity: Activity::Idle,
+                                }),
+                            }
                         });
                     if deadline.expired() {
                         result = Err(Error::TooLarge);
@@ -824,6 +846,7 @@ impl<C: Collector> Worker<C> {
                         deferred.push_back((
                             Instant::now() + REFRESH_INTERVAL,
                             Command::Refresh {
+                                kind,
                                 directory,
                                 cancel,
                                 reply,
@@ -965,7 +988,7 @@ impl<C: Collector> Worker<C> {
                         && entry
                             .live
                             .as_ref()
-                            .is_some_and(|live| Arc::strong_count(&live.matcher) == 1)
+                            .is_some_and(|live| Arc::strong_count(&live.prepared.matcher) == 1)
                 })
                 .min_by_key(|(_, entry)| entry.used)
                 .map(|(key, _)| key.clone());
@@ -1009,6 +1032,7 @@ impl<C: Collector> Worker<C> {
         if self.sources.dictionary.stamp() != self.stamp {
             self.runtime.prepare(None);
         }
+        self.prepare_stale(&mut self.runtime.registry());
     }
 
     /// A failed refresh keeps the stamp, so the poll waits for the next save
@@ -1048,10 +1072,52 @@ impl<C: Collector> Worker<C> {
             .push((Arc::downgrade(&matcher), matcher.estimated_bytes()));
         let retired = std::mem::replace(&mut registry.personal, matcher);
         registry.personal_revision = registry.personal_revision.wrapping_add(1);
+        self.prepare_stale(&mut registry);
         drop(registry);
         drop(retired);
         self.personal = rules;
         Ok(())
+    }
+
+    fn prepare_stale(&self, registry: &mut Registry) {
+        let stale: Vec<_> = registry
+            .entries
+            .iter()
+            .filter_map(|(directory, entry)| {
+                let live = entry.live.as_ref()?;
+                (entry.activity == Activity::Idle
+                    && live.personal_revision != registry.personal_revision)
+                    .then(|| directory.clone())
+            })
+            .collect();
+        for directory in stale {
+            if self
+                .runtime
+                .enqueue(registry, Some(directory), None, Refresh::Recompile)
+                .is_err()
+            {
+                break;
+            }
+        }
+    }
+
+    fn recompile(
+        &self,
+        directory: &Directory,
+        cancel: &AtomicBool,
+        token: &CancelToken,
+    ) -> Result<Status, Error> {
+        let current = self
+            .runtime
+            .registry()
+            .entries
+            .get(directory)
+            .and_then(|entry| Some((entry.root.clone()?, entry.live.as_ref()?.prepared.clone())));
+        if let Some((root, mut prepared)) = current {
+            prepared.matcher = self.compile(&prepared.terms, token)?;
+            self.runtime.publish(directory, &root, prepared, cancel)?;
+        }
+        Ok(self.runtime.catalog_status(Some(directory)))
     }
 
     fn refresh_project(
@@ -1078,6 +1144,7 @@ impl<C: Collector> Worker<C> {
                 directory,
                 &root,
                 Prepared {
+                    terms: selection.terms.into(),
                     matcher,
                     catalog_revision: Some(cached.revision),
                     found: selection.found,
@@ -1132,6 +1199,7 @@ impl<C: Collector> Worker<C> {
             directory,
             &root,
             Prepared {
+                terms: selection.terms.into(),
                 matcher,
                 catalog_revision,
                 found: selection.found,
@@ -1274,6 +1342,7 @@ mod tests {
 
     fn prepared(matcher: &Arc<Vocabulary>, revision: u64) -> Prepared {
         Prepared {
+            terms: Arc::from([]),
             matcher: Arc::clone(matcher),
             catalog_revision: Some(revision),
             found: 1,
@@ -1827,6 +1896,48 @@ mod tests {
                 .correct("vex sixteen")
                 .as_deref(),
             Some("vex16")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dictionary_edit_recompiles_each_ready_folder_without_rescanning() {
+        let root = tempfile::tempdir().unwrap();
+        let [first, second] = ["Aria-Kit", "Other-Kit"].map(|name| project(root.path(), name));
+        let (runtime, worker) = local_runtime(root.path());
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn(worker.run(shutdown.clone()));
+        let first_ready = runtime.refresh(Some(first.clone())).await.unwrap();
+        let second_ready = runtime.refresh(Some(second.clone())).await.unwrap();
+        assert_eq!(runtime.add_word("db2").unwrap(), AddWordOutcome::Added);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                {
+                    let registry = runtime.registry();
+                    if registry.personal_revision > 0 && registry.pending.is_empty() {
+                        break;
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let corrected = |folder: &Directory, said: &str| {
+            let snapshot = runtime.snapshot(Some(folder));
+            let text = snapshot
+                .matcher
+                .correct_spoken(said, "")
+                .map(|result| result.text);
+            (runtime.catalog_status(Some(folder)), text)
+        };
+        let first = corrected(&first, "use aria dash kit with d b two");
+        let second = corrected(&second, "use other dash kit with d b two");
+        shutdown.cancel();
+        task.await.unwrap();
+        assert_eq!(first, (first_ready, Some("use Aria-Kit with db2".into())));
+        assert_eq!(
+            second,
+            (second_ready, Some("use Other-Kit with db2".into()))
         );
     }
 
