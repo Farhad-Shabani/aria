@@ -80,8 +80,7 @@ pub(super) fn ui_element(value: &cf::Type) -> Option<&ax::UiElement> {
     Some(unsafe { &*std::ptr::from_ref(value).cast::<ax::UiElement>() })
 }
 
-/// Whether `window` is first in `application`'s window list, which
-/// Accessibility orders front to back.
+/// Accessibility lists windows front to back.
 #[allow(
     unsafe_code,
     reason = "cidre 0.28 has no checked cast to CFArray; the runtime type is \

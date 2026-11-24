@@ -48,8 +48,7 @@ pub(crate) const RETURN_VIRTUAL_KEY: u16 = 0x24;
 const NO_ERR: i32 = 0;
 
 pub struct MacOsTextDelivery {
-    /// How long a paste may wait for an answer. Posted keys don't wait at
-    /// all.
+    /// How long a paste waits for an answer. Typed keys never wait.
     timeout: Duration,
 }
 
@@ -112,8 +111,6 @@ enum Route {
 }
 
 impl Route {
-    /// Pastes where the front terminal can. Anything else, or a terminal that
-    /// can't be driven, takes keys.
     fn choose(process: u32) -> Self {
         let Some(bundle_id) = application(process).and_then(|application| application.bundle_id)
         else {
@@ -362,8 +359,8 @@ impl TextDelivery for MacOsTextDelivery {
             } => autoreleasepool(|_| {
                 let process = destination.process;
                 let mut anchoring = anchoring.borrow_mut();
-                // A bound field only updates its expected caret, so it needs
-                // no pin check.
+                // An anchored field only updates its expected caret, so it
+                // skips the pin check.
                 let (caret, focus, pinned) = if matches!(*anchoring, Anchoring::Anchored(_)) {
                     let (caret, focus) = caret::read(process);
                     (caret, focus, true)
@@ -424,9 +421,9 @@ fn return_after_text(
     post_return()
 }
 
-/// The caret and focused field, and whether the route's pin held on both
-/// sides of the read. A route pinned to one terminal binds a field only
-/// there: the app's other windows have fields of their own.
+/// The caret, the focused field, and whether the route's focus check passed
+/// before and after the read. Only a field in the route's terminal may be
+/// anchored, since the app's other windows have their own fields.
 fn read_in_pin(destination: &Destination) -> (Caret, Result<caret::Focus, &'static str>, bool) {
     let pinned = || destination.route.check_focus(destination.process).is_ok();
     let before = pinned();
@@ -434,9 +431,8 @@ fn read_in_pin(destination: &Destination) -> (Caret, Result<caret::Focus, &'stat
     (caret, focus, before && pinned())
 }
 
-/// Focus left before this text went in. Text may wait only when the press
-/// knows where it goes: the field it started in, or the place its route
-/// pins.
+/// Text may wait only when the press knows where it goes: its starting field,
+/// or a route that pins its target.
 fn focus_lost(anchoring: &Anchoring, route_pins_target: bool) -> DeliveryError {
     if anchoring.is_unavailable() && !route_pins_target {
         return DeliveryError::TargetUnverified;
@@ -444,9 +440,8 @@ fn focus_lost(anchoring: &Anchoring, route_pins_target: bool) -> DeliveryError {
     DeliveryError::TargetChanged
 }
 
-/// What the insertion guards look at, read all at once so `prepare` and the
-/// re-checks in `guard` judge the same facts, and so a test can hand in values.
-/// A route's own focus check reads its app live.
+/// What the insertion guards check, read together so a test can supply them.
+/// A route's focus check reads its app live instead.
 struct Facts {
     trust: Trust,
     secure_input: bool,
@@ -490,7 +485,6 @@ fn insert(
     Ok(DeliveryOutcome::Inserted)
 }
 
-/// Every refusal that precedes sending the first of the text.
 fn guard(
     destination: &Destination,
     should_cancel: &impl Fn() -> bool,
@@ -540,7 +534,7 @@ fn post(text: &str) -> Result<(), DeliveryError> {
 }
 
 // Only text that reached nobody may go to the clipboard: a refusal from the
-// guard, or from the app. Keys that failed partway may have typed some of it.
+// guard, or from the app.
 fn insert_or_copy(
     destination: &Destination,
     text: &str,
@@ -558,8 +552,8 @@ fn insert_or_copy(
         Err(DeliveryError::Cancelled) => return Err(DeliveryError::Cancelled),
         Err(refusal) => refusal,
     };
-    // A guard refusal skips the guard's cancel check, and an app refusal
-    // comes after a send, so ask again before anything lands on the clipboard.
+    // A guard refusal skipped its cancel check, and an app refusal came after
+    // the send, so check again before copying.
     if should_cancel() {
         return Err(DeliveryError::Cancelled);
     }

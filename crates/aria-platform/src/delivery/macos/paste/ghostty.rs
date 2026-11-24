@@ -1,10 +1,7 @@
 //! Text into Ghostty as a paste, through its scripting interface.
 //!
-//! Ghostty handles `input text` as it handles Cmd-V, without the clipboard
-//! and without its paste confirmation: a program that asked for bracketed
-//! paste gets the text between paste markers. A modal editor or a vim-mode
-//! prompt then reads it as text in any mode, where typed keys would run as
-//! its commands.
+//! Ghostty handles `input text` like Cmd-V, without the clipboard or its
+//! paste confirmation.
 
 use std::time::Duration;
 

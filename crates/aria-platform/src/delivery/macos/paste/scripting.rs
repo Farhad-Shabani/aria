@@ -78,9 +78,8 @@ pub(super) fn permit(
     }
 }
 
-/// Shows macOS's consent prompt on a detached thread. It holds nothing but
-/// the prompt and ends when the person answers. The next press reads the
-/// answer.
+/// Shows macOS's consent prompt on a detached thread that ends when the
+/// person answers. The next press reads the answer.
 fn ask_consent(process: u32, event: (u32, u32)) {
     if ASKING.swap(true, Ordering::AcqRel) {
         return;

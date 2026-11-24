@@ -1,10 +1,9 @@
 //! Text into a tmux pane as a paste, for terminals that can't paste from a
 //! script.
 //!
-//! `paste-buffer -p` wraps the text in paste markers when the pane asked for
-//! them, so a Vim-mode program inside tmux reads it as text in any mode. The
-//! terminal's scripting interface names its focused tab's tty, and the tmux
-//! client in front on that tty names the pane.
+//! The terminal names its focused tab's tty, and the tmux client in front on
+//! that tty names the pane. `paste-buffer -p` adds paste markers only if the
+//! pane asked for them.
 
 mod acl;
 mod proc_info;
@@ -108,9 +107,8 @@ impl Pane {
         })
     }
 
-    /// Refuses unless the same tab still has focus, its client is still in
-    /// front there, and that client still shows the same pane, ready for
-    /// input.
+    /// Refuses unless the same tab has focus, its client is still in front,
+    /// and that client shows the same pane, ready for input.
     pub(super) fn check_focus(&self, process: u32) -> Result<(), DeliveryError> {
         let current = scripting::target(process)
             .map_err(Lookup::Unanswered)
@@ -201,8 +199,8 @@ impl Pane {
     }
 }
 
-/// A name no buffer of the person's has, so a paste neither replaces nor
-/// deletes one.
+/// A random name, so a paste neither replaces nor deletes one of the person's
+/// buffers.
 fn buffer_name() -> String {
     use std::hash::{BuildHasher, Hasher};
     let random = std::collections::hash_map::RandomState::new()
@@ -244,12 +242,9 @@ struct Client {
 }
 
 impl Client {
-    /// The tmux client in the foreground of `tty`, where the tab's keys go. A
-    /// suspended or background client isn't the one in view. Its executable
-    /// is accepted only as the daemon accepts any executable it runs: a
-    /// regular file owned by the user or root, writable by no one else. Only
-    /// the user, root or `admin` may change the folders above it, or the file
-    /// could be swapped after the check.
+    /// The tmux client in the foreground of `tty`, where the tab's keys go.
+    /// Only the user, root or `admin` may change the folders above its
+    /// executable, or the file could be swapped after the check.
     fn in_front(tty: &str) -> Option<Self> {
         let device = terminal_device(tty)?;
         let (pid, tmux) = proc_info::on_terminal(device)
@@ -275,9 +270,9 @@ impl Client {
         terminal_device(tty).is_some_and(|device| proc_info::is_foreground(self.pid, device))
     }
 
-    /// The server this client is attached to, and its active pane. `-L`,
-    /// `-S` and `TMUX_TMPDIR` can put the server's socket anywhere, so the
-    /// private sockets the person's tmux processes listen on are asked.
+    /// The server this client is attached to, and its active pane. `-L`, `-S`
+    /// and `TMUX_TMPDIR` can put the socket anywhere, so every private socket
+    /// the person's tmux processes listen on gets asked.
     fn server(&self) -> Result<(PathBuf, i32, Shown), &'static str> {
         let uid = rustix::process::getuid().as_raw();
         let mut listening: Vec<(PathBuf, i32)> = proc_info::of_user(uid)
@@ -414,8 +409,7 @@ fn private_socket(path: &Path, uid: u32) -> Option<PathBuf> {
 
 /// Whether `socket` is a socket `uid` owns, in folders no other account can
 /// change. An account that could replace the socket, or rename a folder on
-/// its way, could put in a server that receives the text. A sticky folder,
-/// such as `/tmp`, lets no one move what they don't own.
+/// its way, could put in a server that receives the text.
 fn is_private_socket(socket: &Path, uid: u32) -> bool {
     let owned = std::fs::symlink_metadata(socket)
         .is_ok_and(|metadata| metadata.file_type().is_socket() && metadata.uid() == uid);

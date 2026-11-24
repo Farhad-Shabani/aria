@@ -18,10 +18,8 @@ pub(super) enum Paste {
 }
 
 impl Paste {
-    /// Ghostty takes the paste through its own scripting interface, iTerm2
-    /// and Terminal.app through the tmux client in the focused tab. `None`
-    /// means the app has no paste path. An error means it has one that can't
-    /// be driven.
+    /// `None` means typed keys with no warning: no paste path, or no trusted
+    /// tmux client in front. An error carries the reason to warn about.
     pub(super) fn focused(process: u32, bundle_id: &str) -> Result<Option<Self>, &'static str> {
         if bundle_id == ghostty::BUNDLE_ID {
             return ghostty::Terminal::focused(process)
@@ -37,9 +35,9 @@ impl Paste {
         }
     }
 
-    /// Whether the paste can find the exact place again, so text may wait for
-    /// it even when the field can't be read. A Ghostty terminal can't: a
-    /// multiplexer inside it may show another pane by then.
+    /// Whether the paste finds its exact place again, so text may wait even
+    /// when the field can't be read. A Ghostty terminal can't: a multiplexer
+    /// inside it may show another pane by then.
     pub(super) fn pins_target(&self) -> bool {
         matches!(self, Self::Tmux(_))
     }

@@ -1,4 +1,4 @@
-//! Checks that keyboard focus is still where a route pinned it, and how long
+//! Checks that keyboard focus is still where a route found it, and how long
 //! one check may take.
 
 use std::time::Duration;
@@ -28,10 +28,8 @@ impl Lookup {
     }
 }
 
-/// A focus somewhere else reads as a target change, which may wait for the
-/// person to come back. A terminal or
-/// tmux server that can't be asked won't answer later either, so the press
-/// stops.
+/// Focus somewhere else is a target change, so text may wait for the person
+/// to come back. An unanswered lookup stops the press.
 pub(super) fn verdict<T: PartialEq>(
     pinned: &T,
     current: Result<T, Lookup>,

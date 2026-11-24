@@ -1,9 +1,9 @@
 //! Whether a terminal's key window is where text may go.
 //!
 //! A terminal's scripting interface names its front window's focused tab.
-//! That leaves out panels, such as Ghostty's quick terminal, and windows that
-//! aren't terminals. So Accessibility must agree that window has keyboard
-//! focus before text goes to what the terminal named.
+//! That misses panels, such as Ghostty's quick terminal, and windows that
+//! aren't terminals. So Accessibility must confirm that window has keyboard
+//! focus first.
 
 use std::time::Instant;
 
