@@ -10,5 +10,7 @@
     <string>Aria uses the microphone for speech recognition and optional wake-word detection.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>Aria transcribes this Mac's system audio into local transcript files when you start a transcription.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Aria pastes what you dictate into your terminal, so Vim-mode editors read it as text, not commands.</string>
 </dict>
 </plist>

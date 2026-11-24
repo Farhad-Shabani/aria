@@ -19,9 +19,11 @@ use crate::accessibility::Trust;
 mod anchor;
 mod caret;
 mod element;
+mod paste;
 mod placement;
 
 use anchor::Anchoring;
+use paste::Paste;
 
 const PLAIN_TEXT_TYPE: &str = "public.utf8-plain-text";
 // The concealed type asks clipboard managers not to record the transcript in
@@ -45,40 +47,123 @@ pub(crate) const RETURN_VIRTUAL_KEY: u16 = 0x24;
 /// Carbon's `noErr`.
 const NO_ERR: i32 = 0;
 
-pub struct MacOsTextDelivery;
+pub struct MacOsTextDelivery {
+    /// How long a paste waits for an answer. Typed keys never wait.
+    timeout: Duration,
+}
 
 pub enum MacOsDeliveryTarget {
     Application {
-        process: u32,
+        destination: Destination,
         anchoring: RefCell<Anchoring>,
     },
     ApplicationAndSubmit {
-        process: u32,
+        destination: Destination,
         anchoring: RefCell<Anchoring>,
         submission: Cell<Submission>,
     },
-    ApplicationOrClipboard(u32),
+    ApplicationOrClipboard(Destination),
     Clipboard,
 }
 
 impl MacOsDeliveryTarget {
-    fn application(process: u32) -> Self {
+    fn application(destination: Destination) -> Self {
         Self::Application {
-            process,
+            destination,
             anchoring: RefCell::new(Anchoring::Pending),
         }
     }
 
-    fn submitting(process: u32, anchoring: Anchoring) -> Self {
+    fn submitting(destination: Destination, anchoring: Anchoring) -> Self {
         let submission = if anchoring.is_unavailable() {
             Submission::Unbound
         } else {
             Submission::Owed
         };
         Self::ApplicationAndSubmit {
-            process,
+            destination,
             anchoring: RefCell::new(anchoring),
             submission: Cell::new(submission),
+        }
+    }
+}
+
+pub struct Destination {
+    process: u32,
+    route: Route,
+}
+
+impl Destination {
+    fn choose(process: u32) -> Self {
+        Self {
+            process,
+            route: Route::choose(process),
+        }
+    }
+}
+
+/// How text travels to its app, chosen as the press starts.
+enum Route {
+    Keys,
+    /// A modal editor reads a paste as text in any mode, where keys would
+    /// run as its commands.
+    Paste(Paste),
+}
+
+impl Route {
+    fn choose(process: u32) -> Self {
+        let Some(bundle_id) = application(process).and_then(|application| application.bundle_id)
+        else {
+            return Self::Keys;
+        };
+        match Paste::focused(process, &bundle_id) {
+            Ok(Some(paste)) => Self::Paste(paste),
+            Ok(None) => Self::Keys,
+            Err(reason) => {
+                tracing::warn!(
+                    reason,
+                    "the terminal takes typed keys, which Vim modes may run as commands"
+                );
+                Self::Keys
+            }
+        }
+    }
+
+    fn pins_target(&self) -> bool {
+        match self {
+            Self::Keys => false,
+            Self::Paste(paste) => paste.pins_target(),
+        }
+    }
+
+    fn check_focus(&self, process: u32) -> Result<(), DeliveryError> {
+        match self {
+            Self::Keys => Ok(()),
+            Self::Paste(paste) => paste.check_focus(process),
+        }
+    }
+
+    fn send(&self, process: u32, text: &str, timeout: Duration) -> Result<(), Undelivered> {
+        match self {
+            // Posted events can't be recalled, so a failure partway through
+            // may have typed some of the text.
+            Self::Keys => post(text).map_err(Undelivered::Uncertain),
+            Self::Paste(paste) => paste.send(process, text, timeout),
+        }
+    }
+}
+
+enum Undelivered {
+    /// None of it reached the app, so it may still go elsewhere.
+    Refused(DeliveryError),
+    /// Some or all of it may have reached the app.
+    Uncertain(DeliveryError),
+}
+
+impl Undelivered {
+    fn into_error(self) -> DeliveryError {
+        match self {
+            Self::Refused(error) | Self::Uncertain(error) => error,
         }
     }
 }
@@ -93,12 +178,9 @@ pub enum Submission {
 }
 
 impl MacOsTextDelivery {
-    // Posted events don't wait, and every field check has a compiled budget.
-    // So nothing here waits on the configured timeout. It is still checked,
-    // so one value means the same on every platform.
     pub(super) fn new(timeout: Duration) -> Result<Self, DeliveryError> {
         validate_timeout(timeout)?;
-        Ok(Self)
+        Ok(Self { timeout })
     }
 }
 
@@ -123,22 +205,33 @@ impl TextDelivery for MacOsTextDelivery {
         match mode {
             // Asked while there is still nothing to lose: a refusal ends the
             // press before a transcript exists.
-            OutputMode::Insert => {
-                autoreleasepool(|_| Ok(MacOsDeliveryTarget::application(insertable(observe())?)))
-            }
+            OutputMode::Insert => autoreleasepool(|_| {
+                let process = insertable(observe())?;
+                Ok(MacOsDeliveryTarget::application(Destination::choose(
+                    process,
+                )))
+            }),
             // Bound as the press starts, so a later read that finds another
             // field refuses the Return.
             OutputMode::InsertAndSubmit => autoreleasepool(|_| {
                 let process = insertable(observe())?;
+                let destination = Destination::choose(process);
                 let mut anchoring = Anchoring::Pending;
-                anchoring.start(caret::read(process).1);
-                Ok(MacOsDeliveryTarget::submitting(process, anchoring))
+                let (_, focus, pinned) = read_in_pin(&destination);
+                anchoring.start(if pinned {
+                    focus
+                } else {
+                    Err("focus left the pinned terminal")
+                });
+                Ok(MacOsDeliveryTarget::submitting(destination, anchoring))
             }),
             // The same question, but a refusal costs nothing here: the
             // clipboard is still a destination, so the press goes ahead.
             OutputMode::InsertOrCopy => autoreleasepool(|_| {
                 Ok(match insertable(observe()) {
-                    Ok(process) => MacOsDeliveryTarget::ApplicationOrClipboard(process),
+                    Ok(process) => {
+                        MacOsDeliveryTarget::ApplicationOrClipboard(Destination::choose(process))
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "no insertion target; delivering to the clipboard");
                         MacOsDeliveryTarget::Clipboard
@@ -155,7 +248,7 @@ impl TextDelivery for MacOsTextDelivery {
         should_cancel: impl Fn() -> bool,
     ) -> Result<Finished, DeliveryError> {
         let MacOsDeliveryTarget::ApplicationAndSubmit {
-            process,
+            destination,
             anchoring,
             submission,
         } = prepared
@@ -166,7 +259,8 @@ impl TextDelivery for MacOsTextDelivery {
             Submission::Spent => Err(DeliveryError::SubmissionSpent),
             Submission::Unbound => Err(DeliveryError::SubmissionUnverified),
             Submission::Owed => autoreleasepool(|_| {
-                return_after_text(*process, anchoring, &should_cancel).map(|()| Finished::Submitted)
+                return_after_text(destination, anchoring, &should_cancel)
+                    .map(|()| Finished::Submitted)
             }),
         }
     }
@@ -177,12 +271,13 @@ impl TextDelivery for MacOsTextDelivery {
         should_cancel: impl Fn() -> bool,
     ) -> Result<(), DeliveryError> {
         autoreleasepool(|_| match prepared {
-            MacOsDeliveryTarget::Application { process, anchoring } => {
-                return_after_text(*process, anchoring, &should_cancel)
-            }
+            MacOsDeliveryTarget::Application {
+                destination,
+                anchoring,
+            } => return_after_text(destination, anchoring, &should_cancel),
             MacOsDeliveryTarget::ApplicationAndSubmit { .. } => Err(DeliveryError::SubmissionSpent),
-            MacOsDeliveryTarget::ApplicationOrClipboard(process) => {
-                guard(*process, &should_cancel, observe())?;
+            MacOsDeliveryTarget::ApplicationOrClipboard(destination) => {
+                guard(destination, &should_cancel, observe)?;
                 post_return()
             }
             MacOsDeliveryTarget::Clipboard => Err(DeliveryError::TargetUnavailable),
@@ -206,26 +301,33 @@ impl TextDelivery for MacOsTextDelivery {
             {
                 Err(DeliveryError::SubmissionSpent)
             }
-            MacOsDeliveryTarget::Application { process, anchoring }
+            MacOsDeliveryTarget::Application {
+                destination,
+                anchoring,
+            }
             | MacOsDeliveryTarget::ApplicationAndSubmit {
-                process, anchoring, ..
+                destination,
+                anchoring,
+                ..
             } => {
                 let mut anchoring = anchoring.borrow_mut();
                 anchoring.before_typing()?;
-                let outcome = insert(*process, text, &should_cancel, observe()).map_err(
-                    |error| match error {
-                        DeliveryError::TargetChanged => focus_lost(&anchoring),
+                let outcome = insert(destination, text, self.timeout, &should_cancel, observe)
+                    .map_err(|error| match error {
+                        DeliveryError::TargetChanged => {
+                            focus_lost(&anchoring, destination.route.pins_target())
+                        }
                         error => error,
-                    },
-                )?;
+                    })?;
                 anchoring.after_typing(text);
                 Ok(outcome)
             }
-            MacOsDeliveryTarget::ApplicationOrClipboard(process) => insert_or_copy(
-                *process,
+            MacOsDeliveryTarget::ApplicationOrClipboard(destination) => insert_or_copy(
+                destination,
                 text,
+                self.timeout,
                 &should_cancel,
-                observe(),
+                observe,
                 &NSPasteboard::generalPasteboard(),
             ),
             MacOsDeliveryTarget::Clipboard => {
@@ -237,49 +339,69 @@ impl TextDelivery for MacOsTextDelivery {
 
     fn target_process(&self, prepared: &Self::Prepared) -> Option<u32> {
         match prepared {
-            MacOsDeliveryTarget::Application { process, .. }
-            | MacOsDeliveryTarget::ApplicationAndSubmit { process, .. }
-            | MacOsDeliveryTarget::ApplicationOrClipboard(process) => Some(*process),
+            MacOsDeliveryTarget::Application { destination, .. }
+            | MacOsDeliveryTarget::ApplicationAndSubmit { destination, .. }
+            | MacOsDeliveryTarget::ApplicationOrClipboard(destination) => Some(destination.process),
             MacOsDeliveryTarget::Clipboard => None,
         }
     }
 
     fn caret(&self, prepared: &Self::Prepared) -> Caret {
         match prepared {
-            MacOsDeliveryTarget::Application { process, anchoring }
+            MacOsDeliveryTarget::Application {
+                destination,
+                anchoring,
+            }
             | MacOsDeliveryTarget::ApplicationAndSubmit {
-                process, anchoring, ..
+                destination,
+                anchoring,
+                ..
             } => autoreleasepool(|_| {
-                let (caret, focus) = caret::read(*process);
+                let process = destination.process;
+                let mut anchoring = anchoring.borrow_mut();
+                // An anchored field only updates its expected caret, so it
+                // skips the pin check.
+                let (caret, focus, pinned) = if matches!(*anchoring, Anchoring::Anchored(_)) {
+                    let (caret, focus) = caret::read(process);
+                    (caret, focus, true)
+                } else {
+                    read_in_pin(destination)
+                };
                 // Only a read with the target in front binds the field: from
                 // behind, it may see another app's secure input, or a field
                 // the user hasn't come back to.
-                if insertable(observe()).ok() == Some(*process) {
-                    anchoring.borrow_mut().start(focus);
+                if pinned && insertable(observe()).ok() == Some(process) {
+                    anchoring.start(focus);
                 }
                 caret
             }),
-            MacOsDeliveryTarget::ApplicationOrClipboard(process) => {
-                autoreleasepool(|_| caret::read(*process).0)
+            MacOsDeliveryTarget::ApplicationOrClipboard(destination) => {
+                autoreleasepool(|_| caret::read(destination.process).0)
             }
             MacOsDeliveryTarget::Clipboard => Caret::default(),
         }
     }
 
     fn placement(&self, prepared: &Self::Prepared) -> Option<Placement> {
-        let (MacOsDeliveryTarget::Application { process, anchoring }
+        let (MacOsDeliveryTarget::Application {
+            destination,
+            anchoring,
+        }
         | MacOsDeliveryTarget::ApplicationAndSubmit {
-            process, anchoring, ..
+            destination,
+            anchoring,
+            ..
         }) = prepared
         else {
             return None;
         };
+        let process = destination.process;
         autoreleasepool(|_| {
-            if insertable(observe()).ok()? != *process {
+            if insertable(observe()).ok()? != process {
                 return None;
             }
             let deadline = Instant::now() + placement::READ_BUDGET;
-            let (field, caret) = anchoring.borrow().resting_caret(*process, deadline)?;
+            let (field, caret) = anchoring.borrow().resting_caret(process, deadline)?;
             placement::read(&field, caret, deadline)
         })
     }
@@ -290,26 +412,36 @@ impl TextDelivery for MacOsTextDelivery {
 /// the person never meant to send. A field that can't be read leaves only the
 /// app check.
 fn return_after_text(
-    process: u32,
+    destination: &Destination,
     anchoring: &RefCell<Anchoring>,
     should_cancel: &impl Fn() -> bool,
 ) -> Result<(), DeliveryError> {
     anchoring.borrow_mut().before_return()?;
-    guard(process, should_cancel, observe())?;
+    guard(destination, should_cancel, observe)?;
     post_return()
 }
 
-/// Another app took focus before this text typed. Text may wait for its
-/// field only when the press knows which field that is.
-fn focus_lost(anchoring: &Anchoring) -> DeliveryError {
-    if anchoring.is_unavailable() {
-        return DeliveryError::TargetUnverified;
-    }
-    anchor::target_changed("another app is frontmost")
+/// The caret, the focused field, and whether the route's focus check passed
+/// before and after the read. Only a field in the route's terminal may be
+/// anchored, since the app's other windows have their own fields.
+fn read_in_pin(destination: &Destination) -> (Caret, Result<caret::Focus, &'static str>, bool) {
+    let pinned = || destination.route.check_focus(destination.process).is_ok();
+    let before = pinned();
+    let (caret, focus) = caret::read(destination.process);
+    (caret, focus, before && pinned())
 }
 
-/// What the insertion guards look at, read all at once so `prepare` and the
-/// re-check in `insert` judge the same facts, and so a test can hand in values.
+/// Text may wait only when the press knows where it goes: its starting field,
+/// or a route that pins its target.
+fn focus_lost(anchoring: &Anchoring, route_pins_target: bool) -> DeliveryError {
+    if anchoring.is_unavailable() && !route_pins_target {
+        return DeliveryError::TargetUnverified;
+    }
+    DeliveryError::TargetChanged
+}
+
+/// What the insertion guards check, read together so a test can supply them.
+/// A route's focus check reads its app live instead.
 struct Facts {
     trust: Trust,
     secure_input: bool,
@@ -339,25 +471,43 @@ fn insertable(facts: Facts) -> Result<u32, DeliveryError> {
 }
 
 fn insert(
-    process: u32,
+    destination: &Destination,
     text: &str,
+    timeout: Duration,
     should_cancel: &impl Fn() -> bool,
-    facts: Facts,
+    observe: impl Fn() -> Facts,
 ) -> Result<DeliveryOutcome, DeliveryError> {
-    guard(process, should_cancel, facts)?;
-    post(text)?;
+    guard(destination, should_cancel, observe)?;
+    destination
+        .route
+        .send(destination.process, text, timeout)
+        .map_err(Undelivered::into_error)?;
     Ok(DeliveryOutcome::Inserted)
 }
 
-/// Every refusal that precedes the first posted event.
 fn guard(
-    process: u32,
+    destination: &Destination,
     should_cancel: &impl Fn() -> bool,
-    facts: Facts,
+    observe: impl Fn() -> Facts,
 ) -> Result<(), DeliveryError> {
+    judge(destination, observe())?;
+    destination.route.check_focus(destination.process)?;
+    // A route's focus check can wait on its app, and the user may leave
+    // meanwhile. Text or a Return posted after it goes wherever focus is then.
+    judge(destination, observe())?;
+
+    // Check before typing: cancelling midway would leave a partial transcript
+    // in the document while reporting failure.
+    if should_cancel() {
+        return Err(DeliveryError::Cancelled);
+    }
+    Ok(())
+}
+
+fn judge(destination: &Destination, facts: Facts) -> Result<(), DeliveryError> {
     // Judged again rather than trusted from `prepare`: a whole recording and
     // transcription sit in between, and the user is free to switch windows,
-    // click into a password field, or withdraw the grant during it. Focus is
+    // click into a password field, or withdraw the grant during it. App focus is
     // judged before secure input, which is system-wide: a password field in
     // another app means the user left, not that this field refuses.
     if !facts.trust.is_trusted() {
@@ -365,17 +515,11 @@ fn guard(
     }
     // A front process that can't be read, as during Mission Control, isn't
     // this one either.
-    if facts.frontmost.ok() != Some(process) {
-        return Err(DeliveryError::TargetChanged);
+    if facts.frontmost.ok() != Some(destination.process) {
+        return Err(anchor::target_changed("another app is frontmost"));
     }
     if facts.secure_input {
         return Err(DeliveryError::SecureInput);
-    }
-
-    // Check before typing: cancelling midway would leave a partial transcript
-    // in the document while reporting failure.
-    if should_cancel() {
-        return Err(DeliveryError::Cancelled);
     }
     Ok(())
 }
@@ -389,22 +533,27 @@ fn post(text: &str) -> Result<(), DeliveryError> {
     Ok(())
 }
 
-// A posted event cannot be recalled, so only a refusal from the guard may send
-// the transcript to the clipboard; a failure from the loop never does.
+// Only text that reached nobody may go to the clipboard: a refusal from the
+// guard, or from the app.
 fn insert_or_copy(
-    process: u32,
+    destination: &Destination,
     text: &str,
+    timeout: Duration,
     should_cancel: &impl Fn() -> bool,
-    facts: Facts,
+    observe: impl Fn() -> Facts,
     pasteboard: &NSPasteboard,
 ) -> Result<DeliveryOutcome, DeliveryError> {
-    let refusal = match guard(process, should_cancel, facts) {
-        Ok(()) => return post(text).map(|()| DeliveryOutcome::Inserted),
+    let refusal = match guard(destination, should_cancel, observe) {
+        Ok(()) => match destination.route.send(destination.process, text, timeout) {
+            Ok(()) => return Ok(DeliveryOutcome::Inserted),
+            Err(Undelivered::Refused(refusal)) => refusal,
+            Err(Undelivered::Uncertain(error)) => return Err(error),
+        },
         Err(DeliveryError::Cancelled) => return Err(DeliveryError::Cancelled),
         Err(refusal) => refusal,
     };
-    // A refused guard returns before its own cancel check, so nothing has
-    // asked since `deliver` did.
+    // A guard refusal skipped its cancel check, and an app refusal came after
+    // the send, so check again before copying.
     if should_cancel() {
         return Err(DeliveryError::Cancelled);
     }
@@ -458,8 +607,12 @@ pub(super) fn frontmost_process() -> Result<u32, DeliveryError> {
 }
 
 pub fn frontmost_application() -> Option<super::Application> {
+    application(frontmost_process().ok()?)
+}
+
+fn application(process: u32) -> Option<super::Application> {
     autoreleasepool(|_| {
-        let pid = i32::try_from(frontmost_process().ok()?).ok()?;
+        let pid = i32::try_from(process).ok()?;
         let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
         let name = app.localizedName()?.to_string();
         let bundle_id = app.bundleIdentifier().map(|id| id.to_string());
@@ -588,10 +741,17 @@ mod tests {
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
     const PREPARED_TARGET: u32 = 4321;
 
+    fn keys() -> Destination {
+        Destination {
+            process: PREPARED_TARGET,
+            route: Route::Keys,
+        }
+    }
+
     #[test]
     fn a_field_unread_at_the_start_sends_no_return() {
         let delivery = MacOsTextDelivery::new(TEST_TIMEOUT).unwrap();
-        let target = MacOsDeliveryTarget::submitting(PREPARED_TARGET, Anchoring::Unavailable);
+        let target = MacOsDeliveryTarget::submitting(keys(), Anchoring::Unavailable);
 
         assert!(matches!(
             delivery.finish(&target, || false),
@@ -615,8 +775,8 @@ mod tests {
 
     /// An insertion that is not cancelled, so a test that is about the facts
     /// names only the facts.
-    fn insertion(facts: Facts) -> Result<DeliveryOutcome, DeliveryError> {
-        insert(PREPARED_TARGET, TEST_TRANSCRIPT, &|| false, facts)
+    fn insertion(observe: impl Fn() -> Facts) -> Result<DeliveryOutcome, DeliveryError> {
+        insert(&keys(), TEST_TRANSCRIPT, TEST_TIMEOUT, &|| false, observe)
     }
 
     #[test]
@@ -646,15 +806,16 @@ mod tests {
     #[test]
     fn a_refused_guard_sends_the_transcript_to_the_pasteboard() {
         let pasteboard = NSPasteboard::pasteboardWithUniqueName();
-        let secure_input = Facts {
+        let secure_input = || Facts {
             trust: Trust::Trusted,
             secure_input: true,
             frontmost: Ok(PREPARED_TARGET),
         };
 
         let outcome = insert_or_copy(
-            PREPARED_TARGET,
+            &keys(),
             TEST_TRANSCRIPT,
+            TEST_TIMEOUT,
             &|| false,
             secure_input,
             &pasteboard,
@@ -674,10 +835,11 @@ mod tests {
         let spaced = format!(" {TEST_TRANSCRIPT} ");
 
         insert_or_copy(
-            PREPARED_TARGET,
+            &keys(),
             &spaced,
+            TEST_TIMEOUT,
             &|| false,
-            permitted(Ok(PREPARED_TARGET + 1)),
+            || permitted(Ok(PREPARED_TARGET + 1)),
             &pasteboard,
         )
         .expect("the pasteboard should take the transcript");
@@ -693,10 +855,11 @@ mod tests {
         let pasteboard = NSPasteboard::pasteboardWithUniqueName();
 
         let result = insert_or_copy(
-            PREPARED_TARGET,
+            &keys(),
             TEST_TRANSCRIPT,
+            TEST_TIMEOUT,
             &|| true,
-            permitted(Ok(PREPARED_TARGET + 1)),
+            || permitted(Ok(PREPARED_TARGET + 1)),
             &pasteboard,
         );
 
@@ -706,7 +869,7 @@ mod tests {
 
     #[test]
     fn a_withdrawn_grant_beats_every_other_refusal() {
-        let result = insertion(Facts {
+        let result = insertion(|| Facts {
             trust: Trust::Untrusted,
             secure_input: true,
             frontmost: Err(DeliveryError::TargetUnavailable),
@@ -717,7 +880,7 @@ mod tests {
 
     #[test]
     fn secure_input_in_the_target_app_is_refused() {
-        let result = insertion(Facts {
+        let result = insertion(|| Facts {
             trust: Trust::Trusted,
             secure_input: true,
             frontmost: Ok(PREPARED_TARGET),
@@ -728,7 +891,25 @@ mod tests {
 
     #[test]
     fn insertion_stops_when_another_application_took_focus() {
-        let result = insertion(permitted(Ok(PREPARED_TARGET + 1)));
+        let result = insertion(|| permitted(Ok(PREPARED_TARGET + 1)));
+
+        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+    }
+
+    #[test]
+    fn focus_leaving_during_the_route_check_stops_the_text() {
+        let looks = Cell::new(0);
+        let observe = || {
+            looks.set(looks.get() + 1);
+            let frontmost = if looks.get() == 1 {
+                PREPARED_TARGET
+            } else {
+                PREPARED_TARGET + 1
+            };
+            permitted(Ok(frontmost))
+        };
+
+        let result = guard(&keys(), &|| false, observe);
 
         assert!(matches!(result, Err(DeliveryError::TargetChanged)));
     }
@@ -736,18 +917,26 @@ mod tests {
     #[test]
     fn focus_lost_from_an_unknown_field_cannot_wait_for_it() {
         assert!(matches!(
-            focus_lost(&Anchoring::Unavailable),
+            focus_lost(&Anchoring::Unavailable, false),
             DeliveryError::TargetUnverified
         ));
         assert!(matches!(
-            focus_lost(&Anchoring::Pending),
+            focus_lost(&Anchoring::Pending, false),
+            DeliveryError::TargetChanged
+        ));
+    }
+
+    #[test]
+    fn a_pinned_terminal_lets_text_wait_though_its_field_is_unknown() {
+        assert!(matches!(
+            focus_lost(&Anchoring::Unavailable, true),
             DeliveryError::TargetChanged
         ));
     }
 
     #[test]
     fn a_password_field_in_another_app_reads_as_focus_lost() {
-        let result = insertion(Facts {
+        let result = insertion(|| Facts {
             trust: Trust::Trusted,
             secure_input: true,
             frontmost: Ok(PREPARED_TARGET + 1),
@@ -758,19 +947,16 @@ mod tests {
 
     #[test]
     fn an_unreadable_front_process_reads_as_focus_lost() {
-        let result = insertion(permitted(Err(DeliveryError::TargetUnavailable)));
+        let result = insertion(|| permitted(Err(DeliveryError::TargetUnavailable)));
 
         assert!(matches!(result, Err(DeliveryError::TargetChanged)));
     }
 
     #[test]
     fn a_cancelled_insertion_types_nothing() {
-        let result = insert(
-            PREPARED_TARGET,
-            TEST_TRANSCRIPT,
-            &|| true,
-            permitted(Ok(PREPARED_TARGET)),
-        );
+        let result = insert(&keys(), TEST_TRANSCRIPT, TEST_TIMEOUT, &|| true, || {
+            permitted(Ok(PREPARED_TARGET))
+        });
 
         assert!(matches!(result, Err(DeliveryError::Cancelled)));
     }
@@ -778,7 +964,7 @@ mod tests {
     #[test]
     fn deliver_rejects_an_already_cancelled_request() {
         let delivery = MacOsTextDelivery::new(TEST_TIMEOUT).expect("delivery should initialize");
-        let target = MacOsDeliveryTarget::application(PREPARED_TARGET);
+        let target = MacOsDeliveryTarget::application(keys());
 
         let result = delivery.deliver(&target, TEST_TRANSCRIPT, || true);
 

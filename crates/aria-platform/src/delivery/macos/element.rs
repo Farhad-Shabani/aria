@@ -68,6 +68,47 @@ pub(super) fn ax_value(value: &cf::Type) -> Option<&ax::Value> {
     Some(unsafe { &*std::ptr::from_ref(value).cast::<ax::Value>() })
 }
 
+#[allow(
+    unsafe_code,
+    reason = "AXUIElement is a transparent CF type; the runtime type is checked before casting"
+)]
+pub(super) fn ui_element(value: &cf::Type) -> Option<&ax::UiElement> {
+    if value.get_type_id() != ax::UiElement::type_id() {
+        return None;
+    }
+    // SAFETY: the type ID identifies an AXUIElement, and the borrow retains its owner.
+    Some(unsafe { &*std::ptr::from_ref(value).cast::<ax::UiElement>() })
+}
+
+/// Accessibility lists windows front to back.
+#[allow(
+    unsafe_code,
+    reason = "cidre 0.28 has no checked cast to CFArray; the runtime type is \
+              checked before casting, and the invariants live on the SAFETY comments"
+)]
+pub(super) fn is_first_window(
+    application: &ax::UiElement,
+    window: &cf::Type,
+    deadline: Instant,
+) -> Result<bool, &'static str> {
+    limit(application, deadline)?;
+    let windows = application
+        .attr_value(ax::attr::windows())
+        .map_err(|_| "window list unreadable")?;
+    if windows.get_type_id() != cf::Array::type_id() {
+        return Err("window list is not a list");
+    }
+    // SAFETY: the type ID identifies a CFArray, and the borrow retains its owner.
+    let windows = unsafe { &*std::ptr::from_ref::<cf::Type>(&windows).cast::<cf::Array>() };
+    if windows.is_empty() {
+        return Err("no windows");
+    }
+    // SAFETY: index 0 exists, and Accessibility lists only CF objects, which
+    // `windows` keeps alive for this borrow.
+    let first = unsafe { &*windows.get(0).cast::<cf::Type>() };
+    Ok(first.equal(window))
+}
+
 /// Bounds the next Accessibility call by what is left of the budget.
 pub(super) fn limit(element: &ax::UiElement, deadline: Instant) -> Result<(), &'static str> {
     let remaining = deadline
