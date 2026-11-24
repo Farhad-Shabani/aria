@@ -19,14 +19,11 @@ use crate::accessibility::Trust;
 mod anchor;
 mod caret;
 mod element;
-mod focus;
-mod ghostty;
-mod key_window;
+mod paste;
 mod placement;
-mod scripting;
-mod tmux;
 
 use anchor::Anchoring;
+use paste::Paste;
 
 const PLAIN_TEXT_TYPE: &str = "public.utf8-plain-text";
 // The concealed type asks clipboard managers not to record the transcript in
@@ -114,57 +111,38 @@ enum Route {
     Paste(Paste),
 }
 
-enum Paste {
-    Ghostty(ghostty::Terminal),
-    Tmux(tmux::Pane),
-}
-
 impl Route {
-    /// Pastes where the front terminal can: Ghostty through its own
-    /// scripting interface, iTerm2 and Terminal.app through the tmux client
-    /// in the focused tab. Anything else, or a terminal that can't be driven,
-    /// takes keys.
+    /// Pastes where the front terminal can. Anything else, or a terminal that
+    /// can't be driven, takes keys.
     fn choose(process: u32) -> Self {
         let Some(bundle_id) = application(process).and_then(|application| application.bundle_id)
         else {
             return Self::Keys;
         };
-        if bundle_id == ghostty::BUNDLE_ID {
-            return match ghostty::Terminal::focused(process) {
-                Ok(terminal) => Self::Paste(Paste::Ghostty(terminal)),
-                Err(reason) => Self::keys_instead(reason),
-            };
-        }
-        let Some(host) = tmux::Host::of(&bundle_id) else {
-            return Self::Keys;
-        };
-        match tmux::Pane::focused(host, process) {
-            Ok(pane) => Self::Paste(Paste::Tmux(pane)),
-            Err(tmux::Unpinned::NoTmux) => Self::Keys,
-            Err(tmux::Unpinned::Refused(reason)) => Self::keys_instead(reason),
+        match Paste::focused(process, &bundle_id) {
+            Ok(Some(paste)) => Self::Paste(paste),
+            Ok(None) => Self::Keys,
+            Err(reason) => {
+                tracing::warn!(
+                    reason,
+                    "the terminal takes typed keys, which Vim modes may run as commands"
+                );
+                Self::Keys
+            }
         }
     }
 
-    fn keys_instead(reason: &'static str) -> Self {
-        tracing::warn!(
-            reason,
-            "the terminal takes typed keys, which Vim modes may run as commands"
-        );
-        Self::Keys
-    }
-
-    /// Whether the route can find the exact place again, so text may wait for
-    /// it even when the field can't be read. A Ghostty terminal can't: a
-    /// multiplexer inside it may show another pane by then.
     fn pins_target(&self) -> bool {
-        matches!(self, Self::Paste(Paste::Tmux(_)))
+        match self {
+            Self::Keys => false,
+            Self::Paste(paste) => paste.pins_target(),
+        }
     }
 
     fn check_focus(&self, process: u32) -> Result<(), DeliveryError> {
         match self {
             Self::Keys => Ok(()),
-            Self::Paste(Paste::Ghostty(terminal)) => terminal.check_focus(process),
-            Self::Paste(Paste::Tmux(pane)) => pane.check_focus(process),
+            Self::Paste(paste) => paste.check_focus(process),
         }
     }
 
@@ -173,8 +151,7 @@ impl Route {
             // Posted events can't be recalled, so a failure partway through
             // may have typed some of the text.
             Self::Keys => post(text).map_err(Undelivered::Uncertain),
-            Self::Paste(Paste::Ghostty(terminal)) => terminal.paste(process, text, timeout),
-            Self::Paste(Paste::Tmux(pane)) => pane.paste(text, timeout),
+            Self::Paste(paste) => paste.send(process, text, timeout),
         }
     }
 }

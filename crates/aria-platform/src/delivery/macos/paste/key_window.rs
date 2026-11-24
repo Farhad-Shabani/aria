@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use cidre::ax;
 
-use super::element;
+use super::super::element;
 use super::focus::LOOKUP_TIMEOUT;
 
 pub(super) fn confirm(process: u32) -> Result<(), &'static str> {

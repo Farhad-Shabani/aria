@@ -8,9 +8,9 @@ use objc2::rc::{Retained, autoreleasepool};
 use objc2_core_services::AEDeterminePermissionToAutomateTarget;
 use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventSendOptions};
 
-use super::super::DeliveryError;
+use super::super::{NO_ERR, Undelivered};
 use super::focus::{LOOKUP_TIMEOUT, Lookup};
-use super::{NO_ERR, Undelivered};
+use crate::delivery::DeliveryError;
 
 pub(super) const fn code(name: &[u8; 4]) -> u32 {
     u32::from_be_bytes(*name)

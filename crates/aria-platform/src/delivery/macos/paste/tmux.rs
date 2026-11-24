@@ -20,11 +20,11 @@ use aria_primitives::file_inspection::InspectedFile;
 use aria_primitives::process::{self, Bounds, Capture, RunError};
 use objc2_foundation::NSAppleEventDescriptor;
 
-use super::super::DeliveryError;
-use super::Undelivered;
+use super::super::Undelivered;
 use super::focus::{self, LOOKUP_TIMEOUT, Lookup};
 use super::key_window;
 use super::scripting::{self, CORE_SUITE, GET_DATA, code};
+use crate::delivery::DeliveryError;
 
 /// The most a tmux command may print before it counts as broken.
 const MAX_OUTPUT: usize = 64 * 1024;
@@ -73,7 +73,7 @@ pub(super) enum Unpinned {
 
 /// The tmux pane a press started in, through the client in front on the
 /// focused tab.
-pub(super) struct Pane {
+pub(in crate::delivery::macos) struct Pane {
     host: Host,
     client: Client,
     socket: PathBuf,

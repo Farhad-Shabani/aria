@@ -3,8 +3,8 @@
 
 use std::time::Duration;
 
-use super::super::DeliveryError;
-use super::anchor;
+use super::super::anchor;
+use crate::delivery::DeliveryError;
 
 /// The budget for one lookup: an Apple Event, a pass of Accessibility
 /// reads, or a tmux query. A terminal answers on its main thread, so a busy

@@ -10,11 +10,11 @@ use std::time::Duration;
 
 use objc2_foundation::{NSAppleEventDescriptor, NSString};
 
-use super::super::DeliveryError;
-use super::Undelivered;
+use super::super::Undelivered;
 use super::focus::{self, Lookup};
 use super::key_window;
 use super::scripting::{self, DIRECT_OBJECT, code};
+use crate::delivery::DeliveryError;
 
 pub(super) const BUNDLE_ID: &str = "com.mitchellh.ghostty";
 
@@ -30,7 +30,7 @@ const UNIQUE_ID: u32 = code(b"ID  ");
 
 /// The Ghostty terminal surface a press started in, by the stable ID its
 /// scripting interface gives.
-pub(super) struct Terminal {
+pub(in crate::delivery::macos) struct Terminal {
     id: String,
 }
 
