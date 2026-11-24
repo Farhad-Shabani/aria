@@ -62,6 +62,28 @@ another app or field, Aria keeps recording. It types what you said once you're b
 typing in that field stops the dictation, in apps that report their text
 cursor.
 
+In Ghostty 1.3 or later, and in tmux in iTerm2 or Terminal.app, Aria pastes
+the text instead of typing it. A program that supports bracketed paste then
+reads it as text in any Vim mode, where typed letters would run as commands.
+This needs [Automation](./macos.md#permissions) permission.
+
+Aria types instead in these cases:
+
+- You don't allow Automation for that app.
+- You set `macos-applescript = false` in Ghostty, or dictate into Ghostty's
+  quick terminal.
+- The iTerm2 or Terminal.app tab isn't showing tmux, or tmux runs on a
+  remote machine.
+- tmux is attached read-only, or in control mode, as iTerm2's tmux
+  integration runs it.
+
+In tmux in iTerm2 or Terminal.app, copy mode or a popup counts as leaving the
+pane, even a popup on another tmux client. With `--stream`, Aria waits and
+types once you're back. Without it, Aria stops, or copies the text with
+`--mode insert-or-copy`. `--mode insert-and-submit` always stops. Aria can't
+see tmux's command prompt, its menus, or a popup whose program has ended. With
+one of those open, the text goes to the pane behind it.
+
 `--mode insert-or-copy` copies the text when insertion can't begin. If
 you stop while away, it copies the words Aria hasn't typed yet. `--mode insert`
 keeps those words only in [history](./history.md#saving), when saving is on.

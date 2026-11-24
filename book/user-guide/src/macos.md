@@ -25,6 +25,9 @@ Aria needs these permissions:
   with Accessibility on. When macOS asks, choose **Open System Settings** and
   turn on **Aria** under **System Settings → Privacy & Security → Input
   Monitoring**.
+- **Automation** to paste into terminals, so programs in a Vim mode read your
+  words as text. macOS asks the first time you dictate into Ghostty, or into
+  tmux in iTerm2 or Terminal.app. Without it, Aria types there instead.
 
 ## Try it
 
