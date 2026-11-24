@@ -147,6 +147,7 @@ impl From<&ChatError> for RpcErrorCode {
             ChatError::Delivery(
                 DeliveryError::SubmissionSpent
                 | DeliveryError::SubmissionUnverified
+                | DeliveryError::PasteUnconfirmed
                 | DeliveryError::InsertionNotPermitted
                 | DeliveryError::SecureInput,
             ) => Self::DeliveryFailed,

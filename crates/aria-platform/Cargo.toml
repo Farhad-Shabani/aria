@@ -55,7 +55,8 @@ objc2                  = { workspace = true }
 objc2-app-kit          = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
 objc2-core-foundation  = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }
 objc2-core-graphics    = { version = "0.3.2", default-features = false, features = [ "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation" ] }
-objc2-foundation       = { workspace = true, features = [ "NSArray", "NSDictionary", "NSString", "NSUserDefaults", "NSValue", "std" ] }
+objc2-core-services    = { version = "0.3.2", default-features = false, features = [ "AEDataModel", "AppleEvents", "std" ] }
+objc2-foundation       = { workspace = true, features = [ "NSAppleEventDescriptor", "NSArray", "NSDate", "NSDictionary", "NSError", "NSString", "NSUserDefaults", "NSValue", "libc", "objc2-core-services", "std" ] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

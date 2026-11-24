@@ -327,7 +327,7 @@ pub enum DeliveryError {
     )]
     SubmissionUnsupported,
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[error("could not confirm the paste; the text may or may not have reached the app")]
     PasteUnconfirmed,
 
