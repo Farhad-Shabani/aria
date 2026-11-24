@@ -19,8 +19,12 @@ use crate::accessibility::Trust;
 mod anchor;
 mod caret;
 mod element;
+mod focus;
 mod ghostty;
+mod key_window;
 mod placement;
+mod scripting;
+mod tmux;
 
 use anchor::Anchoring;
 
@@ -47,8 +51,8 @@ pub(crate) const RETURN_VIRTUAL_KEY: u16 = 0x24;
 const NO_ERR: i32 = 0;
 
 pub struct MacOsTextDelivery {
-    /// How long a paste may wait for the app to answer. Posted keys don't
-    /// wait at all.
+    /// How long a paste may wait for an answer. Posted keys don't wait at
+    /// all.
     timeout: Duration,
 }
 
@@ -105,44 +109,62 @@ impl Destination {
 /// How text travels to its app, chosen as the press starts.
 enum Route {
     Keys,
-    /// A modal editor in the terminal reads a paste as text in any mode,
-    /// where keys would run as its commands.
-    Paste(ghostty::Terminal),
+    /// A modal editor reads a paste as text in any mode, where keys would
+    /// run as its commands.
+    Paste(Paste),
+}
+
+enum Paste {
+    Ghostty(ghostty::Terminal),
+    Tmux(tmux::Pane),
 }
 
 impl Route {
-    /// Ghostty takes keys whenever its focused terminal can't be pinned: its
-    /// scripting is off or too old, permission is refused or undecided, it
-    /// didn't answer, or focus is outside a terminal window.
+    /// Pastes where the front terminal can: Ghostty through its own
+    /// scripting interface, iTerm2 and Terminal.app through the tmux client
+    /// in the focused tab. Anything else, or a terminal that can't be driven,
+    /// takes keys.
     fn choose(process: u32) -> Self {
-        let is_ghostty = application(process)
-            .and_then(|application| application.bundle_id)
-            .is_some_and(|id| id == ghostty::BUNDLE_ID);
-        if !is_ghostty {
+        let Some(bundle_id) = application(process).and_then(|application| application.bundle_id)
+        else {
             return Self::Keys;
+        };
+        if bundle_id == ghostty::BUNDLE_ID {
+            return match ghostty::Terminal::focused(process) {
+                Ok(terminal) => Self::Paste(Paste::Ghostty(terminal)),
+                Err(reason) => Self::keys_instead(reason),
+            };
         }
-        match ghostty::Terminal::focused(process) {
-            Ok(terminal) => Self::Paste(terminal),
-            Err(reason) => {
-                tracing::warn!(
-                    reason,
-                    "Ghostty takes typed keys, which Vim modes may run as commands"
-                );
-                Self::Keys
-            }
+        let Some(host) = tmux::Host::of(&bundle_id) else {
+            return Self::Keys;
+        };
+        match tmux::Pane::focused(host, process) {
+            Ok(pane) => Self::Paste(Paste::Tmux(pane)),
+            Err(tmux::Unpinned::NoTmux) => Self::Keys,
+            Err(tmux::Unpinned::Refused(reason)) => Self::keys_instead(reason),
         }
     }
 
-    /// Whether the route names the exact place text goes, so text may wait
-    /// for it even when the field can't be read.
+    fn keys_instead(reason: &'static str) -> Self {
+        tracing::warn!(
+            reason,
+            "the terminal takes typed keys, which Vim modes may run as commands"
+        );
+        Self::Keys
+    }
+
+    /// Whether the route can find the exact place again, so text may wait for
+    /// it even when the field can't be read. A Ghostty terminal can't: a
+    /// multiplexer inside it may show another pane by then.
     fn pins_target(&self) -> bool {
-        matches!(self, Self::Paste(_))
+        matches!(self, Self::Paste(Paste::Tmux(_)))
     }
 
     fn check_focus(&self, process: u32) -> Result<(), DeliveryError> {
         match self {
             Self::Keys => Ok(()),
-            Self::Paste(terminal) => terminal.check_focus(process),
+            Self::Paste(Paste::Ghostty(terminal)) => terminal.check_focus(process),
+            Self::Paste(Paste::Tmux(pane)) => pane.check_focus(process),
         }
     }
 
@@ -151,7 +173,8 @@ impl Route {
             // Posted events can't be recalled, so a failure partway through
             // may have typed some of the text.
             Self::Keys => post(text).map_err(Undelivered::Uncertain),
-            Self::Paste(terminal) => terminal.paste(process, text, timeout),
+            Self::Paste(Paste::Ghostty(terminal)) => terminal.paste(process, text, timeout),
+            Self::Paste(Paste::Tmux(pane)) => pane.paste(text, timeout),
         }
     }
 }
@@ -220,7 +243,12 @@ impl TextDelivery for MacOsTextDelivery {
                 let process = insertable(observe())?;
                 let destination = Destination::choose(process);
                 let mut anchoring = Anchoring::Pending;
-                anchoring.start(caret::read(process).1);
+                let (_, focus, pinned) = read_in_pin(&destination);
+                anchoring.start(if pinned {
+                    focus
+                } else {
+                    Err("focus left the pinned terminal")
+                });
                 Ok(MacOsDeliveryTarget::submitting(destination, anchoring))
             }),
             // The same question, but a refusal costs nothing here: the
@@ -275,7 +303,7 @@ impl TextDelivery for MacOsTextDelivery {
             } => return_after_text(destination, anchoring, &should_cancel),
             MacOsDeliveryTarget::ApplicationAndSubmit { .. } => Err(DeliveryError::SubmissionSpent),
             MacOsDeliveryTarget::ApplicationOrClipboard(destination) => {
-                guard(destination, &should_cancel, observe())?;
+                guard(destination, &should_cancel, observe)?;
                 post_return()
             }
             MacOsDeliveryTarget::Clipboard => Err(DeliveryError::TargetUnavailable),
@@ -310,7 +338,7 @@ impl TextDelivery for MacOsTextDelivery {
             } => {
                 let mut anchoring = anchoring.borrow_mut();
                 anchoring.before_typing()?;
-                let outcome = insert(destination, text, self.timeout, &should_cancel, observe())
+                let outcome = insert(destination, text, self.timeout, &should_cancel, observe)
                     .map_err(|error| match error {
                         DeliveryError::TargetChanged => {
                             focus_lost(&anchoring, destination.route.pins_target())
@@ -325,7 +353,7 @@ impl TextDelivery for MacOsTextDelivery {
                 text,
                 self.timeout,
                 &should_cancel,
-                observe(),
+                observe,
                 &NSPasteboard::generalPasteboard(),
             ),
             MacOsDeliveryTarget::Clipboard => {
@@ -356,12 +384,20 @@ impl TextDelivery for MacOsTextDelivery {
                 ..
             } => autoreleasepool(|_| {
                 let process = destination.process;
-                let (caret, focus) = caret::read(process);
+                let mut anchoring = anchoring.borrow_mut();
+                // A bound field only updates its expected caret, so it needs
+                // no pin check.
+                let (caret, focus, pinned) = if matches!(*anchoring, Anchoring::Anchored(_)) {
+                    let (caret, focus) = caret::read(process);
+                    (caret, focus, true)
+                } else {
+                    read_in_pin(destination)
+                };
                 // Only a read with the target in front binds the field: from
                 // behind, it may see another app's secure input, or a field
                 // the user hasn't come back to.
-                if insertable(observe()).ok() == Some(process) {
-                    anchoring.borrow_mut().start(focus);
+                if pinned && insertable(observe()).ok() == Some(process) {
+                    anchoring.start(focus);
                 }
                 caret
             }),
@@ -407,12 +443,23 @@ fn return_after_text(
     should_cancel: &impl Fn() -> bool,
 ) -> Result<(), DeliveryError> {
     anchoring.borrow_mut().before_return()?;
-    guard(destination, should_cancel, observe())?;
+    guard(destination, should_cancel, observe)?;
     post_return()
 }
 
+/// The caret and focused field, and whether the route's pin held on both
+/// sides of the read. A route pinned to one terminal binds a field only
+/// there: the app's other windows have fields of their own.
+fn read_in_pin(destination: &Destination) -> (Caret, Result<caret::Focus, &'static str>, bool) {
+    let pinned = || destination.route.check_focus(destination.process).is_ok();
+    let before = pinned();
+    let (caret, focus) = caret::read(destination.process);
+    (caret, focus, before && pinned())
+}
+
 /// Focus left before this text went in. Text may wait only when the press
-/// knows where it goes: the field it started in, or the pinned terminal.
+/// knows where it goes: the field it started in, or the place its route
+/// pins.
 fn focus_lost(anchoring: &Anchoring, route_pins_target: bool) -> DeliveryError {
     if anchoring.is_unavailable() && !route_pins_target {
         return DeliveryError::TargetUnverified;
@@ -421,7 +468,7 @@ fn focus_lost(anchoring: &Anchoring, route_pins_target: bool) -> DeliveryError {
 }
 
 /// What the insertion guards look at, read all at once so `prepare` and the
-/// re-check in `insert` judge the same facts, and so a test can hand in values.
+/// re-checks in `guard` judge the same facts, and so a test can hand in values.
 /// A route's own focus check reads its app live.
 struct Facts {
     trust: Trust,
@@ -456,9 +503,9 @@ fn insert(
     text: &str,
     timeout: Duration,
     should_cancel: &impl Fn() -> bool,
-    facts: Facts,
+    observe: impl Fn() -> Facts,
 ) -> Result<DeliveryOutcome, DeliveryError> {
-    guard(destination, should_cancel, facts)?;
+    guard(destination, should_cancel, observe)?;
     destination
         .route
         .send(destination.process, text, timeout)
@@ -470,8 +517,23 @@ fn insert(
 fn guard(
     destination: &Destination,
     should_cancel: &impl Fn() -> bool,
-    facts: Facts,
+    observe: impl Fn() -> Facts,
 ) -> Result<(), DeliveryError> {
+    judge(destination, observe())?;
+    destination.route.check_focus(destination.process)?;
+    // A route's focus check can wait on its app, and the user may leave
+    // meanwhile. Text or a Return posted after it goes wherever focus is then.
+    judge(destination, observe())?;
+
+    // Check before typing: cancelling midway would leave a partial transcript
+    // in the document while reporting failure.
+    if should_cancel() {
+        return Err(DeliveryError::Cancelled);
+    }
+    Ok(())
+}
+
+fn judge(destination: &Destination, facts: Facts) -> Result<(), DeliveryError> {
     // Judged again rather than trusted from `prepare`: a whole recording and
     // transcription sit in between, and the user is free to switch windows,
     // click into a password field, or withdraw the grant during it. App focus is
@@ -487,13 +549,6 @@ fn guard(
     }
     if facts.secure_input {
         return Err(DeliveryError::SecureInput);
-    }
-    destination.route.check_focus(destination.process)?;
-
-    // Check before typing: cancelling midway would leave a partial transcript
-    // in the document while reporting failure.
-    if should_cancel() {
-        return Err(DeliveryError::Cancelled);
     }
     Ok(())
 }
@@ -514,10 +569,10 @@ fn insert_or_copy(
     text: &str,
     timeout: Duration,
     should_cancel: &impl Fn() -> bool,
-    facts: Facts,
+    observe: impl Fn() -> Facts,
     pasteboard: &NSPasteboard,
 ) -> Result<DeliveryOutcome, DeliveryError> {
-    let refusal = match guard(destination, should_cancel, facts) {
+    let refusal = match guard(destination, should_cancel, observe) {
         Ok(()) => match destination.route.send(destination.process, text, timeout) {
             Ok(()) => return Ok(DeliveryOutcome::Inserted),
             Err(Undelivered::Refused(refusal)) => refusal,
@@ -749,8 +804,8 @@ mod tests {
 
     /// An insertion that is not cancelled, so a test that is about the facts
     /// names only the facts.
-    fn insertion(facts: Facts) -> Result<DeliveryOutcome, DeliveryError> {
-        insert(&keys(), TEST_TRANSCRIPT, TEST_TIMEOUT, &|| false, facts)
+    fn insertion(observe: impl Fn() -> Facts) -> Result<DeliveryOutcome, DeliveryError> {
+        insert(&keys(), TEST_TRANSCRIPT, TEST_TIMEOUT, &|| false, observe)
     }
 
     #[test]
@@ -780,7 +835,7 @@ mod tests {
     #[test]
     fn a_refused_guard_sends_the_transcript_to_the_pasteboard() {
         let pasteboard = NSPasteboard::pasteboardWithUniqueName();
-        let secure_input = Facts {
+        let secure_input = || Facts {
             trust: Trust::Trusted,
             secure_input: true,
             frontmost: Ok(PREPARED_TARGET),
@@ -813,7 +868,7 @@ mod tests {
             &spaced,
             TEST_TIMEOUT,
             &|| false,
-            permitted(Ok(PREPARED_TARGET + 1)),
+            || permitted(Ok(PREPARED_TARGET + 1)),
             &pasteboard,
         )
         .expect("the pasteboard should take the transcript");
@@ -833,7 +888,7 @@ mod tests {
             TEST_TRANSCRIPT,
             TEST_TIMEOUT,
             &|| true,
-            permitted(Ok(PREPARED_TARGET + 1)),
+            || permitted(Ok(PREPARED_TARGET + 1)),
             &pasteboard,
         );
 
@@ -843,7 +898,7 @@ mod tests {
 
     #[test]
     fn a_withdrawn_grant_beats_every_other_refusal() {
-        let result = insertion(Facts {
+        let result = insertion(|| Facts {
             trust: Trust::Untrusted,
             secure_input: true,
             frontmost: Err(DeliveryError::TargetUnavailable),
@@ -854,7 +909,7 @@ mod tests {
 
     #[test]
     fn secure_input_in_the_target_app_is_refused() {
-        let result = insertion(Facts {
+        let result = insertion(|| Facts {
             trust: Trust::Trusted,
             secure_input: true,
             frontmost: Ok(PREPARED_TARGET),
@@ -865,7 +920,25 @@ mod tests {
 
     #[test]
     fn insertion_stops_when_another_application_took_focus() {
-        let result = insertion(permitted(Ok(PREPARED_TARGET + 1)));
+        let result = insertion(|| permitted(Ok(PREPARED_TARGET + 1)));
+
+        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+    }
+
+    #[test]
+    fn focus_leaving_during_the_route_check_stops_the_text() {
+        let looks = Cell::new(0);
+        let observe = || {
+            looks.set(looks.get() + 1);
+            let frontmost = if looks.get() == 1 {
+                PREPARED_TARGET
+            } else {
+                PREPARED_TARGET + 1
+            };
+            permitted(Ok(frontmost))
+        };
+
+        let result = guard(&keys(), &|| false, observe);
 
         assert!(matches!(result, Err(DeliveryError::TargetChanged)));
     }
@@ -892,7 +965,7 @@ mod tests {
 
     #[test]
     fn a_password_field_in_another_app_reads_as_focus_lost() {
-        let result = insertion(Facts {
+        let result = insertion(|| Facts {
             trust: Trust::Trusted,
             secure_input: true,
             frontmost: Ok(PREPARED_TARGET + 1),
@@ -903,20 +976,16 @@ mod tests {
 
     #[test]
     fn an_unreadable_front_process_reads_as_focus_lost() {
-        let result = insertion(permitted(Err(DeliveryError::TargetUnavailable)));
+        let result = insertion(|| permitted(Err(DeliveryError::TargetUnavailable)));
 
         assert!(matches!(result, Err(DeliveryError::TargetChanged)));
     }
 
     #[test]
     fn a_cancelled_insertion_types_nothing() {
-        let result = insert(
-            &keys(),
-            TEST_TRANSCRIPT,
-            TEST_TIMEOUT,
-            &|| true,
-            permitted(Ok(PREPARED_TARGET)),
-        );
+        let result = insert(&keys(), TEST_TRANSCRIPT, TEST_TIMEOUT, &|| true, || {
+            permitted(Ok(PREPARED_TARGET))
+        });
 
         assert!(matches!(result, Err(DeliveryError::Cancelled)));
     }

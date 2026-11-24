@@ -51,6 +51,7 @@ core-foundation        = { workspace = true, optional = true }
 security-framework     = { workspace = true, optional = true }
 security-framework-sys = { workspace = true, optional = true }
 cidre                  = { workspace = true, features = [ "ax", "dispatch", "macos_14_2" ] }
+libc                   = { workspace = true }
 objc2                  = { workspace = true }
 objc2-app-kit          = { version = "0.3.2", default-features = false, features = [ "NSPasteboard", "NSRunningApplication", "libc", "std" ] }
 objc2-core-foundation  = { version = "0.3.2", default-features = false, features = [ "CFMachPort", "CFRunLoop", "std" ] }
