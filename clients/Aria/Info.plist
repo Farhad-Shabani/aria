@@ -28,6 +28,8 @@
 	<string>Aria uses the microphone to hear what you dictate.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Aria uses your Mac’s audio to transcribe what it plays. Transcripts stay on your Mac.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Aria pastes what you dictate into your terminal, so Vim-mode editors read it as text, not commands.</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
