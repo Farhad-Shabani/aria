@@ -203,6 +203,41 @@ mod tests {
     }
 
     #[test]
+    fn a_decoder_waiting_for_speech_lets_go_of_a_long_silence() {
+        let (mut recording, mut writer) = Recording::open();
+        let mut detector = SpeechDetector::new(Loud, 0);
+        let snapshot = |detector: &SpeechDetector<Loud>| Snapshot {
+            speech: Arc::new(detector.map().clone()),
+            timeline: None,
+        };
+        let board = Board::new();
+        board.start_walk(recording.waker(), snapshot(&detector));
+        let transcription = Transcription::agreement(
+            Cadence::from_millis(100, 20_000),
+            Hypotheses(|_: &[f32]| Ok(Hypothesis::new("hello"))),
+        );
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+        let silence = [0.0; 24_000];
+
+        let (skipped, held_from) = std::thread::scope(|scope| {
+            let decoder = scope.spawn(|| {
+                let skipped = skip_before_speech(&mut operation, &mut recording, 16, &board);
+                (skipped, recording.held_from())
+            });
+            // The decoder reaches its wait before any silence is heard.
+            std::thread::sleep(Duration::from_millis(20));
+            writer.push(&silence);
+            detector.hear(&silence).unwrap();
+            board.publish(snapshot(&detector));
+            board.end_walk(Ending::Stopped);
+            decoder.join().unwrap()
+        });
+
+        assert!(matches!(skipped, Err(TranscriptionError::Cancelled)));
+        assert_eq!(held_from, silence.len() as u64 - 16);
+    }
+
+    #[test]
     fn a_capture_that_fails_before_any_speech_is_not_taken_for_silence() {
         let (recording, mut writer) = Recording::open();
         writer.push(&[0.0; 1_000]);
