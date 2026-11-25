@@ -58,6 +58,8 @@ pub struct SpeechMap {
     speech: Vec<Range<u64>>,
     /// Speech in what was forgotten, so counts from the start stay whole.
     forgotten_speech: u64,
+    /// Kept past forgetting, so `None` only ever means no speech yet.
+    first_speech: Option<u64>,
     progress: Progress,
 }
 
@@ -163,6 +165,11 @@ impl SpeechMap {
             .take(PAUSES_KEPT)
     }
 
+    /// Where the first speech scored starts. `None` before any speech.
+    pub fn speech_from(&self) -> Option<u64> {
+        self.first_speech
+    }
+
     /// Samples of speech scored before `at`.
     pub fn speech_before(&self, at: u64) -> u64 {
         self.forgotten_speech + self.speech(&(0..at))
@@ -202,6 +209,7 @@ impl SpeechMap {
     }
 
     fn add_speech(&mut self, frame: Range<u64>) {
+        self.first_speech.get_or_insert(frame.start);
         match self.speech.last_mut() {
             Some(run) if run.end == frame.start => run.end = frame.end,
             _ => self.speech.push(frame),
@@ -391,6 +399,19 @@ mod tests {
         assert_eq!(map.speech_before(5 * FRAME), 2 * FRAME);
         assert_eq!(map.speech(&(FRAME..2 * FRAME)), FRAME);
         assert_eq!(map.speech(&(2 * FRAME..3 * FRAME)), 0);
+    }
+
+    #[test]
+    fn the_first_speech_stays_placed_once_the_map_forgets_it() {
+        let quiet = heard(&[0.0, 0.0], 10, 160);
+        let mut map = heard(&[0.0, 0.0, 0.9, 0.0, 0.9], 10, 160);
+
+        assert_eq!(quiet.speech_from(), None);
+        assert_eq!(map.speech_from(), Some(2 * FRAME));
+
+        map.forget_before(3 * FRAME);
+
+        assert_eq!(map.speech_from(), Some(2 * FRAME));
     }
 
     #[test]

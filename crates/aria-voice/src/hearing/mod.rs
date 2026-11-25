@@ -1,7 +1,8 @@
 //! Hears one recording. The decoder runs on one thread; the speech detector
-//! and the tracker run on another, ahead of it. The gate decides on the
-//! caller's thread whenever either moves, so a word is released as soon as
-//! its turn is judged rather than at the decoder's next step.
+//! and the tracker run on another, ahead of it. The decoder starts where
+//! the detector first hears speech. The gate decides on the caller's thread
+//! whenever either moves, so a word is released as soon as its turn is
+//! judged rather than at the decoder's next step.
 
 mod board;
 mod decoder;
@@ -18,7 +19,7 @@ use aria_kit::backend::BackendError;
 use aria_kit::cancel::CancelToken;
 use aria_kit::speaker::{Admission, Gate, Released, SpeakerTracker, Timeline, TurnFeed};
 use aria_kit::transcription::HeardUpdate;
-use aria_kit::voice_activity::{SpeechMap, VoiceActivityDetector};
+use aria_kit::voice_activity::{LEAD_IN_FRAMES, SpeechMap, VoiceActivityDetector};
 
 use crate::stt::{Operation, Recognizer, Transcript, TranscriptionError};
 pub(crate) use board::Board;
@@ -299,11 +300,16 @@ impl<'scope> Hearing<'scope> {
             }
             None => None,
         };
+        // Only a walk can say where speech starts.
+        let lead_in = turns
+            .is_some()
+            .then_some((LEAD_IN_FRAMES * V::FRAME_SAMPLES) as u64);
         let decoder = DecodeThread::spawn(
             scope,
             decoding.operation,
             decoding.recording,
             decoding.previews,
+            lead_in,
             Arc::clone(board),
         )
         .map_err(|error| {
@@ -828,6 +834,39 @@ mod tests {
         });
 
         assert_eq!(written, ["hello", "hum", "end"]);
+    }
+
+    #[test]
+    fn a_decoder_that_reads_from_the_start_loses_its_words_from_before_the_speech() {
+        // A delegated operation can't skip the recording's start, so
+        // it may still name a word in the opening silence.
+        let mut audio = vec![0.0; SECOND as usize];
+        audio.extend(vec![0.5; SECOND as usize]);
+        let script = scripted(
+            vec![("Yeah.", 0..SECOND / 2), ("hello", SECOND..2 * SECOND)],
+            2 * SECOND,
+        );
+        let recording = RecordingReader::from_samples(&audio);
+
+        let (written, transcript) = hearing(
+            script,
+            recording,
+            None,
+            Admission::Everyone,
+            |mut hearing| {
+                let mut written = Vec::new();
+                while let Some(event) = hearing.next().unwrap() {
+                    if let Event::Released(released) = event {
+                        written.push(released.heard.segment.as_str().to_owned());
+                    }
+                }
+                let transcript = hearing.finish().unwrap().transcript;
+                (written, transcript.as_str().to_owned())
+            },
+        );
+
+        assert_eq!(written, ["hello"]);
+        assert_eq!(transcript, "hello");
     }
 
     #[test]

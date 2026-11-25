@@ -356,6 +356,9 @@ pub struct Operation<'a, T, L = ()> {
     language: &'a Language,
     cancel: CancelToken,
     strategy: Strategy,
+    /// Whether a step has run. Until one has, the operation can still skip
+    /// audio at the recording's start.
+    stepped: bool,
     read_to: u64,
     transcript: Option<Transcript>,
     layers: &'a L,
@@ -638,6 +641,7 @@ impl<T: Recognizer, M: Mode, L: Layer> Transcription<T, M, L> {
             language,
             cancel: cancel.clone(),
             strategy,
+            stepped: false,
             read_to: 0,
             transcript: None,
             layers: &self.layers,
@@ -732,6 +736,37 @@ impl<T: Recognizer, L: Layer> Operation<'_, T, L> {
         }
     }
 
+    /// Skips the audio before `at`: it is released and never decoded. A
+    /// recognizer names words in audio that holds none, so a caller that
+    /// knows where speech begins skips what comes before it.
+    ///
+    /// `false` leaves the operation where it was: once a step has run, or
+    /// when a delegated recognizer reads the recording from its start.
+    pub fn skip_before(
+        &mut self,
+        recording: &mut RecordingReader,
+        at: u64,
+    ) -> Result<bool, TranscriptionError> {
+        if self.stepped || matches!(self.strategy, Strategy::Delegated(_)) {
+            return Ok(false);
+        }
+        check_cancelled(&self.cancel)?;
+        recording
+            .fill_through(at)
+            .map_err(TranscriptionError::Capture)?;
+        check_cancelled(&self.cancel)?;
+        // The recording may have ended short of `at`.
+        let at = at.clamp(recording.held_from(), recording.held_to());
+        match &mut self.strategy {
+            Strategy::Agreement(state) => state.skip_before(at),
+            Strategy::Native(state) => state.skip_before(at),
+            // A whole recording is whatever the reader still holds.
+            Strategy::WholeRecording | Strategy::Delegated(_) => {}
+        }
+        recording.release_before(at);
+        Ok(true)
+    }
+
     pub fn next_update(
         &mut self,
         recording: &mut RecordingReader,
@@ -800,6 +835,7 @@ impl<T: Recognizer, L: Layer> Operation<'_, T, L> {
         recording: &mut RecordingReader,
         previews: bool,
     ) -> Result<Option<TranscriptUpdate>, TranscriptionError> {
+        self.stepped = true;
         let update = self.decode_step(recording, previews);
         self.read_to = match &self.strategy {
             Strategy::Delegated(source) => source.read_to,
@@ -1454,6 +1490,20 @@ mod operation_source_tests {
         assert_eq!(*openings.lock().unwrap(), [false]);
     }
 
+    #[test]
+    fn a_delegated_operation_skips_no_audio() {
+        let recognizer: Arc<dyn Recognizer> = Arc::new(Delegated {
+            openings: Arc::new(Mutex::new(Vec::new())),
+        });
+        let transcription = Transcription::<_, Streaming>::delegated(recognizer);
+        let mut recording = RecordingReader::from_samples(&[0.5; 40]);
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        assert!(!operation.skip_before(&mut recording, 20).unwrap());
+
+        assert_eq!(recording.held_from(), 0);
+    }
+
     struct Local;
 
     impl Recognizer for Local {
@@ -2014,6 +2064,120 @@ mod coordinator_tests {
             Transcription::complete(FakeRecognizer::answering("hello there")),
             "hello there",
         );
+    }
+
+    /// Answers "hello" at the start of every window, and records each
+    /// window's length and whether it held a silent sample.
+    #[derive(Default)]
+    struct Windows(Mutex<Vec<(usize, bool)>>);
+
+    impl Recognizer for Windows {
+        fn validate_language(
+            &self,
+            _language: &Language,
+            _cancel: &CancelToken,
+        ) -> Result<(), TranscriptionError> {
+            Ok(())
+        }
+
+        fn recognize_with(
+            &self,
+            samples: &[f32],
+            _language: &Language,
+            _cancel: &CancelToken,
+        ) -> Result<Hypothesis, TranscriptionError> {
+            let silent = samples.contains(&0.0);
+            self.0.lock().unwrap().push((samples.len(), silent));
+            Ok(Hypothesis::with_words(
+                "hello",
+                vec![TimedWord {
+                    start: 0.0,
+                    end: 0.05,
+                }],
+            ))
+        }
+    }
+
+    /// Half a second of silence, then half a second of sound.
+    fn silence_then_sound() -> RecordingReader {
+        let mut samples = vec![0.0; 8_000];
+        samples.extend([0.5; 8_000]);
+        RecordingReader::from_samples(&samples)
+    }
+
+    #[test]
+    fn an_agreement_stream_that_skips_audio_decodes_and_times_from_there() {
+        let recognizer = Arc::new(Windows::default());
+        let transcription =
+            Transcription::agreement(Cadence::from_millis(100, 2_000), Arc::clone(&recognizer));
+        let mut recording = silence_then_sound();
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        assert!(operation.skip_before(&mut recording, 8_000).unwrap());
+        let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
+        let transcript = operation.finish(&mut recording).unwrap();
+
+        assert_eq!(segment.span(), Some(8_000..8_800));
+        assert_eq!(transcript.as_str(), "hello");
+        // The sound alone, in whatever windows the decodes took.
+        let windows = recognizer.0.lock().unwrap();
+        assert_eq!(windows.first(), Some(&(8_000, false)));
+        assert!(windows.iter().all(|(_, silent)| !silent));
+    }
+
+    #[test]
+    fn a_native_stream_feeds_no_chunk_from_skipped_audio() {
+        let mut recording = recorded(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let transcription = Transcription::stream(Stream::Native, Chunked);
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        assert!(operation.skip_before(&mut recording, 4).unwrap());
+        assert_eq!(operation.retained_from(), 4);
+        let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
+        let transcript = operation.finish(&mut recording).unwrap();
+
+        assert_eq!(segment.source_window().map(|window| window.start), Some(4));
+        assert_eq!(transcript.as_str(), "hello hello");
+    }
+
+    #[test]
+    fn a_whole_recording_that_skips_audio_is_decoded_from_there() {
+        let mut recording = recorded(&[1, 2, 3, 4]);
+        let recognizer = Arc::new(FakeRecognizer::answering("hello there"));
+        let transcription = Transcription::complete(Arc::clone(&recognizer));
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        assert!(operation.skip_before(&mut recording, 3).unwrap());
+        operation.finish(&mut recording).unwrap();
+
+        assert_eq!(recognizer.inputs(), [1]);
+    }
+
+    #[test]
+    fn an_operation_that_has_stepped_skips_no_audio() {
+        let transcription =
+            Transcription::agreement(Cadence::from_millis(100, 2_000), Windows::default());
+        let mut recording = silence_then_sound();
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+        operation.next_finalized(&mut recording).unwrap();
+
+        assert!(!operation.skip_before(&mut recording, 8_000).unwrap());
+    }
+
+    #[test]
+    fn skipping_past_the_recordings_end_stops_at_the_end() {
+        let transcription =
+            Transcription::agreement(Cadence::from_millis(100, 2_000), Windows::default());
+        let mut recording = silence_then_sound();
+        let mut operation = transcription.start(&Language::Automatic).unwrap();
+
+        assert!(operation.skip_before(&mut recording, 80_000).unwrap());
+
+        assert_eq!(recording.held_from(), 16_000);
+        assert!(matches!(
+            operation.finish(&mut recording),
+            Err(TranscriptionError::NoSpeech)
+        ));
     }
 
     #[test]

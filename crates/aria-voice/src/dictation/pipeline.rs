@@ -5916,22 +5916,36 @@ mod tests {
         }
     }
 
+    /// Guesses a word wherever its window opens on more silence than the
+    /// decoder's lead-in, as a recognizer does. Counts its decodes.
+    fn guessing_in_silence() -> (impl Recognizer, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let lead_in = aria_kit::voice_activity::LEAD_IN_FRAMES * Loud::FRAME_SAMPLES;
+        let decodes = Arc::new(AtomicUsize::new(0));
+        let engine = Hypotheses({
+            let decodes = Arc::clone(&decodes);
+            move |samples: &[f32]| {
+                decodes.fetch_add(1, Ordering::SeqCst);
+                let silent = samples.iter().take_while(|sample| **sample == 0.0).count();
+                Ok(Hypothesis::new(if silent > lead_in {
+                    "Yeah. hello"
+                } else {
+                    "hello"
+                }))
+            }
+        });
+        (engine, decodes)
+    }
+
     #[test]
-    fn words_guessed_before_the_speech_are_not_delivered() {
+    fn the_silence_before_the_speech_is_never_decoded() {
         for delivery in [DeliveryMode::Streaming, DeliveryMode::Complete] {
-            // Settles on a word during the opening silence, then hears the
-            // speech after it.
-            let (capture, engine) = scripted(
-                &[0.0; 8000],
-                &[
-                    (&[0.0; 1600], "Mm-hmm."),
-                    (SPEECH, "Mm-hmm."),
-                    (&[0.5; 1600], "Mm-hmm. hello"),
-                ],
-                Hypothesis::new("Mm-hmm. hello"),
-            );
+            let mut audio = vec![0.0; 8000];
+            audio.extend(SPEECH);
+            let (engine, _decodes) = guessing_in_silence();
             let (result, log) = press(
-                capture,
+                Finished(audio),
                 Transcription::agreement(Cadence::from_millis(100, 20_000), engine),
                 Some(Loud),
                 delivery,
@@ -5944,6 +5958,20 @@ mod tests {
             );
             assert_eq!(delivered(&log), "hello", "{delivery:?}");
         }
+    }
+
+    #[test]
+    fn a_press_without_speech_is_never_decoded() {
+        let (engine, decodes) = guessing_in_silence();
+        let (result, _log) = press(
+            Finished(vec![0.0; 16_000]),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), engine),
+            Some(Loud),
+            DeliveryMode::Streaming,
+        );
+
+        assert!(matches!(result, Err(DictationError::NoSpeech)));
+        assert_eq!(decodes.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[test]
