@@ -19,6 +19,8 @@ const FLUSH_CHUNKS: usize = 1;
 /// Drives a [`ChunkStream`] over a recording, one chunk per step.
 pub struct NativeState {
     stream: Box<dyn ChunkStream>,
+    /// Stream position the decoder's first chunk starts at.
+    opened_at: u64,
     /// Stream position handed to the decoder so far.
     fed: u64,
     /// A chunk's last word, kept until the next chunk shows whether it
@@ -38,6 +40,7 @@ impl NativeState {
     pub(super) fn new(stream: Box<dyn ChunkStream>) -> Self {
         Self {
             stream,
+            opened_at: 0,
             fed: 0,
             held: None,
             transcript: Vec::new(),
@@ -45,10 +48,17 @@ impl NativeState {
         }
     }
 
+    /// Opens the stream at `at` rather than at the recording's start. Only
+    /// a state that has fed nothing is asked to.
+    pub(super) fn open_at(&mut self, at: u64) {
+        self.opened_at = at;
+        self.fed = at;
+    }
+
     /// The audio of the held word and of the chunk the last segment came
     /// from both stay: their readers still want them.
     pub(super) fn retained_from(&self) -> u64 {
-        let last_chunk = self.fed.saturating_sub(self.chunk());
+        let last_chunk = self.fed.saturating_sub(self.chunk()).max(self.opened_at);
         self.held
             .as_ref()
             .map_or(last_chunk, |held| held.window.start.min(last_chunk))
@@ -89,7 +99,7 @@ impl NativeState {
                 "native decode step"
             );
             let words = self.absorb(&emitted, at, chunk);
-            if let Some(segment) = segment(&words, self.fed) {
+            if let Some(segment) = segment(&words, self.opened_at..self.fed) {
                 self.transcript.push(segment.as_str().to_owned());
                 return Ok(Some(ChunkStep {
                     update: Some(TranscriptUpdate::Finalized(segment)),
@@ -106,7 +116,7 @@ impl NativeState {
                         held.window.clone()
                     } else {
                         // An untimed word may come from any earlier chunk.
-                        0..self.fed
+                        self.opened_at..self.fed
                     }
                 });
                 return Ok(Some(ChunkStep {
@@ -189,7 +199,7 @@ impl NativeState {
             let emitted = self.stream.feed(&tail)?;
             parts.extend(self.absorb(&emitted, tail_start, chunk));
         }
-        if audio_end > 0 {
+        if audio_end > self.opened_at {
             let silence = vec![0.0; chunk as usize];
             for _ in 0..FLUSH_CHUNKS {
                 check_cancelled(cancel)?;
@@ -198,7 +208,7 @@ impl NativeState {
             }
         }
         parts.extend(self.held.take());
-        let retained = tail_start.saturating_sub(chunk)..audio_end;
+        let retained = tail_start.saturating_sub(chunk).max(self.opened_at)..audio_end;
         for word in &mut parts {
             if word.window.start >= audio_end {
                 // A word emitted in synthetic padding has no real timestamp.
@@ -208,7 +218,7 @@ impl NativeState {
                 word.window.end = word.window.end.min(audio_end);
             }
         }
-        let segment = segment(&parts, audio_end);
+        let segment = segment(&parts, self.opened_at..audio_end);
         if let Some(segment) = &segment {
             self.transcript.push(segment.as_str().to_owned());
         }
@@ -245,7 +255,7 @@ fn chunk_windows(
         .ok()
 }
 
-fn segment(words: &[Word], audio_end: u64) -> Option<TranscriptSegment> {
+fn segment(words: &[Word], heard: std::ops::Range<u64>) -> Option<TranscriptSegment> {
     if words.iter().all(|word| word.timed) {
         let timed: Vec<_> = words
             .iter()
@@ -258,7 +268,7 @@ fn segment(words: &[Word], audio_end: u64) -> Option<TranscriptSegment> {
     let text: Vec<_> = words.iter().map(|word| word.text.clone()).collect();
     let mut segment = TranscriptSegment::spanned(&text, None)?;
     // A native stream may emit untimed words from any earlier chunk.
-    segment.source_window = Some(0..audio_end);
+    segment.source_window = Some(heard);
     Some(segment)
 }
 
@@ -587,7 +597,7 @@ mod tests {
             };
             let joined = segment(
                 &state.absorb(&second, CHUNK as u64, CHUNK as u64),
-                2 * CHUNK as u64,
+                0..2 * CHUNK as u64,
             )
             .unwrap();
             assert_eq!(joined.as_str(), format!("{prefix}{suffix}"));

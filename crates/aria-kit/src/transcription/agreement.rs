@@ -113,6 +113,9 @@ struct LookbackWindow {
 /// it confirms, one segment per step.
 pub struct AgreementState {
     cadence: Cadence,
+    /// Stream position the first buffer opened at. No audio before it was
+    /// ever read, so a lookback never reaches behind it.
+    opened_at: u64,
     /// Stream position the buffer opens at. Moves only on a trim.
     buffer_start: u64,
     /// Stream position the last decode reached.
@@ -137,6 +140,7 @@ impl AgreementState {
     pub(super) fn new(cadence: Cadence) -> Self {
         Self {
             cadence,
+            opened_at: 0,
             buffer_start: 0,
             decoded_end: 0,
             pause_level: None,
@@ -148,6 +152,14 @@ impl AgreementState {
             lookback: None,
             untimed: false,
         }
+    }
+
+    /// Opens the buffer at `at` rather than at the recording's start. Only
+    /// a state that has decoded nothing is asked to.
+    pub(super) fn open_at(&mut self, at: u64) {
+        self.opened_at = at;
+        self.buffer_start = at;
+        self.decoded_end = at;
     }
 
     /// The earliest position a reader may still need. Never decreases: a
@@ -181,7 +193,7 @@ impl AgreementState {
         if self.untimed {
             cut
         } else {
-            cut.saturating_sub(LOOKBACK_SAMPLES)
+            cut.saturating_sub(LOOKBACK_SAMPLES).max(self.opened_at)
         }
     }
 
@@ -2872,6 +2884,23 @@ mod tests {
 
             state.pending_segment = None;
             assert_eq!(state.retained_from(), 10 * STRIDE as u64);
+        }
+
+        #[test]
+        fn a_lookback_never_reaches_before_the_opening() {
+            let mut state = AgreementState::new(cadence(5_000));
+            let opening = 5 * LOOKBACK_SAMPLES;
+            state.open_at(opening);
+
+            assert_eq!(state.retained_from(), opening);
+            assert_eq!(
+                state.lookback_before(opening + LOOKBACK_SAMPLES / 2),
+                opening
+            );
+            assert_eq!(
+                state.lookback_before(opening + 2 * LOOKBACK_SAMPLES),
+                opening + LOOKBACK_SAMPLES
+            );
         }
 
         #[test]
