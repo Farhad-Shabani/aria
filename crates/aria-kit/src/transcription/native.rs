@@ -20,7 +20,7 @@ const FLUSH_CHUNKS: usize = 1;
 pub struct NativeState {
     stream: Box<dyn ChunkStream>,
     /// Stream position the decoder's first chunk starts at.
-    opened_at: u64,
+    read_from: u64,
     /// Stream position handed to the decoder so far.
     fed: u64,
     /// A chunk's last word, kept until the next chunk shows whether it
@@ -40,7 +40,7 @@ impl NativeState {
     pub(super) fn new(stream: Box<dyn ChunkStream>) -> Self {
         Self {
             stream,
-            opened_at: 0,
+            read_from: 0,
             fed: 0,
             held: None,
             transcript: Vec::new(),
@@ -48,17 +48,17 @@ impl NativeState {
         }
     }
 
-    /// Opens the stream at `at` rather than at the recording's start. Only
+    /// Starts the stream at `at` rather than at the recording's start. Only
     /// a state that has fed nothing is asked to.
-    pub(super) fn open_at(&mut self, at: u64) {
-        self.opened_at = at;
+    pub(super) fn skip_before(&mut self, at: u64) {
+        self.read_from = at;
         self.fed = at;
     }
 
     /// The audio of the held word and of the chunk the last segment came
     /// from both stay: their readers still want them.
     pub(super) fn retained_from(&self) -> u64 {
-        let last_chunk = self.fed.saturating_sub(self.chunk()).max(self.opened_at);
+        let last_chunk = self.fed.saturating_sub(self.chunk()).max(self.read_from);
         self.held
             .as_ref()
             .map_or(last_chunk, |held| held.window.start.min(last_chunk))
@@ -99,7 +99,7 @@ impl NativeState {
                 "native decode step"
             );
             let words = self.absorb(&emitted, at, chunk);
-            if let Some(segment) = segment(&words, self.opened_at..self.fed) {
+            if let Some(segment) = segment(&words, self.read_from..self.fed) {
                 self.transcript.push(segment.as_str().to_owned());
                 return Ok(Some(ChunkStep {
                     update: Some(TranscriptUpdate::Finalized(segment)),
@@ -116,7 +116,7 @@ impl NativeState {
                         held.window.clone()
                     } else {
                         // An untimed word may come from any earlier chunk.
-                        self.opened_at..self.fed
+                        self.read_from..self.fed
                     }
                 });
                 return Ok(Some(ChunkStep {
@@ -199,7 +199,7 @@ impl NativeState {
             let emitted = self.stream.feed(&tail)?;
             parts.extend(self.absorb(&emitted, tail_start, chunk));
         }
-        if audio_end > self.opened_at {
+        if audio_end > self.read_from {
             let silence = vec![0.0; chunk as usize];
             for _ in 0..FLUSH_CHUNKS {
                 check_cancelled(cancel)?;
@@ -208,7 +208,7 @@ impl NativeState {
             }
         }
         parts.extend(self.held.take());
-        let retained = tail_start.saturating_sub(chunk).max(self.opened_at)..audio_end;
+        let retained = tail_start.saturating_sub(chunk).max(self.read_from)..audio_end;
         for word in &mut parts {
             if word.window.start >= audio_end {
                 // A word emitted in synthetic padding has no real timestamp.
@@ -218,7 +218,7 @@ impl NativeState {
                 word.window.end = word.window.end.min(audio_end);
             }
         }
-        let segment = segment(&parts, self.opened_at..audio_end);
+        let segment = segment(&parts, self.read_from..audio_end);
         if let Some(segment) = &segment {
             self.transcript.push(segment.as_str().to_owned());
         }

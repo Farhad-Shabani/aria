@@ -1,8 +1,8 @@
 //! The decoder on a thread of its own, posting each update to the board as
 //! it comes so the caller's thread can decide on it whenever anything moves.
 //!
-//! When a walk hears the recording, the decoder opens where speech first
-//! starts: a recognizer handed audio that holds no speech names words in it.
+//! When a walk hears the recording, the decoder skips what comes before
+//! speech: a recognizer handed audio that holds no speech names words in it.
 
 use std::sync::Arc;
 use std::thread::{Scope, ScopedJoinHandle};
@@ -15,7 +15,7 @@ use super::board::{Board, Decoded, Ending};
 use crate::stt::{Operation, Recognizer, Transcript, TranscriptionError};
 
 /// How much silence the decoder lets go of at a time while it waits for
-/// speech, so a long quiet opening is not kept.
+/// speech, so a long quiet start is not kept.
 const SILENCE_HELD: u64 = canonical_samples(Duration::from_secs(1));
 
 pub(super) struct DecodeThread<'scope> {
@@ -27,9 +27,9 @@ impl<'scope> DecodeThread<'scope> {
     /// Decodes `recording` to its end. Every update goes on `board`, and the
     /// decoder's end follows the last, however the decoder ends.
     ///
-    /// With `lead_in`, a walk hears the recording, and the decoder opens
+    /// With `lead_in`, a walk hears the recording, and the decoder starts
     /// that many samples before the first speech. Without it, the decoder
-    /// opens at the recording's start.
+    /// starts at the recording's start.
     pub(super) fn spawn<'env, T: Recognizer>(
         scope: &'scope Scope<'scope, 'env>,
         mut operation: Operation<'scope, T>,
@@ -92,7 +92,7 @@ fn decode<T: Recognizer>(
     board: &Board,
 ) -> Result<Transcript, TranscriptionError> {
     if let Some(lead_in) = lead_in
-        && !open_at_speech(operation, recording, lead_in, board)?
+        && !skip_before_speech(operation, recording, lead_in, board)?
     {
         tracing::info!("no speech detected in the recording; nothing is decoded");
         return Err(TranscriptionError::NoSpeech);
@@ -111,13 +111,13 @@ fn decode<T: Recognizer>(
     operation.finish(recording)
 }
 
-/// Opens `operation` `lead_in` samples before the first speech the walk
-/// hears, waiting for it. `false` when the recording ended without any.
+/// Skips the audio up to `lead_in` samples before the first speech the
+/// walk hears, waiting for it. `false` when the recording ended without any.
 ///
-/// A map that could not be judged counts as speech, so the decoder opens
+/// A map that could not be judged counts as speech, so the decoder starts
 /// on what it still holds. An operation that reads the recording from its
 /// start decodes all of it.
-fn open_at_speech<T: Recognizer>(
+fn skip_before_speech<T: Recognizer>(
     operation: &mut Operation<'_, T>,
     recording: &mut RecordingReader,
     lead_in: u64,
@@ -132,8 +132,8 @@ fn open_at_speech<T: Recognizer>(
         }
         let speech_from = speech.speech_from();
         let silent_to = speech.reached();
-        let opening = speech_from.unwrap_or(silent_to).saturating_sub(lead_in);
-        if !operation.open_at(recording, opening)? || speech_from.is_some() {
+        let start = speech_from.unwrap_or(silent_to).saturating_sub(lead_in);
+        if !operation.skip_before(recording, start)? || speech_from.is_some() {
             return Ok(true);
         }
         match ending {
@@ -169,9 +169,9 @@ mod tests {
     use crate::hearing::turns::Snapshot;
     use crate::stt::{Language, Transcription};
 
-    /// How `open_at_speech` answers once a walk that heard no speech in
+    /// How `skip_before_speech` answers once a walk that heard no speech in
     /// `recording` has ended as `ending`.
-    fn opened_after(
+    fn skipped_after(
         mut recording: RecordingReader,
         ending: Ending,
     ) -> Result<bool, TranscriptionError> {
@@ -190,16 +190,16 @@ mod tests {
         );
         let mut operation = transcription.start(&Language::Automatic).unwrap();
 
-        open_at_speech(&mut operation, &mut recording, 16, &board)
+        skip_before_speech(&mut operation, &mut recording, 16, &board)
     }
 
     #[test]
     fn a_walk_stopped_before_any_speech_ends_the_decoder_cancelled() {
         let recording = RecordingReader::from_samples(&[0.0; 16_000]);
 
-        let opened = opened_after(recording, Ending::Stopped);
+        let skipped = skipped_after(recording, Ending::Stopped);
 
-        assert!(matches!(opened, Err(TranscriptionError::Cancelled)));
+        assert!(matches!(skipped, Err(TranscriptionError::Cancelled)));
     }
 
     #[test]
@@ -209,8 +209,8 @@ mod tests {
         // Dropped unfinished, as a capture thread that vanished.
         drop(writer);
 
-        let opened = opened_after(recording, Ending::Heard);
+        let skipped = skipped_after(recording, Ending::Heard);
 
-        assert!(matches!(opened, Err(TranscriptionError::Capture(_))));
+        assert!(matches!(skipped, Err(TranscriptionError::Capture(_))));
     }
 }

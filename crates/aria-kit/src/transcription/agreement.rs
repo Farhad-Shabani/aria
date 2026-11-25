@@ -113,9 +113,9 @@ struct LookbackWindow {
 /// it confirms, one segment per step.
 pub struct AgreementState {
     cadence: Cadence,
-    /// Stream position the first buffer opened at. No audio before it was
-    /// ever read, so a lookback never reaches behind it.
-    opened_at: u64,
+    /// Where reading starts. No audio before it was ever read, so a
+    /// lookback never reaches behind it.
+    read_from: u64,
     /// Stream position the buffer opens at. Moves only on a trim.
     buffer_start: u64,
     /// Stream position the last decode reached.
@@ -140,7 +140,7 @@ impl AgreementState {
     pub(super) fn new(cadence: Cadence) -> Self {
         Self {
             cadence,
-            opened_at: 0,
+            read_from: 0,
             buffer_start: 0,
             decoded_end: 0,
             pause_level: None,
@@ -154,10 +154,10 @@ impl AgreementState {
         }
     }
 
-    /// Opens the buffer at `at` rather than at the recording's start. Only
+    /// Starts the buffer at `at` rather than at the recording's start. Only
     /// a state that has decoded nothing is asked to.
-    pub(super) fn open_at(&mut self, at: u64) {
-        self.opened_at = at;
+    pub(super) fn skip_before(&mut self, at: u64) {
+        self.read_from = at;
         self.buffer_start = at;
         self.decoded_end = at;
     }
@@ -193,7 +193,7 @@ impl AgreementState {
         if self.untimed {
             cut
         } else {
-            cut.saturating_sub(LOOKBACK_SAMPLES).max(self.opened_at)
+            cut.saturating_sub(LOOKBACK_SAMPLES).max(self.read_from)
         }
     }
 
@@ -2887,19 +2887,16 @@ mod tests {
         }
 
         #[test]
-        fn a_lookback_never_reaches_before_the_opening() {
+        fn a_lookback_never_reaches_into_skipped_audio() {
             let mut state = AgreementState::new(cadence(5_000));
-            let opening = 5 * LOOKBACK_SAMPLES;
-            state.open_at(opening);
+            let start = 5 * LOOKBACK_SAMPLES;
+            state.skip_before(start);
 
-            assert_eq!(state.retained_from(), opening);
+            assert_eq!(state.retained_from(), start);
+            assert_eq!(state.lookback_before(start + LOOKBACK_SAMPLES / 2), start);
             assert_eq!(
-                state.lookback_before(opening + LOOKBACK_SAMPLES / 2),
-                opening
-            );
-            assert_eq!(
-                state.lookback_before(opening + 2 * LOOKBACK_SAMPLES),
-                opening + LOOKBACK_SAMPLES
+                state.lookback_before(start + 2 * LOOKBACK_SAMPLES),
+                start + LOOKBACK_SAMPLES
             );
         }
 

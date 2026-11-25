@@ -1,6 +1,6 @@
 //! Hears one recording. The decoder runs on one thread; the speech detector
-//! and the tracker run on another, ahead of it. The decoder opens where the
-//! detector first hears speech. The gate decides on the caller's thread
+//! and the tracker run on another, ahead of it. The decoder starts where
+//! the detector first hears speech. The gate decides on the caller's thread
 //! whenever either moves, so a word is released as soon as its turn is
 //! judged rather than at the decoder's next step.
 
@@ -838,7 +838,7 @@ mod tests {
 
     #[test]
     fn a_decoder_that_reads_from_the_start_loses_its_words_from_before_the_speech() {
-        // A delegated operation can't open past the recording's start, so
+        // A delegated operation can't skip the recording's start, so
         // it may still name a word in the opening silence.
         let mut audio = vec![0.0; SECOND as usize];
         audio.extend(vec![0.5; SECOND as usize]);

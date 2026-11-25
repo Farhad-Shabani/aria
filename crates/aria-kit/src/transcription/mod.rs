@@ -356,8 +356,8 @@ pub struct Operation<'a, T, L = ()> {
     language: &'a Language,
     cancel: CancelToken,
     strategy: Strategy,
-    /// Whether a step has run. Until one has, the operation can still open
-    /// past the recording's start.
+    /// Whether a step has run. Until one has, the operation can still skip
+    /// audio at the recording's start.
     stepped: bool,
     read_to: u64,
     transcript: Option<Transcript>,
@@ -736,14 +736,13 @@ impl<T: Recognizer, L: Layer> Operation<'_, T, L> {
         }
     }
 
-    /// Opens the operation at `at` rather than at the start of `recording`:
-    /// the audio before it is released and never decoded. A recognizer names
-    /// words in audio that holds none, so a caller that knows where speech
-    /// begins opens there.
+    /// Skips the audio before `at`: it is released and never decoded. A
+    /// recognizer names words in audio that holds none, so a caller that
+    /// knows where speech begins skips what comes before it.
     ///
     /// `false` leaves the operation where it was: once a step has run, or
     /// when a delegated recognizer reads the recording from its start.
-    pub fn open_at(
+    pub fn skip_before(
         &mut self,
         recording: &mut RecordingReader,
         at: u64,
@@ -759,8 +758,8 @@ impl<T: Recognizer, L: Layer> Operation<'_, T, L> {
         // The recording may have ended short of `at`.
         let at = at.clamp(recording.held_from(), recording.held_to());
         match &mut self.strategy {
-            Strategy::Agreement(state) => state.open_at(at),
-            Strategy::Native(state) => state.open_at(at),
+            Strategy::Agreement(state) => state.skip_before(at),
+            Strategy::Native(state) => state.skip_before(at),
             // A whole recording is whatever the reader still holds.
             Strategy::WholeRecording | Strategy::Delegated(_) => {}
         }
@@ -1492,7 +1491,7 @@ mod operation_source_tests {
     }
 
     #[test]
-    fn a_delegated_operation_stays_open_at_the_recordings_start() {
+    fn a_delegated_operation_skips_no_audio() {
         let recognizer: Arc<dyn Recognizer> = Arc::new(Delegated {
             openings: Arc::new(Mutex::new(Vec::new())),
         });
@@ -1500,7 +1499,7 @@ mod operation_source_tests {
         let mut recording = RecordingReader::from_samples(&[0.5; 40]);
         let mut operation = transcription.start(&Language::Automatic).unwrap();
 
-        assert!(!operation.open_at(&mut recording, 20).unwrap());
+        assert!(!operation.skip_before(&mut recording, 20).unwrap());
 
         assert_eq!(recording.held_from(), 0);
     }
@@ -2107,14 +2106,14 @@ mod coordinator_tests {
     }
 
     #[test]
-    fn an_agreement_stream_opened_past_the_start_decodes_and_times_from_there() {
+    fn an_agreement_stream_that_skips_audio_decodes_and_times_from_there() {
         let recognizer = Arc::new(Windows::default());
         let transcription =
             Transcription::agreement(Cadence::from_millis(100, 2_000), Arc::clone(&recognizer));
         let mut recording = silence_then_sound();
         let mut operation = transcription.start(&Language::Automatic).unwrap();
 
-        assert!(operation.open_at(&mut recording, 8_000).unwrap());
+        assert!(operation.skip_before(&mut recording, 8_000).unwrap());
         let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
         let transcript = operation.finish(&mut recording).unwrap();
 
@@ -2127,12 +2126,12 @@ mod coordinator_tests {
     }
 
     #[test]
-    fn a_native_stream_opened_past_the_start_feeds_no_chunk_before_it() {
+    fn a_native_stream_feeds_no_chunk_from_skipped_audio() {
         let mut recording = recorded(&[1, 2, 3, 4, 5, 6, 7, 8]);
         let transcription = Transcription::stream(Stream::Native, Chunked);
         let mut operation = transcription.start(&Language::Automatic).unwrap();
 
-        assert!(operation.open_at(&mut recording, 4).unwrap());
+        assert!(operation.skip_before(&mut recording, 4).unwrap());
         assert_eq!(operation.retained_from(), 4);
         let segment = operation.next_finalized(&mut recording).unwrap().unwrap();
         let transcript = operation.finish(&mut recording).unwrap();
@@ -2142,37 +2141,37 @@ mod coordinator_tests {
     }
 
     #[test]
-    fn a_whole_recording_opened_past_the_start_is_decoded_from_there() {
+    fn a_whole_recording_that_skips_audio_is_decoded_from_there() {
         let mut recording = recorded(&[1, 2, 3, 4]);
         let recognizer = Arc::new(FakeRecognizer::answering("hello there"));
         let transcription = Transcription::complete(Arc::clone(&recognizer));
         let mut operation = transcription.start(&Language::Automatic).unwrap();
 
-        assert!(operation.open_at(&mut recording, 3).unwrap());
+        assert!(operation.skip_before(&mut recording, 3).unwrap());
         operation.finish(&mut recording).unwrap();
 
         assert_eq!(recognizer.inputs(), [1]);
     }
 
     #[test]
-    fn an_operation_that_has_stepped_stays_where_it_opened() {
+    fn an_operation_that_has_stepped_skips_no_audio() {
         let transcription =
             Transcription::agreement(Cadence::from_millis(100, 2_000), Windows::default());
         let mut recording = silence_then_sound();
         let mut operation = transcription.start(&Language::Automatic).unwrap();
         operation.next_finalized(&mut recording).unwrap();
 
-        assert!(!operation.open_at(&mut recording, 8_000).unwrap());
+        assert!(!operation.skip_before(&mut recording, 8_000).unwrap());
     }
 
     #[test]
-    fn an_opening_past_the_recordings_end_stops_at_the_end() {
+    fn skipping_past_the_recordings_end_stops_at_the_end() {
         let transcription =
             Transcription::agreement(Cadence::from_millis(100, 2_000), Windows::default());
         let mut recording = silence_then_sound();
         let mut operation = transcription.start(&Language::Automatic).unwrap();
 
-        assert!(operation.open_at(&mut recording, 80_000).unwrap());
+        assert!(operation.skip_before(&mut recording, 80_000).unwrap());
 
         assert_eq!(recording.held_from(), 16_000);
         assert!(matches!(
