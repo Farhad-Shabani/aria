@@ -78,6 +78,9 @@ aria say "Done for today."
 aria transcribe start # Mac only: your Mac's audio, by speaker
 ```
 
+To dictate from your iPhone or Apple Watch, get
+[Aria for iPhone and Apple Watch](https://apps.apple.com/app/id6823881648) from the App Store.
+
 ## What leaves your computer
 
 Speech runs on your computer. Aria sends no audio to any cloud service, and
@@ -85,9 +88,9 @@ has no telemetry or crash reporting.
 
 **Audio**
 
-- **iPhone and Apple Watch (coming soon):** audio goes to your Mac on your
-  local network. It uses mutual TLS, so both devices check each other's
-  certificate. Off until you turn on phone pairing.
+- **[iPhone and Apple Watch](https://apps.apple.com/app/id6823881648):** audio goes to
+  your Mac on your local network. It uses mutual TLS, so both devices check
+  each other's certificate. Off until you turn on phone pairing.
 - **Your own server (optional):** audio goes to a machine you set up with
   `aria serve` and pair with, over mutual TLS too. Off until you set it up.
   Whoever runs that server can hear the audio.

@@ -172,8 +172,8 @@ wait for that app.
 ## Dictate from iPhone and Apple Watch
 
 Switch on **Phone pairing** under **Settings → Phone**. Aria restarts and shows
-a code for Aria for iPhone to scan. Switching it off keeps paired phones for
-next time.
+a code for [Aria for iPhone](https://apps.apple.com/app/id6823881648) to scan.
+Switching it off keeps paired phones for next time.
 
 **Copy Code** puts the code on the clipboard, marked hidden from clipboard
 managers and wiped when the code expires. Universal Clipboard may still carry

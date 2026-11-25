@@ -72,7 +72,10 @@ struct PhoneSettings: View {
     }
 
     private func live(_ invite: PairingInvite, expiresAt: Date) -> some View {
-        PairingCodeCard(invite: invite, expiresAt: expiresAt, phonePairedAt: pairing.phonePairedAt) {
+        PairingCodeCard(
+            invite: invite, expiresAt: expiresAt, phonePairedAt: pairing.phonePairedAt,
+            appStoreURL: PhoneApp.appStoreURL
+        ) {
             actions(invite, expiresAt: expiresAt)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

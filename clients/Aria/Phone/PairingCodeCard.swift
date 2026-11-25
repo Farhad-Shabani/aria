@@ -10,6 +10,7 @@ struct PairingCodeCard<Actions: View>: View {
     let invite: PairingInvite
     let expiresAt: Date
     let phonePairedAt: Date?
+    let appStoreURL: URL?
     @ViewBuilder let actions: Actions
 
     var body: some View {
@@ -67,17 +68,10 @@ struct PairingCodeCard<Actions: View>: View {
 
     @ViewBuilder
     private var openPhoneApp: some View {
-        if let url = PhoneApp.appStoreURL {
+        if let url = appStoreURL {
             Text("Open \(Self.link("Aria for iPhone", to: url)).")
         } else {
-            HStack(spacing: 6) {
-                Text("Open Aria for iPhone.")
-                Text("Soon")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 4)
-                    .overlay { RoundedRectangle(cornerRadius: 4).strokeBorder(.tertiary) }
-            }
+            Text("Open Aria for iPhone.")
         }
     }
 
@@ -89,7 +83,9 @@ struct PairingCodeCard<Actions: View>: View {
 }
 
 extension PairingCodeCard where Actions == EmptyView {
-    init(invite: PairingInvite, expiresAt: Date, phonePairedAt: Date?) {
-        self.init(invite: invite, expiresAt: expiresAt, phonePairedAt: phonePairedAt) { EmptyView() }
+    init(invite: PairingInvite, expiresAt: Date, phonePairedAt: Date?, appStoreURL: URL?) {
+        self.init(invite: invite, expiresAt: expiresAt, phonePairedAt: phonePairedAt, appStoreURL: appStoreURL) {
+            EmptyView()
+        }
     }
 }
