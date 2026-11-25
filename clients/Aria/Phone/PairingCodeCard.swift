@@ -10,7 +10,6 @@ struct PairingCodeCard<Actions: View>: View {
     let invite: PairingInvite
     let expiresAt: Date
     let phonePairedAt: Date?
-    /// Nil in the palette: opening a link takes its focus, which closes it and its code.
     let appStoreURL: URL?
     @ViewBuilder let actions: Actions
 

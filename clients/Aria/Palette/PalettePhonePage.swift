@@ -35,6 +35,7 @@ struct PalettePhonePage: View {
     private var content: some View {
         switch pairing.status {
         case .live(let invite, let expiresAt):
+            // A link would take the palette's focus, closing it and the code.
             PairingCodeCard(
                 invite: invite, expiresAt: expiresAt, phonePairedAt: pairing.phonePairedAt, appStoreURL: nil)
         case .relayOff:
