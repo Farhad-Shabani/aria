@@ -163,6 +163,15 @@ impl SpeechMap {
             .take(PAUSES_KEPT)
     }
 
+    /// Where the first speech scored starts. `None` before any speech, and
+    /// once the map forgot where it began.
+    pub fn speech_from(&self) -> Option<u64> {
+        if self.forgotten_speech > 0 {
+            return None;
+        }
+        self.speech.first().map(|run| run.start)
+    }
+
     /// Samples of speech scored before `at`.
     pub fn speech_before(&self, at: u64) -> u64 {
         self.forgotten_speech + self.speech(&(0..at))
@@ -391,6 +400,19 @@ mod tests {
         assert_eq!(map.speech_before(5 * FRAME), 2 * FRAME);
         assert_eq!(map.speech(&(FRAME..2 * FRAME)), FRAME);
         assert_eq!(map.speech(&(2 * FRAME..3 * FRAME)), 0);
+    }
+
+    #[test]
+    fn the_first_speech_is_placed_until_the_map_forgets_it() {
+        let quiet = heard(&[0.0, 0.0], 10, 160);
+        let mut map = heard(&[0.0, 0.0, 0.9, 0.0, 0.9], 10, 160);
+
+        assert_eq!(quiet.speech_from(), None);
+        assert_eq!(map.speech_from(), Some(2 * FRAME));
+
+        map.forget_before(3 * FRAME);
+
+        assert_eq!(map.speech_from(), None);
     }
 
     #[test]
