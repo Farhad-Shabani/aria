@@ -35,7 +35,8 @@ struct PalettePhonePage: View {
     private var content: some View {
         switch pairing.status {
         case .live(let invite, let expiresAt):
-            PairingCodeCard(invite: invite, expiresAt: expiresAt, phonePairedAt: pairing.phonePairedAt)
+            PairingCodeCard(
+                invite: invite, expiresAt: expiresAt, phonePairedAt: pairing.phonePairedAt, appStoreURL: nil)
         case .relayOff:
             ContentUnavailableView(
                 "Phone Pairing Is Off", systemImage: "iphone.slash",
