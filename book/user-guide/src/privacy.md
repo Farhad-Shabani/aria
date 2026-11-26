@@ -19,7 +19,8 @@ temporary file, and delete it once they're done with it. Swap or a crash
 dump can still put audio on disk, and deletion isn't secure erasure.
 
 On a Mac, **Mute while recording** asks macOS to silence other apps, except
-apps already using the microphone. Aria doesn't record, save, or send their sound.
+apps already using the microphone. Aria doesn't record, save, or send their
+sound.
 
 On a Mac, Aria plays the start sound each time a dictation starts, so you hear
 when your microphone begins recording. It plays whether the Aria key, the
