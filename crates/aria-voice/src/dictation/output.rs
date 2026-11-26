@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 use cidre::core_audio::{self as ca, aggregate_device_keys as aggregate, hardware};
 use cidre::{cf, ns, os};
 
-/// Silences every app but this process while it lives, so cues stay audible.
+/// Silences other apps while it lives. This process stays audible for its
+/// cues. Processes using the microphone when it starts, such as a call, stay
+/// audible.
 pub(super) struct OutputMute {
     restore: Option<Box<dyn FnOnce() + Send>>,
 }
@@ -147,7 +149,7 @@ struct OtherAppsMuted {
 
 impl OtherAppsMuted {
     fn start() -> Result<Self, MuteError> {
-        let tap = tap_all_but_this_process()?;
+        let tap = tap_all_but_spared()?;
         let reader = aggregate_reading(&tap)?;
         Ok(Self {
             reader: Some(ca::device_start(reader, None)?),
@@ -167,20 +169,127 @@ impl Drop for OtherAppsMuted {
     }
 }
 
-fn tap_all_but_this_process() -> Result<ca::TapGuard, MuteError> {
+fn tap_all_but_spared() -> Result<ca::TapGuard, MuteError> {
     let pid = ns::ProcessInfo::current().process_id();
     let process = ca::Process::with_pid(pid)?;
     if process.0 == ca::Obj::UNKNOWN {
         return Err(MuteError::UnknownProcess);
     }
-    let this_process = ns::Number::with_u32(process.0.0);
-    let mut description =
-        ca::TapDesc::with_stereo_global_tap_excluding_processes(&ns::Array::from_slice(&[
-            this_process.as_ref(),
-        ]));
-    description.set_private(true);
-    description.set_mute_behavior(ca::TapMuteBehavior::Muted);
-    Ok(description.create_process_tap()?)
+    once_more_if_stale(|| {
+        let mut listed = Vec::new();
+        for other in processes()? {
+            let Some(input) = microphone_use(other.is_running_input()) else {
+                continue;
+            };
+            listed.push(ListedProcess {
+                object: other.0.0,
+                input,
+            });
+        }
+        let spared: Vec<_> = spared(process.0.0, listed)
+            .into_iter()
+            .map(ns::Number::with_u32)
+            .collect();
+        let spared: Vec<_> = spared.iter().map(AsRef::as_ref).collect();
+        let mut description = ca::TapDesc::with_stereo_global_tap_excluding_processes(
+            &ns::Array::from_slice(&spared),
+        );
+        description.set_private(true);
+        description.set_mute_behavior(ca::TapMuteBehavior::Muted);
+        Ok(description.create_process_tap()?)
+    })
+}
+
+/// A spared process can quit between the listing and the tap, and CoreAudio
+/// then refuses the tap for its stale id. A fresh listing leaves it out.
+fn once_more_if_stale<T>(
+    mut attempt: impl FnMut() -> Result<T, MuteError>,
+) -> Result<T, MuteError> {
+    match attempt() {
+        Err(MuteError::Native(error)) if error == ca::hardware_err::BAD_OBJ => attempt(),
+        result => result,
+    }
+}
+
+/// `ca::Process::list` keeps the length it sized before reading, so a process
+/// that quits in between would leave its last entries unwritten.
+#[allow(
+    unsafe_code,
+    reason = "reads CoreAudio's process list with the size it reports back"
+)]
+fn processes() -> os::Result<Vec<ca::Process>> {
+    let address = ca::PropSelector::HW_PROCESS_OBJ_LIST.global_addr();
+    let system = *ca::System::OBJ;
+    let mut size = system.prop_size(&address)?;
+    let mut objects = vec![0_u32; size as usize / size_of::<u32>()];
+    // SAFETY: `objects` owns `size` writable bytes. CoreAudio writes at most
+    // that many and stores in `size` how many it wrote.
+    unsafe {
+        AudioObjectGetPropertyData(
+            system,
+            &address,
+            0,
+            std::ptr::null(),
+            &mut size,
+            objects.as_mut_ptr().cast(),
+        )
+    }
+    .result()?;
+    objects.truncate(size as usize / size_of::<u32>());
+    Ok(objects
+        .into_iter()
+        .map(|object| ca::Process(ca::Obj(object)))
+        .collect())
+}
+
+#[allow(unsafe_code, reason = "declares a CoreAudio function")]
+unsafe extern "C" {
+    fn AudioObjectGetPropertyData(
+        object: ca::Obj,
+        address: *const ca::PropAddr,
+        qualifier_size: u32,
+        qualifier: *const std::ffi::c_void,
+        size: *mut u32,
+        data: *mut std::ffi::c_void,
+    ) -> os::Status;
+}
+
+/// None for a process that quit after the listing: it has no sound to spare.
+fn microphone_use(answer: os::Result<bool>) -> Option<Input> {
+    match answer {
+        Ok(true) => Some(Input::Running),
+        Ok(false) => Some(Input::Stopped),
+        Err(error) if error == ca::hardware_err::BAD_OBJ => None,
+        Err(error) => {
+            tracing::warn!(%error, "could not tell whether a process uses the microphone; leaving it audible");
+            Some(Input::Unknown)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ListedProcess {
+    object: u32,
+    input: Input,
+}
+
+/// Unknown is spared, so a failed query can't silence a call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Input {
+    Running,
+    Stopped,
+    Unknown,
+}
+
+fn spared(this_process: u32, listed: impl IntoIterator<Item = ListedProcess>) -> Vec<u32> {
+    let mut spared = vec![this_process];
+    spared.extend(
+        listed
+            .into_iter()
+            .filter(|listed| listed.input != Input::Stopped && listed.object != this_process)
+            .map(|listed| listed.object),
+    );
+    spared
 }
 
 /// The output device drives the IO cycle; a tap alone never runs it.
@@ -222,6 +331,80 @@ fn aggregate_reading(tap: &ca::TapGuard) -> os::Result<ca::AggregateDevice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_mute_spares_this_process_and_apps_using_the_microphone() {
+        let listed = [
+            ListedProcess {
+                object: 7,
+                input: Input::Running,
+            },
+            ListedProcess {
+                object: 20,
+                input: Input::Running,
+            },
+            ListedProcess {
+                object: 30,
+                input: Input::Stopped,
+            },
+        ];
+
+        assert_eq!(spared(7, listed), [7, 20]);
+    }
+
+    #[test]
+    fn a_failed_microphone_query_leaves_the_process_audible() {
+        let input = microphone_use(Err(ca::hardware_err::UNKNOWN_PROP)).unwrap();
+        let listed = [ListedProcess { object: 40, input }];
+
+        assert_eq!(spared(7, listed), [7, 40]);
+    }
+
+    #[test]
+    fn a_tap_refused_for_a_stale_process_is_built_once_more() {
+        let mut attempts = 0;
+
+        let outcome = once_more_if_stale(|| {
+            attempts += 1;
+            match attempts {
+                1 => Err(MuteError::Native(ca::hardware_err::BAD_OBJ)),
+                _ => Ok(attempts),
+            }
+        });
+
+        assert_eq!(outcome.ok(), Some(2));
+    }
+
+    #[test]
+    fn a_tap_refused_twice_for_a_stale_process_gives_up() {
+        let mut attempts = 0;
+
+        let outcome: Result<(), _> = once_more_if_stale(|| {
+            attempts += 1;
+            Err(MuteError::Native(ca::hardware_err::BAD_OBJ))
+        });
+
+        assert!(outcome.is_err());
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn a_tap_refused_for_another_reason_is_not_retried() {
+        let mut attempts = 0;
+
+        let outcome: Result<(), _> = once_more_if_stale(|| {
+            attempts += 1;
+            Err(MuteError::Native(ca::hardware_err::UNKNOWN_PROP))
+        });
+
+        assert!(outcome.is_err());
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn a_process_that_quit_after_the_listing_is_left_out() {
+        assert_eq!(microphone_use(Err(ca::hardware_err::BAD_OBJ)), None);
+    }
 
     #[test]
     #[ignore = "mutes this Mac's sound; run by hand with music playing"]
