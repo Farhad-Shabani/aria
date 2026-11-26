@@ -2,9 +2,9 @@
 
 # Engines and sessions
 
-Speech work uses three objects. You load an engine once, hand it to a
-`Transcription` or `Synthesis`, and keep that value. Each recording or text
-then gets its own short-lived `Session`.
+Load the engine once and reuse the `Transcription` or `Synthesis` that owns it.
+For a WAV file, call `transcription.transcribe_file(path)` directly.
+For live transcription or Kokoro audio, use one session per recording or utterance.
 
 | Object | What it holds | How long to keep it |
 |---|---|---|
@@ -28,8 +28,10 @@ Some uses need a Cargo feature:
 | To | Enable |
 |---|---|
 | Record from the microphone | The [`microphone` feature](./workflow.md#transcription) of `aria-stt` |
-| Play audio on the speakers | The [`playback` feature](./synthesis.md#kokoro-playback) of `aria-kit` |
+| Play Kokoro’s generated audio through Aria | The [`playback` feature](./synthesis.md#kokoro-playback) of `aria-kit` |
 | Split a long recording at each pause | The [`silero` feature](./recording.md#continuous-dictation) of `aria-kit` |
+
+The [system voice](./synthesis.md#system-voice) handles its own playback.
 
 ## Transcription
 
