@@ -155,7 +155,7 @@ keys! {
     DictationHoldMicrophone: "dictation.hold_microphone", Live, Mac, [], Kind::Bool, Some("true"),
         "Keeps the microphone open between dictations, so a word said as you press keeps its start. macOS shows the microphone in use while it's held.";
     DictationMuteSound: "dictation.mute_sound", Live, Mac, [], Kind::Bool, Some("true"),
-        "Mutes other apps while recording.";
+        "Mutes other apps while recording. Apps already using the microphone, such as a call, keep playing.";
     DictationReturnSends: "dictation.return_sends", Live, Mac, [], Kind::Bool, Some("true"),
         "Return in the app being dictated into ends recording, then sends after the text.";
     DictationOwnVoiceOnly: "dictation.own_voice_only", Live, Phone, [], Kind::Bool, Some("false"),
