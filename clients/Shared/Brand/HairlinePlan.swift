@@ -43,21 +43,20 @@ struct HairlinePlan: Equatable, Sendable {
         let minGap: Double
         var ringFit = RingFit.overhang
 
-        /// For a mark in the app: heavier than the website's, never closer than 2 px.
         static let button = Lines(weight: 1.4, minGap: 2)
         /// For a small mark, such as the app icon's or the pairing code's, which needs more light:
         /// twice the website's weight, 1 px apart.
         static let small = Lines(weight: 2, minGap: 1)
-        /// For a large mark: heavier lines than the button's with the same 2 px gaps, so fewer rings
-        /// and waves read calmer but no dimmer. A 176 pt mark at @3x draws 8 rings · 14 waves.
+        /// For a large mark: lines heavier than the button's, so fewer rings and waves read calmer.
+        /// Where both round to the same pixels, the two draw alike.
         static let large = Lines(weight: 2.2, minGap: 2)
     }
 
-    /// Which rings the ring's thickness holds. Two always draw, even where they run past it.
+    /// Which hairline rings fit across the logo's ring. Two always draw, even where they run past it.
     enum RingFit: Equatable, Sendable {
         /// Every ring that starts inside it, so the last may run past it.
         case overhang
-        /// Only rings that end inside it, so the ring stays as thick as the solid logo's.
+        /// Only rings that end inside it, so they span no wider than the solid logo's ring.
         case inside
     }
 
