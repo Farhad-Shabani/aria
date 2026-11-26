@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Speak, then press Enter to finish.");
     std::io::stdin().read_line(&mut String::new())?;
 
-    println!("{}", session.stop()?.as_str());
+    println!("{}", session.finish()?.as_str());
     Ok(())
 }
 ```
@@ -39,9 +39,9 @@ Run with `cargo run --release`, speak a sentence, and press Enter within a
 minute. The default microphone limit is 60 seconds; exceeding it produces an
 error rather than a successful transcript.
 
-`stop()` ends capture, processes the remaining audio, and returns the transcript.
-Dropping the session without calling `stop()` requests a stop without returning
-a transcript.
+`finish()` ends capture, processes the remaining audio, and returns the
+transcript. Dropping the session without calling `finish()` requests a stop
+without returning a transcript.
 
 ## Live text
 
@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", segment.as_str());
     }
 
-    println!("Complete: {}", session.stop()?.as_str());
+    println!("Complete: {}", session.finish()?.as_str());
     Ok(())
 }
 ```
@@ -83,8 +83,8 @@ contains those segments too; replace the display with it, or use it elsewhere,
 without appending it a second time. A short utterance may finish before any
 intermediate text appears.
 
-Here, silence ends the recording. Calling `stop()` on `Session::over` waits
-for that end before completing transcription; it does not stop capture itself.
+Here, silence ends the recording. Calling `finish()` on `Session::over` waits
+for that end before completing transcription. It doesn't stop capture itself.
 
 ## Continuous dictation
 

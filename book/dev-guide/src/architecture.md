@@ -2,60 +2,41 @@
 
 # Engines and sessions
 
-The examples use two kinds of object: a loaded engine and a session for one
-recording or utterance. Keeping them separate lets you load a model once and
-reuse it for later requests.
+Load the model once and reuse the `Transcription` or `Synthesis` that owns it.
+A session lasts for one live recording or one Kokoro utterance.
 
 ## Libraries
 
-`aria-stt` provides transcription, `aria-tts` provides synthesis, and `aria-kit`
-provides microphone capture, audio playback, and shared speech types.
-
-The engine crates re-export their common types in `prelude`. That is why
-transcription imports `Transcription`, `RecordingReader`, and `Microphone` from
-`aria_stt`, and synthesis imports `Synthesis` and `CancelToken` from `aria_tts`. Add
-`aria-kit` directly for playback, for writing a clip to WAV, or for cutting a
-recording into utterances.
+Use `aria-stt` for transcription and `aria-tts` for speech synthesis.
+Both use `aria-kit` for audio. The [setup guide](./workflow.md#create-a-project)
+shows which Cargo features to enable for your input or output.
 
 ## Transcription
 
-```text
-Load Whisper once
-  → construct Transcription
-  → provide a WAV or microphone recording
-  → receive finalized text
-```
+Choose the call by where your audio comes from and who ends the recording.
 
-`Whisper` loads and runs the recognition model. `Transcription` chooses how to
-process the recording and applies any text layers. `Session` manages
-transcription of one recording.
+| Input | Call | How you get the transcript |
+|---|---|---|
+| [A WAV file](./transcription.md#print-the-transcript) | `transcription.transcribe_file(path)` | The call reads the file and returns a `Transcript` directly. |
+| [The default microphone](./recording.md#stop-with-enter) | `Session::microphone` | Call `session.finish()` to stop capture and return the complete transcript. |
+| [A recording you supply](./recording.md#live-text) | `Session::over` | The audio source must end the recording. `session.finish()` waits for that end and returns the complete transcript. |
 
-For a completed file, `transcribe_file` returns one `Transcript`. For live
-input, `Session::next_finalized` returns segments as they become final, and
-`stop` returns the complete transcript. Finalized segments stay unchanged.
-
-The libraries do not insert text into another application. Your code decides
-whether to display, save, or deliver it.
+To show text while someone speaks, use `Transcription::streaming` and read
+finalized segments with `session.next_finalized()`. Those words stay unchanged.
+The transcript from `finish()` includes them, so appending it to the displayed
+segments would repeat them.
 
 ## Synthesis
 
-```text
-Load Kokoro once
-  → construct Synthesis
-  → start an utterance
-  → read audio samples until completion
-```
-
-`Kokoro` supplies the model and voices. `Synthesis` starts one worker per
-utterance. Its session gives you the sample rate and generated audio samples.
-Dropping the session requests cancellation and waits for the thread to stop.
-
-The system voice has a different output: it speaks through the platform's
-voice program and provides no audio samples.
+For [Kokoro audio](./synthesis.md#kokoro-audio), load the model and voices
+files, then pass the engine to `Synthesis::new`. Each call to `start` returns
+a session you can read for audio samples. To play those samples through Aria,
+enable the [playback feature](./synthesis.md#kokoro-playback). For the
+[system voice](./synthesis.md#system-voice), call `SystemVoice::speak`
+directly. It handles playback and returns when speech ends.
 
 ## Blocking calls
 
-Model loading, transcription, audio reads, and speaking are synchronous calls.
-Run them on a worker thread when integrating with a UI or an asynchronous
-application. Streaming can produce output before an operation finishes, but
-reading the next result can still block.
+In a UI or async application, load models, transcribe, read samples, and run
+playback on a worker thread. Drop a live Kokoro session there too. Dropping it
+requests cancellation and waits for its synthesis worker to stop.
