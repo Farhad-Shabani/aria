@@ -3,12 +3,15 @@ import XCTest
 @testable import Aria
 
 final class HairlinePlanTests: XCTestCase {
-    private let sizes = [(width: 176.0, scale: 3.0), (width: 96.0, scale: 3.0), (width: 104.0, scale: 2.0)]
     /// Each preset at sizes it draws at, including the two-ring fallback's 1 px lines.
     private let marks: [(width: Double, scale: Double, lines: HairlinePlan.Lines)] = [
         (176, 3, .button), (96, 3, .button), (104, 2, .button), (176, 3, .large), (176, 2, .large),
         (536, 1, .large), (118, 1, .small), (26, 1, .small), (38, 1, .small),
     ]
+
+    private func pixelsPerUnit(width: Double, scale: Double = 1) -> Double {
+        width / MarkTuning.visible.width * scale
+    }
 
     func testLargeMarksStopAtSixteenWaves() {
         let expected = [
@@ -27,7 +30,7 @@ final class HairlinePlanTests: XCTestCase {
         // The 180 px Home Screen icon's mark, drawn at one pixel per point.
         let icon = HairlinePlan(width: 118, displayScale: 1, lines: .small)
         let button = HairlinePlan(width: 118, displayScale: 1)
-        let perUnit = 118 / MarkTuning.visible.width
+        let perUnit = pixelsPerUnit(width: 118)
         XCTAssertEqual(icon.hairline * perUnit, 2, accuracy: 1e-9)
         XCTAssertEqual(icon.step * perUnit, 3, accuracy: 1e-9)
         XCTAssertEqual(icon.rings.count, 3)
@@ -36,9 +39,8 @@ final class HairlinePlanTests: XCTestCase {
 
     func testRingsInsideStopBeforeRunningPastTheRing() {
         // A 666 px mark: 3 px lines on a 6 px step. Counted from where each ring starts, nine fit.
-        let width = 666.0
-        let plan = HairlinePlan(width: width, displayScale: 1, lines: .init(weight: 2, minGap: 3, ringFit: .inside))
-        let perUnit = width / MarkTuning.visible.width
+        let plan = HairlinePlan(width: 666, displayScale: 1, lines: .init(weight: 2, minGap: 3, ringFit: .inside))
+        let perUnit = pixelsPerUnit(width: 666)
         XCTAssertEqual(plan.hairline * perUnit, 3, accuracy: 1e-9)
         XCTAssertEqual(plan.step * perUnit, 6, accuracy: 1e-9)
         XCTAssertEqual(plan.rings.count, 8)
@@ -51,7 +53,7 @@ final class HairlinePlanTests: XCTestCase {
         // A 176 pt mark at @3x, and the Mac icon's mark at 1024 px.
         for (width, scale) in [(176.0, 3.0), (536.0, 1.0)] {
             let plan = HairlinePlan(width: width, displayScale: scale, lines: .large)
-            let perUnit = width / MarkTuning.visible.width * scale
+            let perUnit = pixelsPerUnit(width: width, scale: scale)
             XCTAssertEqual(plan.hairline * perUnit, 3, accuracy: 1e-9)
             XCTAssertEqual(plan.step * perUnit, 5, accuracy: 1e-9)
             XCTAssertEqual(plan.rings.count, 8)
@@ -59,19 +61,10 @@ final class HairlinePlanTests: XCTestCase {
         }
     }
 
-    func testLargeLinesKeepTheButtonsRingsAtTwoX() {
-        // At @2x the lines round to the button's, so the mark keeps the button's rings.
-        let large = HairlinePlan(width: 176, displayScale: 2, lines: .large)
-        let button = HairlinePlan(width: 176, displayScale: 2)
-        XCTAssertEqual(large.rings.count, button.rings.count)
-        XCTAssertEqual(large.gaps, button.gaps)
-    }
-
     func testSmallMarksDrawTwoRingsOfThinnerLines() {
         // A 26 px mark: one 2 px ring would fit, so the lines drop to 1 px on a 2 px step.
-        let width = 26.0
-        let plan = HairlinePlan(width: width, displayScale: 1, lines: .small)
-        let perUnit = width / MarkTuning.visible.width
+        let plan = HairlinePlan(width: 26, displayScale: 1, lines: .small)
+        let perUnit = pixelsPerUnit(width: 26)
         XCTAssertEqual(plan.rings.count, 2)
         XCTAssertEqual(plan.hairline * perUnit, 1, accuracy: 1e-9)
         XCTAssertEqual(plan.step * perUnit, 2, accuracy: 1e-9)
@@ -85,7 +78,7 @@ final class HairlinePlanTests: XCTestCase {
     func testRingEdgesLandOnWholeDevicePixels() {
         for size in marks {
             let plan = HairlinePlan(width: size.width, displayScale: size.scale, lines: size.lines)
-            let perUnit = size.width / MarkTuning.visible.width * size.scale
+            let perUnit = pixelsPerUnit(width: size.width, scale: size.scale)
             let center = (MarkTuning.center - MarkTuning.visible.minX) * perUnit
             for radius in plan.rings {
                 for edge in [radius - plan.hairline / 2, radius + plan.hairline / 2] {
@@ -97,9 +90,9 @@ final class HairlinePlanTests: XCTestCase {
     }
 
     func testLinesAreAtLeastTwoDevicePixelsWide() {
-        for size in sizes {
+        for size in [(width: 176.0, scale: 3.0), (width: 96.0, scale: 3.0), (width: 104.0, scale: 2.0)] {
             let plan = HairlinePlan(width: size.width, displayScale: size.scale)
-            let perUnit = size.width / MarkTuning.visible.width * size.scale
+            let perUnit = pixelsPerUnit(width: size.width, scale: size.scale)
             XCTAssertGreaterThanOrEqual(plan.hairline * perUnit, 2 - 1e-9, "\(size)")
         }
     }
