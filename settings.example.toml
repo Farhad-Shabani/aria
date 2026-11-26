@@ -25,8 +25,9 @@ microphone = "automatic"
 # Off releases it, and recording starts a moment after you tap. Bluetooth
 # headphones take a little longer and might not play the start sound.
 hold_microphone = true
-# Mutes other apps while recording, so Aria's own sounds still play.
-# Their sound comes back when recording stops.
+# Mutes other apps while recording, so Aria's own sounds still play. Apps
+# already using the microphone, such as a call, keep playing. Their sound comes
+# back when recording stops.
 mute_sound = true
 # Return in the app being dictated into ends recording, types the rest, then
 # sends. Off, Return reaches the app at once.

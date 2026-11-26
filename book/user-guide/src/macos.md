@@ -187,7 +187,8 @@ long it has been recording and the device's icon. A dictation you start on
 your Mac meanwhile still starts, and the pill follows it instead.
 
 With **Mute while recording** on, other apps on your Mac stay silent until
-the device stops recording.
+the device stops recording. Apps already using the microphone, such as a call,
+keep playing.
 
 **Allow your iPhone to press Return**, under **Settings → Phone**, is on by
 default. Your iPhone and Apple Watch can then ask your Mac to press
