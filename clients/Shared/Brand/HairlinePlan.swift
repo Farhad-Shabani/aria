@@ -76,14 +76,11 @@ struct HairlinePlan: Equatable, Sendable {
         }
         var linePixels = max(
             (max(Self.minLine, width * displayScale / Self.pixelsPerLine) * lines.weight).rounded(), Self.minPixels)
-        var (stepPixels, count) = fit(linePixels)
         // One ring reads as a plain outline, not the engraved mark, so a small mark thins its lines
         // to fit two, and keeps two even where they run past the ring.
-        if count < Self.minRings {
-            linePixels = Self.minLine
-            (stepPixels, count) = fit(linePixels)
-            count = max(count, Self.minRings)
-        }
+        if fit(linePixels).count < Self.minRings { linePixels = Self.minLine }
+        let (stepPixels, fitted) = fit(linePixels)
+        let count = max(fitted, Self.minRings)
         let outerPixels = (MarkTuning.outer * perUnit).rounded()
         hairline = linePixels * pixel
         step = stepPixels * pixel

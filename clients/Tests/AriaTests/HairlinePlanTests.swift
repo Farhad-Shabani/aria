@@ -90,7 +90,7 @@ final class HairlinePlanTests: XCTestCase {
     }
 
     func testLinesAreAtLeastTwoDevicePixelsWide() {
-        for size in [(width: 176.0, scale: 3.0), (width: 96.0, scale: 3.0), (width: 104.0, scale: 2.0)] {
+        for size in marks where size.lines == .button {
             let plan = HairlinePlan(width: size.width, displayScale: size.scale)
             let perUnit = pixelsPerUnit(width: size.width, scale: size.scale)
             XCTAssertGreaterThanOrEqual(plan.hairline * perUnit, 2 - 1e-9, "\(size)")
