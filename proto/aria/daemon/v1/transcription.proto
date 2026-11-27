@@ -71,14 +71,12 @@ message ListUnsavedTranscriptsResponse {
 }
 
 message UnsavedTranscript {
-  // The file's name, which ReadUnsaved and DiscardUnsaved take.
+  // The file's name in `unsaved_dir`, which ReadUnsaved and DiscardUnsaved
+  // take. The file is plain text, private to its owner.
   string name = 1;
-  // Absolute, in `~/.aria/unsaved`. The file is plain text, private to its
-  // owner.
-  string path = 2;
-  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp started_at = 2;
   // How long the session wrote to it.
-  google.protobuf.Duration duration = 4;
+  google.protobuf.Duration duration = 3;
 }
 
 message ReadUnsavedTranscriptRequest {

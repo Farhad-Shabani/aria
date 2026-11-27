@@ -1522,7 +1522,6 @@ impl From<UnsavedTranscriptList> for wire::ListUnsavedTranscriptsResponse {
                 .into_iter()
                 .map(|transcript| wire::UnsavedTranscript {
                     name: transcript.name().to_owned(),
-                    path: transcript.path().display().to_string(),
                     started_at: Some(wire_time(Duration::from_millis(transcript.started_at_ms()))),
                     duration: Some(wire_duration(Duration::from_millis(
                         transcript.duration_ms(),

@@ -386,13 +386,25 @@ final class UnsavedTranscriptsTests: XCTestCase {
     }
 
     func testAListedTranscriptWithoutItsStartIsRefused() {
+        let folder = URL(filePath: "/Users/me/.aria/unsaved", directoryHint: .isDirectory)
+        var wire = Aria_Daemon_V1_UnsavedTranscript.with { $0.name = "a.txt" }
+
+        XCTAssertThrowsError(try UnsavedTranscript(wire, in: folder))
+        wire.startedAt = .init(date: Date(timeIntervalSince1970: 100))
+        XCTAssertEqual(try UnsavedTranscript(wire, in: folder).name, "a.txt")
+    }
+
+    func testAListedTranscriptLivesInTheFolderAndNamesOnlyAFile() throws {
+        let folder = URL(filePath: "/Users/me/.aria/unsaved", directoryHint: .isDirectory)
         var wire = Aria_Daemon_V1_UnsavedTranscript.with {
-            $0.name = "a.txt"
-            $0.path = "/Users/me/.aria/unsaved/a.txt"
+            $0.startedAt = .init(date: Date(timeIntervalSince1970: 100))
         }
 
-        XCTAssertThrowsError(try UnsavedTranscript(wire))
-        wire.startedAt = .init(date: Date(timeIntervalSince1970: 100))
-        XCTAssertEqual(try UnsavedTranscript(wire).name, "a.txt")
+        wire.name = "a.txt"
+        XCTAssertEqual(try UnsavedTranscript(wire, in: folder).path.path, "/Users/me/.aria/unsaved/a.txt")
+        for refused in ["", ".", "..", "../a.txt", "a/b.txt"] {
+            wire.name = refused
+            XCTAssertThrowsError(try UnsavedTranscript(wire, in: folder), refused)
+        }
     }
 }

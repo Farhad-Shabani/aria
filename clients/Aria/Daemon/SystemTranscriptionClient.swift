@@ -43,11 +43,12 @@ enum SystemTranscriptionClient {
                     guard !message.transcriptsDir.isEmpty, !message.unsavedDir.isEmpty else {
                         throw DaemonFailure.invalidResponse
                     }
+                    let unsavedDir = URL(filePath: message.unsavedDir, directoryHint: .isDirectory)
                     return UnsavedTranscriptList(
-                        transcripts: try message.transcripts.map(UnsavedTranscript.init),
+                        transcripts: try message.transcripts.map { try UnsavedTranscript($0, in: unsavedDir) },
                         isHistoryFull: message.historyFull,
                         transcriptsDir: URL(filePath: message.transcriptsDir, directoryHint: .isDirectory),
-                        unsavedDir: URL(filePath: message.unsavedDir, directoryHint: .isDirectory))
+                        unsavedDir: unsavedDir)
                 }
         }
     }
@@ -86,12 +87,12 @@ enum SystemTranscriptionClient {
 }
 
 extension UnsavedTranscript {
-    init(_ wire: Aria_Daemon_V1_UnsavedTranscript) throws {
-        guard !wire.name.isEmpty, !wire.path.isEmpty, wire.hasStartedAt else {
-            throw DaemonFailure.invalidResponse
-        }
+    /// A transcript the daemon listed in `folder`. Its name must be a plain file name there.
+    init(_ wire: Aria_Daemon_V1_UnsavedTranscript, in folder: URL) throws {
+        guard !wire.name.isEmpty, !wire.name.contains("/"), ![".", ".."].contains(wire.name), wire.hasStartedAt
+        else { throw DaemonFailure.invalidResponse }
         self.init(
-            name: wire.name, path: URL(filePath: wire.path), startedAt: wire.startedAt.date,
-            duration: wire.duration.timeInterval)
+            name: wire.name, path: folder.appending(path: wire.name, directoryHint: .notDirectory),
+            startedAt: wire.startedAt.date, duration: wire.duration.timeInterval)
     }
 }

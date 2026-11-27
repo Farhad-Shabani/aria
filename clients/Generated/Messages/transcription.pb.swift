@@ -209,12 +209,9 @@ public nonisolated struct Aria_Daemon_V1_UnsavedTranscript: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// The file's name, which ReadUnsaved and DiscardUnsaved take.
+  /// The file's name in `unsaved_dir`, which ReadUnsaved and DiscardUnsaved
+  /// take. The file is plain text, private to its owner.
   public var name: String = String()
-
-  /// Absolute, in `~/.aria/unsaved`. The file is plain text, private to its
-  /// owner.
-  public var path: String = String()
 
   public var startedAt: SwiftProtobuf.Google_Protobuf_Timestamp {
     get {_startedAt ?? SwiftProtobuf.Google_Protobuf_Timestamp()}
@@ -554,7 +551,7 @@ nonisolated extension Aria_Daemon_V1_ListUnsavedTranscriptsResponse: SwiftProtob
 
 nonisolated extension Aria_Daemon_V1_UnsavedTranscript: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UnsavedTranscript"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}path\0\u{3}started_at\0\u{1}duration\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{3}started_at\0\u{1}duration\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -563,9 +560,8 @@ nonisolated extension Aria_Daemon_V1_UnsavedTranscript: SwiftProtobuf.Message, S
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.path) }()
-      case 3: try { try decoder.decodeSingularMessageField(value: &self._startedAt) }()
-      case 4: try { try decoder.decodeSingularMessageField(value: &self._duration) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._startedAt) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._duration) }()
       default: break
       }
     }
@@ -579,21 +575,17 @@ nonisolated extension Aria_Daemon_V1_UnsavedTranscript: SwiftProtobuf.Message, S
     if !self.name.isEmpty {
       try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
     }
-    if !self.path.isEmpty {
-      try visitor.visitSingularStringField(value: self.path, fieldNumber: 2)
-    }
     try { if let v = self._startedAt {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
     } }()
     try { if let v = self._duration {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
     } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_UnsavedTranscript, rhs: Aria_Daemon_V1_UnsavedTranscript) -> Bool {
     if lhs.name != rhs.name {return false}
-    if lhs.path != rhs.path {return false}
     if lhs._startedAt != rhs._startedAt {return false}
     if lhs._duration != rhs._duration {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
