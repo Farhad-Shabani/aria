@@ -1721,12 +1721,17 @@ pub(super) mod tests {
 
     #[test]
     fn a_transcripts_folder_key_is_refused_as_unknown() {
-        let refused = Loaded::parse(
+        let error = Loaded::parse(
             "[transcription]\ntranscripts_dir = \"~/.aria/transcripts\"\n",
             Path::new(HOME),
-        );
+        )
+        .expect_err("the key is unknown");
 
-        assert!(refused.is_err());
+        let SettingsError::Parse(parse) = error else {
+            panic!("{error}");
+        };
+        let message = parse.to_string();
+        assert!(message.contains("transcripts_dir"), "{message}");
     }
 
     #[test]

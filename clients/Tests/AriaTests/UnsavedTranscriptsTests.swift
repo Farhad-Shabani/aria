@@ -48,9 +48,9 @@ final class UnsavedTranscriptsTests: XCTestCase {
         }
     }
 
-    private static func transcript(_ name: String) -> UnsavedTranscript {
+    private static func transcript(_ name: String, at path: URL? = nil) -> UnsavedTranscript {
         UnsavedTranscript(
-            name: name, path: URL(filePath: "/transcripts/.unsaved/\(name)"),
+            name: name, path: path ?? URL(filePath: "/transcripts/.unsaved/\(name)"),
             startedAt: Date(timeIntervalSince1970: 100), duration: 60)
     }
 
@@ -233,8 +233,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: unsavedFolder) }
         let file = unsavedFolder.appending(path: "a.txt")
         try Data("[00:00:01] heard".utf8).write(to: file)
-        let transcript = UnsavedTranscript(
-            name: "a.txt", path: file, startedAt: Date(timeIntervalSince1970: 100), duration: 60)
+        let transcript = Self.transcript("a.txt", at: file)
         let fake = Fake([transcript])
         fake.unsavedDir = unsavedFolder
         let unsaved = await refreshed(fake)
@@ -260,8 +259,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
         try files.createSymbolicLink(at: alias, withDestinationURL: home.appending(path: ".aria/transcripts"))
         let file = unsavedFolder.appending(path: "a.txt")
         try Data("[00:00:01] heard".utf8).write(to: file)
-        let transcript = UnsavedTranscript(
-            name: "a.txt", path: file, startedAt: Date(timeIntervalSince1970: 100), duration: 60)
+        let transcript = Self.transcript("a.txt", at: file)
         let fake = Fake([transcript])
         fake.transcriptsDir = home.appending(path: ".aria/transcripts", directoryHint: .isDirectory)
         fake.unsavedDir = home.appending(path: ".aria/unsaved", directoryHint: .isDirectory)
@@ -295,8 +293,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
             withDestinationURL: transcriptsTarget.deletingLastPathComponent())
         let file = home.appending(path: ".aria/unsaved/a.txt")
         try Data("[00:00:01] heard".utf8).write(to: file)
-        let transcript = UnsavedTranscript(
-            name: "a.txt", path: file, startedAt: Date(timeIntervalSince1970: 100), duration: 60)
+        let transcript = Self.transcript("a.txt", at: file)
         let fake = Fake([transcript])
         fake.transcriptsDir = home.appending(path: ".aria/transcripts", directoryHint: .isDirectory)
         fake.unsavedDir = home.appending(path: ".aria/unsaved", directoryHint: .isDirectory)
@@ -359,8 +356,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
         defer { try? files.removeItem(at: folder) }
         let file = folder.appending(path: "a.txt")
         try Data("[00:00:01] heard".utf8).write(to: file)
-        let transcript = UnsavedTranscript(
-            name: "a.txt", path: file, startedAt: Date(timeIntervalSince1970: 100), duration: 60)
+        let transcript = Self.transcript("a.txt", at: file)
         let copied = folder.appending(path: "copied.txt")
 
         try await UnsavedTranscripts.Effects.copy(transcript, to: copied)
@@ -378,8 +374,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
         try Data("someone else’s".utf8).write(to: unrelated)
         let link = folder.appending(path: "a.txt")
         try files.createSymbolicLink(at: link, withDestinationURL: unrelated)
-        let transcript = UnsavedTranscript(
-            name: "a.txt", path: link, startedAt: Date(timeIntervalSince1970: 100), duration: 60)
+        let transcript = Self.transcript("a.txt", at: link)
         let copied = folder.appending(path: "copied.txt")
 
         do {
