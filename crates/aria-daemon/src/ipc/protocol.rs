@@ -440,10 +440,10 @@ impl From<RelayStage> for wire::RelayEvent {
                 event.quiet_limit_ms = quiet_limit_ms(quiet_limit);
                 wire::RelayStage::Recording
             }
-            RelayStage::Resumed { taken, quiet_limit } => {
+            RelayStage::Continued { taken, quiet_limit } => {
                 event.taken_bytes = taken;
                 event.quiet_limit_ms = quiet_limit_ms(quiet_limit);
-                wire::RelayStage::Resumed
+                wire::RelayStage::Continued
             }
             RelayStage::Transcribing => wire::RelayStage::Transcribing,
             RelayStage::Completed {
@@ -3912,14 +3912,14 @@ mod tests {
     fn recording_and_resumed_tell_the_client_its_quiet_limit() {
         let quiet_limit = std::time::Duration::from_millis(4_500);
         let recording = wire::RelayEvent::from(RelayStage::Recording { quiet_limit });
-        let resumed = wire::RelayEvent::from(RelayStage::Resumed {
+        let resumed = wire::RelayEvent::from(RelayStage::Continued {
             taken: 320,
             quiet_limit,
         });
 
         assert_eq!(recording.stage(), wire::RelayStage::Recording);
         assert_eq!(recording.quiet_limit_ms, 4_500);
-        assert_eq!(resumed.stage(), wire::RelayStage::Resumed);
+        assert_eq!(resumed.stage(), wire::RelayStage::Continued);
         assert_eq!(resumed.taken_bytes, 320);
         assert_eq!(resumed.quiet_limit_ms, 4_500);
     }

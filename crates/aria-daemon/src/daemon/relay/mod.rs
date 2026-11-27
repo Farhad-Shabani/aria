@@ -49,9 +49,9 @@ const MAX_AUDIO_BYTES: usize = canonical_samples(MAX_RECORDING) as usize * 2;
 /// while auto-stop is off.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How long a recording may go without speech, or without audio arriving,
-/// before the press ends it: the auto-stop time, so every device keeps one
-/// rule.
+/// How long a recording may go without audio arriving before the press ends
+/// it: the auto-stop time, which ends it after as long without speech, so
+/// every device keeps one rule.
 pub(super) fn quiet_limit(auto_stop: Option<AutoStop>) -> Duration {
     auto_stop.map_or(IDLE_TIMEOUT, AutoStop::get)
 }
@@ -89,7 +89,7 @@ pub(super) enum Opened {
     /// client named it.
     Started(Opening, Option<RecordingId>),
     /// It continues the recording of this name, whose stream failed.
-    Resumed(RecordingId),
+    Continued(RecordingId),
 }
 
 /// The name a client gives its recording.
@@ -112,15 +112,16 @@ impl RecordingId {
 pub(super) enum ReplyChannel {
     /// It ended with a `RelayStop`, so a `RelaySubmit` can follow.
     Open,
-    /// It half-closed, so it sends nothing more.
+    /// It half-closed after its stop, or never stopped, so it sends nothing
+    /// more.
     Closed,
 }
 
 /// How a recording's audio stopped arriving.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PushEnd {
-    /// The client ended it with a `RelayStop` or a half-close.
-    ClientStopped(ReplyChannel),
+    /// The client ended it with a `RelayStop`.
+    ClientStopped,
     /// The press stopped reading, as the Mac stopped the recording.
     PressEnded,
 }
@@ -154,8 +155,8 @@ where
                     .transpose()?;
                 Ok(Opened::Started(Opening::accept(start)?, recording))
             }
-            Some(wire::relay_request::Body::Resume(resume)) => {
-                RecordingId::accept(resume.recording_id).map(Opened::Resumed)
+            Some(wire::relay_request::Body::Continuation(continuation)) => {
+                RecordingId::accept(continuation.recording_id).map(Opened::Continued)
             }
             _other => Err(RelayError::NotStarted),
         },
@@ -193,7 +194,8 @@ where
                 }
                 Some(wire::relay_request::Body::Stop(_stop)) => return Ok(None),
                 Some(
-                    wire::relay_request::Body::Start(_) | wire::relay_request::Body::Resume(_),
+                    wire::relay_request::Body::Start(_)
+                    | wire::relay_request::Body::Continuation(_),
                 ) => {
                     return Err(RelayError::RestartedMidStream);
                 }
@@ -238,10 +240,11 @@ where
                     }
                 }
                 Some(wire::relay_request::Body::Stop(_stop)) => {
-                    return Ok(PushEnd::ClientStopped(ReplyChannel::Open));
+                    return Ok(PushEnd::ClientStopped);
                 }
                 Some(
-                    wire::relay_request::Body::Start(_) | wire::relay_request::Body::Resume(_),
+                    wire::relay_request::Body::Start(_)
+                    | wire::relay_request::Body::Continuation(_),
                 ) => {
                     return Err(RelayError::RestartedMidStream);
                 }
@@ -254,7 +257,7 @@ where
                 None => {}
             },
             Some(Err(status)) => return Err(RelayError::ClientStream(status)),
-            None => return Ok(PushEnd::ClientStopped(ReplyChannel::Closed)),
+            None => return Err(RelayError::ClientStream(ended_before_stop())),
         }
     }
 }
@@ -308,7 +311,7 @@ where
             }
             Some(
                 wire::relay_request::Body::Start(_)
-                | wire::relay_request::Body::Resume(_)
+                | wire::relay_request::Body::Continuation(_)
                 | wire::relay_request::Body::Audio(_)
                 | wire::relay_request::Body::Stop(_),
             ) => return Err(RelayError::RecordingEnded),
@@ -345,7 +348,7 @@ where
             }
             Some(
                 wire::relay_request::Body::Start(_)
-                | wire::relay_request::Body::Resume(_)
+                | wire::relay_request::Body::Continuation(_)
                 | wire::relay_request::Body::Audio(_)
                 | wire::relay_request::Body::Stop(_),
             ) => return Err(RelayError::RecordingEnded),
@@ -365,10 +368,10 @@ fn decode(opening: Opening, audio: &[u8]) -> Result<Vec<i16>, RelayError> {
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum RelayError {
-    #[error("a relay stream must open with RelayStart or RelayResume")]
+    #[error("a relay stream must open with RelayStart or RelayContinuation")]
     NotStarted,
 
-    #[error("a second RelayStart or RelayResume arrived mid-stream")]
+    #[error("a second RelayStart or RelayContinuation arrived mid-stream")]
     RestartedMidStream,
 
     #[error("a recording_id must be 1 to {} bytes", RecordingId::MAX_BYTES)]
@@ -411,6 +414,12 @@ impl RelayError {
     pub(super) fn is_lost_stream(&self) -> bool {
         matches!(self, Self::ClientStream(status) if is_lost(status))
     }
+}
+
+/// A stream that ended without its `RelayStop`, as a dropped connection or a
+/// cancelled RPC ends it.
+pub(super) fn ended_before_stop() -> Status {
+    Status::unavailable("the relay client's stream ended before its stop")
 }
 
 /// Whether a stream failed as a lost connection fails it: its keepalive
@@ -559,7 +568,7 @@ mod tests {
     {
         match open(stream).await.expect("a valid opening") {
             Opened::Started(opening, recording) => (opening, recording),
-            Opened::Resumed(recording) => panic!("{recording:?} starts no recording"),
+            Opened::Continued(recording) => panic!("{recording:?} starts no recording"),
         }
     }
 
@@ -580,7 +589,7 @@ mod tests {
         let (feed, press) = std::sync::mpsc::sync_channel(8);
         let ended = forward(&mut stream, opening, feed, 2).await.unwrap();
 
-        assert_eq!(ended, PushEnd::ClientStopped(ReplyChannel::Open));
+        assert_eq!(ended, PushEnd::ClientStopped);
         assert_eq!(press.try_iter().collect::<Vec<_>>(), [vec![2, 3]]);
     }
 
@@ -597,15 +606,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_half_closed_recording_takes_no_return() {
+    async fn a_stream_that_ends_before_its_stop_was_lost() {
         let opening = pcm_opening().await;
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
 
-        let ended = forward(&mut requests(vec![chunk(&[2, 0])]), opening, feed, 0)
-            .await
-            .unwrap();
+        let ended = forward(&mut requests(vec![chunk(&[2, 0])]), opening, feed, 0).await;
 
-        assert_eq!(ended, PushEnd::ClientStopped(ReplyChannel::Closed));
+        assert!(ended.is_err_and(|error| error.is_lost_stream()));
     }
 
     #[tokio::test]
@@ -704,9 +711,11 @@ mod tests {
 
     fn resume(recording_id: &[u8]) -> wire::RelayRequest {
         wire::RelayRequest {
-            body: Some(wire::relay_request::Body::Resume(wire::RelayResume {
-                recording_id: recording_id.to_vec(),
-            })),
+            body: Some(wire::relay_request::Body::Continuation(
+                wire::RelayContinuation {
+                    recording_id: recording_id.to_vec(),
+                },
+            )),
         }
     }
 
@@ -722,7 +731,7 @@ mod tests {
         assert_eq!(unnamed, None);
         assert_eq!(
             resumed,
-            Opened::Resumed(recording.expect("the recording named itself"))
+            Opened::Continued(recording.expect("the recording named itself"))
         );
     }
 
@@ -925,7 +934,7 @@ mod tests {
 
         let ended = forward(&mut stream, opening, feed, 0).await.unwrap();
 
-        assert_eq!(ended, PushEnd::ClientStopped(ReplyChannel::Open));
+        assert_eq!(ended, PushEnd::ClientStopped);
         assert_eq!(reading.await.unwrap(), [vec![1], vec![2], vec![3]]);
     }
 
@@ -953,7 +962,7 @@ mod tests {
             .await
             .expect("the unknown is skipped");
 
-        assert_eq!(ended, PushEnd::ClientStopped(ReplyChannel::Open));
+        assert_eq!(ended, PushEnd::ClientStopped);
         assert_eq!(press.try_iter().collect::<Vec<_>>(), [vec![1]]);
     }
 

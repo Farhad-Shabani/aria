@@ -4,14 +4,14 @@
 use aria_voice::dictation::Delivered;
 
 pub(crate) enum RelayStage {
-    /// The Mac took the recording's first audio. Without speech, or without
-    /// audio arriving, for `quiet_limit`, it ends the recording.
+    /// The Mac took the recording's first audio. Without audio arriving for
+    /// `quiet_limit`, it ends the recording.
     Recording {
         quiet_limit: std::time::Duration,
     },
     /// The stream continues its recording. The Mac took `taken` bytes of
     /// its audio on earlier streams, and still ends it at `quiet_limit`.
-    Resumed {
+    Continued {
         taken: u64,
         quiet_limit: std::time::Duration,
     },
