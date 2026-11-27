@@ -23,6 +23,7 @@ struct HairlinePlan: Equatable, Sendable {
     private static let ringGaps = 9.0
     /// In device pixels. A one-pixel line that moves between pixels blurs to gray.
     private static let minPixels = 2.0
+    private static let minRings = 2
     /// Where more would fit, the band stops here, so a large mark stays light.
     private static let maxWaves = 16
 
@@ -40,21 +41,45 @@ struct HairlinePlan: Equatable, Sendable {
         let weight: Double
         /// In device pixels.
         let minGap: Double
+        var ringFit = RingFit.overhang
 
-        /// For a mark you press: heavier than the website's, never closer than 2 px.
         static let button = Lines(weight: 1.4, minGap: 2)
         /// For a small mark, such as the app icon's or the pairing code's, which needs more light:
         /// twice the website's weight, 1 px apart.
         static let small = Lines(weight: 2, minGap: 1)
+        /// For a large mark: lines heavier than the button's, so fewer rings and waves read calmer.
+        /// Where both round to the same pixels, the two draw alike.
+        static let large = Lines(weight: 2.2, minGap: 2)
+    }
+
+    /// Which hairline rings fit across the logo's ring. Two always draw, even where they run past it.
+    enum RingFit: Equatable, Sendable {
+        /// Every ring that starts inside it, so the last may run past it.
+        case overhang
+        /// Only rings that end inside it, so they span no wider than the solid logo's ring.
+        case inside
     }
 
     init(width: Double, displayScale: Double, lines: Lines = .button) {
         let perUnit = width / MarkTuning.visible.width * displayScale
         let pixel = 1 / perUnit
-        let linePixels = max(
+        let ringPixels = MarkTuning.ring * perUnit
+        func fit(_ linePixels: Double) -> (step: Double, count: Int) {
+            let step = max((MarkTuning.ring / Self.ringGaps * perUnit).rounded(), linePixels + lines.minGap)
+            let span =
+                switch lines.ringFit {
+                case .overhang: ringPixels
+                case .inside: ringPixels - linePixels
+                }
+            return (step, Int((span / step).rounded(.down)) + 1)
+        }
+        var linePixels = max(
             (max(Self.minLine, width * displayScale / Self.pixelsPerLine) * lines.weight).rounded(), Self.minPixels)
-        let stepPixels = max((MarkTuning.ring / Self.ringGaps * perUnit).rounded(), linePixels + lines.minGap)
-        let count = Int((MarkTuning.ring * perUnit / stepPixels).rounded(.down)) + 1
+        // One ring reads as a plain outline, not the engraved mark, so a small mark thins its lines
+        // to fit two, and keeps two even where they run past the ring.
+        if fit(linePixels).count < Self.minRings { linePixels = Self.minLine }
+        let (stepPixels, fitted) = fit(linePixels)
+        let count = max(fitted, Self.minRings)
         let outerPixels = (MarkTuning.outer * perUnit).rounded()
         hairline = linePixels * pixel
         step = stepPixels * pixel
