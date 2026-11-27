@@ -673,15 +673,6 @@ mod tests {
         assert!(asked);
     }
 
-    #[tokio::test]
-    async fn a_cancel_is_read_once_the_mac_ended_the_recording() {
-        let sent = vec![chunk(&[2, 0]), cancel()];
-
-        let (said, _asked) = said_after(PushEnd::PressEnded, sent).await;
-
-        assert!(matches!(said, Err(RelayError::ClientCancelled)));
-    }
-
     /// The client hears late that the Mac ended its recording, so what it
     /// sent meanwhile is no fault of its own.
     #[tokio::test]

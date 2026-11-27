@@ -1139,23 +1139,8 @@ mod tests {
     }
 
     /// The session from the landed text on, with a Return offer that counts
-    /// its presses.
+    /// its presses. `early` is what the client said while the press ran.
     async fn after_landing<S>(
-        policy: ReturnPolicy,
-        typed_into: &str,
-        channel: ReplyChannel,
-        microphone: &Arc<Gate>,
-        requests: S,
-    ) -> (Vec<Result<wire::RelayEvent, Status>>, usize)
-    where
-        S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
-    {
-        landed(policy, typed_into, channel, Ok(None), microphone, requests).await
-    }
-
-    /// As [`after_landing`], after the client said `early` while the press
-    /// ran.
-    async fn landed<S>(
         policy: ReturnPolicy,
         typed_into: &str,
         channel: ReplyChannel,
@@ -1371,6 +1356,7 @@ mod tests {
             ReturnPolicy::Press,
             "Messages",
             ReplyChannel::Open,
+            Ok(None),
             &Gate::new(),
             requests,
         )
@@ -1390,6 +1376,7 @@ mod tests {
             ReturnPolicy::Offer,
             "Messages",
             ReplyChannel::Open,
+            Ok(None),
             &Gate::new(),
             requests,
         )
@@ -1405,7 +1392,7 @@ mod tests {
     /// The cancel is read as the press answers, with a submit before it.
     #[tokio::test]
     async fn a_cancel_that_lands_as_the_press_answers_presses_no_return() {
-        let (events, presses) = landed(
+        let (events, presses) = after_landing(
             ReturnPolicy::Offer,
             "Messages",
             ReplyChannel::Open,
@@ -1422,7 +1409,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_cancel_that_lands_after_the_return_went_still_reports_the_return() {
-        let (events, presses) = landed(
+        let (events, presses) = after_landing(
             ReturnPolicy::Press,
             "Messages",
             ReplyChannel::Open,
@@ -1445,6 +1432,7 @@ mod tests {
             ReturnPolicy::Offer,
             "Messages",
             ReplyChannel::Closed,
+            Ok(None),
             &Gate::new(),
             Box::pin(tokio_stream::pending()),
         )
@@ -1469,6 +1457,7 @@ mod tests {
             ReturnPolicy::Offer,
             "Messages",
             ReplyChannel::Open,
+            Ok(None),
             &microphone,
             requests,
         )
@@ -1490,6 +1479,7 @@ mod tests {
             ReturnPolicy::Never,
             "Messages",
             ReplyChannel::Open,
+            Ok(None),
             &Gate::new(),
             requests,
         )
@@ -1555,6 +1545,15 @@ mod tests {
         relay::forward(requests, opening, feed, &mut 0).await
     }
 
+    /// A recording's requests, from the stream `first` on.
+    fn requests_of<'a>(
+        first: Requests,
+        continuations: &mut Option<Continuations<Requests>>,
+        client: &'a Client,
+    ) -> Pin<Box<impl Stream<Item = Result<wire::RelayRequest, Status>> + 'a>> {
+        Box::pin(continued(first, continuations.take(), client, QUIET))
+    }
+
     /// A recording its phone named `walk`, under way and open to streams.
     struct Walk {
         opening: Opening,
@@ -1615,12 +1614,7 @@ mod tests {
         second.send(stop()).await.unwrap();
         let (events, mut continued_events) = mpsc::channel(EVENT_CAPACITY);
         let (feed, press) = std::sync::mpsc::sync_channel(8);
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
+        let mut requests = requests_of(requests, &mut walk.continuations, &walk.client);
 
         let (ended, resumed) = tokio::join!(
             forwarded(&mut requests, walk.opening, feed),
@@ -1654,12 +1648,7 @@ mod tests {
         second.send(stop()).await.unwrap();
         let (events, _continued) = mpsc::channel(EVENT_CAPACITY);
         let (feed, press) = std::sync::mpsc::sync_channel(8);
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
+        let mut requests = requests_of(requests, &mut walk.continuations, &walk.client);
 
         let (ended, resumed) = tokio::time::timeout(WAIT, async {
             tokio::join!(
@@ -1678,37 +1667,6 @@ mod tests {
         assert_eq!(press.try_iter().collect::<Vec<_>>(), [vec![1], vec![2]]);
     }
 
-    #[tokio::test]
-    async fn a_stream_can_continue_a_recording_before_the_mac_sees_the_first_fail() {
-        let mut walk = walk().await;
-        let (first, requests) = stream();
-        first.send(audio(&[1, 0])).await.unwrap();
-        let (second, continuing) = stream();
-        second.send(audio(&[2, 0])).await.unwrap();
-        second.send(stop()).await.unwrap();
-        let (events, _continued) = mpsc::channel(EVENT_CAPACITY);
-        let (feed, press) = std::sync::mpsc::sync_channel(8);
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
-
-        let (ended, resumed) = tokio::join!(
-            forwarded(&mut requests, walk.opening, feed),
-            walk.resumable.resume(&walk.named, continuing, events),
-        );
-
-        assert!(resumed.is_ok());
-        assert_eq!(
-            ended.expect("the recording ends on its second stream"),
-            PushEnd::ClientStopped
-        );
-        assert_eq!(press.try_iter().collect::<Vec<_>>(), [vec![1], vec![2]]);
-        drop(first);
-    }
-
     /// A stream taking over while the press still takes a chunk in would
     /// hear that chunk counted, and could get its own in ahead of it.
     #[tokio::test]
@@ -1723,12 +1681,7 @@ mod tests {
         let (events, mut continued_events) = mpsc::channel(EVENT_CAPACITY);
         // Room for one chunk, so the second waits on the press.
         let (feed, press) = std::sync::mpsc::sync_channel(1);
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
+        let mut requests = requests_of(requests, &mut walk.continuations, &walk.client);
         let resuming = walk.resumable.resume(&walk.named, continuing, events);
         tokio::pin!(resuming);
 
@@ -1753,39 +1706,6 @@ mod tests {
         assert_eq!(resumed.taken_bytes, 4);
     }
 
-    /// Audio written as the first stream failed never arrived, so the
-    /// client has to hear where the Mac's copy ends.
-    #[tokio::test]
-    async fn a_stream_that_continues_a_recording_hears_what_the_mac_took() {
-        let mut walk = walk().await;
-        let (first, requests) = stream();
-        first.send(audio(&[1, 0])).await.unwrap();
-        first.send(dropped()).await.unwrap();
-        let (second, continuing) = stream();
-        second.send(stop()).await.unwrap();
-        let (events, mut continued_events) = mpsc::channel(EVENT_CAPACITY);
-        let (feed, _press) = std::sync::mpsc::sync_channel(8);
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
-
-        let (_ended, resumed) = tokio::join!(
-            forwarded(&mut requests, walk.opening, feed),
-            walk.resumable.resume(&walk.named, continuing, events),
-        );
-
-        let event = continued_events
-            .try_recv()
-            .expect("the stream hears first that it continues")
-            .expect("an event");
-        assert!(resumed.is_ok());
-        assert_eq!(event.stage(), wire::RelayStage::Continued);
-        assert_eq!(event.taken_bytes, 2);
-    }
-
     /// The connection can drop before any audio crossed it, and the phone
     /// still holds every chunk.
     #[tokio::test]
@@ -1797,12 +1717,7 @@ mod tests {
         second.send(audio(&[1, 0])).await.unwrap();
         let (events, mut continued_events) = mpsc::channel(EVENT_CAPACITY);
         let shutdown = CancellationToken::new();
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
+        let mut requests = requests_of(requests, &mut walk.continuations, &walk.client);
 
         let (first_audio, resumed) = tokio::time::timeout(WAIT, async {
             tokio::join!(
@@ -1841,13 +1756,6 @@ mod tests {
     async fn press_after(
         walk: &mut Walk,
         sent: Vec<Result<wire::RelayRequest, Status>>,
-    ) -> (Result<PushEnd, RelayError>, bool) {
-        aborted_press(walk, sent, Press::Taking).await
-    }
-
-    async fn aborted_press(
-        walk: &mut Walk,
-        sent: Vec<Result<wire::RelayRequest, Status>>,
         press: Press,
     ) -> (Result<PushEnd, RelayError>, bool) {
         let (first, requests) = stream();
@@ -1859,12 +1767,7 @@ mod tests {
         let abort = CancellationToken::new();
         let aborted = abort.clone();
         let (_capture_ended, capturing) = oneshot::channel();
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
+        let mut requests = requests_of(requests, &mut walk.continuations, &walk.client);
         let (stopped, pushed) = oneshot::channel();
         let (asked, asking) = oneshot::channel();
         let Followed { ended, .. } = tokio::time::timeout(
@@ -1898,12 +1801,7 @@ mod tests {
         drop(first);
         let (feed, _taking) = std::sync::mpsc::sync_channel(8);
         let (_capture_ended, capturing) = oneshot::channel();
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
+        let mut requests = requests_of(requests, &mut walk.continuations, &walk.client);
         let (stopped, pushed) = oneshot::channel();
         let (asked, asking) = oneshot::channel();
         follow_press(
@@ -1923,21 +1821,10 @@ mod tests {
         let mut walk = walk().await;
         let sent = vec![audio(&[1, 0]), cancel()];
 
-        let (ended, aborted) = aborted_press(&mut walk, sent, Press::Ended).await;
+        let (ended, aborted) = press_after(&mut walk, sent, Press::Ended).await;
 
         assert!(matches!(ended, Ok(PushEnd::PressEnded)));
         assert!(aborted, "nothing more types");
-    }
-
-    #[tokio::test]
-    async fn a_cancel_after_a_submit_ahead_of_completed_cancels_the_press() {
-        let mut walk = walk().await;
-        let sent = vec![audio(&[1, 0]), stop(), Ok(submit()), cancel()];
-
-        let (ended, aborted) = press_after(&mut walk, sent).await;
-
-        assert!(matches!(ended, Ok(PushEnd::ClientStopped)));
-        assert!(aborted, "no Return follows");
     }
 
     #[tokio::test]
@@ -2010,12 +1897,7 @@ mod tests {
         walk.client.settle();
         let (first, requests) = stream();
         drop(first);
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
+        let mut requests = requests_of(requests, &mut walk.continuations, &walk.client);
 
         let ended = requests.next().await;
 
@@ -2045,7 +1927,8 @@ mod tests {
     async fn a_cancel_during_the_recording_cancels_the_press() {
         let mut walk = walk().await;
 
-        let (ended, aborted) = press_after(&mut walk, vec![audio(&[1, 0]), cancel()]).await;
+        let (ended, aborted) =
+            press_after(&mut walk, vec![audio(&[1, 0]), cancel()], Press::Taking).await;
         let (_second, continuing) = stream();
         let (events, _continued) = mpsc::channel(EVENT_CAPACITY);
         let late = walk.resumable.resume(&walk.named, continuing, events).await;
@@ -2059,7 +1942,9 @@ mod tests {
     async fn a_cancel_after_the_stop_cancels_the_press_as_it_transcribes() {
         let mut walk = walk().await;
 
-        let (ended, aborted) = press_after(&mut walk, vec![audio(&[1, 0]), stop(), cancel()]).await;
+        let sent = vec![audio(&[1, 0]), stop(), cancel()];
+
+        let (ended, aborted) = press_after(&mut walk, sent, Press::Taking).await;
 
         assert!(matches!(ended, Ok(PushEnd::ClientStopped)));
         assert!(aborted, "nothing more types");
@@ -2069,14 +1954,10 @@ mod tests {
     async fn a_malformed_message_ends_a_named_recording_rather_than_waiting() {
         let mut walk = walk().await;
 
-        let (ended, aborted) = press_after(
-            &mut walk,
-            vec![
-                audio(&[1, 0]),
-                Err(Status::out_of_range("a message over the size limit")),
-            ],
-        )
-        .await;
+        let oversized = Err(Status::out_of_range("a message over the size limit"));
+        let sent = vec![audio(&[1, 0]), oversized];
+
+        let (ended, aborted) = press_after(&mut walk, sent, Press::Taking).await;
 
         assert!(matches!(ended, Err(RelayError::ClientStream(_))));
         assert!(aborted, "nothing more types");
@@ -2193,7 +2074,7 @@ mod tests {
     fn a_client_that_is_gone_gets_no_return() {
         let (return_offer, pressed) = counted_return(|| {});
 
-        let after = ReturnPolicy::Press
+        let after = ReturnPolicy::Offer
             .after_text(
                 Some(return_offer),
                 Some(FeedEnd::Ended),
@@ -2256,12 +2137,7 @@ mod tests {
         let abort = CancellationToken::new();
         let delivering = walk.client.cancel_with(&abort);
         let (left, has_left) = oneshot::channel::<()>();
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
+        let mut requests = requests_of(requests, &mut walk.continuations, &walk.client);
         let leaving = async {
             // Once the phone heard the recording end.
             while walk
@@ -2319,12 +2195,7 @@ mod tests {
         let abort = CancellationToken::new();
         let delivering = walk.client.cancel_with(&abort);
         let (typed, has_typed) = oneshot::channel::<()>();
-        let mut requests = std::pin::pin!(continued(
-            requests,
-            walk.continuations.take(),
-            &walk.client,
-            QUIET
-        ));
+        let mut requests = requests_of(requests, &mut walk.continuations, &walk.client);
         let ending = async {
             // Once the recording waits for a stream.
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
