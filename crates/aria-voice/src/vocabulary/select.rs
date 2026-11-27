@@ -22,7 +22,7 @@ pub struct Selection {
     pub terms: Vec<Term>,
     /// Folder names a named slash glues to, shallowest first, up to the cap.
     /// "crates forward slash aria" → `crates/aria`.
-    pub folders: Vec<String>,
+    pub folder_names: Vec<String>,
     /// Names that pass the keep rules, before the cap.
     pub found: usize,
 }
@@ -178,7 +178,7 @@ pub fn terms(sources: &[Source], cancel: &CancelToken) -> Result<Selection, Erro
         .collect();
     Ok(Selection {
         terms,
-        folders,
+        folder_names: folders,
         found,
     })
 }
@@ -309,7 +309,7 @@ mod tests {
         ];
         let selected = terms(&sources, &CancelToken::never()).unwrap();
         assert_eq!(
-            selected.folders,
+            selected.folder_names,
             ["crates", "docs", "tools", "aria-cli", "aria-kit", "src"]
         );
     }

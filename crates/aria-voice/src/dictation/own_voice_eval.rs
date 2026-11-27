@@ -127,7 +127,7 @@ impl TextDelivery for TimedDelivery {
         Err(DeliveryError::TargetUnavailable)
     }
 
-    fn deliver_space(
+    fn deliver_closing_space(
         &self,
         prepared: &Self::Prepared,
         space: &str,

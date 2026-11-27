@@ -68,7 +68,7 @@ impl TextDelivery for IosTextDelivery {
         Err(DeliveryError::InsertionUnsupported)
     }
 
-    fn deliver_space(
+    fn deliver_closing_space(
         &self,
         _prepared: &Self::Prepared,
         _space: &str,

@@ -222,7 +222,7 @@ impl TextDelivery for LinuxTextDelivery {
 
     // Linux never reads the caret, so no dictation here asks for a closing
     // space.
-    fn deliver_space(
+    fn deliver_closing_space(
         &self,
         _prepared: &Self::Prepared,
         _space: &str,

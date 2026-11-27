@@ -96,10 +96,10 @@ impl<L: Layer> Rewrites<L> {
     pub(crate) fn finish(
         &self,
         transcript: Transcript,
-        correction: Correction<'_>,
+        correction: CorrectionSettings<'_>,
         cancel: &CancelToken,
-    ) -> Result<Finished, TranscriptionError> {
-        let Correction {
+    ) -> Result<CorrectedTranscript, TranscriptionError> {
+        let CorrectionSettings {
             cleanup,
             vocabulary,
             writing,
@@ -118,7 +118,7 @@ impl<L: Layer> Rewrites<L> {
         // Cleanup can leave nothing, and then this fails as `NoSpeech`.
         let transcript = Transcript::new(text)?;
         if !self.reaches_model(cleanup) {
-            return Ok(Finished {
+            return Ok(CorrectedTranscript {
                 transcript,
                 attachment,
             });
@@ -134,7 +134,7 @@ impl<L: Layer> Rewrites<L> {
                 elapsed_ms = started.elapsed().as_millis(),
                 "dictation cleanup failed; delivering deterministic text"
             );
-            return Ok(Finished {
+            return Ok(CorrectedTranscript {
                 transcript,
                 attachment,
             });
@@ -155,7 +155,7 @@ impl<L: Layer> Rewrites<L> {
         if !text.trim_start().starts_with(&symbol) {
             attachment = Attachment::default();
         }
-        Ok(Finished {
+        Ok(CorrectedTranscript {
             transcript: Transcript::new(text)?,
             attachment,
         })
@@ -164,14 +164,14 @@ impl<L: Layer> Rewrites<L> {
 
 /// A corrected whole transcript and its attachment. After `open`, "dot env
 /// file" → `open .env file`.
-pub(crate) struct Finished {
+pub(crate) struct CorrectedTranscript {
     pub(crate) transcript: Transcript,
     pub(crate) attachment: Attachment,
 }
 
 /// What a press corrects its whole transcript with.
 #[derive(Clone, Copy)]
-pub(crate) struct Correction<'a> {
+pub(crate) struct CorrectionSettings<'a> {
     pub(crate) cleanup: Cleanup,
     pub(crate) vocabulary: Option<&'a Vocabulary>,
     pub(crate) writing: Writing,
@@ -200,7 +200,7 @@ mod tests {
         Rewrites::new()
             .finish(
                 Transcript::new(heard).unwrap(),
-                Correction {
+                CorrectionSettings {
                     cleanup: Cleanup::default(),
                     vocabulary,
                     writing: Writing::Commands,
@@ -239,7 +239,7 @@ mod tests {
             rewrites
                 .finish(
                     Transcript::new("um meet at 2 actually 3").unwrap(),
-                    Correction {
+                    CorrectionSettings {
                         cleanup: Cleanup {
                             enabled,
                             fillers,
@@ -292,7 +292,7 @@ mod tests {
                 }))
                 .finish(
                     Transcript::new("dot env file").unwrap(),
-                    Correction {
+                    CorrectionSettings {
                         cleanup: Cleanup {
                             enabled: true,
                             fillers: false,
@@ -327,7 +327,7 @@ mod tests {
                 rewrites
                     .finish(
                         Transcript::new(text).unwrap(),
-                        Correction {
+                        CorrectionSettings {
                             cleanup: BACKTRACK,
                             vocabulary: None,
                             writing: Writing::Commands
@@ -345,7 +345,7 @@ mod tests {
         assert!(matches!(
             rewrites.finish(
                 Transcript::new("meet at 2 actually 3").unwrap(),
-                Correction {
+                CorrectionSettings {
                     cleanup: BACKTRACK,
                     vocabulary: None,
                     writing: Writing::Commands
@@ -376,7 +376,7 @@ mod tests {
             let transcript = rewrites
                 .finish(
                     Transcript::new(&text).unwrap(),
-                    Correction {
+                    CorrectionSettings {
                         cleanup: BACKTRACK,
                         vocabulary: None,
                         writing: Writing::Commands,
@@ -397,7 +397,7 @@ mod tests {
             let transcript = Rewrites::new()
                 .finish(
                     Transcript::new("send the the um report").unwrap(),
-                    Correction {
+                    CorrectionSettings {
                         cleanup: Cleanup {
                             enabled,
                             fillers: true,
@@ -419,7 +419,7 @@ mod tests {
     fn a_whole_transcript_of_only_fillers_is_no_speech() {
         let result = Rewrites::new().finish(
             Transcript::new("um").unwrap(),
-            Correction {
+            CorrectionSettings {
                 cleanup: Cleanup {
                     enabled: true,
                     fillers: true,

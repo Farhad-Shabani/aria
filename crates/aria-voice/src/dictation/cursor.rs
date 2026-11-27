@@ -116,7 +116,7 @@ impl<D: TextDelivery> Cursor<D> {
 
     /// Types the closing space: "open src" streamed before `notes` →
     /// `open src notes`.
-    fn close_field(&mut self) -> Result<(), DeliveryError> {
+    fn type_closing_space(&mut self) -> Result<(), DeliveryError> {
         let Some(target) = self.target.as_mut() else {
             return Ok(());
         };
@@ -135,7 +135,7 @@ impl<D: TextDelivery> Cursor<D> {
             .confirm_front(&*self.delivery)
             .and_then(|()| {
                 self.delivery
-                    .deliver_space(&target.prepared, &space, || false)
+                    .deliver_closing_space(&target.prepared, &space, || false)
             })
             .inspect_err(|error| {
                 tracing::warn!(%error, "the space after the typed text was not typed");
@@ -378,7 +378,7 @@ where
                 self.leave_queue()?;
             }
         }
-        let closed = self.close_field();
+        let closed = self.type_closing_space();
         let Some(target) = self.target.as_mut() else {
             return Ok(());
         };
@@ -462,8 +462,8 @@ where
         // A press that heard no speech still owes the person their Return.
         // A failure keeps it: the text was cut short. Only a field bound as
         // the press started shows the Return lands where it was pressed.
-        // `close_field` logs its own failure, and nothing waits on it now.
-        let _ = self.close_field();
+        // `type_closing_space` logs its own failure, and nothing waits on it now.
+        let _ = self.type_closing_space();
         let Some(mut target) = self.target.take() else {
             return;
         };
@@ -567,7 +567,7 @@ mod tests {
             self.delivery.finish(prepared, should_cancel)
         }
 
-        fn deliver_space(
+        fn deliver_closing_space(
             &self,
             prepared: &Self::Prepared,
             space: &str,
@@ -1471,7 +1471,7 @@ mod tests {
                 Err(DeliveryError::TargetUnavailable)
             }
 
-            fn deliver_space(
+            fn deliver_closing_space(
                 &self,
                 prepared: &Self::Prepared,
                 space: &str,

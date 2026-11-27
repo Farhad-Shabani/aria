@@ -138,7 +138,7 @@ impl TextDelivery for FieldWithText {
         Err(DeliveryError::TargetUnavailable)
     }
 
-    fn deliver_space(
+    fn deliver_closing_space(
         &self,
         prepared: &Self::Prepared,
         space: &str,
@@ -147,7 +147,8 @@ impl TextDelivery for FieldWithText {
         if should_cancel() {
             return Err(DeliveryError::Cancelled);
         }
-        self.delivery.deliver_space(prepared, space, should_cancel)
+        self.delivery
+            .deliver_closing_space(prepared, space, should_cancel)
     }
 
     fn deliver(
@@ -230,7 +231,7 @@ impl TextDelivery for RecordingDelivery {
         Ok(())
     }
 
-    fn deliver_space(
+    fn deliver_closing_space(
         &self,
         _prepared: &Self::Prepared,
         space: &str,
@@ -303,7 +304,7 @@ impl TextDelivery for PlacedDelivery {
         Err(DeliveryError::TargetUnavailable)
     }
 
-    fn deliver_space(
+    fn deliver_closing_space(
         &self,
         prepared: &Self::Prepared,
         space: &str,

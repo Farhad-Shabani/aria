@@ -35,7 +35,7 @@ pub enum Error {
 /// `origin/main` and `team/fix/typo` → `fix`, `origin`, `team`, sorted.
 /// Empty when `root` isn't a readable repository.
 pub fn path_names(root: &Path, cancel: &CancelToken) -> Result<Vec<String>, Error> {
-    let Some(git) = git_dir(root) else {
+    let Some(git) = common_git_dir(root) else {
         return Ok(Vec::new());
     };
     let mut names = BTreeSet::new();
@@ -43,7 +43,7 @@ pub fn path_names(root: &Path, cancel: &CancelToken) -> Result<Vec<String>, Erro
         for kind in ["remotes", "heads"] {
             if let Some(folder) = open_child_dir(&refs, kind) {
                 let mut left = MAX_REFS;
-                walk(&folder, "", 0, &mut left, &mut names, cancel)?;
+                read_ref_folder(&folder, "", 0, &mut left, &mut names, cancel)?;
             }
         }
     }
@@ -53,7 +53,7 @@ pub fn path_names(root: &Path, cancel: &CancelToken) -> Result<Vec<String>, Erro
 
 /// The git folder holding `root`'s refs. A linked worktree's `.git` file
 /// and `commondir` lead there, followed as git follows them.
-fn git_dir(root: &Path) -> Option<File> {
+fn common_git_dir(root: &Path) -> Option<File> {
     let dot_git = root.join(".git");
     if let Some(folder) = open_dir(&dot_git, OFlags::NOFOLLOW) {
         return Some(folder);
@@ -112,7 +112,7 @@ fn read_bounded(file: File, limit: u64) -> Option<Vec<u8>> {
 
 /// Adds path names from the ref files under `folder`, reading at most
 /// `left` refs. The first in sorted order win, however the folder lists.
-fn walk(
+fn read_ref_folder(
     folder: &File,
     prefix: &str,
     depth: usize,
@@ -157,7 +157,7 @@ fn walk(
         match FileType::from_raw_mode(stat.st_mode) {
             FileType::Directory if depth < MAX_DEPTH => {
                 if let Some(child) = open_child_dir(folder, name) {
-                    walk(
+                    read_ref_folder(
                         &child,
                         &format!("{branch}/"),
                         depth + 1,
@@ -167,7 +167,7 @@ fn walk(
                     )?;
                 }
             }
-            FileType::RegularFile => add(&branch, names),
+            FileType::RegularFile => add_path_names(&branch, names),
             _ => {}
         }
     }
@@ -198,7 +198,7 @@ fn push_packed_names(
             .strip_prefix("refs/heads/")
             .or_else(|| name.strip_prefix("refs/remotes/"));
         if let Some(branch) = branch {
-            add(branch, names);
+            add_path_names(branch, names);
         }
     }
     Ok(())
@@ -206,7 +206,7 @@ fn push_packed_names(
 
 /// `team/fix/typo` adds `team` and `fix`. Skips a branch that isn't plain
 /// ASCII.
-fn add(branch: &str, names: &mut BTreeSet<String>) {
+fn add_path_names(branch: &str, names: &mut BTreeSet<String>) {
     if !branch.chars().all(|c| c.is_ascii_graphic()) {
         return;
     }

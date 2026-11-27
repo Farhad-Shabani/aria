@@ -1238,7 +1238,7 @@ impl<C: Collector> Worker<C> {
         let cached = self.catalog(catalog, token)?.load(&root, &key)?;
         if let Some(cached) = &cached {
             let selection = select::terms(&cached.sources, token)?;
-            let path_names = path_names(selection.folders, &root, token)?;
+            let path_names = path_names(selection.folder_names, &root, token)?;
             let matcher = self.compile(&selection.terms, &path_names, token)?;
             self.runtime.publish(
                 directory,
@@ -1269,7 +1269,7 @@ impl<C: Collector> Worker<C> {
         }
         drop(previous);
         let selection = select::terms(&discovery.sources, token)?;
-        let path_names = path_names(selection.folders, &root, token)?;
+        let path_names = path_names(selection.folder_names, &root, token)?;
         let matcher = self.compile(&selection.terms, &path_names, token)?;
         self.runtime.interrupted(cancel)?;
         // How far a scan gets in time depends on the machine's load, so a

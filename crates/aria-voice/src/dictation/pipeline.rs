@@ -31,7 +31,7 @@ use aria_segmentation::pyannote::Pyannote;
 use aria_settings::StreamingSupport;
 use aria_speaker::wespeaker::WeSpeaker;
 
-use super::rewrites::{Correction, Finished};
+use super::rewrites::{CorrectedTranscript, CorrectionSettings};
 use super::{
     CaptionSnapshot, Delivered, DeliveredRecording, DeliveryMode, DictationError,
     DictationEventEmitter, DictationResult, DictationSettings, DictationStage, ExecutionControl,
@@ -243,7 +243,7 @@ where
             recording,
             language,
             own_voice_only,
-            Correction {
+            CorrectionSettings {
                 cleanup,
                 vocabulary,
                 writing: Writing::Commands,
@@ -263,9 +263,9 @@ where
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        correction: Correction<'_>,
+        correction: CorrectionSettings<'_>,
         cancel: &CancelToken,
-    ) -> Result<(Finished, Option<&'static str>), DictationError> {
+    ) -> Result<(CorrectedTranscript, Option<&'static str>), DictationError> {
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled);
         }
@@ -848,7 +848,7 @@ where
                 .rewrites
                 .finish(ended.transcript, settings.correction(vocabulary), &cancel)
                 .map_err(started)?,
-            DeliveryMode::Streaming => Finished {
+            DeliveryMode::Streaming => CorrectedTranscript {
                 transcript: ended.transcript,
                 attachment: Attachment::default(),
             },
@@ -1126,7 +1126,7 @@ impl<'a> Published<'a> {
 
     fn finish<S>(
         self,
-        finished: Finished,
+        finished: CorrectedTranscript,
         own_voice: bool,
         sinks: &mut S,
     ) -> Result<Dictated, DictationError>
@@ -1350,7 +1350,7 @@ impl Delivery<'_> {
     fn finish<S>(
         mut self,
         typed: String,
-        finished: Finished,
+        finished: CorrectedTranscript,
         own_voice: bool,
         sinks: &mut S,
     ) -> Result<Dictated, DictationError>
@@ -1394,7 +1394,7 @@ impl Delivery<'_> {
             "dictation streaming delivery completed"
         );
         Ok(Dictated {
-            finished: Finished {
+            finished: CorrectedTranscript {
                 transcript,
                 attachment: Attachment::default(),
             },
@@ -1471,7 +1471,7 @@ fn log_transcription_error(
 /// Complete delivery: the whole transcript reaches the sinks at once, history
 /// first, so a cursor that then refuses it cannot lose the utterance.
 fn deliver_transcript<S>(
-    finished: &Finished,
+    finished: &CorrectedTranscript,
     completion: &mut Completion,
     recording: &RecordingReader,
     control: &ExecutionControl,
@@ -1578,7 +1578,7 @@ fn kept_recording(kept: &[f32]) -> Result<RecordingReader, DictationError> {
 
 /// A press's text once hearing has ended.
 struct Dictated {
-    finished: Finished,
+    finished: CorrectedTranscript,
     /// Whether the sinks still owe the completed transcript.
     completion: Completion,
     /// Every word typed was the owner's, judged on the whole recording.
@@ -3289,8 +3289,8 @@ mod tests {
         published.publish(heard, typed, None, sinks)
     }
 
-    fn finished(transcript: Transcript) -> super::Finished {
-        super::Finished {
+    fn finished(transcript: Transcript) -> super::CorrectedTranscript {
+        super::CorrectedTranscript {
             transcript,
             attachment: Attachment::default(),
         }
@@ -4905,7 +4905,7 @@ mod tests {
             Err(DeliveryError::TargetUnavailable)
         }
 
-        fn deliver_space(
+        fn deliver_closing_space(
             &self,
             prepared: &Self::Prepared,
             space: &str,
@@ -5015,7 +5015,7 @@ mod tests {
             Err(DeliveryError::TargetUnavailable)
         }
 
-        fn deliver_space(
+        fn deliver_closing_space(
             &self,
             prepared: &Self::Prepared,
             space: &str,
@@ -5169,7 +5169,7 @@ mod tests {
             Err(DeliveryError::TargetUnavailable)
         }
 
-        fn deliver_space(
+        fn deliver_closing_space(
             &self,
             prepared: &Self::Prepared,
             space: &str,

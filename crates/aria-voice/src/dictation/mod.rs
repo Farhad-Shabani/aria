@@ -172,8 +172,8 @@ impl DictationSettings {
     pub(crate) fn correction<'a>(
         &self,
         vocabulary: Option<&'a crate::vocabulary::Vocabulary>,
-    ) -> rewrites::Correction<'a> {
-        rewrites::Correction {
+    ) -> rewrites::CorrectionSettings<'a> {
+        rewrites::CorrectionSettings {
             cleanup: self.cleanup,
             vocabulary,
             writing: self.writing(),

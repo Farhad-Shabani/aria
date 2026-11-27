@@ -141,7 +141,7 @@ pub trait TextDelivery: Send + Sync + 'static {
     /// `open src notes`. Refuses unless the caret sits right after the typed
     /// text with nothing selected. A field that can't set its selection, as
     /// a terminal's, takes it where a segment would type.
-    fn deliver_space(
+    fn deliver_closing_space(
         &self,
         prepared: &Self::Prepared,
         space: &str,

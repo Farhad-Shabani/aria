@@ -337,7 +337,7 @@ impl TextDelivery for MacOsTextDelivery {
         })
     }
 
-    fn deliver_space(
+    fn deliver_closing_space(
         &self,
         prepared: &Self::Prepared,
         space: &str,
@@ -363,9 +363,9 @@ impl TextDelivery for MacOsTextDelivery {
                 ..
             } => {
                 let mut anchoring = anchoring.borrow_mut();
-                anchoring.before_space()?;
+                anchoring.before_closing_space()?;
                 insert(destination, space, self.timeout, &should_cancel, observe)?;
-                anchoring.after_space(space);
+                anchoring.after_closing_space(space);
                 Ok(())
             }
             MacOsDeliveryTarget::ApplicationOrClipboard(_) | MacOsDeliveryTarget::Clipboard => {
