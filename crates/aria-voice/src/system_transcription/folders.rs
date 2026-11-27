@@ -72,10 +72,9 @@ pub enum StartError {
 pub enum OutputError {
     #[error("an output path can't contain . or ..")]
     Dotted,
-    /// Delete or Discard would remove it.
-    #[error(
-        "an output file can't go in ~/.aria/transcripts or ~/.aria/unsaved; choose another folder"
-    )]
+    /// Delete or Discard would remove it, or it would replace Aria's own
+    /// data.
+    #[error("an output file can't go in ~/.aria; choose another folder")]
     InAriaFolder,
     /// Deleting its entry, or a removal still pending, would remove it too.
     #[error("that file is a transcript history saved; choose another")]
@@ -208,8 +207,8 @@ impl TranscriptFolders {
         Ok(())
     }
 
-    /// Refuses `destination` in either folder, however a link or letter
-    /// case spells it. Also refuses a file history owns. With `owned` `None`
+    /// Refuses `destination` in `~/.aria` or either folder, which may link
+    /// elsewhere, however a link or letter case spells it. Also refuses a file history owns. With `owned` `None`
     /// nothing says which files history owns, so it accepts only a new file.
     pub(crate) fn check_destination(
         &self,
@@ -222,11 +221,11 @@ impl TranscriptFolders {
         {
             return Err(OutputError::Dotted);
         }
-        let inside = is_within(destination, &self.transcripts)
-            .and_then(|inside| Ok(inside || is_within(destination, &self.unsaved)?))
-            .map_err(OutputError::Io)?;
-        if inside {
-            return Err(OutputError::InAriaFolder);
+        let aria = self.transcripts.parent().unwrap_or(&self.transcripts);
+        for folder in [aria, &self.transcripts, &self.unsaved] {
+            if is_within(destination, folder).map_err(OutputError::Io)? {
+                return Err(OutputError::InAriaFolder);
+            }
         }
         let saved = match owned {
             Some(owned) => owned.contains(destination),
@@ -382,6 +381,8 @@ mod tests {
             home.join(".aria/unsaved/new/meeting.txt"),
             alias.join("meeting.txt"),
             home.join("new/../.aria/unsaved/meeting.txt"),
+            home.join(".aria/settings.toml"),
+            home.join(".aria/meeting.txt"),
         ] {
             let refused =
                 TranscriptFolders::at(home).start(Some(inside.clone()), None, SaveHistory::On);
