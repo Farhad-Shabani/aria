@@ -96,7 +96,8 @@ pub(crate) struct Decoding<'scope, T> {
 /// Hears the whole of the recording `feed` reads on the turn thread while
 /// capture runs, with no decoder, for a press decoded only once it ends.
 /// Only the owner's words pass, so it returns the timeline to judge them by.
-/// `heard` sees each timeline as the walk publishes it.
+/// `heard` sees the walk's latest timeline each time it publishes, through
+/// its last.
 pub(crate) fn hear_to_end<V, K>(
     feed: TurnFeed<V, K>,
     cancel: &CancelToken,
@@ -113,14 +114,14 @@ where
         // The walk ends with capture. A tracker that fails once someone
         // spoke ends the press early; before that, it may still be NoSpeech.
         loop {
-            let snapshot = board.next_snapshot();
+            let (snapshot, ended) = board.next_snapshot();
             if let Some(timeline) = &snapshot.timeline {
                 heard(timeline);
             }
             if snapshot.tracking_failed() && held_speech(&snapshot.speech) {
                 return Err(HearingError::Tracking(TrackingError::Failed));
             }
-            if board.walk_ending().is_some() {
+            if ended.is_some() {
                 break;
             }
         }

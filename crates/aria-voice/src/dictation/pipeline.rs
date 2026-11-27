@@ -5846,6 +5846,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_voice_the_walk_ends_on_is_announced() {
+        // A slow subscriber holds the press on the first voice it hears
+        // while the walk closes the turn and ends.
+        let (_directory, capture) = replay(|directory| fixture_of(directory, 4_000));
+        let log = CallLog::default();
+        let pipeline = filtered_pipeline(
+            capture,
+            diarizer(VoiceByLevel),
+            Transcription::agreement(Cadence::from_millis(100, 20_000), Answering("yeah")),
+            (log.history(), log.cursor()),
+        );
+        let (send, receive) = std::sync::mpsc::channel();
+        let events = DictationEventEmitter::forwarded_by(move |event| {
+            if let super::super::DictationEvent::Stage(DictationStage::SpeakerChanged(voice)) =
+                event
+            {
+                if voice == HeardSpeaker::Undecided {
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                send.send(voice).unwrap();
+            }
+        });
+        pipeline
+            .run_observed(
+                own_voice_only(settings(DeliveryMode::Complete, OutputMode::Insert)),
+                &events,
+            )
+            .unwrap();
+        let voices: Vec<_> = receive.try_iter().collect();
+        assert_eq!(
+            voices.last(),
+            Some(&HeardSpeaker::Typed(None)),
+            "{voices:?}"
+        );
+    }
+
     /// Runs one press and returns its result and the sink log.
     fn press<C: AudioCapture, T: Recognizer, M: Mode, V: VoiceActivityDetector + Send>(
         capture: C,
