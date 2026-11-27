@@ -375,6 +375,7 @@ pub(in crate::daemon) fn redacted(status: Status) -> Status {
         | RpcErrorCode::SystemTranscriptionUnsupportedOs
         | RpcErrorCode::SystemTranscriptionPermissionDenied
         | RpcErrorCode::SystemTranscriptionCaptureFailed
+        | RpcErrorCode::UnsavedTranscriptMissing
         | RpcErrorCode::HistoryMissing
         | RpcErrorCode::HistoryAudioUnavailable
         | RpcErrorCode::HistoryUnavailable

@@ -96,6 +96,7 @@ fn message(code: RpcErrorCode) -> &'static str {
         | RpcErrorCode::SystemTranscriptionUnsupportedOs
         | RpcErrorCode::SystemTranscriptionPermissionDenied
         | RpcErrorCode::SystemTranscriptionCaptureFailed
+        | RpcErrorCode::UnsavedTranscriptMissing
         | RpcErrorCode::HistoryMissing
         | RpcErrorCode::HistoryAudioUnavailable
         | RpcErrorCode::HistoryUnavailable

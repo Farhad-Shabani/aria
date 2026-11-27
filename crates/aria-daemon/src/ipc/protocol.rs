@@ -183,6 +183,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
             tonic::Code::AlreadyExists
         }
         RpcErrorCode::HistoryMissing
+        | RpcErrorCode::UnsavedTranscriptMissing
         | RpcErrorCode::PromptMissing
         | RpcErrorCode::SpeakerNotEnrolled
         | RpcErrorCode::VoiceUnavailable => tonic::Code::NotFound,
@@ -3704,6 +3705,7 @@ pub(crate) fn error_code_to_wire(code: RpcErrorCode) -> i32 {
         RpcErrorCode::SystemTranscriptionCaptureFailed => {
             wire::ErrorCode::SystemTranscriptionCaptureFailed
         }
+        RpcErrorCode::UnsavedTranscriptMissing => wire::ErrorCode::UnsavedTranscriptMissing,
         RpcErrorCode::HistoryMissing => wire::ErrorCode::HistoryMissing,
         RpcErrorCode::HistoryAudioUnavailable => wire::ErrorCode::HistoryAudioUnavailable,
         RpcErrorCode::HistoryUnavailable => wire::ErrorCode::HistoryUnavailable,
@@ -3767,6 +3769,7 @@ pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolEr
         Ok(wire::ErrorCode::SystemTranscriptionCaptureFailed) => {
             RpcErrorCode::SystemTranscriptionCaptureFailed
         }
+        Ok(wire::ErrorCode::UnsavedTranscriptMissing) => RpcErrorCode::UnsavedTranscriptMissing,
         Ok(wire::ErrorCode::HistoryMissing) => RpcErrorCode::HistoryMissing,
         Ok(wire::ErrorCode::HistoryAudioUnavailable) => RpcErrorCode::HistoryAudioUnavailable,
         Ok(wire::ErrorCode::HistoryUnavailable) => RpcErrorCode::HistoryUnavailable,
@@ -6429,6 +6432,10 @@ mod history_tests {
                 tonic::Code::FailedPrecondition,
             ),
             (RpcErrorCode::HistoryFull, tonic::Code::ResourceExhausted),
+            (
+                RpcErrorCode::UnsavedTranscriptMissing,
+                tonic::Code::NotFound,
+            ),
         ] {
             assert_eq!(
                 error_code_from_wire(error_code_to_wire(code)).expect("known code"),

@@ -218,7 +218,7 @@ final class UnsavedTranscripts: ObservableObject {
 
     /// The transcript is gone since the daemon listed it, so the list is out of date.
     private static func isGone(_ error: Error) -> Bool {
-        if case .refused(.historyMissing) = error as? DaemonFailure { return true }
+        if case .refused(.unsavedTranscriptMissing) = error as? DaemonFailure { return true }
         return false
     }
 

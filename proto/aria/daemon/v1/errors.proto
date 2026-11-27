@@ -90,6 +90,8 @@ enum ErrorCode {
   // System Audio Recording permission is missing or was denied.
   ERROR_CODE_SYSTEM_TRANSCRIPTION_PERMISSION_DENIED = 801;
   ERROR_CODE_SYSTEM_TRANSCRIPTION_CAPTURE_FAILED = 802;
+  // An unsaved transcript is gone.
+  ERROR_CODE_UNSAVED_TRANSCRIPT_MISSING = 803;
   ERROR_CODE_HISTORY_MISSING = 900;
   ERROR_CODE_HISTORY_AUDIO_UNAVAILABLE = 901;
   ERROR_CODE_HISTORY_UNAVAILABLE = 902;
@@ -98,7 +100,7 @@ enum ErrorCode {
   ERROR_CODE_HISTORY_ENTRY_EMPTY = 904;
   // A transcript is unreadable, or too long to read in full.
   ERROR_CODE_HISTORY_TRANSCRIPT_UNREADABLE = 905;
-  // Mac Audio holds its most entries. Aria evicts none, so the person must
-  // delete some before saving another.
+  // Mac Audio holds its most entries. Aria evicts none. A new session runs
+  // unsaved instead.
   ERROR_CODE_HISTORY_FULL = 906;
 }

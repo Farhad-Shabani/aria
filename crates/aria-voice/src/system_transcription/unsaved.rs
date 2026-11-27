@@ -265,7 +265,7 @@ impl From<&UnsavedError> for RpcErrorCode {
     fn from(error: &UnsavedError) -> Self {
         match error {
             UnsavedError::InvalidName | UnsavedError::Owned => Self::InvalidRequest,
-            UnsavedError::Missing => Self::HistoryMissing,
+            UnsavedError::Missing => Self::UnsavedTranscriptMissing,
             UnsavedError::Foreign => Self::PermissionDenied,
             UnsavedError::NotText => Self::HistoryTranscriptUnreadable,
             UnsavedError::Busy => Self::Busy,
@@ -419,7 +419,14 @@ mod tests {
         folder.discard(&stale, None).unwrap();
 
         assert_ne!(second.path(), first.path());
-        assert!(matches!(read, Err(UnsavedError::Missing)));
+        let Err(missing) = read else {
+            panic!("the stale name still reads")
+        };
+        assert!(matches!(missing, UnsavedError::Missing));
+        assert_eq!(
+            RpcErrorCode::from(&missing),
+            RpcErrorCode::UnsavedTranscriptMissing
+        );
         assert_eq!(
             fs::read_to_string(second.path()).unwrap(),
             "[00:00:01] second"
