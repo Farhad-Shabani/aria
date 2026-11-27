@@ -474,8 +474,7 @@ where
 {
     let streams = Streams {
         current: stream,
-        awaits_stop: continuations.is_some(),
-        continuations,
+        ending: continuations.map_or(Ending::Final, Ending::Continuable),
         client,
         taken: 0,
         quiet_limit,
@@ -491,17 +490,24 @@ where
 /// The streams of one recording, one at a time.
 struct Streams<'a, S> {
     current: S,
-    /// The streams asking to take over, until the recording settles or its
-    /// client stops it.
-    continuations: Option<Continuations<S>>,
-    /// A named recording ends with a stop, so its stream ending before one
-    /// has failed.
-    awaits_stop: bool,
+    ending: Ending<S>,
     client: &'a Client,
     /// The audio bytes handed on, from every stream.
     taken: u64,
     /// Told again to each stream that takes over.
     quiet_limit: Duration,
+}
+
+/// What the current stream ending before a stop means.
+enum Ending<S> {
+    /// The stream was lost, and another can take over, asking through here.
+    Continuable(Continuations<S>),
+    /// The stream was lost, and none takes over: the recording settled, and
+    /// its client named it, so only a stop ends it.
+    Unstopped,
+    /// The client sends nothing more: it stopped the recording, or never
+    /// named it.
+    Final,
 }
 
 impl<S> Streams<'_, S>
@@ -510,11 +516,15 @@ where
 {
     async fn next(&mut self) -> Option<Result<wire::RelayRequest, Status>> {
         loop {
-            let Some(continuations) = self.continuations.as_mut() else {
+            let Ending::Continuable(continuations) = &mut self.ending else {
                 return match self.current.next().await {
-                    None if self.awaits_stop => Some(Err(relay::ended_before_stop())),
+                    None if matches!(self.ending, Ending::Unstopped) => {
+                        Some(Err(relay::ended_before_stop()))
+                    }
                     request => {
-                        self.awaits_stop &= !is_stop(request.as_ref());
+                        if is_stop(request.as_ref()) {
+                            self.ending = Ending::Final;
+                        }
                         request
                     }
                 };
@@ -544,8 +554,7 @@ where
                             // Its client ended the recording, so no stream
                             // takes over, and a half-close now is no failure.
                             if is_stop(request.as_ref()) {
-                                self.awaits_stop = false;
-                                self.continuations = None;
+                                self.ending = Ending::Final;
                             }
                             return request;
                         }
@@ -560,7 +569,7 @@ where
                     tokio::select! {
                         biased;
                         () = settled.cancelled() => {
-                            self.continuations = None;
+                            self.ending = Ending::Unstopped;
                             return Some(Err(status));
                         }
                         continuation = continuations.next() => Some(continuation),
@@ -574,13 +583,13 @@ where
                 taken: answer,
             }) = continuation
             else {
-                self.continuations = None;
+                self.ending = Ending::Unstopped;
                 continue;
             };
             // A stream that asked as the recording settled is refused: its
             // answer drops with it.
             if !self.client.listen_on(events) {
-                self.continuations = None;
+                self.ending = Ending::Unstopped;
                 continue;
             }
             self.current = requests;
@@ -687,9 +696,7 @@ where
     tokio::pin!(pushing);
     let mut is_listening = true;
     let mut ended = None;
-    let mut is_closed = false;
-    let mut refused = None;
-    let mut is_reading = true;
+    let mut said = None;
     loop {
         tokio::select! {
             // A capture ends before its press can, so polling it first tells
@@ -706,17 +713,16 @@ where
             end = &mut pushed, if ended.is_none() => {
                 ended = Some(pushing_ended(client, abort, end));
             }
-            said = &mut pushing, if is_reading => {
-                is_reading = false;
-                match said {
-                    Ok(()) => is_closed = true,
+            closed = &mut pushing, if said.is_none() => {
+                match &closed {
+                    Ok(()) => {}
                     Err(error) if error.is_lost_stream() => client.lose(abort),
                     Err(error) => {
                         tracing::info!(method = METHOD, %error, "the relay client ended its recording as the Mac transcribed it");
                         abort.cancel();
-                        refused = Some(error);
                     }
                 }
+                said = Some(closed);
             }
             joined = &mut job => {
                 client.settle();
@@ -728,10 +734,12 @@ where
                 if ended.is_none() && let Ok(end) = pushed.try_recv() {
                     ended = Some(pushing_ended(client, abort, Ok(end)));
                 }
-                let early = match refused {
-                    Some(error) => Err(error),
-                    None if asking.try_recv().is_ok() => Ok(Some(AfterStop::Submit)),
-                    None => Ok(is_closed.then_some(AfterStop::Closed)),
+                let early = match said {
+                    Some(Err(error)) if !error.is_lost_stream() => Err(error),
+                    _ if asking.try_recv().is_ok() => Ok(Some(AfterStop::Submit)),
+                    Some(Ok(())) => Ok(Some(AfterStop::Closed)),
+                    // Lost, or still reading.
+                    Some(Err(_)) | None => Ok(None),
                 };
                 // Still pushing: the client is recording, or gone.
                 break Followed {
