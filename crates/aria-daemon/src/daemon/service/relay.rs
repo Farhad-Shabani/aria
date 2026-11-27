@@ -2,15 +2,16 @@
 //! [`crate::daemon::relay`] validates the stream and forwards its audio to
 //! the press.
 
+use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use aria_kit::audio::PushedFeed;
 use aria_kit::cancel::CancelToken;
 use tokio::sync::{mpsc, oneshot};
-use tokio_stream::{Stream, wrappers::ReceiverStream};
+use tokio_stream::{Stream, StreamExt, wrappers::ReceiverStream};
 use tokio_util::sync::CancellationToken;
-use tonic::{Request, Response, Status, Streaming};
+use tonic::{Code, Request, Response, Status, Streaming};
 
 use crate::ipc::wire;
 use aria_platform::delivery::OutputMode;
@@ -20,7 +21,9 @@ use aria_voice::microphone::Gate;
 
 use super::super::capture::FEED_CHUNKS;
 use super::super::dictation::{DictationRuntime, DictationRuntimeError, RelaySettings};
-use super::super::relay::{self, Opening, PushEnd, RelayError, RelayStage, Reply, ReplyChannel};
+use super::super::relay::{
+    self, Opened, Opening, PushEnd, RecordingId, RelayError, RelayStage, Reply, ReplyChannel,
+};
 
 const METHOD: &str = "RelayService/Relay";
 
@@ -35,6 +38,7 @@ pub(in crate::daemon) struct RelayRpc {
     /// The daemon's stop, so a session in flight ends with it rather than
     /// holding the drain open until one of its own clocks runs out.
     shutdown: CancellationToken,
+    resumable: Arc<Resumable<Streaming<wire::RelayRequest>>>,
 }
 
 impl RelayRpc {
@@ -47,6 +51,7 @@ impl RelayRpc {
             dictation,
             microphone,
             shutdown,
+            resumable: Arc::default(),
         }
     }
 
@@ -72,6 +77,7 @@ impl RelayRpc {
 }
 
 type EventStream = Pin<Box<dyn Stream<Item = Result<wire::RelayEvent, Status>> + Send>>;
+type Events = mpsc::Sender<Result<wire::RelayEvent, Status>>;
 
 #[tonic::async_trait]
 impl wire::relay_service_server::RelayService for RelayRpc {
@@ -81,29 +87,49 @@ impl wire::relay_service_server::RelayService for RelayRpc {
         &self,
         request: Request<Streaming<wire::RelayRequest>>,
     ) -> Result<Response<Self::RelayStream>, Status> {
+        let phone = relay::presented(&request);
         let mut requests = request.into_inner();
 
         // Before the stream opens, so a client that opened badly learns it
         // from the call rather than from an event it has to interpret.
-        let opening = relay::open(&mut requests)
+        let opened = relay::open(&mut requests)
             .await
             .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
-        let (settings, return_policy) = self.session_settings()?;
         let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
-        let session = Session {
-            client: Client {
-                events,
-                shutdown: self.shutdown.clone(),
-            },
-            microphone: Arc::clone(&self.microphone),
-            dictation: Arc::clone(&self.dictation),
-            opening,
-            return_policy,
-            settings,
-        };
-        // The session's press claims the recorder once the first audio
-        // arrives.
-        tokio::spawn(session.run(requests));
+        match opened {
+            Opened::Resumed(recording) => {
+                self.resumable
+                    .resume(&(phone, recording), requests, events)
+                    .await
+                    .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
+            }
+            Opened::Started(opening, recording) => {
+                let (settings, return_policy) = self.session_settings()?;
+                let (client, continuations) = match recording {
+                    Some(recording) => {
+                        let client = Client::continuable(events, self.shutdown.clone());
+                        let continuations = self
+                            .resumable
+                            .open((phone, recording), client.settled.clone())
+                            .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
+                        (client, Some(continuations))
+                    }
+                    None => (Client::new(events, self.shutdown.clone()), None),
+                };
+                let session = Session {
+                    client,
+                    microphone: Arc::clone(&self.microphone),
+                    dictation: Arc::clone(&self.dictation),
+                    opening,
+                    return_policy,
+                    settings,
+                    continuations,
+                };
+                // The session's press claims the recorder once the first
+                // audio arrives.
+                tokio::spawn(session.run(requests));
+            }
+        }
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
 }
@@ -111,8 +137,149 @@ impl wire::relay_service_server::RelayService for RelayRpc {
 /// What the session tells the relay client, and what ends the session
 /// early: the daemon stopping, or the client no longer reading.
 struct Client {
-    events: mpsc::Sender<Result<wire::RelayEvent, Status>>,
+    listener: Arc<Mutex<Listener>>,
+    /// Fires once no stream can take over the recording.
+    settled: CancellationToken,
     shutdown: CancellationToken,
+}
+
+/// Who reads the session's events.
+enum Listener {
+    /// A stream no other takes over from. Its client not reading ends the
+    /// session.
+    Last(Events),
+    /// The stream of a named recording the Mac still takes audio for, which
+    /// another can take over from. Its client not reading ends nothing: it
+    /// may come back.
+    Replaceable(Events),
+    /// A named recording's stream failed, and no other continues it yet.
+    Away,
+    /// The stream failed, and none continues the recording any more.
+    Gone,
+}
+
+/// The phone that started a recording, by its certificate, and the name it
+/// gave the recording. Only that phone continues it.
+type Named = (Option<[u8; 32]>, RecordingId);
+
+/// The named recordings under way, which a new stream can continue.
+struct Resumable<S>(Mutex<HashMap<Named, Offered<S>>>);
+
+/// Where a stream asks to continue one recording.
+struct Offered<S> {
+    streams: mpsc::Sender<Continuation<S>>,
+    /// Fires once the recording takes no more streams.
+    settled: CancellationToken,
+}
+
+impl<S> Clone for Offered<S> {
+    fn clone(&self) -> Self {
+        Self {
+            streams: self.streams.clone(),
+            settled: self.settled.clone(),
+        }
+    }
+}
+
+impl<S> Default for Resumable<S> {
+    fn default() -> Self {
+        Self(Mutex::default())
+    }
+}
+
+/// A stream asking to continue a recording.
+struct Continuation<S> {
+    requests: S,
+    events: Events,
+    /// Hears that the recording took the stream.
+    taken: oneshot::Sender<()>,
+}
+
+impl<S> Resumable<S> {
+    /// Lets streams ask to continue `named` until `settled` fires. The name
+    /// stays taken until the returned value drops.
+    fn open(
+        self: &Arc<Self>,
+        named: Named,
+        settled: CancellationToken,
+    ) -> Result<Continuations<S>, RelayError> {
+        // One at a time: the session answers each before it reads the next.
+        let (sender, streams) = mpsc::channel(1);
+        let mut recordings = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if recordings.contains_key(&named) {
+            return Err(RelayError::RecordingIdInUse);
+        }
+        let offered = Offered {
+            streams: sender,
+            settled,
+        };
+        recordings.insert(named.clone(), offered);
+        Ok(Continuations {
+            resumable: Arc::clone(self),
+            named,
+            streams,
+        })
+    }
+
+    /// Hands a stream to the recording `named`, and returns once it took it.
+    /// A recording that takes no more streams refuses it at once.
+    async fn resume(&self, named: &Named, requests: S, events: Events) -> Result<(), RelayError> {
+        let recording = self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(named)
+            .cloned()
+            .ok_or(RelayError::RecordingOver)?;
+        let (taken, answer) = oneshot::channel();
+        let continuation = Continuation {
+            requests,
+            events,
+            taken,
+        };
+        let taking = async {
+            recording
+                .streams
+                .send(continuation)
+                .await
+                .map_err(|_over| RelayError::RecordingOver)?;
+            answer.await.map_err(|_over| RelayError::RecordingOver)
+        };
+        tokio::select! {
+            // The answer first: a stream the recording took just before it
+            // settled is its stream.
+            biased;
+            taken = taking => taken,
+            () = recording.settled.cancelled() => Err(RelayError::RecordingOver),
+        }
+    }
+}
+
+/// The streams asking to continue one recording, while it can be continued.
+struct Continuations<S> {
+    resumable: Arc<Resumable<S>>,
+    named: Named,
+    streams: mpsc::Receiver<Continuation<S>>,
+}
+
+impl<S> Continuations<S> {
+    async fn next(&mut self) -> Continuation<S> {
+        match self.streams.recv().await {
+            Some(continuation) => continuation,
+            // `resumable` holds a sender until this drops.
+            None => std::future::pending().await,
+        }
+    }
+}
+
+impl<S> Drop for Continuations<S> {
+    fn drop(&mut self) {
+        self.resumable
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.named);
+    }
 }
 
 /// One relayed recording: its audio forwarded to a press on the Mac as it
@@ -126,10 +293,12 @@ struct Session {
     opening: Opening,
     return_policy: ReturnPolicy,
     settings: DictationSettings,
+    /// For a recording its client named.
+    continuations: Option<Continuations<Streaming<wire::RelayRequest>>>,
 }
 
 impl Session {
-    async fn run(self, mut requests: Streaming<wire::RelayRequest>) {
+    async fn run(self, requests: Streaming<wire::RelayRequest>) {
         let Self {
             client,
             microphone,
@@ -137,7 +306,9 @@ impl Session {
             opening,
             return_policy,
             settings,
+            continuations,
         } = self;
+        let mut requests = std::pin::pin!(continued(requests, continuations, &client));
         let first = match relay::first_audio(&mut requests, opening, &client.shutdown).await {
             Ok(Some(first)) => first,
             Ok(None) => {
@@ -158,7 +329,7 @@ impl Session {
         // Runs once the press's capture ends, as when the Mac stops it, so
         // the phone hears TRANSCRIBING before the text. A session that
         // already ended has no one to tell.
-        let samples = PushedFeed::new(first, rest, relay::IDLE_TIMEOUT, move || {
+        let samples = PushedFeed::new(first, rest, opening.stall(), move || {
             let _ = capture_ended.send(());
         });
 
@@ -235,10 +406,128 @@ impl Session {
     }
 }
 
+/// A recording's requests, from the stream that started it and from each
+/// that continues it. A stream that fails, unless its client cancelled it,
+/// leaves a named recording waiting for the next. The next can also arrive
+/// before this Mac sees the failure. It hears first how much audio the Mac
+/// took, and sends on from there.
+///
+/// Streams change only between requests: the caller asks for the next once
+/// it is done with the last, so every chunk counted as taken has reached the
+/// press, in order. Once `client` is settled no stream takes over, and a
+/// failure is the caller's to read.
+fn continued<'a, S>(
+    stream: S,
+    continuations: Option<Continuations<S>>,
+    client: &'a Client,
+) -> impl Stream<Item = Result<wire::RelayRequest, Status>> + 'a
+where
+    S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin + 'a,
+{
+    let streams = Streams {
+        current: stream,
+        continuations,
+        client,
+        taken: 0,
+    };
+    // Fused: the session reads on after a half-close ended one stream.
+    futures_util::stream::unfold(streams, |mut streams| async move {
+        let request = streams.next().await?;
+        Some((request, streams))
+    })
+    .fuse()
+}
+
+/// The streams of one recording, one at a time.
+struct Streams<'a, S> {
+    current: S,
+    /// The streams asking to take over, until the recording settles.
+    continuations: Option<Continuations<S>>,
+    client: &'a Client,
+    /// The audio bytes handed on, from every stream.
+    taken: u64,
+}
+
+impl<S> Streams<'_, S>
+where
+    S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
+{
+    async fn next(&mut self) -> Option<Result<wire::RelayRequest, Status>> {
+        loop {
+            let Some(continuations) = self.continuations.as_mut() else {
+                return self.current.next().await;
+            };
+            let settled = &self.client.settled;
+            let continuation = tokio::select! {
+                biased;
+                () = settled.cancelled() => None,
+                // Ahead of a stream that takes over, so audio that already
+                // arrived counts as taken before the next stream hears the
+                // count.
+                request = self.current.next() => match request {
+                    Some(Err(status))
+                        if status.code() != Code::Cancelled && self.client.leave() =>
+                    {
+                        tracing::info!(
+                            method = METHOD,
+                            "the relay client's stream failed; its recording waits for another"
+                        );
+                        tokio::select! {
+                            biased;
+                            () = settled.cancelled() => {
+                                self.continuations = None;
+                                return Some(Err(status));
+                            }
+                            continuation = continuations.next() => Some(continuation),
+                        }
+                    }
+                    request => {
+                        if let Some(Ok(wire::RelayRequest {
+                            body: Some(wire::relay_request::Body::Audio(audio)),
+                        })) = &request
+                        {
+                            self.taken += audio.chunk.len() as u64;
+                        }
+                        return request;
+                    }
+                },
+                continuation = continuations.next() => Some(continuation),
+            };
+            let Some(Continuation {
+                requests,
+                events,
+                taken: answer,
+            }) = continuation
+            else {
+                self.continuations = None;
+                continue;
+            };
+            // A stream that asked as the recording settled is refused: its
+            // answer drops with it.
+            if !self.client.listen_on(events) {
+                self.continuations = None;
+                continue;
+            }
+            self.current = requests;
+            let taken = self.taken;
+            self.client
+                .emit(Ok(RelayStage::Resumed { taken }.into()))
+                .await;
+            let _ = answer.send(());
+        }
+    }
+}
+
 /// Runs until the press ends, and says what ended the pushing. The client
 /// hears TRANSCRIBING once, as the press's capture ends, whichever side ends
 /// it. A press refused before capture never says it, so the client hears
 /// only the refusal.
+///
+/// The Mac takes audio only until the capture ends, the pushing ends, or the
+/// press does. Each settles the client, so no stream continues the recording
+/// after it. A recording still waiting for a stream then has no client to
+/// hear its text or ask for Return, and one whose client leaves later has
+/// none either: both cancel the press.
 async fn follow_press<J, F>(
     client: &Client,
     mut capturing: oneshot::Receiver<()>,
@@ -261,18 +550,21 @@ where
             biased;
             told = &mut capturing, if is_listening => {
                 is_listening = false;
+                client.settle();
                 if told.is_ok() {
                     client.emit(Ok(RelayStage::Transcribing.into())).await;
                 }
             }
             // Ahead of the press, so a stop that arrived keeps its channel.
             ended = &mut forwarding, if pushed.is_none() => {
+                client.settle();
                 if ended.is_err() {
                     abort.cancel();
                 }
                 pushed = Some(ended);
             }
             joined = &mut job => {
+                client.settle();
                 // A capture can end between the poll above and this one.
                 if is_listening && capturing.try_recv().is_ok() {
                     client.emit(Ok(RelayStage::Transcribing.into())).await;
@@ -381,16 +673,87 @@ async fn complete<S>(
 }
 
 impl Client {
+    /// For a recording no stream continues.
+    fn new(events: Events, shutdown: CancellationToken) -> Self {
+        let settled = CancellationToken::new();
+        settled.cancel();
+        Self {
+            listener: Arc::new(Mutex::new(Listener::Last(events))),
+            settled,
+            shutdown,
+        }
+    }
+
+    /// For a named recording, which another stream can continue until
+    /// [`Client::settle`].
+    fn continuable(events: Events, shutdown: CancellationToken) -> Self {
+        Self {
+            listener: Arc::new(Mutex::new(Listener::Replaceable(events))),
+            settled: CancellationToken::new(),
+            shutdown,
+        }
+    }
+
+    fn listener(&self) -> std::sync::MutexGuard<'_, Listener> {
+        self.listener.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// A client that stopped reading is not a failure worth reporting: the
     /// recording is already delivered, or already lost.
     async fn emit(&self, event: Result<wire::RelayEvent, Status>) {
-        drop(self.events.send(event).await);
+        let events = match &*self.listener() {
+            Listener::Last(events) | Listener::Replaceable(events) => events.clone(),
+            Listener::Away | Listener::Gone => return,
+        };
+        drop(events.send(event).await);
+    }
+
+    /// The recording's stream failed. True when another may continue it,
+    /// which it then waits for.
+    fn leave(&self) -> bool {
+        let mut listener = self.listener();
+        let waits = matches!(*listener, Listener::Replaceable(_));
+        if waits {
+            *listener = Listener::Away;
+        }
+        waits
+    }
+
+    /// The stream that continues the recording reads the events from here
+    /// on. False once the recording settled, which takes no stream.
+    fn listen_on(&self, events: Events) -> bool {
+        let mut listener = self.listener();
+        let continues = matches!(*listener, Listener::Replaceable(_) | Listener::Away);
+        if continues {
+            *listener = Listener::Replaceable(events);
+        }
+        continues
+    }
+
+    /// No stream continues the recording from here on: the Mac takes no more
+    /// of its audio. A recording waiting for a stream is left with no client.
+    fn settle(&self) {
+        {
+            let mut listener = self.listener();
+            *listener = match std::mem::replace(&mut *listener, Listener::Gone) {
+                Listener::Last(events) | Listener::Replaceable(events) => Listener::Last(events),
+                Listener::Away | Listener::Gone => Listener::Gone,
+            };
+        }
+        self.settled.cancel();
     }
 
     fn cancel(&self) -> CancelToken {
         let shutdown = self.shutdown.clone();
-        let events = self.events.clone();
-        CancelToken::from_fn(move || shutdown.is_cancelled() || events.is_closed())
+        let listener = Arc::clone(&self.listener);
+        CancelToken::from_fn(move || {
+            shutdown.is_cancelled()
+                || match &*listener.lock().unwrap_or_else(PoisonError::into_inner) {
+                    Listener::Last(events) => events.is_closed(),
+                    Listener::Replaceable(_) | Listener::Away => false,
+                    Listener::Gone => true,
+                }
+        })
     }
 
     /// As [`Client::cancel`], and also once `abort` fires, as when the
@@ -473,10 +836,7 @@ mod tests {
 
     fn client() -> (Client, mpsc::Receiver<Result<wire::RelayEvent, Status>>) {
         let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
-        let client = Client {
-            events,
-            shutdown: CancellationToken::new(),
-        };
+        let client = Client::new(events, CancellationToken::new());
         (client, receiver)
     }
 
@@ -774,5 +1134,424 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(stage(&events[0]), (wire::RelayStage::Completed, false));
         assert_eq!(offered_in(&events[0]), None);
+    }
+
+    type Requests = ReceiverStream<Result<wire::RelayRequest, Status>>;
+
+    /// A client's stream, and the end the test writes it from.
+    fn stream() -> (mpsc::Sender<Result<wire::RelayRequest, Status>>, Requests) {
+        let (sender, receiver) = mpsc::channel(8);
+        (sender, ReceiverStream::new(receiver))
+    }
+
+    fn audio(bytes: &[u8]) -> Result<wire::RelayRequest, Status> {
+        Ok(wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Audio(wire::RelayAudio {
+                chunk: bytes.to_vec(),
+            })),
+        })
+    }
+
+    fn stop() -> Result<wire::RelayRequest, Status> {
+        Ok(wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Stop(wire::RelayStop {})),
+        })
+    }
+
+    fn dropped() -> Result<wire::RelayRequest, Status> {
+        Err(Status::unknown("the connection dropped"))
+    }
+
+    /// The stages a client has heard so far.
+    fn stages(
+        events: &mut mpsc::Receiver<Result<wire::RelayEvent, Status>>,
+    ) -> Vec<wire::RelayStage> {
+        std::iter::from_fn(|| events.try_recv().ok())
+            .map(|event| event.expect("an event").stage())
+            .collect()
+    }
+
+    const PHONE: Option<[u8; 32]> = Some([7; 32]);
+
+    /// Long enough for what a test waits on, so a wait that would never end
+    /// fails.
+    const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// A recording its phone named `walk`, under way and open to streams.
+    struct Walk {
+        opening: Opening,
+        named: Named,
+        resumable: Arc<Resumable<Requests>>,
+        continuations: Option<Continuations<Requests>>,
+        client: Client,
+        events: mpsc::Receiver<Result<wire::RelayEvent, Status>>,
+    }
+
+    async fn walk() -> Walk {
+        let (start, mut requests) = stream();
+        start
+            .send(Ok(wire::RelayRequest {
+                body: Some(wire::relay_request::Body::Start(wire::RelayStart {
+                    format: wire::AudioFormat::PcmS16le as i32,
+                    recording_id: Some(b"walk".to_vec()),
+                    ..Default::default()
+                })),
+            }))
+            .await
+            .expect("the stream is open");
+        let Ok(Opened::Started(opening, Some(recording))) = relay::open(&mut requests).await else {
+            panic!("a named start opens a recording");
+        };
+        let named = (PHONE, recording);
+        let resumable = Arc::<Resumable<Requests>>::default();
+        let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
+        let client = Client::continuable(events, CancellationToken::new());
+        let continuations = resumable
+            .open(named.clone(), client.settled.clone())
+            .expect("the name is free");
+        Walk {
+            opening,
+            named,
+            resumable,
+            continuations: Some(continuations),
+            client,
+            events: receiver,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_recording_whose_stream_failed_continues_on_the_next() {
+        let mut walk = walk().await;
+        let (first, requests) = stream();
+        first.send(audio(&[1, 0])).await.unwrap();
+        first.send(dropped()).await.unwrap();
+        let (second, continuing) = stream();
+        second.send(audio(&[2, 0])).await.unwrap();
+        second.send(stop()).await.unwrap();
+        let (events, mut continued_events) = mpsc::channel(EVENT_CAPACITY);
+        let (feed, press) = std::sync::mpsc::sync_channel(8);
+        let mut requests =
+            std::pin::pin!(continued(requests, walk.continuations.take(), &walk.client));
+
+        let (ended, resumed) = tokio::join!(
+            relay::forward(&mut requests, walk.opening, feed, 0),
+            walk.resumable.resume(&walk.named, continuing, events),
+        );
+        walk.client.emit(Ok(RelayStage::Transcribing.into())).await;
+
+        assert!(resumed.is_ok());
+        assert_eq!(
+            ended.expect("the recording ends on its second stream"),
+            PushEnd::ClientStopped(ReplyChannel::Open)
+        );
+        assert_eq!(press.try_iter().collect::<Vec<_>>(), [vec![1], vec![2]]);
+        assert_eq!(
+            stages(&mut continued_events),
+            [wire::RelayStage::Resumed, wire::RelayStage::Transcribing],
+            "the new stream hears the rest"
+        );
+        assert!(walk.events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_stream_can_continue_a_recording_before_the_mac_sees_the_first_fail() {
+        let mut walk = walk().await;
+        let (first, requests) = stream();
+        first.send(audio(&[1, 0])).await.unwrap();
+        let (second, continuing) = stream();
+        second.send(audio(&[2, 0])).await.unwrap();
+        second.send(stop()).await.unwrap();
+        let (events, _continued) = mpsc::channel(EVENT_CAPACITY);
+        let (feed, press) = std::sync::mpsc::sync_channel(8);
+        let mut requests =
+            std::pin::pin!(continued(requests, walk.continuations.take(), &walk.client));
+
+        let (ended, resumed) = tokio::join!(
+            relay::forward(&mut requests, walk.opening, feed, 0),
+            walk.resumable.resume(&walk.named, continuing, events),
+        );
+
+        assert!(resumed.is_ok());
+        assert_eq!(
+            ended.expect("the recording ends on its second stream"),
+            PushEnd::ClientStopped(ReplyChannel::Open)
+        );
+        assert_eq!(press.try_iter().collect::<Vec<_>>(), [vec![1], vec![2]]);
+        drop(first);
+    }
+
+    /// A stream taking over while the press still takes a chunk in would
+    /// hear that chunk counted, and could get its own in ahead of it.
+    #[tokio::test]
+    async fn a_stream_takes_over_only_once_the_press_has_every_chunk_counted() {
+        let mut walk = walk().await;
+        let (first, requests) = stream();
+        first.send(audio(&[1, 0])).await.unwrap();
+        first.send(audio(&[2, 0])).await.unwrap();
+        let (second, continuing) = stream();
+        second.send(audio(&[3, 0])).await.unwrap();
+        second.send(stop()).await.unwrap();
+        let (events, mut continued_events) = mpsc::channel(EVENT_CAPACITY);
+        // Room for one chunk, so the second waits on the press.
+        let (feed, press) = std::sync::mpsc::sync_channel(1);
+        let mut requests =
+            std::pin::pin!(continued(requests, walk.continuations.take(), &walk.client));
+        let resuming = walk.resumable.resume(&walk.named, continuing, events);
+        tokio::pin!(resuming);
+
+        let (ended, ()) = tokio::join!(
+            relay::forward(&mut requests, walk.opening, feed, 0),
+            async {
+                let early =
+                    tokio::time::timeout(std::time::Duration::from_millis(50), &mut resuming).await;
+                assert!(early.is_err(), "the press still takes the second chunk in");
+                assert_eq!(press.recv().expect("the first chunk"), [1]);
+                assert_eq!(press.recv().expect("the second chunk"), [2]);
+                resuming.await.expect("the recording takes the stream");
+            },
+        );
+
+        assert_eq!(
+            ended.expect("the recording ends on its second stream"),
+            PushEnd::ClientStopped(ReplyChannel::Open)
+        );
+        assert_eq!(press.try_iter().collect::<Vec<_>>(), [vec![3]]);
+        let resumed = continued_events
+            .try_recv()
+            .expect("the stream hears first that it continues")
+            .expect("an event");
+        assert_eq!(resumed.taken_bytes, 4);
+    }
+
+    /// Audio written as the first stream failed never arrived, so the
+    /// client has to hear where the Mac's copy ends.
+    #[tokio::test]
+    async fn a_stream_that_continues_a_recording_hears_what_the_mac_took() {
+        let mut walk = walk().await;
+        let (first, requests) = stream();
+        first.send(audio(&[1, 0])).await.unwrap();
+        first.send(dropped()).await.unwrap();
+        let (second, continuing) = stream();
+        second.send(stop()).await.unwrap();
+        let (events, mut continued_events) = mpsc::channel(EVENT_CAPACITY);
+        let (feed, _press) = std::sync::mpsc::sync_channel(8);
+        let mut requests =
+            std::pin::pin!(continued(requests, walk.continuations.take(), &walk.client));
+
+        let (_ended, resumed) = tokio::join!(
+            relay::forward(&mut requests, walk.opening, feed, 0),
+            walk.resumable.resume(&walk.named, continuing, events),
+        );
+
+        let event = continued_events
+            .try_recv()
+            .expect("the stream hears first that it continues")
+            .expect("an event");
+        assert!(resumed.is_ok());
+        assert_eq!(event.stage(), wire::RelayStage::Resumed);
+        assert_eq!(event.taken_bytes, 2);
+    }
+
+    /// The connection can drop before any audio crossed it, and the phone
+    /// still holds every chunk.
+    #[tokio::test]
+    async fn a_stream_that_failed_before_its_first_audio_is_continued_from_the_start() {
+        let mut walk = walk().await;
+        let (first, requests) = stream();
+        first.send(dropped()).await.unwrap();
+        let (second, continuing) = stream();
+        second.send(audio(&[1, 0])).await.unwrap();
+        let (events, mut continued_events) = mpsc::channel(EVENT_CAPACITY);
+        let shutdown = CancellationToken::new();
+        let mut requests =
+            std::pin::pin!(continued(requests, walk.continuations.take(), &walk.client));
+
+        let (first_audio, resumed) = tokio::time::timeout(WAIT, async {
+            tokio::join!(
+                relay::first_audio(&mut requests, walk.opening, &shutdown),
+                walk.resumable.resume(&walk.named, continuing, events),
+            )
+        })
+        .await
+        .expect("the recording takes the stream");
+
+        let event = continued_events
+            .try_recv()
+            .expect("the stream hears first that it continues")
+            .expect("an event");
+        assert!(resumed.is_ok());
+        assert_eq!(event.taken_bytes, 0);
+        assert_eq!(first_audio.expect("the audio arrives"), Some(vec![1]));
+    }
+
+    #[tokio::test]
+    async fn a_stream_its_client_cancelled_ends_a_named_recording() {
+        let mut walk = walk().await;
+        let (first, requests) = stream();
+        first
+            .send(Err(Status::cancelled("the client cancelled")))
+            .await
+            .unwrap();
+        let (feed, _press) = std::sync::mpsc::sync_channel(8);
+        let abort = CancellationToken::new();
+        let cancelled = abort.clone();
+        let (_capture_ended, capturing) = oneshot::channel();
+        let mut requests =
+            std::pin::pin!(continued(requests, walk.continuations.take(), &walk.client));
+
+        let (ended, ()) = follow_press(
+            &walk.client,
+            capturing,
+            async move { cancelled.cancelled().await },
+            relay::forward(&mut requests, walk.opening, feed, 0),
+            &abort,
+        )
+        .await;
+        let (_second, continuing) = stream();
+        let (events, _continued) = mpsc::channel(EVENT_CAPACITY);
+        let late = walk.resumable.resume(&walk.named, continuing, events).await;
+
+        assert!(matches!(ended, Err(RelayError::ClientStream(_))));
+        assert!(matches!(late, Err(RelayError::RecordingOver)));
+    }
+
+    #[tokio::test]
+    async fn only_the_phone_that_started_a_recording_continues_it() {
+        let walk = walk().await;
+        let (_other, continuing) = stream();
+        let (events, _continued) = mpsc::channel(EVENT_CAPACITY);
+        let other_phone = (Some([8; 32]), walk.named.1.clone());
+
+        let resumed = walk
+            .resumable
+            .resume(&other_phone, continuing, events)
+            .await;
+        let again = walk
+            .resumable
+            .open(walk.named.clone(), CancellationToken::new());
+
+        assert!(matches!(resumed, Err(RelayError::RecordingOver)));
+        assert!(matches!(again, Err(RelayError::RecordingIdInUse)));
+    }
+
+    #[tokio::test]
+    async fn a_recording_that_ended_frees_its_name() {
+        let mut walk = walk().await;
+
+        drop(walk.continuations.take());
+
+        let again = walk
+            .resumable
+            .open(walk.named.clone(), CancellationToken::new());
+        assert!(again.is_ok());
+    }
+
+    #[test]
+    fn a_named_recording_outlives_its_stream_until_its_audio_is_in() {
+        let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
+        let named = Client::continuable(events, CancellationToken::new());
+        let (events, unnamed_receiver) = mpsc::channel(EVENT_CAPACITY);
+        let unnamed = Client::new(events, CancellationToken::new());
+        drop((receiver, unnamed_receiver));
+
+        assert!(unnamed.cancel().is_cancelled());
+        assert!(!named.cancel().is_cancelled());
+        named.settle();
+        assert!(named.cancel().is_cancelled());
+    }
+
+    /// The Mac ended the recording and the phone left before it said its
+    /// stop. Nothing may type, or press Return, with nobody there.
+    #[tokio::test]
+    async fn a_client_that_leaves_once_the_mac_ended_its_recording_gets_nothing_typed() {
+        let mut walk = walk().await;
+        let (first, requests) = stream();
+        first.send(audio(&[1, 0])).await.unwrap();
+        let (feed, _press) = std::sync::mpsc::sync_channel(8);
+        let (capture_ended, capturing) = oneshot::channel();
+        capture_ended.send(()).expect("the session listens");
+        let abort = CancellationToken::new();
+        let delivering = walk.client.cancel_with(&abort);
+        let cancelled = abort.clone();
+        let mut requests =
+            std::pin::pin!(continued(requests, walk.continuations.take(), &walk.client));
+        let leaving = async {
+            // Once the phone heard the recording end.
+            while walk
+                .events
+                .recv()
+                .await
+                .expect("an event")
+                .expect("a stage")
+                .stage()
+                != wire::RelayStage::Transcribing
+            {}
+            first.send(dropped()).await.unwrap();
+        };
+
+        let ((ended, ()), ()) = tokio::time::timeout(WAIT, async {
+            tokio::join!(
+                follow_press(
+                    &walk.client,
+                    capturing,
+                    async move { cancelled.cancelled().await },
+                    relay::forward(&mut requests, walk.opening, feed, 0),
+                    &abort,
+                ),
+                leaving,
+            )
+        })
+        .await
+        .expect("the press is cancelled");
+        let (_second, continuing) = stream();
+        let (events, _continued) = mpsc::channel(EVENT_CAPACITY);
+        let late = walk.resumable.resume(&walk.named, continuing, events).await;
+
+        assert!(matches!(ended, Err(RelayError::ClientStream(_))));
+        assert!(delivering.is_cancelled(), "nothing is delivered");
+        assert!(matches!(late, Err(RelayError::RecordingOver)));
+    }
+
+    /// A phone that never comes back must not leave its press running, and
+    /// then typing, with nobody there.
+    #[tokio::test]
+    async fn a_recording_that_ends_while_its_stream_is_gone_is_cancelled() {
+        let mut walk = walk().await;
+        let (first, requests) = stream();
+        first.send(dropped()).await.unwrap();
+        let (feed, _press) = std::sync::mpsc::sync_channel(8);
+        let (capture_ended, capturing) = oneshot::channel();
+        let abort = CancellationToken::new();
+        let delivering = walk.client.cancel_with(&abort);
+        let cancelled = abort.clone();
+        let mut requests =
+            std::pin::pin!(continued(requests, walk.continuations.take(), &walk.client));
+        let ending = async {
+            // Once the recording waits for a stream.
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            capture_ended.send(()).expect("the session listens");
+        };
+
+        let ((ended, ()), ()) = tokio::time::timeout(WAIT, async {
+            tokio::join!(
+                follow_press(
+                    &walk.client,
+                    capturing,
+                    async move { cancelled.cancelled().await },
+                    relay::forward(&mut requests, walk.opening, feed, 0),
+                    &abort,
+                ),
+                ending,
+            )
+        })
+        .await
+        .expect("the press is cancelled");
+
+        assert!(matches!(ended, Err(RelayError::ClientStream(_))));
+        assert!(delivering.is_cancelled());
+        assert!(
+            walk.events.try_recv().is_err(),
+            "nobody is there to hear it"
+        );
     }
 }

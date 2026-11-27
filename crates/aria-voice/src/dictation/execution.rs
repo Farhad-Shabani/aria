@@ -897,8 +897,8 @@ where
     /// and on nothing else. A watch tap's samples go in, and `after_text`
     /// gets how the press ended. It starts only while nothing records, and
     /// Escape, a manual press, or the auto-stop setting ends it. The device
-    /// hears no voices, only loudness, so the quiet is judged here. The
-    /// device plays its own cue, so the Mac doesn't mute other apps.
+    /// has no voice detector, so the quiet is judged here. The device plays
+    /// its own cue, so the Mac doesn't mute other apps.
     /// `after_text` runs while the press still holds the microphone, so
     /// nothing records under a Return it presses.
     pub fn execute_pushed<T>(

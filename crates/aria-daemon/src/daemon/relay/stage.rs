@@ -4,6 +4,11 @@
 use aria_voice::dictation::Delivered;
 
 pub(crate) enum RelayStage {
+    /// The stream continues its recording. The Mac took `taken` bytes of
+    /// its audio on earlier streams.
+    Resumed {
+        taken: u64,
+    },
     Transcribing,
     /// The text landed. With an offer, the stream stays open for the
     /// phone's Return.

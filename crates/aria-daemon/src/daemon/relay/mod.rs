@@ -46,8 +46,8 @@ const MAX_RECORDING: Duration = Duration::from_secs(601);
 /// streams.
 const MAX_AUDIO_BYTES: usize = canonical_samples(MAX_RECORDING) as usize * 2;
 /// Maximum wait for the opening and the first audio, and the gap after which
-/// the press ends a recording whose audio stopped arriving.
-pub(super) const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+/// the press ends a phone's recording whose audio stopped arriving.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the phone may take to ask for Return once the text landed.
 const SUBMIT_WAIT: Duration = Duration::from_secs(10);
 
@@ -72,6 +72,42 @@ impl Opening {
 
     pub(super) fn device(&self) -> Option<RecordingDevice> {
         self.device
+    }
+
+    /// The gap after which the press ends a recording whose audio stopped
+    /// arriving. A watch sends nothing while its wearer's wrist is down, and
+    /// catches up once it is raised, so its recording may go quiet for as
+    /// long as it may record.
+    pub(super) fn stall(&self) -> Duration {
+        match self.device {
+            Some(RecordingDevice::Watch) => MAX_RECORDING,
+            Some(RecordingDevice::Phone) | None => IDLE_TIMEOUT,
+        }
+    }
+}
+
+/// How a stream opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Opened {
+    /// It starts a recording, which a later stream can continue when the
+    /// client named it.
+    Started(Opening, Option<RecordingId>),
+    /// It continues the recording of this name, whose stream failed.
+    Resumed(RecordingId),
+}
+
+/// The name a client gives its recording.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct RecordingId(Vec<u8>);
+
+impl RecordingId {
+    const MAX_BYTES: usize = 32;
+
+    fn accept(id: Vec<u8>) -> Result<Self, RelayError> {
+        if id.is_empty() || id.len() > Self::MAX_BYTES {
+            return Err(RelayError::UnusableRecordingId);
+        }
+        Ok(Self(id))
     }
 }
 
@@ -105,7 +141,7 @@ pub(super) enum Reply {
 
 /// Reads the opening message and validates it. A stream that opens with
 /// anything else never gets as far as claiming the recorder.
-pub(super) async fn open<S>(stream: &mut S) -> Result<Opening, RelayError>
+pub(super) async fn open<S>(stream: &mut S) -> Result<Opened, RelayError>
 where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
 {
@@ -114,7 +150,17 @@ where
         .map_err(|_elapsed| RelayError::NotStarted)?;
     match first {
         Some(Ok(request)) => match request.body {
-            Some(wire::relay_request::Body::Start(start)) => Opening::accept(start),
+            Some(wire::relay_request::Body::Start(mut start)) => {
+                let recording = start
+                    .recording_id
+                    .take()
+                    .map(RecordingId::accept)
+                    .transpose()?;
+                Ok(Opened::Started(Opening::accept(start)?, recording))
+            }
+            Some(wire::relay_request::Body::Resume(resume)) => {
+                RecordingId::accept(resume.recording_id).map(Opened::Resumed)
+            }
             _other => Err(RelayError::NotStarted),
         },
         Some(Err(status)) => Err(RelayError::ClientStream(status)),
@@ -150,7 +196,9 @@ where
                     return decode(opening, &chunk.chunk).map(Some);
                 }
                 Some(wire::relay_request::Body::Stop(_stop)) => return Ok(None),
-                Some(wire::relay_request::Body::Start(_start)) => {
+                Some(
+                    wire::relay_request::Body::Start(_) | wire::relay_request::Body::Resume(_),
+                ) => {
                     return Err(RelayError::RestartedMidStream);
                 }
                 Some(wire::relay_request::Body::Submit(_submit)) => {
@@ -193,7 +241,9 @@ where
                 Some(wire::relay_request::Body::Stop(_stop)) => {
                     return Ok(PushEnd::ClientStopped(ReplyChannel::Open));
                 }
-                Some(wire::relay_request::Body::Start(_start)) => {
+                Some(
+                    wire::relay_request::Body::Start(_) | wire::relay_request::Body::Resume(_),
+                ) => {
                     return Err(RelayError::RestartedMidStream);
                 }
                 Some(wire::relay_request::Body::Submit(_submit)) => {
@@ -253,6 +303,7 @@ where
             Some(wire::relay_request::Body::Submit(_submit)) => return Ok(Reply::Submit),
             Some(
                 wire::relay_request::Body::Start(_)
+                | wire::relay_request::Body::Resume(_)
                 | wire::relay_request::Body::Audio(_)
                 | wire::relay_request::Body::Stop(_),
             ) => return Err(RelayError::RecordingEnded),
@@ -273,11 +324,20 @@ fn decode(opening: Opening, audio: &[u8]) -> Result<Vec<i16>, RelayError> {
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum RelayError {
-    #[error("a relay stream must open with RelayStart")]
+    #[error("a relay stream must open with RelayStart or RelayResume")]
     NotStarted,
 
-    #[error("a second RelayStart arrived mid-stream")]
+    #[error("a second RelayStart or RelayResume arrived mid-stream")]
     RestartedMidStream,
+
+    #[error("a recording_id must be 1 to {} bytes", RecordingId::MAX_BYTES)]
+    UnusableRecordingId,
+
+    #[error("the recording_id names a recording still under way")]
+    RecordingIdInUse,
+
+    #[error("the recording to continue is over")]
+    RecordingOver,
 
     #[error("a RelaySubmit arrived before the recording ended")]
     SubmittedMidRecording,
@@ -306,13 +366,15 @@ impl From<&RelayError> for RpcErrorCode {
         match error {
             RelayError::NotStarted
             | RelayError::RestartedMidStream
+            | RelayError::UnusableRecordingId
+            | RelayError::RecordingIdInUse
             | RelayError::SubmittedMidRecording
             | RelayError::RecordingEnded
             | RelayError::UnsupportedFormat
             | RelayError::Audio(_) => Self::InvalidRequest,
             RelayError::TooLarge => Self::PayloadTooLarge,
             RelayError::ShuttingDown => Self::ShuttingDown,
-            RelayError::ClientStream(_) => Self::Cancelled,
+            RelayError::RecordingOver | RelayError::ClientStream(_) => Self::Cancelled,
         }
     }
 }
@@ -425,10 +487,21 @@ mod tests {
         iter(messages.into_iter().map(Ok))
     }
 
+    /// The recording a stream starts, and the name it gave it.
+    async fn started<S>(stream: &mut S) -> (Opening, Option<RecordingId>)
+    where
+        S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
+    {
+        match open(stream).await.expect("a valid opening") {
+            Opened::Started(opening, recording) => (opening, recording),
+            Opened::Resumed(recording) => panic!("{recording:?} starts no recording"),
+        }
+    }
+
     async fn pcm_opening() -> Opening {
-        open(&mut requests(vec![start(wire::AudioFormat::PcmS16le)]))
+        started(&mut requests(vec![start(wire::AudioFormat::PcmS16le)]))
             .await
-            .expect("a valid opening")
+            .0
     }
 
     #[tokio::test]
@@ -530,9 +603,7 @@ mod tests {
     async fn pcm_opens_without_rate_metadata() {
         let mut stream = requests(vec![start(wire::AudioFormat::PcmS16le)]);
 
-        let opening = open(&mut stream)
-            .await
-            .expect("the format defines its rate");
+        let (opening, _recording) = started(&mut stream).await;
 
         assert_eq!(opening.format, wire::AudioFormat::PcmS16le);
     }
@@ -544,19 +615,87 @@ mod tests {
                 body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                     format: wire::AudioFormat::PcmS16le as i32,
                     device: device as i32,
+                    recording_id: None,
                 })),
             }])
         };
 
-        let watch = open(&mut opening(wire::RecordingDevice::Watch))
-            .await
-            .expect("a valid opening");
-        let older = open(&mut opening(wire::RecordingDevice::Unspecified))
-            .await
-            .expect("an older client's opening is valid");
+        let (watch, _) = started(&mut opening(wire::RecordingDevice::Watch)).await;
+        let (older, _) = started(&mut opening(wire::RecordingDevice::Unspecified)).await;
 
         assert_eq!(watch.device(), Some(RecordingDevice::Watch));
         assert_eq!(older.device(), None);
+    }
+
+    fn named(recording_id: &[u8]) -> wire::RelayRequest {
+        wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Start(wire::RelayStart {
+                format: wire::AudioFormat::PcmS16le as i32,
+                recording_id: Some(recording_id.to_vec()),
+                ..Default::default()
+            })),
+        }
+    }
+
+    fn resume(recording_id: &[u8]) -> wire::RelayRequest {
+        wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Resume(wire::RelayResume {
+                recording_id: recording_id.to_vec(),
+            })),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stream_continues_the_recording_its_resume_names() {
+        let (_, recording) = started(&mut requests(vec![named(b"walk")])).await;
+        let (_, unnamed) = started(&mut requests(vec![start(wire::AudioFormat::PcmS16le)])).await;
+
+        let resumed = open(&mut requests(vec![resume(b"walk")]))
+            .await
+            .expect("a resume opens a stream");
+
+        assert_eq!(unnamed, None);
+        assert_eq!(
+            resumed,
+            Opened::Resumed(recording.expect("the recording named itself"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recording_id_that_is_empty_or_too_long_is_refused() {
+        for unusable in [vec![], vec![7; RecordingId::MAX_BYTES + 1]] {
+            let starting = open(&mut requests(vec![named(&unusable)])).await;
+            let resuming = open(&mut requests(vec![resume(&unusable)])).await;
+
+            assert!(matches!(starting, Err(RelayError::UnusableRecordingId)));
+            assert!(matches!(resuming, Err(RelayError::UnusableRecordingId)));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_resume_after_the_opening_is_refused() {
+        let opening = pcm_opening().await;
+        let (feed, _press) = std::sync::mpsc::sync_channel(8);
+        let shutdown = CancellationToken::new();
+
+        let before_audio =
+            first_audio(&mut requests(vec![resume(b"walk")]), opening, &shutdown).await;
+        let mid_recording = forward(&mut requests(vec![resume(b"walk")]), opening, feed, 0).await;
+
+        assert!(matches!(before_audio, Err(RelayError::RestartedMidStream)));
+        assert!(matches!(mid_recording, Err(RelayError::RestartedMidStream)));
+    }
+
+    #[test]
+    fn a_watch_recording_may_go_quiet_while_the_wrist_is_down() {
+        let from = |device| Opening {
+            format: wire::AudioFormat::PcmS16le,
+            device,
+        };
+
+        assert_eq!(from(Some(RecordingDevice::Watch)).stall(), MAX_RECORDING);
+        assert_eq!(from(Some(RecordingDevice::Phone)).stall(), IDLE_TIMEOUT);
+        assert_eq!(from(None).stall(), IDLE_TIMEOUT);
     }
 
     #[tokio::test]

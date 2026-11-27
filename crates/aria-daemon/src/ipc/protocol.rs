@@ -431,6 +431,10 @@ impl From<RelayStage> for wire::RelayEvent {
     fn from(outcome: RelayStage) -> Self {
         let mut event = Self::default();
         let stage = match outcome {
+            RelayStage::Resumed { taken } => {
+                event.taken_bytes = taken;
+                wire::RelayStage::Resumed
+            }
             RelayStage::Transcribing => wire::RelayStage::Transcribing,
             RelayStage::Completed {
                 text,

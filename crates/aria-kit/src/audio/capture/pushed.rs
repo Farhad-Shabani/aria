@@ -122,7 +122,13 @@ impl Session {
         if room.push(recording, first)? == CaptureProgress::Complete {
             return Ok(());
         }
-        let deadline = Instant::now() + self.maximum_duration;
+        // Audio its device held while it couldn't send arrives late, by up
+        // to the gap the feed may leave. `room` still limits how much counts.
+        // A feed that may stall without end has no deadline.
+        let deadline = self
+            .maximum_duration
+            .checked_add(self.stall)
+            .and_then(|limit| Instant::now().checked_add(limit));
         let mut heard = Instant::now();
         loop {
             match self.feed.recv_timeout(STOP_POLL) {
@@ -147,7 +153,7 @@ impl Session {
             }
             // The sender's clock started first and its packets lag, so its
             // own limit can land just past this one.
-            if Instant::now() >= deadline {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 tracing::info!(
                     stage = "recording",
                     "the pushed audio reached the recording limit; keeping what arrived"
@@ -424,6 +430,45 @@ mod tests {
 
         assert!(audio < Duration::from_millis(200), "{audio:?}");
         sending.join().expect("the sender stops once capture ends");
+    }
+
+    #[test]
+    fn audio_its_device_held_past_the_limit_still_counts() {
+        let harness = Harness::new().with_limit(Duration::from_millis(200));
+        let (feed, recording) = harness.start(
+            speech(Duration::from_millis(10)),
+            RecordingMode::UntilStopped,
+            StopSignal::never(),
+        );
+        let sending = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            feed.send(speech(Duration::from_millis(50)))
+        });
+
+        let audio =
+            recorded_duration(recording.expect("audio arrived")).expect("the recording finishes");
+
+        assert_eq!(audio, Duration::from_millis(60));
+        sending
+            .join()
+            .expect("the sender finishes")
+            .expect("the capture still reads");
+    }
+
+    #[test]
+    fn a_feed_that_may_stall_forever_still_records() {
+        let harness = Harness::new().with_stall(Duration::MAX);
+        let (feed, recording) = harness.start(
+            speech(Duration::from_millis(500)),
+            RecordingMode::UntilStopped,
+            StopSignal::never(),
+        );
+        drop(feed);
+
+        let audio =
+            recorded_duration(recording.expect("audio arrived")).expect("the recording finishes");
+
+        assert_eq!(audio, Duration::from_millis(500));
     }
 
     #[test]

@@ -75,16 +75,28 @@ extension Aria_Daemon_V1_RelayService {
         /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
         /// > gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, it
         /// > ends the recording with what it has. So does the Mac's recording limit.
+        /// > Once its audio arrived, a watch's recording may instead go quiet for as
+        /// > long as it may record.
+        /// > A stream that fails while the Mac still takes the recording's audio,
+        /// > unless the client cancelled it, leaves a recording that named itself in
+        /// > `RelayStart.recording_id` waiting. A stream from the same phone that
+        /// > opens with a `RelayResume` continues it, from the audio RESUMED says
+        /// > the Mac took. The Mac takes audio until the client's stop, or until it
+        /// > ends the recording itself and says TRANSCRIBING. After that no stream
+        /// > continues the recording, and one that fails cancels it. A recording
+        /// > that ends while it waits is cancelled too.
         /// > The press runs within the Mac's dictation timeouts.
         /// > Failures arrive as a status carrying an RpcError, not as an event:
         /// >   BUSY - a recording is running. This can arrive after the first audio.
         /// >   PAYLOAD_TOO_LARGE - the audio is too long
         /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
         /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
-        /// >     RelayStart, PCM ending mid-sample, or a chunk that isn't whole samples
+        /// >     RelayStart, PCM ending mid-sample, a chunk that isn't whole samples,
+        /// >     or a `recording_id` that is empty, over 32 bytes, or in use
         /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
         /// >   SHUTTING_DOWN - the daemon is stopping
-        /// >   CANCELLED - the client's own stream failed
+        /// >   CANCELLED - the client's own stream failed, or a `RelayResume` named
+        /// >     a recording that is over
         /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
         /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
         /// > Delivery failures do not return the text and can include partial delivery.
@@ -141,16 +153,28 @@ extension Aria_Daemon_V1_RelayService {
         /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
         /// > gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, it
         /// > ends the recording with what it has. So does the Mac's recording limit.
+        /// > Once its audio arrived, a watch's recording may instead go quiet for as
+        /// > long as it may record.
+        /// > A stream that fails while the Mac still takes the recording's audio,
+        /// > unless the client cancelled it, leaves a recording that named itself in
+        /// > `RelayStart.recording_id` waiting. A stream from the same phone that
+        /// > opens with a `RelayResume` continues it, from the audio RESUMED says
+        /// > the Mac took. The Mac takes audio until the client's stop, or until it
+        /// > ends the recording itself and says TRANSCRIBING. After that no stream
+        /// > continues the recording, and one that fails cancels it. A recording
+        /// > that ends while it waits is cancelled too.
         /// > The press runs within the Mac's dictation timeouts.
         /// > Failures arrive as a status carrying an RpcError, not as an event:
         /// >   BUSY - a recording is running. This can arrive after the first audio.
         /// >   PAYLOAD_TOO_LARGE - the audio is too long
         /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
         /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
-        /// >     RelayStart, PCM ending mid-sample, or a chunk that isn't whole samples
+        /// >     RelayStart, PCM ending mid-sample, a chunk that isn't whole samples,
+        /// >     or a `recording_id` that is empty, over 32 bytes, or in use
         /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
         /// >   SHUTTING_DOWN - the daemon is stopping
-        /// >   CANCELLED - the client's own stream failed
+        /// >   CANCELLED - the client's own stream failed, or a `RelayResume` named
+        /// >     a recording that is over
         /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
         /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
         /// > Delivery failures do not return the text and can include partial delivery.
@@ -204,16 +228,28 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
     /// > gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, it
     /// > ends the recording with what it has. So does the Mac's recording limit.
+    /// > Once its audio arrived, a watch's recording may instead go quiet for as
+    /// > long as it may record.
+    /// > A stream that fails while the Mac still takes the recording's audio,
+    /// > unless the client cancelled it, leaves a recording that named itself in
+    /// > `RelayStart.recording_id` waiting. A stream from the same phone that
+    /// > opens with a `RelayResume` continues it, from the audio RESUMED says
+    /// > the Mac took. The Mac takes audio until the client's stop, or until it
+    /// > ends the recording itself and says TRANSCRIBING. After that no stream
+    /// > continues the recording, and one that fails cancels it. A recording
+    /// > that ends while it waits is cancelled too.
     /// > The press runs within the Mac's dictation timeouts.
     /// > Failures arrive as a status carrying an RpcError, not as an event:
     /// >   BUSY - a recording is running. This can arrive after the first audio.
     /// >   PAYLOAD_TOO_LARGE - the audio is too long
     /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
     /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
-    /// >     RelayStart, PCM ending mid-sample, or a chunk that isn't whole samples
+    /// >     RelayStart, PCM ending mid-sample, a chunk that isn't whole samples,
+    /// >     or a `recording_id` that is empty, over 32 bytes, or in use
     /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
     /// >   SHUTTING_DOWN - the daemon is stopping
-    /// >   CANCELLED - the client's own stream failed
+    /// >   CANCELLED - the client's own stream failed, or a `RelayResume` named
+    /// >     a recording that is over
     /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
     /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
     /// > Delivery failures do not return the text and can include partial delivery.
@@ -261,16 +297,28 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
     /// > gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, it
     /// > ends the recording with what it has. So does the Mac's recording limit.
+    /// > Once its audio arrived, a watch's recording may instead go quiet for as
+    /// > long as it may record.
+    /// > A stream that fails while the Mac still takes the recording's audio,
+    /// > unless the client cancelled it, leaves a recording that named itself in
+    /// > `RelayStart.recording_id` waiting. A stream from the same phone that
+    /// > opens with a `RelayResume` continues it, from the audio RESUMED says
+    /// > the Mac took. The Mac takes audio until the client's stop, or until it
+    /// > ends the recording itself and says TRANSCRIBING. After that no stream
+    /// > continues the recording, and one that fails cancels it. A recording
+    /// > that ends while it waits is cancelled too.
     /// > The press runs within the Mac's dictation timeouts.
     /// > Failures arrive as a status carrying an RpcError, not as an event:
     /// >   BUSY - a recording is running. This can arrive after the first audio.
     /// >   PAYLOAD_TOO_LARGE - the audio is too long
     /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
     /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
-    /// >     RelayStart, PCM ending mid-sample, or a chunk that isn't whole samples
+    /// >     RelayStart, PCM ending mid-sample, a chunk that isn't whole samples,
+    /// >     or a `recording_id` that is empty, over 32 bytes, or in use
     /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
     /// >   SHUTTING_DOWN - the daemon is stopping
-    /// >   CANCELLED - the client's own stream failed
+    /// >   CANCELLED - the client's own stream failed, or a `RelayResume` named
+    /// >     a recording that is over
     /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
     /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
     /// > Delivery failures do not return the text and can include partial delivery.

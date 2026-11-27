@@ -45,6 +45,10 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
 
   /// The phone took the Return offer, and Return was pressed. Terminal.
   case offerTaken // = 4
+
+  /// The stream continues its recording. The first event of a stream that
+  /// opened with a `RelayResume`, carrying `taken_bytes`.
+  case resumed // = 5
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -58,6 +62,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
     case 2: self = .completed
     case 3: self = .noSpeech
     case 4: self = .offerTaken
+    case 5: self = .resumed
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -69,6 +74,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
     case .completed: return 2
     case .noSpeech: return 3
     case .offerTaken: return 4
+    case .resumed: return 5
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -80,6 +86,7 @@ public nonisolated enum Aria_Daemon_V1_RelayStage: SwiftProtobuf.Enum, Swift.Cas
     .completed,
     .noSpeech,
     .offerTaken,
+    .resumed,
   ]
 
 }
@@ -323,6 +330,14 @@ public nonisolated struct Aria_Daemon_V1_RelayRequest: Sendable {
     set {body = .submit(newValue)}
   }
 
+  public var resume: Aria_Daemon_V1_RelayResume {
+    get {
+      if case .resume(let v)? = body {return v}
+      return Aria_Daemon_V1_RelayResume()
+    }
+    set {body = .resume(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Body: Equatable, Sendable {
@@ -330,13 +345,15 @@ public nonisolated struct Aria_Daemon_V1_RelayRequest: Sendable {
     case audio(Aria_Daemon_V1_RelayAudio)
     case stop(Aria_Daemon_V1_RelayStop)
     case submit(Aria_Daemon_V1_RelaySubmit)
+    case resume(Aria_Daemon_V1_RelayResume)
 
   }
 
   public init() {}
 }
 
-/// The opening message of a stream. Any other opening message is refused.
+/// The opening message of a recording's first stream. A stream opens with
+/// this or with a `RelayResume`. Any other opening message is refused.
 public nonisolated struct Aria_Daemon_V1_RelayStart: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -346,6 +363,35 @@ public nonisolated struct Aria_Daemon_V1_RelayStart: Sendable {
 
   /// The phone or watch that records. Unspecified for an older client.
   public var device: Aria_Daemon_V1_RecordingDevice = .unspecified
+
+  /// Names the recording, so a later stream can continue it: 1 to 32 bytes
+  /// the client picks at random. Absent, a failed stream cancels the
+  /// recording.
+  public var recordingID: Data {
+    get {_recordingID ?? Data()}
+    set {_recordingID = newValue}
+  }
+  /// Returns true if `recordingID` has been explicitly set.
+  public var hasRecordingID: Bool {self._recordingID != nil}
+  /// Clears the value of `recordingID`. Subsequent reads from it will return its default value.
+  public mutating func clearRecordingID() {self._recordingID = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _recordingID: Data? = nil
+}
+
+/// The opening message of a stream that continues a recording whose stream
+/// failed. Audio and the stop follow as after a `RelayStart`.
+public nonisolated struct Aria_Daemon_V1_RelayResume: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// As the recording's `RelayStart.recording_id` gave it.
+  public var recordingID: Data = Data()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -430,6 +476,11 @@ public nonisolated struct Aria_Daemon_V1_RelayEvent: Sendable {
   /// On COMPLETED: how many of the text's words went where `delivery` says,
   /// its last ones when some typed before.
   public var wordCount: UInt32 = 0
+
+  /// On RESUMED: how many bytes of audio the Mac took on the recording's
+  /// earlier streams. Audio written after them was lost on the way, so the
+  /// client sends on from there.
+  public var takenBytes: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -609,7 +660,7 @@ public nonisolated struct Aria_Daemon_V1_PhoneMicrophoneStop: Sendable {
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
 nonisolated extension Aria_Daemon_V1_RelayStage: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RELAY_STAGE_UNSPECIFIED\0\u{1}RELAY_STAGE_TRANSCRIBING\0\u{1}RELAY_STAGE_COMPLETED\0\u{1}RELAY_STAGE_NO_SPEECH\0\u{1}RELAY_STAGE_OFFER_TAKEN\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RELAY_STAGE_UNSPECIFIED\0\u{1}RELAY_STAGE_TRANSCRIBING\0\u{1}RELAY_STAGE_COMPLETED\0\u{1}RELAY_STAGE_NO_SPEECH\0\u{1}RELAY_STAGE_OFFER_TAKEN\0\u{1}RELAY_STAGE_RESUMED\0")
 }
 
 nonisolated extension Aria_Daemon_V1_AudioFormat: SwiftProtobuf._ProtoNameProviding {
@@ -925,7 +976,7 @@ nonisolated extension Aria_Daemon_V1_RevokePhoneResponse: SwiftProtobuf.Message,
 
 nonisolated extension Aria_Daemon_V1_RelayRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RelayRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}audio\0\u{1}stop\0\u{1}submit\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}audio\0\u{1}stop\0\u{1}submit\0\u{1}resume\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -985,6 +1036,19 @@ nonisolated extension Aria_Daemon_V1_RelayRequest: SwiftProtobuf.Message, SwiftP
           self.body = .submit(v)
         }
       }()
+      case 5: try {
+        var v: Aria_Daemon_V1_RelayResume?
+        var hadOneofValue = false
+        if let current = self.body {
+          hadOneofValue = true
+          if case .resume(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.body = .resume(v)
+        }
+      }()
       default: break
       }
     }
@@ -1012,6 +1076,10 @@ nonisolated extension Aria_Daemon_V1_RelayRequest: SwiftProtobuf.Message, SwiftP
       guard case .submit(let v)? = self.body else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
     }()
+    case .resume?: try {
+      guard case .resume(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -1026,7 +1094,7 @@ nonisolated extension Aria_Daemon_V1_RelayRequest: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Aria_Daemon_V1_RelayStart: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RelayStart"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}format\0\u{2}\u{3}device\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}format\0\u{2}\u{3}device\0\u{3}recording_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1036,24 +1104,63 @@ nonisolated extension Aria_Daemon_V1_RelayStart: SwiftProtobuf.Message, SwiftPro
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.format) }()
       case 4: try { try decoder.decodeSingularEnumField(value: &self.device) }()
+      case 5: try { try decoder.decodeSingularBytesField(value: &self._recordingID) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if self.format != .unspecified {
       try visitor.visitSingularEnumField(value: self.format, fieldNumber: 1)
     }
     if self.device != .unspecified {
       try visitor.visitSingularEnumField(value: self.device, fieldNumber: 4)
     }
+    try { if let v = self._recordingID {
+      try visitor.visitSingularBytesField(value: v, fieldNumber: 5)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Aria_Daemon_V1_RelayStart, rhs: Aria_Daemon_V1_RelayStart) -> Bool {
     if lhs.format != rhs.format {return false}
     if lhs.device != rhs.device {return false}
+    if lhs._recordingID != rhs._recordingID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_RelayResume: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RelayResume"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}recording_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.recordingID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.recordingID.isEmpty {
+      try visitor.visitSingularBytesField(value: self.recordingID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_RelayResume, rhs: Aria_Daemon_V1_RelayResume) -> Bool {
+    if lhs.recordingID != rhs.recordingID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1129,7 +1236,7 @@ nonisolated extension Aria_Daemon_V1_RelaySubmit: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Aria_Daemon_V1_RelayEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RelayEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{1}submitted\0\u{3}return_offer\0\u{1}delivery\0\u{3}word_count\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}text\0\u{1}submitted\0\u{3}return_offer\0\u{1}delivery\0\u{3}word_count\0\u{3}taken_bytes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1143,6 +1250,7 @@ nonisolated extension Aria_Daemon_V1_RelayEvent: SwiftProtobuf.Message, SwiftPro
       case 4: try { try decoder.decodeSingularMessageField(value: &self._returnOffer) }()
       case 5: try { try decoder.decodeSingularEnumField(value: &self.delivery) }()
       case 6: try { try decoder.decodeSingularUInt32Field(value: &self.wordCount) }()
+      case 7: try { try decoder.decodeSingularUInt64Field(value: &self.takenBytes) }()
       default: break
       }
     }
@@ -1171,6 +1279,9 @@ nonisolated extension Aria_Daemon_V1_RelayEvent: SwiftProtobuf.Message, SwiftPro
     if self.wordCount != 0 {
       try visitor.visitSingularUInt32Field(value: self.wordCount, fieldNumber: 6)
     }
+    if self.takenBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.takenBytes, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1181,6 +1292,7 @@ nonisolated extension Aria_Daemon_V1_RelayEvent: SwiftProtobuf.Message, SwiftPro
     if lhs._returnOffer != rhs._returnOffer {return false}
     if lhs.delivery != rhs.delivery {return false}
     if lhs.wordCount != rhs.wordCount {return false}
+    if lhs.takenBytes != rhs.takenBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
