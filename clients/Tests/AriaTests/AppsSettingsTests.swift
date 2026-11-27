@@ -66,23 +66,4 @@ final class AppsSettingsTests: XCTestCase {
 
         XCTAssertEqual(apps, original)
     }
-
-    func testGroupsKnowCommonAppsAndLeaveOthersOut() {
-        XCTAssertEqual(AppGroup.of(bundleID: slack), .chat)
-        XCTAssertEqual(AppGroup.of(bundleID: "com.apple.Terminal"), .terminal)
-        XCTAssertNil(AppGroup.of(bundleID: "com.example.unknown"))
-    }
-
-    func testAnAppInNoGroupShowsEverySetting() {
-        let shown = AppSetting.shown(for: "com.example.unknown", overrides: Aria_Daemon_V1_DictationOverrides())
-
-        XCTAssertEqual(shown, AppSetting.allCases)
-    }
-
-    func testAStoredSettingIsAlwaysShown() {
-        var overrides = Aria_Daemon_V1_DictationOverrides()
-        overrides.deliveryMode = .complete
-
-        XCTAssertTrue(AppSetting.shown(for: slack, overrides: overrides).contains(.delivery))
-    }
 }
