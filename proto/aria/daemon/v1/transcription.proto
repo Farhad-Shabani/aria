@@ -63,7 +63,7 @@ message ListUnsavedTranscriptsResponse {
   repeated UnsavedTranscript transcripts = 1;
   // Whether Mac Audio history is full, which is why a session with history
   // on runs unsaved. False while history can't open.
-  bool history_full = 5;
+  bool history_full = 2;
   // Aria's two folders. A copy saved in either, or below it, isn't the
   // person's own, since Aria removes files there.
   string transcripts_dir = 3;

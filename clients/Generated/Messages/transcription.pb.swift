@@ -509,7 +509,7 @@ nonisolated extension Aria_Daemon_V1_ListUnsavedTranscriptsRequest: SwiftProtobu
 
 nonisolated extension Aria_Daemon_V1_ListUnsavedTranscriptsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListUnsavedTranscriptsResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}transcripts\0\u{4}\u{2}transcripts_dir\0\u{3}unsaved_dir\0\u{3}history_full\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}transcripts\0\u{3}history_full\0\u{3}transcripts_dir\0\u{3}unsaved_dir\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -518,9 +518,9 @@ nonisolated extension Aria_Daemon_V1_ListUnsavedTranscriptsResponse: SwiftProtob
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedMessageField(value: &self.transcripts) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.historyFull) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.transcriptsDir) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.unsavedDir) }()
-      case 5: try { try decoder.decodeSingularBoolField(value: &self.historyFull) }()
       default: break
       }
     }
@@ -530,14 +530,14 @@ nonisolated extension Aria_Daemon_V1_ListUnsavedTranscriptsResponse: SwiftProtob
     if !self.transcripts.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.transcripts, fieldNumber: 1)
     }
+    if self.historyFull != false {
+      try visitor.visitSingularBoolField(value: self.historyFull, fieldNumber: 2)
+    }
     if !self.transcriptsDir.isEmpty {
       try visitor.visitSingularStringField(value: self.transcriptsDir, fieldNumber: 3)
     }
     if !self.unsavedDir.isEmpty {
       try visitor.visitSingularStringField(value: self.unsavedDir, fieldNumber: 4)
-    }
-    if self.historyFull != false {
-      try visitor.visitSingularBoolField(value: self.historyFull, fieldNumber: 5)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
