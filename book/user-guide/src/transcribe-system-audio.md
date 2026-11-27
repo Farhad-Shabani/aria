@@ -57,10 +57,11 @@ With history off, or with history full, a transcript waits unsaved in
 `~/.aria/unsaved`. When it ends, Aria lists it as **Unsaved Transcript**, with
 these choices:
 
-- **Save…** (**⌘S**) saves it where you choose, outside Aria's folders, as
-  your own file. History doesn't list it.
-- **Discard…** deletes it, once you confirm. While history can't open, Aria
-  can't discard it. Try again later.
+- **Save…** (**⌘S**) saves it where you choose, outside `~/.aria`, as your
+  own file. History doesn't list it.
+- **Discard…** deletes it, once you confirm.
+
+While history can't open, Aria can't save or discard it. Try again later.
 
 To save to a file of your own instead:
 

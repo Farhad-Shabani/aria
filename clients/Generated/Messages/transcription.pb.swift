@@ -141,10 +141,9 @@ public nonisolated struct Aria_Daemon_V1_StartSystemTranscriptionRequest: Sendab
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// Absolute file path for the transcript, outside `~/.aria/transcripts`
-  /// and `~/.aria/unsaved`. Absent: a timestamped file in
-  /// `~/.aria/transcripts`, or in `~/.aria/unsaved` when history won't save
-  /// it.
+  /// Absolute file path for the transcript, outside `~/.aria`. Absent: a
+  /// timestamped file in `~/.aria/transcripts`, or in `~/.aria/unsaved` when
+  /// history won't save it.
   public var transcriptPath: String {
     get {_transcriptPath ?? String()}
     set {_transcriptPath = newValue}

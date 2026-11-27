@@ -38,10 +38,9 @@ service SystemTranscriptionService {
 }
 
 message StartSystemTranscriptionRequest {
-  // Absolute file path for the transcript, outside `~/.aria/transcripts`
-  // and `~/.aria/unsaved`. Absent: a timestamped file in
-  // `~/.aria/transcripts`, or in `~/.aria/unsaved` when history won't save
-  // it.
+  // Absolute file path for the transcript, outside `~/.aria`. Absent: a
+  // timestamped file in `~/.aria/transcripts`, or in `~/.aria/unsaved` when
+  // history won't save it.
   optional string transcript_path = 1;
 }
 
