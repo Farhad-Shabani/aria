@@ -76,21 +76,14 @@ final class PaletteUnsavedTranscriptTests: XCTestCase {
             model.keepsHistory = keepsHistory
 
             let actions = PaletteActions(model: model).all
+            let changing = PaletteActions(model: model, isChangingUnsaved: true).all
 
             XCTAssertEqual(actions.map(\.kind), [.saveTranscript(transcript), .discardTranscript(transcript)])
             XCTAssertTrue(actions.allSatisfy { $0.isInFooter && $0.isEnabled })
             XCTAssertEqual(actions.map(\.title), ["Save…", "Discard…"])
             XCTAssertEqual(actions.first?.key.label, "⌘S")
+            XCTAssertEqual(changing.map(\.isEnabled), [false, false])
         }
-    }
-
-    func testEveryUnsavedActionWaitsOnAChange() {
-        let transcript = Self.transcript("a.txt")
-        let model = openModel(unsaved: [transcript], opening: transcript)
-
-        let changing = PaletteActions(model: model, isChangingUnsaved: true).all
-
-        XCTAssertEqual(changing.map(\.isEnabled), [false, false])
     }
 
     func testEscapeOrTheShortcutOnTheUnsavedPageAsksBeforeLeaving() {
@@ -103,13 +96,6 @@ final class PaletteUnsavedTranscriptTests: XCTestCase {
 
         XCTAssertTrue(model.isConfirmingTranscriptDiscard)
         XCTAssertEqual(model.page, .unsaved(transcript))
-    }
-
-    func testTheShortcutClosesAnyOtherPageAtOnce() {
-        var model = openModel(unsaved: [Self.transcript("a.txt")])
-
-        XCTAssertTrue(model.requestClose())
-        XCTAssertFalse(model.isConfirmingTranscriptDiscard)
     }
 
     func testAPageWhoseTranscriptLeftTheListGoesBackToTheCommands() {

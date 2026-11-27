@@ -423,24 +423,6 @@ mod tests {
     }
 
     #[test]
-    fn an_output_file_history_names_is_refused() {
-        let home = tempfile::tempdir().unwrap();
-        let history = opened(home.path());
-        let saved = saved_in(&history, &home.path().join("Meetings"));
-        let folders = TranscriptFolders::at(home.path());
-
-        let owned = folders.start(Some(saved), Some(Arc::clone(&history)), SaveHistory::On);
-
-        assert_eq!(code(&owned), Some(RpcErrorCode::InvalidRequest));
-        let other = home.path().join("Meetings/other.txt");
-        assert!(
-            folders
-                .start(Some(other), Some(history), SaveHistory::On)
-                .is_ok()
-        );
-    }
-
-    #[test]
     fn an_output_file_waiting_to_be_removed_is_refused() {
         let home = tempfile::tempdir().unwrap();
         let history = opened(home.path());

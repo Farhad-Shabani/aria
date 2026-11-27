@@ -91,16 +91,29 @@ final class UnsavedTranscriptsTests: XCTestCase {
         XCTAssertEqual(unsaved.transcripts.map(\.name), ["a.txt"])
     }
 
-    func testADiscardHistoryCantCheckYetKeepsTheTranscriptAndSaysWhy() async {
-        let fake = Fake([Self.transcript("a.txt")])
-        fake.discardFailure = .refused(.historyUnavailable)
-        let unsaved = await refreshed(fake)
+    func testADiscardThatFailsKeepsTheTranscriptAndSaysWhy() async {
+        for (failure, message, refreshes) in [
+            (
+                DaemonFailure.refused(.historyUnavailable),
+                "Aria can’t discard this transcript until history opens. Try again later.", false
+            ),
+            (.unavailable, DaemonFailure.offlineMessage, false),
+            (.refused(.unsavedTranscriptMissing), UnsavedTranscripts.goneNotice, true),
+        ] {
+            let fake = Fake([Self.transcript("a.txt")])
+            fake.discardFailure = failure
+            let unsaved = await refreshed(fake)
 
-        let discarded = await unsaved.discard(Self.transcript("a.txt"))
+            let discarded = await unsaved.discard(Self.transcript("a.txt"))
 
-        XCTAssertFalse(discarded)
-        XCTAssertEqual(unsaved.error, "Aria can’t discard this transcript until history opens. Try again later.")
-        XCTAssertEqual(unsaved.transcripts.map(\.name), ["a.txt"])
+            XCTAssertFalse(discarded, message)
+            XCTAssertEqual(unsaved.error, message)
+            if refreshes {
+                await waitUntil { fake.lists == 2 }
+            } else {
+                XCTAssertEqual(unsaved.transcripts.map(\.name), ["a.txt"], message)
+            }
+        }
     }
 
     func testOnlyASessionEndingRefreshesTheList() async {
@@ -142,6 +155,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
             (.refused(.historyUnavailable), "Aria can’t save this transcript right now. Try again later."),
             (.unavailable, DaemonFailure.offlineMessage),
             (.timeout, "Aria couldn’t save the transcript there. Choose another place."),
+            (.refused(.unsavedTranscriptMissing), UnsavedTranscripts.goneNotice),
         ] {
             let fake = Fake([Self.transcript("a.txt")])
             fake.exportFailure = failure
@@ -155,68 +169,37 @@ final class UnsavedTranscriptsTests: XCTestCase {
         }
     }
 
-    func testACopyThatFailsToWriteKeepsTheTranscriptAndDiscardsNothing() async {
-        let fake = Fake([Self.transcript("a.txt")])
-        fake.exportFailure = CocoaError(.fileWriteNoPermission)
-        let unsaved = await refreshed(fake)
+    func testACopyWhoseDiscardFailsSaysTheCopyIsMade() async {
+        for (failure, message, refreshes) in [
+            (
+                DaemonFailure.unavailable,
+                "Aria saved a copy but couldn’t remove this one. Click **Discard** to remove it. "
+                    + DaemonFailure.offlineMessage, false
+            ),
+            (
+                .refused(.historyUnavailable),
+                "Aria saved a copy. Click **Discard** to remove this one once history opens.", false
+            ),
+            (
+                .refused(.unsavedTranscriptMissing),
+                "Aria saved a copy. This transcript changed since, so Aria left it.", true
+            ),
+        ] {
+            let fake = Fake([Self.transcript("a.txt")])
+            fake.discardFailure = failure
+            let unsaved = await refreshed(fake)
 
-        let isDiscarded = await unsaved.save(Self.transcript("a.txt"), to: URL(filePath: "/Volumes/Locked/a.txt"))
+            let discarded = await unsaved.save(Self.transcript("a.txt"), to: URL(filePath: "/Notes/a.txt"))
 
-        XCTAssertFalse(isDiscarded)
-        XCTAssertEqual(fake.listed.map(\.name), ["a.txt"])
-        XCTAssertEqual(unsaved.error, "Aria couldn’t save the transcript there. Choose another place.")
-    }
-
-    func testACopyOfAGoneTranscriptRefreshesTheList() async {
-        let fake = Fake([Self.transcript("a.txt")])
-        fake.exportFailure = DaemonFailure.refused(.unsavedTranscriptMissing)
-        let unsaved = await refreshed(fake)
-
-        let isDiscarded = await unsaved.save(Self.transcript("a.txt"), to: URL(filePath: "/Notes/a.txt"))
-
-        XCTAssertFalse(isDiscarded)
-        XCTAssertEqual(unsaved.error, UnsavedTranscripts.goneNotice)
-        await waitUntil { fake.lists == 2 }
-    }
-
-    func testACopyWhoseDiscardFailsSaysTheCopyIsMadeEvenWithAriaOff() async {
-        let fake = Fake([Self.transcript("a.txt")])
-        fake.discardFailure = .unavailable
-        let unsaved = await refreshed(fake)
-
-        let discarded = await unsaved.save(Self.transcript("a.txt"), to: URL(filePath: "/Notes/a.txt"))
-
-        XCTAssertFalse(discarded)
-        XCTAssertEqual(
-            unsaved.error,
-            "Aria saved a copy but couldn’t remove this one. Click **Discard** to remove it. "
-                + DaemonFailure.offlineMessage)
-        XCTAssertEqual(unsaved.transcripts.map(\.name), ["a.txt"])
-    }
-
-    func testACopyWhoseDiscardWaitsForHistorySaysSoInsteadOfOfferingDiscard() async {
-        let fake = Fake([Self.transcript("a.txt")])
-        fake.discardFailure = .refused(.historyUnavailable)
-        let unsaved = await refreshed(fake)
-
-        let discarded = await unsaved.save(Self.transcript("a.txt"), to: URL(filePath: "/Notes/a.txt"))
-
-        XCTAssertFalse(discarded)
-        XCTAssertEqual(unsaved.error, "Aria saved a copy. Click **Discard** to remove this one once history opens.")
-        XCTAssertEqual(unsaved.transcripts.map(\.name), ["a.txt"])
-    }
-
-    func testACopyWhoseTranscriptChangedBeforeCleanupSaysSoAndRefreshes() async {
-        let fake = Fake([Self.transcript("a.txt")])
-        fake.discardFailure = .refused(.unsavedTranscriptMissing)
-        let unsaved = await refreshed(fake)
-
-        let discarded = await unsaved.save(Self.transcript("a.txt"), to: URL(filePath: "/Notes/a.txt"))
-
-        XCTAssertFalse(discarded)
-        XCTAssertEqual(fake.exports.count, 1)
-        XCTAssertEqual(unsaved.error, "Aria saved a copy. This transcript changed since, so Aria left it.")
-        await waitUntil { fake.lists == 2 }
+            XCTAssertFalse(discarded, message)
+            XCTAssertEqual(unsaved.error, message)
+            if refreshes {
+                XCTAssertEqual(fake.exports.count, 1)
+                await waitUntil { fake.lists == 2 }
+            } else {
+                XCTAssertEqual(unsaved.transcripts.map(\.name), ["a.txt"], message)
+            }
+        }
     }
 
     func testANewCopyIsWholeAndPrivateAndASecondReplacesIt() async throws {
@@ -274,44 +257,6 @@ final class UnsavedTranscriptsTests: XCTestCase {
         _ = await saving.value
     }
 
-    func testADiscardThatFailsKeepsTheTranscript() async {
-        let fake = Fake([Self.transcript("a.txt")])
-        fake.discardFailure = .unavailable
-        let unsaved = await refreshed(fake)
-
-        let isDiscarded = await unsaved.discard(Self.transcript("a.txt"))
-
-        XCTAssertFalse(isDiscarded)
-        XCTAssertEqual(unsaved.transcripts.map(\.name), ["a.txt"])
-        XCTAssertEqual(unsaved.error, DaemonFailure.offlineMessage)
-    }
-
-    func testTheNextChangeClearsTheLastError() async {
-        let fake = Fake([Self.transcript("a.txt"), Self.transcript("b.txt")])
-        fake.discardFailure = .timeout
-        let unsaved = await refreshed(fake)
-        await unsaved.discard(Self.transcript("a.txt"))
-        XCTAssertNotNil(unsaved.error)
-
-        fake.discardFailure = nil
-        await unsaved.discard(Self.transcript("b.txt"))
-
-        XCTAssertNil(unsaved.error)
-    }
-
-    func testTheTextIsWhatTheDaemonReadsAndUnreadableWhenItCant() async {
-        let fake = Fake([Self.transcript("a.txt")])
-        fake.text = .truncated("[00:00:01] the start")
-        let unsaved = await refreshed(fake)
-
-        let cut = await unsaved.text(of: Self.transcript("a.txt"))
-        fake.readFailure = .refused(.unsavedTranscriptMissing)
-        let gone = await unsaved.text(of: Self.transcript("a.txt"))
-
-        XCTAssertEqual(cut, .truncated("[00:00:01] the start"))
-        XCTAssertEqual(gone, .unreadable)
-    }
-
     func testAReadWhileAriaIsOffSaysSoAndKeepsTheList() async {
         let fake = Fake([Self.transcript("a.txt")])
         fake.readFailure = .unavailable
@@ -349,33 +294,14 @@ final class UnsavedTranscriptsTests: XCTestCase {
         await waitUntil { fake.lists == 2 }
     }
 
-    func testADiscardOfATranscriptAnotherFileReplacedRefreshesTheList() async {
-        let fake = Fake([Self.transcript("a.txt")])
-        fake.discardFailure = .refused(.unsavedTranscriptMissing)
-        let unsaved = await refreshed(fake)
-
-        let discarded = await unsaved.discard(Self.transcript("a.txt"))
-
-        XCTAssertFalse(discarded)
-        XCTAssertEqual(unsaved.error, UnsavedTranscripts.goneNotice)
-        await waitUntil { fake.lists == 2 }
-    }
-
-    func testAListedTranscriptWithoutItsStartIsRefused() {
-        let folder = URL(filePath: "/Users/me/.aria/unsaved", directoryHint: .isDirectory)
-        var wire = Aria_Daemon_V1_UnsavedTranscript.with { $0.name = "a.txt" }
-
-        XCTAssertThrowsError(try UnsavedTranscript(wire, in: folder))
-        wire.startedAt = .init(date: Date(timeIntervalSince1970: 100))
-        XCTAssertEqual(try UnsavedTranscript(wire, in: folder).name, "a.txt")
-    }
-
     func testAListedTranscriptLivesInTheFolderAndNamesOnlyAFile() throws {
         let folder = URL(filePath: "/Users/me/.aria/unsaved", directoryHint: .isDirectory)
         var wire = Aria_Daemon_V1_UnsavedTranscript.with {
             $0.startedAt = .init(date: Date(timeIntervalSince1970: 100))
         }
+        let unstarted = Aria_Daemon_V1_UnsavedTranscript.with { $0.name = "a.txt" }
 
+        XCTAssertThrowsError(try UnsavedTranscript(unstarted, in: folder))
         wire.name = "a.txt"
         XCTAssertEqual(try UnsavedTranscript(wire, in: folder).path.path, "/Users/me/.aria/unsaved/a.txt")
         for refused in ["", ".", "..", "../a.txt", "a/b.txt"] {

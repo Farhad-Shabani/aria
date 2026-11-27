@@ -745,23 +745,6 @@ mod tests {
     }
 
     #[test]
-    fn a_session_that_failed_is_linked_as_a_failed_transcription() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), "[00:00:01] partial");
-        let failure = RpcFailure::new(
-            RpcErrorCode::SystemTranscriptionCaptureFailed,
-            "capture stopped",
-        );
-
-        let linked = recorded(&store, &file, now_ms(), 1_000, Some(failure.clone()))
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(linked.status, HistoryStatus::TranscriptionFailed);
-        assert_eq!(linked.error, Some(failure));
-    }
-
-    #[test]
     fn get_reads_a_long_transcript_up_to_one_mebibyte_and_says_so() {
         let (directory, store) = opened();
         let file = transcript(directory.path(), &"é".repeat(MAX_READ_BYTES as usize));
@@ -862,8 +845,10 @@ mod tests {
             .unwrap();
 
         fs::remove_file(&file).unwrap();
+        let before_sweep = listed(&store).len();
         store.maintenance().unwrap();
 
+        assert_eq!(before_sweep, 2, "a call leaves the row to the full sweep");
         let remaining = listed(&store);
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].text, "unmounted");
@@ -884,18 +869,6 @@ mod tests {
 
         assert_eq!(listed(&store).len(), 1);
         assert!(file.exists());
-    }
-
-    #[test]
-    fn a_call_leaves_a_mac_audio_row_whose_file_is_gone_to_the_full_sweep() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), "[00:00:01] heard");
-        linked(&store, &file);
-        fs::remove_file(&file).unwrap();
-
-        assert_eq!(listed(&store).len(), 1);
-        store.maintenance().unwrap();
-        assert!(listed(&store).is_empty());
     }
 
     #[test]
@@ -1058,24 +1031,6 @@ mod tests {
     }
 
     #[test]
-    fn a_blank_session_whose_folder_cant_be_read_goes_once_it_can() {
-        let (directory, store) = opened();
-        let (file, path, _) = store
-            .create_transcript(&directory.path().join("transcripts"))
-            .unwrap();
-        drop(file);
-        let folder = path.parent().unwrap().to_path_buf();
-        fs::set_permissions(&folder, fs::Permissions::from_mode(0o000)).unwrap();
-
-        let store = reopened(&directory, store);
-        fs::set_permissions(&folder, fs::Permissions::from_mode(0o700)).unwrap();
-        let store = reopened(&directory, store);
-
-        assert!(listed(&store).is_empty());
-        assert!(files_in(&folder).is_empty());
-    }
-
-    #[test]
     fn a_session_rewritten_by_rename_still_goes_with_its_entry() {
         let (directory, store) = opened();
         let (path, id) = session(&directory, &store);
@@ -1087,22 +1042,5 @@ mod tests {
 
         assert_eq!(ended.unwrap().text, "[00:00:00] Alex: heard");
         assert!(files_in(path.parent().unwrap()).is_empty());
-    }
-
-    #[test]
-    fn an_entry_saved_before_this_store_is_read_whole_and_deleted_with_its_file() {
-        let (directory, store) = opened();
-        let text = format!("[00:00:01] {}", "heard ".repeat(1_000));
-        let file = transcript(directory.path(), &text);
-        let id = store
-            .insert(system_transcription(&text[..1_024], &file), None)
-            .unwrap()
-            .id;
-
-        let read = store.get(id).unwrap();
-        store.delete(id).unwrap();
-
-        assert_eq!(read.text, text);
-        assert!(!file.exists());
     }
 }

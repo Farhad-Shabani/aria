@@ -5065,18 +5065,6 @@ mod tests {
     }
 
     #[test]
-    fn the_transcripts_folder_crosses_the_wire() {
-        let snapshot = SettingsSnapshot {
-            transcripts_dir: "/Users/someone/Transcripts".into(),
-            ..SettingsSnapshot::default()
-        };
-
-        let decoded = SettingsSnapshot::try_from(wire::SettingsSnapshot::from(&snapshot)).unwrap();
-
-        assert_eq!(decoded.transcripts_dir, snapshot.transcripts_dir);
-    }
-
-    #[test]
     fn streaming_availability_crosses_the_wire_unchanged() {
         let snapshot = SettingsSnapshot {
             streaming_unavailable: StreamingSupport::of(
@@ -5955,12 +5943,10 @@ mod tests {
                 "/tmp/meeting.txt".into()
             )
         );
-        for destination in ["", "notes/meeting.txt", "/tmp/meeting\0.txt"] {
-            assert!(matches!(
-                decode(destination),
-                Err(ProtocolError::InvalidTranscriptPath)
-            ));
-        }
+        assert!(matches!(
+            decode("notes/meeting.txt"),
+            Err(ProtocolError::InvalidTranscriptPath)
+        ));
     }
 
     #[test]

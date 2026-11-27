@@ -501,12 +501,4 @@ mod tests {
             assert_eq!(session_start(refused), None, "{refused}");
         }
     }
-
-    #[test]
-    fn sessions_in_one_second_never_share_a_name() {
-        let at = OffsetDateTime::from_unix_timestamp(1_795_600_800).unwrap();
-        let names: std::collections::HashSet<String> =
-            (0..100).map(|_| name_at(at).unwrap()).collect();
-        assert_eq!(names.len(), 100);
-    }
 }

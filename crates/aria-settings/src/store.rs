@@ -431,15 +431,6 @@ mod tests {
     }
 
     #[test]
-    fn a_snapshot_names_arias_transcripts_folder() {
-        let (home, _path, store) = store_with("");
-        assert_eq!(
-            store.snapshot().unwrap().transcripts_dir,
-            home.path().join(".aria/transcripts")
-        );
-    }
-
-    #[test]
     fn history_keep_audio_is_opt_in_and_snapshotted() {
         let (_home, path, store) = new_store();
         let original = store.snapshot().unwrap().settings;

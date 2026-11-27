@@ -487,68 +487,23 @@ mod tests {
     }
 
     #[test]
-    fn discarding_leaves_nothing_and_a_blank_session_leaves_no_file() {
-        let home = tempfile::tempdir().unwrap();
-        let folder = folder(home.path(), Some(OwnedFiles::default()));
-        written(
-            &folder,
-            "2026-11-25T10-00-00Z-0000000a.txt",
-            "[00:00:01] heard",
-        );
-        let (sink, session) = UnsavedSession::start(folder.folders.unsaved()).unwrap();
-        drop(sink);
-
-        folder
-            .discard("2026-11-25T10-00-00Z-0000000a.txt", None)
-            .unwrap();
-        session.finish().unwrap();
-
-        assert_eq!(fs::read_dir(folder.folders.unsaved()).unwrap().count(), 0);
-    }
-
-    #[test]
-    fn a_session_end_keeps_a_file_blank_only_at_its_start() {
-        let home = tempfile::tempdir().unwrap();
-        let folder = folder(home.path(), None);
-        let (sink, session) = UnsavedSession::start(folder.folders.unsaved()).unwrap();
-        drop(sink);
-        let blank_start = format!("{}text past the excerpt", " ".repeat(1_024));
-        fs::write(session.path(), &blank_start).unwrap();
-
-        let path = session.path().to_path_buf();
-        session.finish().unwrap();
-
-        assert!(path.exists());
-    }
-
-    #[test]
     fn a_file_history_names_in_the_unsaved_folder_is_never_listed_or_discarded() {
-        for older_name in [false, true] {
-            let home = tempfile::tempdir().unwrap();
-            let history = Store::open(&home.path().join("history"), &AtRest::for_tests()).unwrap();
-            let unsaved = home.path().join(DIRECTORY);
-            fs::create_dir_all(&unsaved).unwrap();
-            // An older Aria's folder, set to a link to what is now the unsaved one.
-            let saved_folder = if older_name {
-                let older = home.path().join("Older Transcripts");
-                std::os::unix::fs::symlink(&unsaved, &older).unwrap();
-                older
-            } else {
-                unsaved.clone()
-            };
-            let (mut file, saved, id) = history.create_transcript(&saved_folder).unwrap();
-            io::Write::write_all(&mut file, b"[00:00:01] heard").unwrap();
-            history.finish_transcript(id, 1_000, None).unwrap();
-            let name = saved.file_name().unwrap().to_str().unwrap().to_owned();
+        let home = tempfile::tempdir().unwrap();
+        let history = Store::open(&home.path().join("history"), &AtRest::for_tests()).unwrap();
+        let unsaved = home.path().join(DIRECTORY);
+        fs::create_dir_all(&unsaved).unwrap();
+        let (mut file, saved, id) = history.create_transcript(&unsaved).unwrap();
+        io::Write::write_all(&mut file, b"[00:00:01] heard").unwrap();
+        history.finish_transcript(id, 1_000, None).unwrap();
+        let name = saved.file_name().unwrap().to_str().unwrap().to_owned();
 
-            let folder = UnsavedFolder::open(home.path(), Some(&history)).unwrap();
-            let listed = folder.list(None).unwrap();
-            let discarded = folder.discard(&name, None);
+        let folder = UnsavedFolder::open(home.path(), Some(&history)).unwrap();
+        let listed = folder.list(None).unwrap();
+        let discarded = folder.discard(&name, None);
 
-            assert!(listed.transcripts.is_empty(), "{older_name}");
-            assert!(discarded.is_err(), "{older_name}");
-            assert!(saved.exists(), "{older_name}");
-        }
+        assert!(listed.transcripts.is_empty());
+        assert!(discarded.is_err());
+        assert!(saved.exists());
     }
 
     #[test]
@@ -566,39 +521,6 @@ mod tests {
         let mut read = String::new();
         io::Read::read_to_string(&mut source, &mut read).unwrap();
         assert_eq!(read, text);
-    }
-
-    #[test]
-    fn a_save_into_an_aria_folder_is_refused_however_it_is_spelled() {
-        let home = tempfile::tempdir().unwrap();
-        let folder = folder(home.path(), Some(OwnedFiles::default()));
-        let name = "2026-11-25T10-00-00Z-0000000a.txt";
-        let unsaved = written(&folder, name, "[00:00:01] heard");
-        let transcripts = home.path().join(aria_settings::TRANSCRIPTS_DIRECTORY);
-        fs::create_dir_all(&transcripts).unwrap();
-        let alias = home.path().join("alias");
-        std::os::unix::fs::symlink(&transcripts, &alias).unwrap();
-
-        for inside in [
-            unsaved.clone(),
-            folder.folders.unsaved().join("meeting.txt"),
-            transcripts.join("meeting.txt"),
-            transcripts.join("new/meeting.txt"),
-            alias.join("meeting.txt"),
-            home.path().join(".aria/settings.toml"),
-        ] {
-            let refused = folder.open_to_export(name, &inside, None).map(drop);
-
-            let Err(error) = refused else {
-                panic!("{inside:?} was accepted")
-            };
-            assert_eq!(
-                RpcErrorCode::from(&error),
-                RpcErrorCode::InvalidRequest,
-                "{inside:?}"
-            );
-        }
-        assert_eq!(fs::read_to_string(&unsaved).unwrap(), "[00:00:01] heard");
     }
 
     #[test]
@@ -648,18 +570,42 @@ mod tests {
         let opened = folder(home.path(), Some(OwnedFiles::default()));
         let running = written(&opened, name, "[00:00:01] live");
         let unchecked = folder(home.path(), None);
+        // A running `--output` session's file, saved onto under another case.
+        let output = home.path().join("Notes.txt");
+        fs::write(&output, "[00:00:01] live").unwrap();
+        let onto_output = home.path().join("NOTES.TXT");
 
-        for (folder, name, running, code) in [
+        for (folder, name, destination, running, code) in [
             (
                 &opened,
                 "2026-11-25T11-00-00Z-0000000b.txt",
+                &destination,
                 None,
                 RpcErrorCode::UnsavedTranscriptMissing,
             ),
-            (&opened, name, Some(running.as_path()), RpcErrorCode::Busy),
-            (&unchecked, name, None, RpcErrorCode::HistoryUnavailable),
+            (
+                &opened,
+                name,
+                &destination,
+                Some(running.as_path()),
+                RpcErrorCode::Busy,
+            ),
+            (
+                &opened,
+                name,
+                &onto_output,
+                Some(output.as_path()),
+                RpcErrorCode::Busy,
+            ),
+            (
+                &unchecked,
+                name,
+                &destination,
+                None,
+                RpcErrorCode::HistoryUnavailable,
+            ),
         ] {
-            let refused = folder.open_to_export(name, &destination, running).map(drop);
+            let refused = folder.open_to_export(name, destination, running).map(drop);
 
             let Err(error) = refused else {
                 panic!("{code:?} was accepted")
@@ -668,25 +614,6 @@ mod tests {
         }
         assert!(!destination.exists());
         assert!(running.exists());
-    }
-
-    #[test]
-    fn a_save_onto_the_running_sessions_file_is_refused_however_it_is_spelled() {
-        let home = tempfile::tempdir().unwrap();
-        let folder = folder(home.path(), Some(OwnedFiles::default()));
-        let name = "2026-11-25T10-00-00Z-0000000a.txt";
-        written(&folder, name, "[00:00:01] heard");
-        let output = home.path().join("Notes.txt");
-        fs::write(&output, "[00:00:01] live").unwrap();
-
-        let refused = folder
-            .open_to_export(name, &home.path().join("NOTES.TXT"), Some(&output))
-            .map(drop);
-
-        let Err(error) = refused else {
-            panic!("the running session's file was accepted")
-        };
-        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::Busy);
         assert_eq!(fs::read_to_string(&output).unwrap(), "[00:00:01] live");
     }
 

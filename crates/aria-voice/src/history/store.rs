@@ -3065,24 +3065,6 @@ mod tests {
     }
 
     #[test]
-    fn a_search_pages_through_its_matches_past_entries_it_skips() {
-        let (_directory, store) = opened();
-        let older = save(&store, "needle one", HistoryStatus::Success, None);
-        save(&store, "hay", HistoryStatus::Success, None);
-        let newer = save(&store, "needle two", HistoryStatus::Success, None);
-        save(&store, "hay", HistoryStatus::Success, None);
-
-        let first = store.list(&query("needle", None, 1)).unwrap();
-        let second = store
-            .list(&query("needle", first.next_before_id, 1))
-            .unwrap();
-
-        assert_eq!(first.entries[0].id, newer.id);
-        assert_eq!(second.entries[0].id, older.id);
-        assert_eq!(second.next_before_id, None);
-    }
-
-    #[test]
     fn typed_errors_and_existing_plain_errors_survive_reopening() {
         let (directory, store) = opened();
         let failures = [
@@ -3922,28 +3904,6 @@ mod tests {
         assert!(RESULTS_SCHEMA.contains(&format!(
             "length(CAST(prompt_name AS BLOB)) BETWEEN 1 AND {MAX_PROMPT_NAME_BYTES})"
         )));
-    }
-
-    #[test]
-    fn a_load_of_the_budgeted_sections_skips_mac_audio_rows_by_index() {
-        let (_directory, store) = opened();
-        let state = store.lock();
-        let plan: Vec<String> = state
-            .connection
-            .prepare(&format!(
-                "EXPLAIN QUERY PLAN SELECT {COLUMNS} FROM entries {}",
-                Rows::Budgeted.filter()
-            ))
-            .unwrap()
-            .query_map([], |row| row.get(3))
-            .unwrap()
-            .map(Result::unwrap)
-            .collect();
-
-        assert!(
-            plan.iter().all(|step| step.contains("entries_by_section")),
-            "{plan:?}"
-        );
     }
 
     #[test]

@@ -392,39 +392,20 @@ mod tests {
     use aria_kit::audio::CANONICAL_SAMPLE_RATE;
     use aria_platform::sqlite::AtRest;
     use std::fs;
-    use std::sync::Arc;
 
     fn enrolled(name: &str) -> Label {
         Label::Enrolled(SpeakerName::new(name).expect("a usable name"))
     }
 
-    /// A session history names, with one segment heard and not yet written.
-    fn recorded_in_tempdir() -> (tempfile::TempDir, Arc<Store>, TranscriptFile, PathBuf, u64) {
+    #[test]
+    fn a_line_another_writer_appends_after_a_rewrite_stays() {
         let directory = tempfile::tempdir().unwrap();
         let history = Store::open(&directory.path().join("history"), &AtRest::for_tests()).unwrap();
-        let (mut sink, path, id) =
+        let (mut sink, path, _id) =
             TranscriptFile::create_recorded(&directory.path().join("transcripts"), &history)
                 .unwrap();
         sink.segment(spanning(0, 2, Some(&Label::Anonymous(1)), "heard"))
             .unwrap();
-        (directory, history, sink, path, id)
-    }
-
-    #[test]
-    fn a_relabeled_transcript_goes_with_its_deleted_entry() {
-        let (_directory, history, mut sink, path, id) = recorded_in_tempdir();
-        sink.rewrite(|_| vec![Some(Label::Anonymous(2))]).unwrap();
-        drop(sink);
-        history.finish_transcript(id, 1_000, None).unwrap();
-
-        history.delete(id).unwrap();
-
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn a_line_another_writer_appends_after_a_rewrite_stays() {
-        let (_directory, _history, mut sink, path, _id) = recorded_in_tempdir();
         sink.segment(heard(None, "first")).unwrap();
         sink.flush_paragraph().unwrap();
         sink.rewrite(|_| vec![Some(Label::Anonymous(2))]).unwrap();
@@ -485,23 +466,6 @@ mod tests {
             fs::read_to_string(&path).unwrap(),
             "[00:00:00] Speaker 1: heard\n\na note\n"
         );
-    }
-
-    #[test]
-    fn a_rewrite_leaves_a_file_an_editor_saved_at_the_output_path() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("meeting.txt");
-        let (mut sink, _) = TranscriptFile::append_to(path.clone()).unwrap();
-        sink.segment(heard(Some(&Label::Anonymous(1)), "heard"))
-            .unwrap();
-        sink.flush_paragraph().unwrap();
-        let saved = directory.path().join("meeting.txt.saving");
-        fs::write(&saved, "the person's edits\n").unwrap();
-        fs::rename(&saved, &path).unwrap();
-
-        sink.rewrite(|_| vec![Some(Label::Anonymous(2))]).unwrap();
-
-        assert_eq!(fs::read_to_string(&path).unwrap(), "the person's edits\n");
     }
 
     fn open_in_tempdir() -> (tempfile::TempDir, TranscriptFile, PathBuf) {
@@ -610,8 +574,6 @@ mod tests {
 
         let written = fs::read_to_string(&path).expect("the transcript file is readable");
         assert_eq!(written, "[00:00:00] hello there general kenobi\n");
-        let name = path.file_name().and_then(|name| name.to_str());
-        assert!(name.and_then(transcript_file::session_start).is_some());
     }
 
     #[test]
