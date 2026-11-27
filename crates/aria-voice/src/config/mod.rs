@@ -114,6 +114,8 @@ impl SttBackend {
 pub struct SystemTranscriptionConfig {
     pub engine: SystemTranscriptionEngine,
     pub transcripts_dir: PathBuf,
+    /// The folder the settings file still names, which Mac Audio ignores.
+    pub ignored_transcripts_dir: Option<PathBuf>,
 }
 
 /// An engine that recognizes a live stream. Only a config whose engine

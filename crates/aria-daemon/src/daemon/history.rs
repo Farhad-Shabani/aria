@@ -197,17 +197,11 @@ impl HistoryStore {
 
     /// Like `save`, a failure is logged and kept as a warning, never returned
     /// to the session.
-    pub(super) fn save_transcript(
-        &self,
-        transcript: &Path,
-        created_at_ms: u64,
-        duration_ms: u64,
-        failure: Option<RpcFailure>,
-    ) {
-        let saved = self.storage().and_then(|store| {
-            store.save_transcript(transcript, created_at_ms, duration_ms, failure)
-        });
-        if let Err(error) = saved {
+    pub(super) fn finish_transcript(&self, id: u64, duration_ms: u64, failure: Option<RpcFailure>) {
+        let finished = self
+            .storage()
+            .and_then(|store| store.finish_transcript(id, duration_ms, failure));
+        if let Err(error) = finished {
             tracing::warn!(error = %error_chain(&error), "system transcription history could not be saved");
             self.warn(error.to_string());
         }

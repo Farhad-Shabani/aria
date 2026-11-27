@@ -1729,6 +1729,19 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_transcripts_folder_the_file_names_still_loads_and_is_reported_ignored() {
+        let home = Path::new(HOME);
+        let named = load("[transcription]\ntranscripts_dir = \"/Meetings\"\n");
+        let default = load("[transcription]\ntranscripts_dir = \"~/.aria/transcripts\"\n");
+
+        assert_eq!(
+            named.settings.ignored_transcripts_dir(home),
+            Some(Path::new("/Meetings"))
+        );
+        assert_eq!(default.settings.ignored_transcripts_dir(home), None);
+    }
+
+    #[test]
     fn the_example_file_loads_with_its_values() {
         let loaded = load(EXAMPLE);
         let settings = &loaded.settings;

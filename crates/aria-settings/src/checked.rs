@@ -2,7 +2,7 @@
 //! config loader reads them and checks nothing again.
 
 use std::ops::Deref;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use aria_kit::synthesis::{SpeakingRate, Voice};
@@ -27,7 +27,22 @@ impl CheckedSettings {
     pub fn choices(&self) -> &Choices {
         &self.choices
     }
+
+    /// The folder the file names in `transcription.transcripts_dir`, when it
+    /// isn't [`TRANSCRIPTS_DIRECTORY`]. Mac Audio ignores it. The key still
+    /// loads, so a file that set it stays valid.
+    pub fn ignored_transcripts_dir(&self, home: &Path) -> Option<&Path> {
+        self.file
+            .system_transcription
+            .transcripts_dir
+            .as_deref()
+            .filter(|folder| *folder != home.join(TRANSCRIPTS_DIRECTORY))
+    }
 }
+
+/// Under the home folder: where Mac Audio keeps the transcripts history
+/// names. Only Aria writes there, and it never moves.
+pub const TRANSCRIPTS_DIRECTORY: &str = ".aria/transcripts";
 
 impl Deref for CheckedSettings {
     type Target = SettingsFile;

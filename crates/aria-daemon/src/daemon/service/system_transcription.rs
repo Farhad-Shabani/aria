@@ -73,4 +73,54 @@ impl wire::system_transcription_service_server::SystemTranscriptionService
         tracing::debug!(method = METHOD, status = "ok", "request served");
         Ok(Response::new(status.into()))
     }
+
+    async fn list_unsaved(
+        &self,
+        _request: Request<wire::ListUnsavedTranscriptsRequest>,
+    ) -> Result<Response<wire::ListUnsavedTranscriptsResponse>, Status> {
+        const METHOD: &str = "SystemTranscriptionService/ListUnsaved";
+        let state = Arc::clone(&self.state);
+        match super::blocking(METHOD, move || state.unsaved()).await? {
+            Ok(unsaved) => {
+                super::served(METHOD);
+                Ok(Response::new(unsaved.into()))
+            }
+            Err(failure) => Err(super::failed(METHOD, failure)),
+        }
+    }
+
+    async fn read_unsaved(
+        &self,
+        request: Request<wire::ReadUnsavedTranscriptRequest>,
+    ) -> Result<Response<wire::ReadUnsavedTranscriptResponse>, Status> {
+        const METHOD: &str = "SystemTranscriptionService/ReadUnsaved";
+        let request = request.into_inner();
+        let name = request.name;
+        let state = Arc::clone(&self.state);
+        match super::blocking(METHOD, move || state.read_unsaved(&name)).await? {
+            Ok(text) => {
+                // The app reads this as the page opens, so info would fill the log.
+                tracing::debug!(method = METHOD, status = "ok", "request served");
+                Ok(Response::new(text.into()))
+            }
+            Err(failure) => Err(super::failed(METHOD, failure)),
+        }
+    }
+
+    async fn discard_unsaved(
+        &self,
+        request: Request<wire::DiscardUnsavedTranscriptRequest>,
+    ) -> Result<Response<wire::DiscardUnsavedTranscriptResponse>, Status> {
+        const METHOD: &str = "SystemTranscriptionService/DiscardUnsaved";
+        let request = request.into_inner();
+        let name = request.name;
+        let state = Arc::clone(&self.state);
+        match super::blocking(METHOD, move || state.discard_unsaved(&name)).await? {
+            Ok(()) => {
+                super::served(METHOD);
+                Ok(Response::new(wire::DiscardUnsavedTranscriptResponse {}))
+            }
+            Err(failure) => Err(super::failed(METHOD, failure)),
+        }
+    }
 }

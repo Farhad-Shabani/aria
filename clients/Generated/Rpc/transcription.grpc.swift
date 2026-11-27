@@ -61,11 +61,53 @@ public enum Aria_Daemon_V1_SystemTranscriptionService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "ListUnsaved" metadata.
+        public enum ListUnsaved: Sendable {
+            /// Request type for "ListUnsaved".
+            public typealias Input = Aria_Daemon_V1_ListUnsavedTranscriptsRequest
+            /// Response type for "ListUnsaved".
+            public typealias Output = Aria_Daemon_V1_ListUnsavedTranscriptsResponse
+            /// Descriptor for "ListUnsaved".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.SystemTranscriptionService"),
+                method: "ListUnsaved",
+                type: .unary
+            )
+        }
+        /// Namespace for "ReadUnsaved" metadata.
+        public enum ReadUnsaved: Sendable {
+            /// Request type for "ReadUnsaved".
+            public typealias Input = Aria_Daemon_V1_ReadUnsavedTranscriptRequest
+            /// Response type for "ReadUnsaved".
+            public typealias Output = Aria_Daemon_V1_ReadUnsavedTranscriptResponse
+            /// Descriptor for "ReadUnsaved".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.SystemTranscriptionService"),
+                method: "ReadUnsaved",
+                type: .unary
+            )
+        }
+        /// Namespace for "DiscardUnsaved" metadata.
+        public enum DiscardUnsaved: Sendable {
+            /// Request type for "DiscardUnsaved".
+            public typealias Input = Aria_Daemon_V1_DiscardUnsavedTranscriptRequest
+            /// Response type for "DiscardUnsaved".
+            public typealias Output = Aria_Daemon_V1_DiscardUnsavedTranscriptResponse
+            /// Descriptor for "DiscardUnsaved".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.SystemTranscriptionService"),
+                method: "DiscardUnsaved",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "aria.daemon.v1.SystemTranscriptionService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Start.descriptor,
             Stop.descriptor,
-            GetStatus.descriptor
+            GetStatus.descriptor,
+            ListUnsaved.descriptor,
+            ReadUnsaved.descriptor,
+            DiscardUnsaved.descriptor
         ]
     }
 }
@@ -147,6 +189,82 @@ extension Aria_Daemon_V1_SystemTranscriptionService {
             deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_GetSystemTranscriptionStatusResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_GetSystemTranscriptionStatusResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "ListUnsaved" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > The unsaved transcripts, oldest first, but the running session's.
+        /// > A session run with history off or full leaves one, and so does one a
+        /// > crash cut short. They wait in `~/.aria/unsaved`, which never moves.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListUnsavedTranscriptsRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListUnsavedTranscriptsRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListUnsavedTranscriptsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func listUnsaved<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListUnsavedTranscriptsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListUnsavedTranscriptsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListUnsavedTranscriptsResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListUnsavedTranscriptsResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "ReadUnsaved" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > An unsaved transcript's text: all of it, or its first 1 MiB.
+        /// > ReadUnsaved and DiscardUnsaved name a transcript by the name
+        /// > ListUnsaved gave. ReadUnsaved of one that's gone fails with
+        /// > HISTORY_MISSING.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ReadUnsavedTranscriptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ReadUnsavedTranscriptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ReadUnsavedTranscriptResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func readUnsaved<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ReadUnsavedTranscriptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ReadUnsavedTranscriptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ReadUnsavedTranscriptResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ReadUnsavedTranscriptResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "DiscardUnsaved" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete an unsaved transcript. One already gone counts as deleted.
+        /// > Refused with HISTORY_UNAVAILABLE while history can't open, since only
+        /// > history knows the files it names.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_DiscardUnsavedTranscriptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_DiscardUnsavedTranscriptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_DiscardUnsavedTranscriptResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func discardUnsaved<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_DiscardUnsavedTranscriptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_DiscardUnsavedTranscriptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_DiscardUnsavedTranscriptResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DiscardUnsavedTranscriptResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -262,6 +380,115 @@ extension Aria_Daemon_V1_SystemTranscriptionService {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "ListUnsaved" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > The unsaved transcripts, oldest first, but the running session's.
+        /// > A session run with history off or full leaves one, and so does one a
+        /// > crash cut short. They wait in `~/.aria/unsaved`, which never moves.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ListUnsavedTranscriptsRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ListUnsavedTranscriptsRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ListUnsavedTranscriptsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func listUnsaved<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListUnsavedTranscriptsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ListUnsavedTranscriptsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ListUnsavedTranscriptsResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListUnsavedTranscriptsResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_SystemTranscriptionService.Method.ListUnsaved.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "ReadUnsaved" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > An unsaved transcript's text: all of it, or its first 1 MiB.
+        /// > ReadUnsaved and DiscardUnsaved name a transcript by the name
+        /// > ListUnsaved gave. ReadUnsaved of one that's gone fails with
+        /// > HISTORY_MISSING.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_ReadUnsavedTranscriptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_ReadUnsavedTranscriptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_ReadUnsavedTranscriptResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func readUnsaved<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_ReadUnsavedTranscriptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_ReadUnsavedTranscriptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_ReadUnsavedTranscriptResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ReadUnsavedTranscriptResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_SystemTranscriptionService.Method.ReadUnsaved.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "DiscardUnsaved" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete an unsaved transcript. One already gone counts as deleted.
+        /// > Refused with HISTORY_UNAVAILABLE while history can't open, since only
+        /// > history knows the files it names.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Aria_Daemon_V1_DiscardUnsavedTranscriptRequest` message.
+        ///   - serializer: A serializer for `Aria_Daemon_V1_DiscardUnsavedTranscriptRequest` messages.
+        ///   - deserializer: A deserializer for `Aria_Daemon_V1_DiscardUnsavedTranscriptResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func discardUnsaved<Result>(
+            request: GRPCCore.ClientRequest<Aria_Daemon_V1_DiscardUnsavedTranscriptRequest>,
+            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_DiscardUnsavedTranscriptRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_DiscardUnsavedTranscriptResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DiscardUnsavedTranscriptResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Aria_Daemon_V1_SystemTranscriptionService.Method.DiscardUnsaved.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -345,6 +572,100 @@ extension Aria_Daemon_V1_SystemTranscriptionService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_GetSystemTranscriptionStatusRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_GetSystemTranscriptionStatusResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListUnsaved" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > The unsaved transcripts, oldest first, but the running session's.
+    /// > A session run with history off or full leaves one, and so does one a
+    /// > crash cut short. They wait in `~/.aria/unsaved`, which never moves.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_ListUnsavedTranscriptsRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listUnsaved<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_ListUnsavedTranscriptsRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListUnsavedTranscriptsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.listUnsaved(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ListUnsavedTranscriptsRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ListUnsavedTranscriptsResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ReadUnsaved" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > An unsaved transcript's text: all of it, or its first 1 MiB.
+    /// > ReadUnsaved and DiscardUnsaved name a transcript by the name
+    /// > ListUnsaved gave. ReadUnsaved of one that's gone fails with
+    /// > HISTORY_MISSING.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_ReadUnsavedTranscriptRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func readUnsaved<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_ReadUnsavedTranscriptRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ReadUnsavedTranscriptResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.readUnsaved(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_ReadUnsavedTranscriptRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_ReadUnsavedTranscriptResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "DiscardUnsaved" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Delete an unsaved transcript. One already gone counts as deleted.
+    /// > Refused with HISTORY_UNAVAILABLE while history can't open, since only
+    /// > history knows the files it names.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Aria_Daemon_V1_DiscardUnsavedTranscriptRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func discardUnsaved<Result>(
+        request: GRPCCore.ClientRequest<Aria_Daemon_V1_DiscardUnsavedTranscriptRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DiscardUnsavedTranscriptResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.discardUnsaved(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_DiscardUnsavedTranscriptRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_DiscardUnsavedTranscriptResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -442,6 +763,112 @@ extension Aria_Daemon_V1_SystemTranscriptionService.ClientProtocol {
             metadata: metadata
         )
         return try await self.getStatus(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListUnsaved" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > The unsaved transcripts, oldest first, but the running session's.
+    /// > A session run with history off or full leaves one, and so does one a
+    /// > crash cut short. They wait in `~/.aria/unsaved`, which never moves.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listUnsaved<Result>(
+        _ message: Aria_Daemon_V1_ListUnsavedTranscriptsRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ListUnsavedTranscriptsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_ListUnsavedTranscriptsRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.listUnsaved(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ReadUnsaved" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > An unsaved transcript's text: all of it, or its first 1 MiB.
+    /// > ReadUnsaved and DiscardUnsaved name a transcript by the name
+    /// > ListUnsaved gave. ReadUnsaved of one that's gone fails with
+    /// > HISTORY_MISSING.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func readUnsaved<Result>(
+        _ message: Aria_Daemon_V1_ReadUnsavedTranscriptRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_ReadUnsavedTranscriptResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_ReadUnsavedTranscriptRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.readUnsaved(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "DiscardUnsaved" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Delete an unsaved transcript. One already gone counts as deleted.
+    /// > Refused with HISTORY_UNAVAILABLE while history can't open, since only
+    /// > history knows the files it names.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func discardUnsaved<Result>(
+        _ message: Aria_Daemon_V1_DiscardUnsavedTranscriptRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_DiscardUnsavedTranscriptResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_DiscardUnsavedTranscriptRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.discardUnsaved(
             request: request,
             options: options,
             onResponse: handleResponse

@@ -2,13 +2,16 @@
 //! Audio process tap and transcribed continuously into a transcript file.
 
 mod event;
+mod folders;
 mod session;
 mod sink;
 mod tap;
 mod track;
+pub mod unsaved;
 
 pub use event::{EVENT_THREAD, SystemTranscriptionEventEmitter};
 pub use event::{SystemAudioLevel, SystemTranscriptionEvent, SystemTranscriptionStage};
+pub use folders::{FolderError, Kept, SaveHistory, StartError, TranscriptFolders};
 pub use session::run_session;
 pub use sink::TranscriptFile;
 pub use sink::{GAP_BREAK, stamp};
@@ -23,6 +26,20 @@ use aria_settings::rpc::RpcErrorCode;
 pub struct SystemTranscriptionStarted {
     pub already_running: bool,
     pub transcript: PathBuf,
+    pub saving: TranscriptSaving,
+}
+
+/// What keeps a session's transcript once it ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TranscriptSaving {
+    /// The transcripts folder, with a history entry from the start.
+    History,
+    /// Unsaved, because **Save history** is off.
+    HistoryOff,
+    /// Unsaved, because Mac Audio history is full.
+    HistoryFull,
+    /// The file the caller named, which history never names.
+    Output,
 }
 
 pub struct SystemTranscriptionStopped {

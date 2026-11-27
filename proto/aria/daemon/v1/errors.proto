@@ -98,4 +98,7 @@ enum ErrorCode {
   ERROR_CODE_HISTORY_ENTRY_EMPTY = 904;
   // A transcript is unreadable, or too long to read in full.
   ERROR_CODE_HISTORY_TRANSCRIPT_UNREADABLE = 905;
+  // Mac Audio holds its most entries. Aria evicts none, so the person must
+  // delete some before saving another.
+  ERROR_CODE_HISTORY_FULL = 906;
 }

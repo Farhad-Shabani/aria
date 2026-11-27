@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use aria_daemon::{DaemonSession, SystemTranscriptionStage};
+use aria_daemon::{DaemonSession, SystemTranscriptionStage, TranscriptSaving};
 use clap::Subcommand;
 
 use super::runtime_paths;
@@ -10,7 +10,7 @@ pub(super) enum TranscribeCommand {
     /// Start transcribing what this machine plays into a transcript file
     Start {
         /// Write the transcript to this exact file instead of a timestamped
-        /// one in the configured transcripts directory
+        /// one in ~/.aria/transcripts
         #[arg(long, short)]
         output: Option<std::path::PathBuf>,
         /// Print the transcript here as it grows, until Ctrl-C or stop
@@ -76,6 +76,14 @@ fn start(session: &DaemonSession, output: Option<std::path::PathBuf>) -> anyhow:
         ""
     };
     println!("{already}transcribing -> {}", started.transcript.display());
+    let unsaved = match started.saving {
+        TranscriptSaving::HistoryOff => Some("history is off"),
+        TranscriptSaving::HistoryFull => Some("transcription history is full"),
+        TranscriptSaving::History | TranscriptSaving::Output => None,
+    };
+    if let Some(reason) = unsaved {
+        println!("unsaved because {reason}; open Aria to save or discard it when it ends");
+    }
     Ok(())
 }
 

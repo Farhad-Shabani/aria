@@ -12,8 +12,11 @@ import "google/protobuf/timestamp.proto";
 service HistoryService {
   rpc List(ListHistoryRequest) returns (ListHistoryResponse);
   rpc Get(GetHistoryRequest) returns (HistoryEntry);
-  // Missing entries succeed. Active regeneration refuses deletion with BUSY.
-  // Audio cleanup may remain pending; List reports cleanup warnings.
+  // Missing entries succeed. Active regeneration, or a Mac Audio session
+  // still recording, refuses deletion with BUSY. Audio cleanup may remain
+  // pending, and so may a transcript file on a drive that isn't connected or
+  // a folder Aria can't write, which goes once it can. List reports cleanup
+  // warnings.
   rpc Delete(DeleteHistoryRequest) returns (DeleteHistoryResponse);
   // Delete the section's rows, or all rows, then remove their audio and
   // orphaned recordings. Any active regeneration refuses the whole operation
@@ -77,7 +80,8 @@ message ClearHistoryRequest {
 
 message ClearHistoryResponse {
   uint64 deleted_entry_count = 1;
-  // Rows are deleted, but some audio remains for background cleanup.
+  // Rows are deleted, but some audio, or a transcript file Aria can't reach
+  // or remove yet, remains for background cleanup.
   bool audio_cleanup_pending = 2;
 }
 
@@ -184,7 +188,9 @@ message HistoryEntry {
 
 // A system transcription's transcript file. The entry's `text` is the file's
 // first KiB, which search covers. Get reads up to 1 MiB of the file instead.
-// Delete and Clear delete the file as well. Expiry leaves it.
+// Only Delete and Clear end the entry, and they delete the file as well:
+// Mac Audio entries never expire or make room for others. An entry whose
+// session still runs has no `duration` and an empty `text`.
 message HistoryTranscript {
   string path = 1;
   // Set by Get only.

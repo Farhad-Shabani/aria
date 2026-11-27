@@ -20,6 +20,9 @@ pub struct SettingsSnapshot {
     pub settings: Settings,
     /// Derived from the engine the settings name; never written.
     pub streaming_unavailable: StreamingSupport,
+    /// Where Mac Audio keeps its transcripts: [`crate::TRANSCRIPTS_DIRECTORY`]
+    /// under the home folder, whatever the file says.
+    pub transcripts_dir: std::path::PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -93,7 +96,7 @@ impl SettingsStore {
 
     pub fn snapshot(&self) -> Result<SettingsSnapshot, StoreError> {
         let loaded = self.cache.snapshot();
-        snapshot_of(&loaded)
+        snapshot_of(&loaded, self.cache.home())
     }
 
     /// A client's patch against the revision it read.
@@ -160,12 +163,12 @@ impl SettingsStore {
         let updated = match written {
             Written::Applied(loaded) | Written::AppliedRestartKey(loaded) => {
                 UpdateResult::Updated {
-                    snapshot: snapshot_of(&loaded)?,
+                    snapshot: snapshot_of(&loaded, self.cache.home())?,
                     restart_required: self.cache.restart_required(),
                 }
             }
             Written::Refused(Refusal::Conflict { current }) => {
-                UpdateResult::Conflict(snapshot_of(&current)?)
+                UpdateResult::Conflict(snapshot_of(&current, self.cache.home())?)
             }
             Written::Refused(Refusal::FileInvalid(error)) => {
                 return Err(StoreError::FileInvalid(error).into());
@@ -216,11 +219,12 @@ impl SettingsStore {
     }
 }
 
-fn snapshot_of(loaded: &Loaded) -> Result<SettingsSnapshot, StoreError> {
+fn snapshot_of(loaded: &Loaded, home: &std::path::Path) -> Result<SettingsSnapshot, StoreError> {
     Ok(SettingsSnapshot {
         revision: loaded.revision.get(),
         settings: Settings::from_file(&loaded.settings)?,
         streaming_unavailable: StreamingSupport::of(loaded.settings.choices()),
+        transcripts_dir: home.join(crate::TRANSCRIPTS_DIRECTORY),
     })
 }
 
@@ -423,6 +427,15 @@ mod tests {
         assert_eq!(
             reopened.snapshot().unwrap().settings.assistant_id,
             Some(AssistantId::Codex)
+        );
+    }
+
+    #[test]
+    fn a_snapshot_names_arias_transcripts_folder_whatever_the_file_says() {
+        let (home, _path, store) = store_with("[transcription]\ntranscripts_dir = \"/Meetings\"\n");
+        assert_eq!(
+            store.snapshot().unwrap().transcripts_dir,
+            home.path().join(".aria/transcripts")
         );
     }
 

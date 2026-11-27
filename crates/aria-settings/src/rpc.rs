@@ -69,6 +69,7 @@ pub enum RpcErrorCode {
     HistoryProjectUnavailable,
     HistoryEntryEmpty,
     HistoryTranscriptUnreadable,
+    HistoryFull,
     /// A code this build does not name, kept as it arrived so a newer daemon's
     /// failure is still reportable.
     Unknown(i32),
@@ -140,6 +141,7 @@ impl RpcErrorCode {
             Self::HistoryProjectUnavailable => "history_project_unavailable",
             Self::HistoryEntryEmpty => "history_entry_empty",
             Self::HistoryTranscriptUnreadable => "history_transcript_unreadable",
+            Self::HistoryFull => "history_full",
             Self::Unknown(_) => "unknown",
         }
     }

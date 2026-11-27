@@ -1,17 +1,16 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::fs::{self, File};
-use std::io::{self, Read};
+use std::fs;
+use std::io;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aria_kit::cancel::CancelToken;
 use aria_platform::sqlite::{AtRest, Database, DriftedMode, Ownership, Policy};
+use rusqlite::functions::FunctionFlags;
 use rusqlite::{OptionalExtension, params};
-use rustix::fs::{Mode, OFlags};
 
 use super::{
     AudioAvailability, ChatPage, ChatQuery, ClearHistoryResult, DictationContent, HistoryContent,
@@ -24,6 +23,12 @@ use aria_primitives::error_chain;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{ChatKey, ChatName, MAX_PROMPT_NAME_BYTES, Quote};
 
+use crate::transcript_file::{self, EXCERPT_BYTES};
+
+pub(super) mod transcripts;
+
+use transcripts::{EXCERPTS_SCHEMA, REMOVALS_SCHEMA, is_removal_waiting, is_transcript_gone};
+
 pub const DIRECTORY: &str = ".aria/history";
 pub const DB_FILE: &str = "history.db";
 const MAX_ERROR_MESSAGE_BYTES: usize = 256;
@@ -33,7 +38,7 @@ const MAX_AUDIO_BYTES: u64 = 128 * 1024 * 1024;
 /// A 16-bit PCM WAV's RIFF, format and data headers.
 const WAV_HEADER_BYTES: u64 = 44;
 /// Text and chats, plus every recording audio keeps.
-const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024 + MAX_AUDIO_BYTES;
+const MAX_DATABASE_BYTES: u64 = 48 * 1024 * 1024 + MAX_AUDIO_BYTES;
 const DATABASE_POLICY: Policy = Policy {
     max_bytes: MAX_DATABASE_BYTES,
     busy_timeout: Duration::from_millis(250),
@@ -50,6 +55,26 @@ const UNREADABLE_WARNING: &str = "Some unreadable history entries were removed."
 /// The version this daemon writes. It refuses a newer database.
 const SCHEMA_VERSION: u32 = 2;
 const COLUMNS: &str = "id,created,source,app_name,bundle_id,duration,text,complete,status,error,expires,audio_present,deleting,language,own_voice,project,engine,section,title,transcript,reply,assistant,chat_name";
+/// The ids of the entries a list returns, as `listed`. `?1` is the section,
+/// or NULL for all; `?2` the lowercased search text; `?3` whether each chat
+/// shows once; `?4` the exclusive cursor, or NULL.
+///
+/// A chat shows at its newest matching ask, picked before the cursor applies,
+/// so a chat shown on one page shows no older ask on the next. An ask whose
+/// chat this daemon can't read shows on its own, as the decoder reads it.
+const LISTED: &str = "WITH matching AS (
+        SELECT e.id, e.assistant, e.chat_name FROM entries e
+        LEFT JOIN chats c ON c.assistant=e.assistant AND c.name=e.chat_name
+        WHERE (?1 IS NULL OR e.section=?1)
+        AND (?2='' OR instr(lowercase(e.text),?2)>0 OR instr(lowercase(e.reply),?2)>0
+            OR instr(lowercase(c.quote),?2)>0 OR instr(lowercase(e.title),?2)>0
+            OR instr(lowercase(e.chat_name),?2)>0 OR instr(lowercase(e.app_name),?2)>0)),
+    newest AS (SELECT MAX(id) AS id FROM matching
+        WHERE is_chat(assistant, chat_name) GROUP BY assistant, chat_name),
+    listed AS (SELECT m.id FROM matching m
+        WHERE (NOT ?3 OR NOT is_chat(m.assistant, m.chat_name)
+            OR m.id IN (SELECT id FROM newest))
+        AND (?4 IS NULL OR m.id<?4))";
 /// What a chat's asks share, such as the text the chat is about. Each ask
 /// references its chat, so deleting a chat deletes its asks and their results,
 /// and renaming it renames theirs.
@@ -63,6 +88,11 @@ fn chats_schema() -> String {
         Quote::MAX_BYTES
     )
 }
+/// Lets a load of one section skip the others' rows: Mac Audio rows can
+/// number in the thousands, and every call loads the budgeted sections.
+/// Created at each open, so a database an older Aria made gains it. An older
+/// Aria keeps it up to date without reading it.
+const SECTION_INDEX: &str = "CREATE INDEX IF NOT EXISTS entries_by_section ON entries(section)";
 /// Finds a chat's asks, for reads and for its delete's cascade.
 const CHAT_INDEX: &str = "CREATE INDEX entries_by_chat
      ON entries(assistant, chat_name) WHERE chat_name IS NOT NULL";
@@ -92,10 +122,6 @@ const RESULTS_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS results (
 const RESULTS_PER_ENTRY: usize = 20;
 /// How much text all results keep together, across entries.
 const RESULTS_TEXT_BYTES: usize = 8 * 1024 * 1024;
-/// The start of a transcript that its entry keeps and search covers.
-const EXCERPT_BYTES: usize = 1024;
-/// How much of a transcript Get reads into the entry.
-const MAX_TRANSCRIPT_READ: u64 = 1024 * 1024;
 
 /// How much one section keeps before it evicts its own oldest entries.
 struct Budget {
@@ -103,21 +129,63 @@ struct Budget {
     text_bytes: usize,
 }
 
-fn budget(section: HistorySection) -> Budget {
+/// How long a section keeps its entries.
+enum Retention {
+    /// Its entries expire, and past the budget it evicts its own oldest.
+    Budget(Budget),
+    /// Its entries stay until the person deletes them, and past `most` it
+    /// refuses a new one. Each keeps at most an excerpt, so `most` also
+    /// bounds the section's text.
+    Kept { most: usize },
+}
+
+/// A transcript is the person's record, so only they end it.
+fn retention(section: HistorySection) -> Retention {
     match section {
-        HistorySection::Dictation => Budget {
+        HistorySection::Dictation => Retention::Budget(Budget {
             entries: 1_000,
             text_bytes: 8 * 1024 * 1024,
+        }),
+        HistorySection::SystemTranscription => Retention::Kept {
+            most: MAX_TRANSCRIPTS,
         },
-        // A session's text stays in its transcript file.
-        HistorySection::SystemTranscription => Budget {
-            entries: 500,
-            text_bytes: 512 * 1024,
-        },
-        HistorySection::Chat => Budget {
+        HistorySection::Chat => Retention::Budget(Budget {
             entries: 500,
             text_bytes: 8 * 1024 * 1024,
-        },
+        }),
+    }
+}
+
+fn is_budgeted(section: HistorySection) -> bool {
+    matches!(retention(section), Retention::Budget(_))
+}
+
+const MAX_TRANSCRIPTS: usize = 10_000;
+
+/// Which rows a load reads.
+#[derive(Clone, Copy)]
+enum Rows {
+    All,
+    Section(HistorySection),
+    /// The sections with a budget. Mac Audio rows can number in the
+    /// thousands, so only a full sweep reads them all.
+    Budgeted,
+}
+
+impl Rows {
+    fn filter(self) -> String {
+        match self {
+            Self::All => String::new(),
+            Self::Section(section) => format!("WHERE section={}", section_number(section)),
+            Self::Budgeted => {
+                let budgeted: Vec<String> = HistorySection::ALL
+                    .into_iter()
+                    .filter(|&section| is_budgeted(section))
+                    .map(|section| section_number(section).to_string())
+                    .collect();
+                format!("WHERE section IN ({})", budgeted.join(","))
+            }
+        }
     }
 }
 
@@ -127,11 +195,18 @@ pub struct Store {
     // The one lock also bounds audio copies. Copies need their own admission
     // if reads stall.
     state: Mutex<State>,
+    /// Held across a session's start and end, Delete, Clear and the full
+    /// sweep, so none of them act on one transcript file together. Taken
+    /// before `state`, never after.
+    files: Mutex<()>,
 }
 
 struct State {
     connection: Database,
     pinned: HashSet<u64>,
+    /// The transcript entries this store began whose session still records.
+    /// Any other entry without a duration lost its session.
+    recording: HashSet<u64>,
     warning: Option<String>,
 }
 
@@ -144,8 +219,11 @@ pub struct RetryLease {
 
 impl Drop for RetryLease {
     fn drop(&mut self) {
-        self.store.lock().pinned.remove(&self.entry.id);
-        if let Err(error) = self.store.maintenance() {
+        let mut state = self.store.lock();
+        state.pinned.remove(&self.entry.id);
+        // Only the budgeted sections: the full sweep checks every Mac Audio
+        // file, and the daemon may still hold the microphone here.
+        if let Err(error) = self.store.maintain(&mut state) {
             tracing::warn!(error = %error_chain(&error), "dictation history cleanup failed after retry");
         }
     }
@@ -193,13 +271,44 @@ impl Store {
             }
             _ => {}
         }
+        connection.execute_batch(SECTION_INDEX)?;
+        connection.execute_batch(REMOVALS_SCHEMA)?;
+        connection.execute_batch(EXCERPTS_SCHEMA)?;
         connection.pragma_update(None, "foreign_keys", true)?;
+        // Search folds case as Rust does, so non-ASCII text matches too.
+        connection.create_scalar_function(
+            "lowercase",
+            1,
+            FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+            |context| {
+                Ok(context
+                    .get::<Option<String>>(0)?
+                    .map(|text| text.to_lowercase()))
+            },
+        )?;
+        // Lists group asks into a chat only where the decoder reads one.
+        connection.create_scalar_function(
+            "is_chat",
+            2,
+            FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+            |context| {
+                let (assistant, name) = (
+                    context.get::<Option<String>>(0)?,
+                    context.get::<Option<String>>(1)?,
+                );
+                Ok(assistant
+                    .zip(name)
+                    .is_some_and(|(assistant, name)| chat_key(&assistant, &name).is_some()))
+            },
+        )?;
         remove_plaintext_audio(directory)?;
         let store = Arc::new(Self {
             database,
+            files: Mutex::new(()),
             state: Mutex::new(State {
                 connection,
                 pinned: HashSet::new(),
+                recording: HashSet::new(),
                 warning: None,
             }),
         });
@@ -212,20 +321,21 @@ impl Store {
         entry: HistoryEntry,
         audio: Option<&[f32]>,
     ) -> Result<HistoryEntry, HistoryError> {
-        self.insert_into(entry, audio, None, None)
+        let mut state = self.lock();
+        self.insert_into(&mut state, entry, audio, None, None)
     }
 
     /// `quote` goes on the entry's chat, unless the chat has one already.
     fn insert_into(
         &self,
+        state: &mut State,
         mut entry: HistoryEntry,
         audio: Option<&[f32]>,
         resume: Option<&str>,
         quote: Option<&Quote>,
     ) -> Result<HistoryEntry, HistoryError> {
         validate_entry(&entry)?;
-        let mut state = self.lock();
-        self.maintain(&mut state)?;
+        self.maintain(state)?;
         let mut copied = match audio {
             None => None,
             Some(samples) => match state.warning.is_none().then(|| encoded_audio(samples)) {
@@ -246,13 +356,13 @@ impl Store {
         let joining = entry.content.chat().cloned();
         // Only a chat with no quote yet stores this one.
         let quote = match (&joining, quote) {
-            (Some(chat), Some(quote)) if quote_of(&state, chat)?.is_none() => Some(quote),
+            (Some(chat), Some(quote)) if quote_of(state, chat)?.is_none() => Some(quote),
             _ => None,
         };
         let added = stored_bytes(&entry) + quote.map_or(0, |quote| quote.as_str().len());
         // Free the space before committing: a full database cannot evict anything.
         if let Err(error) = self.make_room(
-            &mut state,
+            state,
             entry.content.section(),
             added,
             copied.as_ref().map_or(0, |wav| wav.len() as u64),
@@ -265,7 +375,7 @@ impl Store {
             copied = None;
             entry.warning = Some(AUDIO_WARNING.to_owned());
             self.make_room(
-                &mut state,
+                state,
                 entry.content.section(),
                 added,
                 0,
@@ -311,14 +421,14 @@ impl Store {
         transaction.commit()?;
         // Its own transaction: an entry whose audio fails is still saved.
         if let Some(wav) = copied
-            && let Err(error) = save_audio(&state, id, &wav)
+            && let Err(error) = save_audio(state, id, &wav)
         {
             {
                 tracing::warn!(error = %error_chain(&error), "dictation history audio could not be saved");
                 entry.warning = Some(AUDIO_WARNING.to_owned());
             }
         }
-        let mut saved = load(&state, id)?;
+        let mut saved = load(state, id)?;
         saved.warning = entry.warning;
         Ok(saved)
     }
@@ -336,59 +446,40 @@ impl Store {
         let mut state = self.lock();
         self.maintain(&mut state)?;
         let needle = query.query.to_lowercase();
-        let (entries, _) = all(&state)?;
-        let quotes: HashMap<ChatKey, String> = if needle.is_empty() {
-            HashMap::new()
-        } else {
-            chat_quotes(&state)?
-                .into_iter()
-                .map(|(chat, quote)| (chat, quote.as_str().to_lowercase()))
-                .collect()
-        };
-        let mut shown = HashSet::new();
-        let mut entries = entries
-            .into_iter()
-            .filter(|entry| {
-                query
-                    .section
-                    .is_none_or(|section| entry.content.section() == section)
-            })
-            .filter(|entry| {
-                entry.text.to_lowercase().contains(&needle)
-                    || reply(&entry.content)
-                        .is_some_and(|reply| reply.to_lowercase().contains(&needle))
-                    || entry
-                        .content
-                        .chat()
-                        .and_then(|chat| quotes.get(chat))
-                        .is_some_and(|quote| quote.contains(&needle))
-                    || entry
-                        .title
-                        .as_ref()
-                        .is_some_and(|title| title.as_str().to_lowercase().contains(&needle))
-                    || entry
-                        .content
-                        .chat()
-                        .is_some_and(|chat| chat.name.as_str().to_lowercase().contains(&needle))
-                    || entry
-                        .application
-                        .as_ref()
-                        .is_some_and(|app| app.name.to_lowercase().contains(&needle))
-            })
-            // Runs before the cursor filter, so a chat shown on one page
-            // shows no older ask on the next.
-            .filter(|entry| {
-                !query.collapse_chats
-                    || entry
-                        .content
-                        .chat()
-                        .is_none_or(|chat| shown.insert(chat.clone()))
-            })
-            .filter(|entry| query.before_id.is_none_or(|id| entry.id < id))
-            .take(query.limit + 1)
-            .collect::<Vec<_>>();
-        let next_before_id = (entries.len() > query.limit).then(|| entries[query.limit - 1].id);
-        entries.truncate(query.limit);
+        let mut statement = state.connection.prepare(&format!(
+            "{LISTED} SELECT {COLUMNS} FROM entries
+             WHERE id IN (SELECT id FROM listed ORDER BY id DESC LIMIT ?5)
+             ORDER BY id DESC"
+        ))?;
+        let rows = statement.query_map(
+            params![
+                query.section.map(section_number),
+                needle,
+                query.collapse_chats,
+                query.before_id.map(sql_integer).transpose()?,
+                sql_integer(query.limit as u64 + 1)?,
+            ],
+            |row| Ok((unsigned(row.get(0)?, 0)?, decode(row))),
+        )?;
+        let mut ids = Vec::new();
+        let mut entries = Vec::new();
+        for row in rows {
+            let (id, decoded) = row?;
+            ids.push(id);
+            if ids.len() > query.limit {
+                break;
+            }
+            // Maintenance removes it. The page goes on without it.
+            match decoded {
+                Ok(mut entry) => {
+                    mark_retrying(&state, &mut entry);
+                    entry.result_count = result_count(&state, id)?;
+                    entries.push(entry);
+                }
+                Err(error) => tracing::warn!(id, %error, "history entry is unreadable"),
+            }
+        }
+        let next_before_id = (ids.len() > query.limit).then(|| ids[query.limit - 1]);
         Ok(HistoryPage {
             entries,
             next_before_id,
@@ -396,48 +487,15 @@ impl Store {
         })
     }
 
-    /// Saves a finished system transcription that wrote `transcript`. The file stays the session's
-    /// text, and the entry keeps its excerpt. An empty transcript saves nothing.
-    pub fn save_transcript(
-        &self,
-        transcript: &Path,
-        created_at_ms: u64,
-        duration_ms: u64,
-        failure: Option<RpcFailure>,
-    ) -> Result<Option<HistoryEntry>, HistoryError> {
-        let mut excerpt = Vec::with_capacity(EXCERPT_BYTES);
-        open_transcript(transcript)?
-            .take(EXCERPT_BYTES as u64)
-            .read_to_end(&mut excerpt)
-            .map_err(HistoryError::storage)?;
-        let excerpt = leading_text(excerpt).ok_or(HistoryError::InvalidRequest)?;
-        if excerpt.trim().is_empty() {
-            return Ok(None);
-        }
-        let entry = HistoryEntry {
-            id: 0,
-            title: None,
-            content: HistoryContent::SystemTranscription {
-                transcript: transcript.to_path_buf(),
-                read: None,
-            },
-            created_at_ms,
-            duration_ms: Some(duration_ms),
-            source: HistorySource::Local,
-            application: None,
-            project: None,
-            text: excerpt,
-            complete: failure.is_none(),
-            result_count: 0,
-            status: match failure {
-                None => HistoryStatus::Success,
-                Some(_) => HistoryStatus::TranscriptionFailed,
-            },
-            error: failure,
-            warning: None,
-            deletion_pending: false,
-        };
-        self.insert(entry, None).map(Some)
+    /// Whether Mac Audio holds `MAX_TRANSCRIPTS`, so a new session runs
+    /// unsaved.
+    pub(crate) fn is_history_full(&self) -> Result<bool, HistoryError> {
+        let state = self.lock();
+        let section = HistorySection::SystemTranscription;
+        Ok(match retention(section) {
+            Retention::Kept { most } => section_size(&state, section)? >= most,
+            Retention::Budget(_) => false,
+        })
     }
 
     pub fn save_ask(&self, ask: NewAsk<'_>) -> Result<HistoryEntry, HistoryError> {
@@ -475,7 +533,8 @@ impl Store {
             warning: None,
             deletion_pending: false,
         };
-        self.insert_into(entry, None, resume, quote)
+        let mut state = self.lock();
+        self.insert_into(&mut state, entry, None, resume, quote)
     }
 
     /// The newest asks saved under the assistant session `resume` whose
@@ -611,7 +670,7 @@ impl Store {
         Ok(results)
     }
 
-    /// A transcript entry comes back with its transcript read, up to `MAX_TRANSCRIPT_READ`, outside
+    /// A transcript entry comes back with its transcript read, up to `MAX_READ_BYTES`, outside
     /// the lock.
     pub fn get(&self, id: u64) -> Result<HistoryEntry, HistoryError> {
         validate_id(id)?;
@@ -621,14 +680,15 @@ impl Store {
             load(&state, id)?
         };
         if let HistoryContent::SystemTranscription { transcript, read } = &mut entry.content {
-            match read_transcript(transcript) {
-                Some((text, whole)) => {
+            // A link or another user's file at the path reads as unavailable,
+            // showing the excerpt.
+            let read_ours = transcript_file::open(transcript)
+                .ok()
+                .and_then(|mut file| transcript_file::read_file(&mut file).ok());
+            match read_ours.map(TranscriptRead::of) {
+                Some((text, how_much)) => {
                     entry.text = text;
-                    *read = Some(if whole {
-                        TranscriptRead::Whole
-                    } else {
-                        TranscriptRead::Truncated
-                    });
+                    *read = Some(how_much);
                 }
                 None => *read = Some(TranscriptRead::Unavailable),
             }
@@ -654,22 +714,26 @@ impl Store {
 
     pub fn delete(&self, id: u64) -> Result<bool, HistoryError> {
         validate_id(id)?;
-        let mut state = self.lock();
-        if state.pinned.contains(&id) {
-            return Err(HistoryError::Busy);
+        let _files = self.lease();
+        {
+            let mut state = self.lock();
+            if state.pinned.contains(&id) || state.recording.contains(&id) {
+                return Err(HistoryError::Busy);
+            }
+            let entry = match load(&state, id) {
+                Ok(entry) => entry,
+                Err(HistoryError::Missing) => return Ok(false),
+                Err(error) => return Err(error),
+            };
+            // The file goes first, or is recorded to go: nothing sweeps the
+            // transcripts folder, so a file whose row went first would never
+            // be reclaimed.
+            if let Some(transcript) = transcript_path(&entry.content) {
+                self.remove_transcript(&mut state, transcript)?;
+            }
+            self.mark_delete(&mut state, id)?;
+            self.remove_entry(&mut state, id)?;
         }
-        let entry = match load(&state, id) {
-            Ok(entry) => entry,
-            Err(HistoryError::Missing) => return Ok(false),
-            Err(error) => return Err(error),
-        };
-        // The file goes first: nothing sweeps the transcripts folder, so a
-        // file whose row went first would never be reclaimed.
-        if let Some(transcript) = transcript_path(&entry.content) {
-            self.remove_transcript(&mut state, transcript)?;
-        }
-        self.mark_delete(&mut state, id)?;
-        self.remove_entry(&mut state, id)?;
         Ok(true)
     }
 
@@ -752,18 +816,19 @@ impl Store {
         &self,
         section: Option<HistorySection>,
     ) -> Result<ClearHistoryResult, HistoryError> {
+        let _files = self.lease();
         let mut state = self.lock();
-        if !state.pinned.is_empty() {
+        let clears_transcripts =
+            section.is_none_or(|section| section == HistorySection::SystemTranscription);
+        if !state.pinned.is_empty() || (clears_transcripts && !state.recording.is_empty()) {
             return Err(HistoryError::Busy);
         }
         state.warning = None;
-        let (entries, unreadable) = all(&state)?;
+        let (entries, unreadable) = load_rows(&state, section.map_or(Rows::All, Rows::Section))?;
         let mut doomed = Vec::new();
         for entry in entries {
-            if section.is_some_and(|section| entry.content.section() != section) {
-                continue;
-            }
-            // A transcript that can't be removed keeps its row, as Delete does.
+            // A transcript that can't be removed or recorded keeps its row, as
+            // Delete does.
             if let Some(transcript) = transcript_path(&entry.content)
                 && self.remove_transcript(&mut state, transcript).is_err()
             {
@@ -785,9 +850,10 @@ impl Store {
         if self.remove_orphans(&mut state).is_err() {
             state.warning = Some(CLEANUP_WARNING.to_owned());
         }
+        let waiting = is_removal_waiting(&state)?;
         Ok(ClearHistoryResult {
             deleted_entries,
-            cleanup_pending: state.warning.is_some(),
+            cleanup_pending: state.warning.is_some() || waiting,
         })
     }
 
@@ -841,12 +907,15 @@ impl Store {
         if entry.deletion_pending {
             return Err(HistoryError::InvalidRequest);
         }
-        self.make_room_for_text(
-            &mut state,
-            entry.content.section(),
-            text.len().saturating_sub(entry.text.len()),
-            None,
-        )?;
+        if let Retention::Budget(budget) = retention(entry.content.section()) {
+            self.make_room_for_text(
+                &mut state,
+                entry.content.section(),
+                budget.text_bytes,
+                text.len().saturating_sub(entry.text.len()),
+                None,
+            )?;
+        }
         state.connection.execute(
             "UPDATE entries SET text=?1,complete=1,status=3,error=NULL,engine=?3,language=?4,
              expires=CASE WHEN ?5 THEN expires ELSE NULL END WHERE id=?2",
@@ -880,15 +949,40 @@ impl Store {
         Ok(())
     }
 
+    /// The full sweep, Mac Audio rows included. Runs when the store opens and
+    /// when the daemon is idle.
     pub fn maintenance(&self) -> Result<(), HistoryError> {
+        let _files = self.lease();
+        // Never stops history opening: what it can't finish waits for the next sweep.
+        let unfinished = self.finish_pending().err();
+        let gone = self.gone_transcripts()?;
+        self.finish_interrupted()?;
         let mut state = self.lock();
-        self.maintain(&mut state)
+        self.sweep(&mut state, Rows::All, &gone)?;
+        if let Some(error) = unfinished {
+            tracing::warn!(error = %error_chain(&error), "transcript removals could not be finished");
+            state.warning = Some(CLEANUP_WARNING.to_owned());
+        }
+        Ok(())
     }
 
+    /// The sweep every call runs first. It skips Mac Audio rows, which never
+    /// expire or evict, and leaves their file checks to the full sweep.
     fn maintain(&self, state: &mut State) -> Result<(), HistoryError> {
+        self.sweep(state, Rows::Budgeted, &HashMap::new())
+    }
+
+    /// `gone` holds the transcripts found missing before the lock was taken.
+    /// An entry goes only if it still names that file, and it is still gone.
+    fn sweep(
+        &self,
+        state: &mut State,
+        rows: Rows,
+        gone: &HashMap<u64, PathBuf>,
+    ) -> Result<(), HistoryError> {
         state.warning = None;
         let now = now_ms();
-        let (entries, unreadable) = all(state)?;
+        let (entries, unreadable) = load_rows(state, rows)?;
         for id in unreadable {
             if state.pinned.contains(&id) {
                 continue;
@@ -903,11 +997,16 @@ impl Store {
             if state.pinned.contains(&entry.id) {
                 continue;
             }
-            // Expiry takes the row only: a transcript stays a file
-            // the person keeps. A row whose file someone removed goes too.
+            let expires = is_budgeted(entry.content.section());
+            // A row whose file someone removed goes, but not its folder: an
+            // unmounted volume keeps its rows.
             if entry.deletion_pending
-                || now.saturating_sub(entry.created_at_ms) >= TEXT_TTL_MS
-                || transcript_path(&entry.content).is_some_and(transcript_gone)
+                || (expires && now.saturating_sub(entry.created_at_ms) >= TEXT_TTL_MS)
+                || (!state.recording.contains(&entry.id)
+                    && transcript_path(&entry.content).is_some_and(|transcript| {
+                        gone.get(&entry.id).is_some_and(|seen| seen == transcript)
+                            && is_transcript_gone(transcript)
+                    }))
             {
                 self.mark_delete(state, entry.id)?;
                 if self.remove_entry(state, entry.id).is_err() {
@@ -931,6 +1030,9 @@ impl Store {
             }
         }
         for section in HistorySection::ALL {
+            if !is_budgeted(section) {
+                continue;
+            }
             if self.make_room(state, section, 0, 0, false, None).is_err() {
                 state.warning = Some(CLEANUP_WARNING.to_owned());
             }
@@ -953,40 +1055,6 @@ impl Store {
             .connection
             .execute("DELETE FROM entries WHERE id=?1", [sql_integer(id)?])?;
         Ok(())
-    }
-
-    /// Leaves in place, with a warning, anything at the path that isn't a
-    /// regular file of ours: the path is the only check the row gives.
-    fn remove_transcript(&self, state: &mut State, transcript: &Path) -> Result<(), HistoryError> {
-        let (Some(parent), Some(name)) = (transcript.parent(), transcript.file_name()) else {
-            return Err(HistoryError::InvalidRequest);
-        };
-        let directory = match rustix::fs::open(
-            parent,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-            Mode::empty(),
-        ) {
-            Ok(directory) => File::from(directory),
-            Err(rustix::io::Errno::NOENT) => return Ok(()),
-            Err(error) => return Err(HistoryError::storage(error)),
-        };
-        let stat = match rustix::fs::statat(&directory, name, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
-        {
-            Ok(stat) => stat,
-            Err(rustix::io::Errno::NOENT) => return Ok(()),
-            Err(error) => return Err(HistoryError::storage(error)),
-        };
-        if rustix::fs::FileType::from_raw_mode(stat.st_mode) != rustix::fs::FileType::RegularFile
-            || stat.st_uid != rustix::process::getuid().as_raw()
-        {
-            state.warning = Some(CLEANUP_WARNING.to_owned());
-            return Ok(());
-        }
-        match rustix::fs::unlinkat(&directory, name, rustix::fs::AtFlags::empty()) {
-            Ok(()) | Err(rustix::io::Errno::NOENT) => {}
-            Err(error) => return Err(HistoryError::storage(error)),
-        }
-        directory.sync_all().map_err(HistoryError::storage)
     }
 
     fn invalidate_audio(&self, state: &mut State, id: u64) -> Result<(), HistoryError> {
@@ -1041,25 +1109,36 @@ impl Store {
         reserve_entry: bool,
         joining: Option<&ChatKey>,
     ) -> Result<(), HistoryError> {
-        self.make_room_for_text(state, section, text_bytes, joining)?;
-        let (mut entries, _) = all(state)?;
-        entries.retain(|entry| entry.content.section() == section);
-        let budget = budget(section).entries;
-        // An insert reserves a slot even when its transcript is empty.
-        let limit = if reserve_entry { budget - 1 } else { budget };
-        while entries.len() > limit {
-            let position = entries
-                .iter()
-                .rposition(|entry| !state.pinned.contains(&entry.id))
-                .ok_or(HistoryError::Busy)?;
-            let entry = entries.remove(position);
-            self.mark_delete(state, entry.id)?;
-            self.remove_entry(state, entry.id)?;
+        match retention(section) {
+            Retention::Budget(budget) => {
+                self.make_room_for_text(state, section, budget.text_bytes, text_bytes, joining)?;
+                let (mut entries, _) = load_rows(state, Rows::Section(section))?;
+                // An insert reserves a slot even when its transcript is empty.
+                let limit = if reserve_entry {
+                    budget.entries - 1
+                } else {
+                    budget.entries
+                };
+                while entries.len() > limit {
+                    let position = entries
+                        .iter()
+                        .rposition(|entry| !state.pinned.contains(&entry.id))
+                        .ok_or(HistoryError::Busy)?;
+                    let entry = entries.remove(position);
+                    self.mark_delete(state, entry.id)?;
+                    self.remove_entry(state, entry.id)?;
+                }
+            }
+            Retention::Kept { most } if reserve_entry && section_size(state, section)? >= most => {
+                return Err(HistoryError::Full);
+            }
+            Retention::Kept { .. } => {}
         }
         if reserve_entry && audio_bytes == 0 {
             return Ok(());
         }
-        let (entries, _) = all(state)?;
+        // Mac Audio entries keep no audio.
+        let (entries, _) = load_rows(state, Rows::Budgeted)?;
         let mut retained_audio = 0;
         for entry in &entries {
             retained_audio += audio_size(state, entry.id)?.unwrap_or(0);
@@ -1088,12 +1167,11 @@ impl Store {
         &self,
         state: &mut State,
         section: HistorySection,
+        limit: usize,
         added: usize,
         joining: Option<&ChatKey>,
     ) -> Result<(), HistoryError> {
-        let limit = budget(section).text_bytes;
-        let (mut entries, _) = all(state)?;
-        entries.retain(|entry| entry.content.section() == section);
+        let (entries, _) = load_rows(state, Rows::Section(section))?;
         let quotes = chat_quotes(state)?;
         let mut asks_left: HashMap<&ChatKey, usize> = HashMap::new();
         for chat in entries.iter().filter_map(|entry| entry.content.chat()) {
@@ -1153,6 +1231,10 @@ impl Store {
 
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lease(&self) -> MutexGuard<'_, ()> {
+        self.files.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -1288,63 +1370,6 @@ fn reply(content: &HistoryContent) -> Option<&str> {
 /// counts once per chat, apart.
 fn stored_bytes(entry: &HistoryEntry) -> usize {
     entry.text.len() + reply(&entry.content).map_or(0, str::len)
-}
-
-/// Gone only while its folder is there, so an unmounted volume doesn't
-/// empty the section.
-fn transcript_gone(transcript: &Path) -> bool {
-    transcript
-        .symlink_metadata()
-        .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
-        && transcript.parent().is_some_and(Path::is_dir)
-}
-
-/// Read-only, never through a link, and only a regular file of ours. Its mode
-/// is the person's to change.
-fn open_transcript(transcript: &Path) -> Result<File, HistoryError> {
-    let descriptor = rustix::fs::open(
-        transcript,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|error| match error {
-        rustix::io::Errno::NOENT => HistoryError::Missing,
-        error => HistoryError::storage(error),
-    })?;
-    let file = File::from(descriptor);
-    let metadata = file.metadata().map_err(HistoryError::storage)?;
-    if !metadata.is_file() || metadata.uid() != rustix::process::getuid().as_raw() {
-        return Err(HistoryError::InvalidRequest);
-    }
-    Ok(file)
-}
-
-/// The text up to `MAX_TRANSCRIPT_READ`, and whether that was all of it. `None` when the file can't
-/// be read as text.
-fn read_transcript(transcript: &Path) -> Option<(String, bool)> {
-    let mut bytes = Vec::new();
-    open_transcript(transcript)
-        .ok()?
-        .take(MAX_TRANSCRIPT_READ + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    let whole = bytes.len() as u64 <= MAX_TRANSCRIPT_READ;
-    bytes.truncate(MAX_TRANSCRIPT_READ as usize);
-    if whole {
-        return String::from_utf8(bytes).ok().map(|text| (text, true));
-    }
-    leading_text(bytes).map(|text| (text, false))
-}
-
-/// The bytes as text, dropping a character the cut split at the end.
-fn leading_text(mut bytes: Vec<u8>) -> Option<String> {
-    if let Err(error) = std::str::from_utf8(&bytes) {
-        if error.error_len().is_some() {
-            return None;
-        }
-        bytes.truncate(error.valid_up_to());
-    }
-    String::from_utf8(bytes).ok()
 }
 
 /// `table` is `entries`, or the table a migration copies into before
@@ -1594,6 +1619,7 @@ fn stored_code(code: RpcErrorCode) -> i32 {
         RpcErrorCode::HistoryProjectUnavailable => 903,
         RpcErrorCode::HistoryEntryEmpty => 904,
         RpcErrorCode::HistoryTranscriptUnreadable => 905,
+        RpcErrorCode::HistoryFull => 906,
         RpcErrorCode::Unknown(value) => value,
     }
 }
@@ -1650,6 +1676,7 @@ fn code_from_stored(number: i32) -> Option<RpcErrorCode> {
         903 => RpcErrorCode::HistoryProjectUnavailable,
         904 => RpcErrorCode::HistoryEntryEmpty,
         905 => RpcErrorCode::HistoryTranscriptUnreadable,
+        906 => RpcErrorCode::HistoryFull,
         other => RpcErrorCode::Unknown(other),
     })
 }
@@ -1694,6 +1721,15 @@ fn decode_error(stored: String) -> rusqlite::Result<RpcFailure> {
     Ok(RpcFailure::new(RpcErrorCode::Internal, stored))
 }
 
+/// The chat an ask's columns name, when this daemon knows its assistant and
+/// accepts its name.
+fn chat_key(assistant: &str, name: &str) -> Option<ChatKey> {
+    Some(ChatKey {
+        assistant_id: assistant.parse().ok()?,
+        name: ChatName::new(name).ok()?,
+    })
+}
+
 fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
     let expires = row
         .get::<_, Option<i64>>(10)?
@@ -1723,13 +1759,7 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
         row.get::<_, Option<String>>(22)?,
     ) {
         (None, None) => None,
-        (Some(assistant), Some(name)) => Some(
-            assistant
-                .parse()
-                .ok()
-                .zip(ChatName::new(&name).ok())
-                .map(|(assistant_id, name)| ChatKey { assistant_id, name }),
-        ),
+        (Some(assistant), Some(name)) => Some(chat_key(&assistant, &name)),
         (Some(_), None) | (None, Some(_)) => return Err(rusqlite::Error::InvalidQuery),
     };
     let content = match (
@@ -1830,6 +1860,23 @@ fn result_counts(state: &State) -> Result<HashMap<u64, u32>, HistoryError> {
     Ok(counts)
 }
 
+fn result_count(state: &State, id: u64) -> Result<u32, HistoryError> {
+    Ok(state.connection.query_row(
+        "SELECT COUNT(*) FROM results WHERE entry=?1",
+        [sql_integer(id)?],
+        |row| row.get(0),
+    )?)
+}
+
+fn section_size(state: &State, section: HistorySection) -> Result<usize, HistoryError> {
+    let size: i64 = state.connection.query_row(
+        "SELECT COUNT(*) FROM entries WHERE section=?1",
+        [section_number(section)],
+        |row| row.get(0),
+    )?;
+    Ok(usize::try_from(size).unwrap_or(usize::MAX))
+}
+
 /// A pinned dictation is one a retry holds.
 fn mark_retrying(state: &State, entry: &mut HistoryEntry) {
     let id = entry.id;
@@ -1849,11 +1896,7 @@ fn load(state: &State, id: u64) -> Result<HistoryEntry, HistoryError> {
         .optional()?
         .ok_or(HistoryError::Missing)?;
     mark_retrying(state, &mut entry);
-    entry.result_count = state.connection.query_row(
-        "SELECT COUNT(*) FROM results WHERE entry=?1",
-        [sql_integer(id)?],
-        |row| row.get(0),
-    )?;
+    entry.result_count = result_count(state, id)?;
     if entry.status == HistoryStatus::Recovered {
         entry.warning = state.warning.clone();
     }
@@ -1910,10 +1953,11 @@ fn stored_quote(quote: String) -> Option<Quote> {
 
 // Rows that fail to decode come back as ids, so one damaged row cannot hide
 // the rest of the history.
-fn all(state: &State) -> Result<(Vec<HistoryEntry>, Vec<u64>), HistoryError> {
-    let mut statement = state
-        .connection
-        .prepare(&format!("SELECT {COLUMNS} FROM entries ORDER BY id DESC"))?;
+fn load_rows(state: &State, rows: Rows) -> Result<(Vec<HistoryEntry>, Vec<u64>), HistoryError> {
+    let mut statement = state.connection.prepare(&format!(
+        "SELECT {COLUMNS} FROM entries {} ORDER BY id DESC",
+        rows.filter()
+    ))?;
     let rows = statement.query_map([], |row| Ok((unsigned(row.get(0)?, 0)?, decode(row))))?;
     let counts = result_counts(state)?;
     let mut entries = Vec::new();
@@ -1939,7 +1983,7 @@ fn all(state: &State) -> Result<(Vec<HistoryEntry>, Vec<u64>), HistoryError> {
 mod tests {
     use aria_kit::primitives::private_fs;
     use rusqlite::Connection;
-    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
     use super::*;
 
@@ -2005,7 +2049,7 @@ mod tests {
         entries.iter().map(|entry| entry.text.as_str()).collect()
     }
 
-    fn save(
+    pub(super) fn save(
         store: &Store,
         text: &str,
         status: HistoryStatus,
@@ -2016,7 +2060,7 @@ mod tests {
 
     /// Edits the database behind the store's back, as damage or an older
     /// daemon would.
-    fn tamper(store: &Store, sql: &str, params: impl rusqlite::Params) {
+    pub(super) fn tamper(store: &Store, sql: &str, params: impl rusqlite::Params) {
         store.lock().connection.execute(sql, params).unwrap();
     }
 
@@ -2024,7 +2068,7 @@ mod tests {
         audio_size(&store.lock(), id).unwrap().is_some()
     }
 
-    fn listed(store: &Store) -> Vec<HistoryEntry> {
+    pub(super) fn listed(store: &Store) -> Vec<HistoryEntry> {
         store.list(&query("", None, 100)).unwrap().entries
     }
 
@@ -2092,7 +2136,7 @@ mod tests {
     }
 
     /// A transcript entry as the store keeps one, without reading the file.
-    fn system_transcription(text: &str, transcript: &Path) -> HistoryEntry {
+    pub(super) fn system_transcription(text: &str, transcript: &Path) -> HistoryEntry {
         HistoryEntry {
             content: HistoryContent::SystemTranscription {
                 transcript: transcript.to_path_buf(),
@@ -2131,29 +2175,18 @@ mod tests {
             .unwrap()
     }
 
+    fn budget(section: HistorySection) -> Budget {
+        match retention(section) {
+            Retention::Budget(budget) => budget,
+            Retention::Kept { .. } => panic!("{section:?} keeps every entry"),
+        }
+    }
+
     /// A store in a fresh folder, which lives as long as the guard.
-    fn opened() -> (tempfile::TempDir, Arc<Store>) {
+    pub(super) fn opened() -> (tempfile::TempDir, Arc<Store>) {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open(directory.path(), &AtRest::for_tests()).unwrap();
         (directory, store)
-    }
-
-    /// Saves `file` as a transcript entry that just ended.
-    fn linked(store: &Store, file: &Path) -> HistoryEntry {
-        store
-            .save_transcript(file, now_ms(), 0, None)
-            .unwrap()
-            .unwrap()
-    }
-
-    /// A transcript file as a session leaves it, in `directory/transcripts`.
-    fn transcript(directory: &Path, text: &str) -> PathBuf {
-        let folder = directory.join("transcripts");
-        fs::create_dir_all(&folder).unwrap();
-        let path = folder.join("2026-11-04T10-00-00Z.txt");
-        fs::write(&path, text).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        path
     }
 
     #[test]
@@ -2800,25 +2833,6 @@ mod tests {
     }
 
     #[test]
-    fn clearing_mac_audio_removes_its_files_and_keeps_dictations() {
-        let (directory, store) = opened();
-        save(&store, "dictated", HistoryStatus::Success, None);
-        let file = transcript(directory.path(), "[00:00:01] heard");
-        store.save_transcript(&file, now_ms(), 1_000, None).unwrap();
-
-        let cleared = store
-            .clear(Some(HistorySection::SystemTranscription))
-            .unwrap();
-
-        assert_eq!(cleared.deleted_entries, 1);
-        assert!(!cleared.cleanup_pending);
-        assert!(!file.exists());
-        let remaining = listed(&store);
-        assert_eq!(remaining.len(), 1);
-        assert!(matches!(remaining[0].content, HistoryContent::Dictation(_)));
-    }
-
-    #[test]
     fn a_rename_sets_a_trimmed_title_that_search_finds_and_none_removes() {
         let (directory, store) = opened();
         let saved = save(&store, "body text", HistoryStatus::Success, None);
@@ -3050,182 +3064,23 @@ mod tests {
     }
 
     #[test]
-    fn a_linked_transcript_keeps_its_first_kibibyte_and_get_reads_it_whole() {
-        let (directory, store) = opened();
-        let text = format!("{}é tail", "a".repeat(EXCERPT_BYTES - 1));
-        let file = transcript(directory.path(), &text);
+    fn a_search_pages_through_its_matches_past_entries_it_skips() {
+        let (_directory, store) = opened();
+        let older = save(&store, "needle one", HistoryStatus::Success, None);
+        save(&store, "hay", HistoryStatus::Success, None);
+        let newer = save(&store, "needle two", HistoryStatus::Success, None);
+        save(&store, "hay", HistoryStatus::Success, None);
 
-        let linked = store
-            .save_transcript(&file, now_ms(), 5_000, None)
-            .unwrap()
+        let first = store.list(&query("needle", None, 1)).unwrap();
+        let second = store
+            .list(&query("needle", first.next_before_id, 1))
             .unwrap();
 
-        assert_eq!(linked.text, "a".repeat(EXCERPT_BYTES - 1));
-        assert_eq!(linked.status, HistoryStatus::Success);
-        let got = store.get(linked.id).unwrap();
-        assert_eq!(got.text, text);
-        assert_eq!(
-            got.content,
-            HistoryContent::SystemTranscription {
-                transcript: file,
-                read: Some(TranscriptRead::Whole)
-            }
-        );
+        assert_eq!(first.entries[0].id, newer.id);
+        assert_eq!(second.entries[0].id, older.id);
+        assert_eq!(second.next_before_id, None);
     }
 
-    #[test]
-    fn an_empty_transcript_is_not_linked() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), "\n\n");
-
-        assert!(
-            store
-                .save_transcript(&file, now_ms(), 0, None)
-                .unwrap()
-                .is_none()
-        );
-        assert!(listed(&store).is_empty());
-    }
-
-    #[test]
-    fn a_session_that_failed_is_linked_as_a_failed_transcription() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), "[00:00:01] partial");
-        let failure = RpcFailure::new(
-            RpcErrorCode::SystemTranscriptionCaptureFailed,
-            "capture stopped",
-        );
-
-        let linked = store
-            .save_transcript(&file, now_ms(), 1_000, Some(failure.clone()))
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(linked.status, HistoryStatus::TranscriptionFailed);
-        assert_eq!(linked.error, Some(failure));
-    }
-
-    #[test]
-    fn get_reads_a_long_transcript_up_to_one_mebibyte_and_says_so() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), &"é".repeat(MAX_TRANSCRIPT_READ as usize));
-        let linked = linked(&store, &file);
-
-        let got = store.get(linked.id).unwrap();
-
-        assert_eq!(got.text.len(), MAX_TRANSCRIPT_READ as usize);
-        assert!(matches!(
-            got.content,
-            HistoryContent::SystemTranscription {
-                read: Some(TranscriptRead::Truncated),
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn get_of_a_transcript_replaced_by_a_link_returns_the_excerpt_as_unavailable() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), "kept excerpt");
-        let linked = linked(&store, &file);
-        let elsewhere = directory.path().join("elsewhere.txt");
-        fs::write(&elsewhere, "someone else's").unwrap();
-        fs::remove_file(&file).unwrap();
-        symlink(&elsewhere, &file).unwrap();
-
-        let got = store.get(linked.id).unwrap();
-
-        assert_eq!(got.text, "kept excerpt");
-        assert!(matches!(
-            got.content,
-            HistoryContent::SystemTranscription {
-                read: Some(TranscriptRead::Unavailable),
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn deleting_a_mac_audio_entry_removes_its_file_and_its_row() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), "[00:00:01] heard");
-        let linked = linked(&store, &file);
-
-        assert!(store.delete(linked.id).unwrap());
-
-        assert!(!file.exists());
-        assert!(listed(&store).is_empty());
-    }
-
-    #[test]
-    fn a_transcript_path_that_became_a_link_is_left_and_its_target_kept() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), "[00:00:01] heard");
-        let linked = linked(&store, &file);
-        let elsewhere = directory.path().join("elsewhere.txt");
-        fs::write(&elsewhere, "keep me").unwrap();
-        fs::remove_file(&file).unwrap();
-        symlink(&elsewhere, &file).unwrap();
-
-        assert!(store.delete(linked.id).unwrap());
-
-        assert_eq!(fs::read_to_string(&elsewhere).unwrap(), "keep me");
-        assert!(file.symlink_metadata().is_ok());
-        assert!(listed(&store).is_empty());
-    }
-
-    #[test]
-    fn a_transcript_that_cant_be_removed_keeps_its_row() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), "[00:00:01] heard");
-        let linked = linked(&store, &file);
-        let folder = file.parent().unwrap();
-        fs::set_permissions(folder, fs::Permissions::from_mode(0o500)).unwrap();
-
-        let deleted = store.delete(linked.id);
-        fs::set_permissions(folder, fs::Permissions::from_mode(0o700)).unwrap();
-
-        assert!(matches!(deleted, Err(HistoryError::Storage(_))));
-        assert!(file.exists());
-        assert_eq!(listed(&store).len(), 1);
-    }
-
-    #[test]
-    fn maintenance_drops_a_row_whose_file_is_gone_only_while_its_folder_is_there() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), "[00:00:01] heard");
-        linked(&store, &file);
-        store
-            .insert(
-                system_transcription("unmounted", Path::new("/no-folder/session.txt")),
-                None,
-            )
-            .unwrap();
-
-        fs::remove_file(&file).unwrap();
-        store.maintenance().unwrap();
-
-        let remaining = listed(&store);
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].text, "unmounted");
-    }
-
-    #[test]
-    fn expiry_removes_a_mac_audio_row_but_keeps_its_file() {
-        let (directory, store) = opened();
-        let file = transcript(directory.path(), "[00:00:01] heard");
-        let linked = linked(&store, &file);
-        tamper(
-            &store,
-            "UPDATE entries SET created=0 WHERE id=?1",
-            [linked.id as i64],
-        );
-
-        store.maintenance().unwrap();
-
-        assert!(listed(&store).is_empty());
-        assert!(file.exists());
-    }
     #[test]
     fn typed_errors_and_existing_plain_errors_survive_reopening() {
         let (directory, store) = opened();
@@ -3301,6 +3156,7 @@ mod tests {
             (RpcErrorCode::HistoryProjectUnavailable, 903),
             (RpcErrorCode::HistoryEntryEmpty, 904),
             (RpcErrorCode::HistoryTranscriptUnreadable, 905),
+            (RpcErrorCode::HistoryFull, 906),
             (RpcErrorCode::Unknown(9_999), 9_999),
         ] {
             assert_eq!(stored_code(code), number);
@@ -3917,7 +3773,7 @@ mod tests {
         assert!(matches!(store.get(first.id), Err(HistoryError::Missing)));
         let state = store.lock();
         assert_eq!(
-            all(&state)
+            load_rows(&state, Rows::All)
                 .unwrap()
                 .0
                 .iter()
@@ -3955,7 +3811,7 @@ mod tests {
         save(&store, "", HistoryStatus::TranscriptionFailed, None);
         assert!(matches!(store.get(first.id), Err(HistoryError::Missing)));
         assert_eq!(
-            all(&store.lock()).unwrap().0.len(),
+            load_rows(&store.lock(), Rows::All).unwrap().0.len(),
             budget(HistorySection::Dictation).entries
         );
     }
@@ -4065,5 +3921,62 @@ mod tests {
         assert!(RESULTS_SCHEMA.contains(&format!(
             "length(CAST(prompt_name AS BLOB)) BETWEEN 1 AND {MAX_PROMPT_NAME_BYTES})"
         )));
+    }
+
+    #[test]
+    fn a_load_of_the_budgeted_sections_skips_mac_audio_rows_by_index() {
+        let (_directory, store) = opened();
+        let state = store.lock();
+        let plan: Vec<String> = state
+            .connection
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN SELECT {COLUMNS} FROM entries {}",
+                Rows::Budgeted.filter()
+            ))
+            .unwrap()
+            .query_map([], |row| row.get(3))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+
+        assert!(
+            plan.iter().all(|step| step.contains("entries_by_section")),
+            "{plan:?}"
+        );
+    }
+
+    #[test]
+    fn asks_whose_chat_this_daemon_cant_read_each_show_when_chats_collapse() {
+        let (_directory, store) = opened();
+        {
+            let state = store.lock();
+            state
+                .connection
+                .execute(
+                    "INSERT INTO chats(assistant,name) VALUES('a-newer-assistant','notes')",
+                    [],
+                )
+                .unwrap();
+            for text in ["first", "second"] {
+                state
+                    .connection
+                    .execute(
+                        "INSERT INTO entries(created,source,text,complete,status,language,own_voice,engine,section,reply,assistant,chat_name)
+                         VALUES(?1,0,?2,1,0,'',0,'',2,'reply','a-newer-assistant','notes')",
+                        params![sql_integer(now_ms()).unwrap(), text],
+                    )
+                    .unwrap();
+            }
+        }
+
+        let page = store.list(&collapsed("", None, 10)).unwrap();
+
+        let mut texts: Vec<_> = page
+            .entries
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect();
+        texts.sort_unstable();
+        assert_eq!(texts, ["first", "second"]);
     }
 }

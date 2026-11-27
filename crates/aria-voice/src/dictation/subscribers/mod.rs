@@ -102,6 +102,7 @@ fn message(code: RpcErrorCode) -> &'static str {
         | RpcErrorCode::HistoryProjectUnavailable
         | RpcErrorCode::HistoryEntryEmpty
         | RpcErrorCode::HistoryTranscriptUnreadable
+        | RpcErrorCode::HistoryFull
         | RpcErrorCode::Unknown(_) => "Something went wrong. See the daemon log.",
     }
 }

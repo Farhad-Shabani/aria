@@ -233,13 +233,16 @@ impl Session<'_> {
                 // its labels replace the live ones. Paragraphs past its
                 // reach lose their live label.
                 sink.rewrite(|spans| attribute_reached(track, spans))
+                    .map(drop)
             });
             (heard_all, settled)
         });
         // Without the voice track, the live labels were given in the order
         // voices spoke. Grouping the whole session at once mends them.
         let settled = settled.unwrap_or_else(|| match &listening.diarizer {
-            Some(diarizer) => sink.relabel(|embeddings| diarizer.relabel(embeddings)),
+            Some(diarizer) => sink
+                .relabel(|embeddings| diarizer.relabel(embeddings))
+                .map(drop),
             None => Ok(()),
         });
         heard_all?;

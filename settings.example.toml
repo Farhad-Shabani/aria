@@ -64,7 +64,7 @@ enabled = false
 # dir = "~/src/writ"
 
 [history]
-# Saves dictation history.
+# Saves history. Off, a Mac Audio transcript waits unsaved until you save or discard it.
 enabled = true
 # Keeps each recording's audio for 24 hours.
 keep_audio = false
@@ -77,7 +77,8 @@ keep_audio = false
 # model = "~/.aria/models/moonshine/base"
 # cpu or gpu. parakeet only.
 # device = "cpu"
-transcripts_dir = "~/.aria/transcripts"
+# Ignored: Mac Audio saves transcripts in ~/.aria/transcripts.
+# transcripts_dir = "~/.aria/transcripts"
 
 [assistant]
 # Who answers `aria ask`: claude-code, codex, or local-model. `--assistant` overrides it for one request.
