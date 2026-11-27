@@ -8,7 +8,7 @@ use aria_kit::speaker::{Admission, Gate, Released, Speaker, Timeline, TurnFeed};
 use aria_kit::transcription::Heard;
 use aria_kit::transcription::layer::Layer;
 use aria_kit::transcription::{
-    Attachment, ClosingMark, Punctuated, SegmentCorrector, Spacing, Writing, check_cancelled,
+    Attachment, Punctuated, SegmentCorrector, Spacing, Writing, check_cancelled,
 };
 use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector};
 
@@ -1019,14 +1019,12 @@ impl<'a> Published<'a> {
         let streaming = settings.delivery_mode == DeliveryMode::Streaming;
         // Complete delivery types the decoder's whole transcript, which
         // keeps every mark.
-        let closing_mark = if streaming {
-            ClosingMark::Deferred
+        let corrector = if streaming {
+            SegmentCorrector::new(vocabulary)
         } else {
-            ClosingMark::AsDecoded
-        };
-        let corrector = SegmentCorrector::new(vocabulary)
-            .with_writing(settings.writing())
-            .with_closing_mark(closing_mark);
+            SegmentCorrector::keeping_marks(vocabulary)
+        }
+        .with_writing(settings.writing());
         Self {
             ends: SegmentEnds::new(corrector),
             delivery: Delivery {

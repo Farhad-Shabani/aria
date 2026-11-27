@@ -9,7 +9,7 @@ mod backtrack;
 pub use backtrack::Backtrack;
 mod claim;
 mod corrector;
-pub use corrector::{ClosingMark, SegmentCorrector, StreamEnd};
+pub use corrector::{SegmentCorrector, StreamEnd};
 mod deferred;
 mod disfluencies;
 pub use disfluencies::{RemoveHesitations, RemoveRepeats};

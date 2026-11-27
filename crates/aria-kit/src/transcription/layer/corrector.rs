@@ -33,11 +33,23 @@ pub struct SegmentCorrector<'a> {
 }
 
 impl<'a> SegmentCorrector<'a> {
+    /// For segments decoded as they stream, whose closing marks wait for
+    /// the next segment to show whether the sentence ended.
     pub fn new(vocabulary: &'a Vocabulary) -> Self {
+        Self::new_with(vocabulary, ClosingMark::Deferred)
+    }
+
+    /// For segments of one decode of the whole recording, whose closing
+    /// marks type as decoded.
+    pub fn keeping_marks(vocabulary: &'a Vocabulary) -> Self {
+        Self::new_with(vocabulary, ClosingMark::AsDecoded)
+    }
+
+    fn new_with(vocabulary: &'a Vocabulary, closing_mark: ClosingMark) -> Self {
         Self {
             vocabulary,
             writing: Writing::default(),
-            closing_mark: ClosingMark::default(),
+            closing_mark,
             words: DeferredWords::default(),
             sentences: SentenceEnds::default(),
             text: String::new(),
@@ -46,11 +58,6 @@ impl<'a> SegmentCorrector<'a> {
 
     pub fn with_writing(mut self, writing: Writing) -> Self {
         self.writing = writing;
-        self
-    }
-
-    pub fn with_closing_mark(mut self, closing_mark: ClosingMark) -> Self {
-        self.closing_mark = closing_mark;
         self
     }
 
@@ -166,11 +173,10 @@ impl<'a> SegmentCorrector<'a> {
 }
 
 /// How a segment's closing mark is typed.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum ClosingMark {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClosingMark {
     /// Held until the next segment shows whether the sentence ended there,
     /// for segments decoded as they stream.
-    #[default]
     Deferred,
     /// As the recognizer wrote it, for segments of one decode of the whole
     /// recording.
@@ -246,8 +252,7 @@ pub(super) mod tests {
     #[test]
     fn segments_as_decoded_keep_their_marks() {
         let vocabulary = Vocabulary::default();
-        let mut corrector =
-            SegmentCorrector::new(&vocabulary).with_closing_mark(ClosingMark::AsDecoded);
+        let mut corrector = SegmentCorrector::keeping_marks(&vocabulary);
         let should = corrector.push("We should.", Some(false)).unwrap();
         assert_eq!(should.text, "We should.");
         assert_eq!(should.spacing.ending, Ending::Spaced);
