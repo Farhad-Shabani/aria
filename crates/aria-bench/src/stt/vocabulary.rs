@@ -8,7 +8,7 @@ use std::time::Instant;
 use aria_harness::artifact::{Provenance, fingerprint, fingerprint_value, write_json};
 use aria_harness::stats::bootstrap;
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{Caret, Corrected, DeferredWords, SentenceEnds, Spacing, Unheld};
+use aria_kit::transcription::{SegmentCorrector, Writing};
 use aria_voice::vocabulary::{PersonalRules, Term, Vocabulary};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -43,11 +43,40 @@ pub struct Case {
     pub personal_pairs: Vec<(String, String)>,
     #[serde(default)]
     pub project_terms: Vec<String>,
+    /// Folder names a named slash glues to: "crates forward slash aria" →
+    /// `crates/aria`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub project_folders: Vec<String>,
+    /// Commands unless the case says prose, where "and forward slash or" →
+    /// `and/or`.
+    #[serde(default, skip_serializing_if = "CaseWriting::is_commands")]
+    pub writing: CaseWriting,
     #[serde(default)]
     pub targets: Vec<Target>,
     pub legacy_whole: Option<String>,
     pub legacy_segments: Option<Vec<String>>,
     pub error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CaseWriting {
+    #[default]
+    Commands,
+    Prose,
+}
+
+impl CaseWriting {
+    fn is_commands(&self) -> bool {
+        *self == Self::Commands
+    }
+
+    fn writing(self) -> Writing {
+        match self {
+            Self::Commands => Writing::Commands,
+            Self::Prose => Writing::Prose,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -308,49 +337,25 @@ fn corrected_stream(
     inputs: &[String],
     sentence_ended_before: &[Option<bool>],
     vocabulary: &Vocabulary,
+    writing: Writing,
 ) -> (String, Vec<String>) {
-    let mut words = DeferredWords::default();
-    let mut sentences = SentenceEnds::default();
-    let mut written = String::new();
-    let mut segments = Vec::new();
-    let mut publish = |unheld: Unheld| {
-        if unheld.text.is_empty() {
-            return;
-        }
-        let before = if sentences.reads_on(unheld.sentence_ended_before) {
-            written.as_str()
-        } else {
-            ""
-        };
-        let corrected = vocabulary
-            .correct_spoken(&unheld.text, before)
-            .unwrap_or(Corrected {
-                text: unheld.text,
-                joins_before: false,
-            });
-        let punctuated = sentences.punctuate(&corrected.text, unheld.sentence_ended_before);
-        let spacing = Spacing {
-            joins_before: corrected.joins_before,
-            defers_ending: punctuated.defers_ending,
-        };
-        written.push_str(&Caret::between(&written, "").insert_with(&punctuated.text, spacing));
-        segments.push(punctuated.text);
-    };
-    for (index, input) in inputs.iter().enumerate() {
-        publish(words.hold(
-            input,
-            sentence_ended_before.get(index).copied().flatten(),
-            vocabulary,
-        ));
-    }
-    if let Some(held) = words.finish() {
-        publish(held);
-    }
-    if let Some(mark) = sentences.finish() {
-        written.push_str(&mark);
-        segments.push(mark);
-    }
-    (written, segments)
+    let mut corrector = SegmentCorrector::new(vocabulary).with_writing(writing);
+    let mut segments: Vec<String> = inputs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, input)| {
+            corrector.push(input, sentence_ended_before.get(index).copied().flatten())
+        })
+        .map(|typed| typed.text)
+        .collect();
+    let end = corrector.finish();
+    segments.extend(
+        end.words
+            .into_iter()
+            .chain(end.mark)
+            .map(|typed| typed.text),
+    );
+    (end.text, segments)
 }
 
 pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
@@ -373,7 +378,8 @@ pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
                 priority: 0,
             })
             .collect();
-        let project = Vocabulary::compile(&terms, rules)?;
+        let project = Vocabulary::compile(&terms, rules)?
+            .with_path_names(&case.project_folders, usize::MAX)?;
         for streaming in [false, true] {
             if !streaming && case.whole_input.is_none() {
                 continue;
@@ -404,13 +410,16 @@ pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
             ] {
                 let started = Instant::now();
                 let (text, corrected) = match matcher {
-                    Some(matcher) if streaming => {
-                        corrected_stream(&inputs, &case.sentence_ended_before, matcher)
-                    }
+                    Some(matcher) if streaming => corrected_stream(
+                        &inputs,
+                        &case.sentence_ended_before,
+                        matcher,
+                        case.writing.writing(),
+                    ),
                     Some(matcher) => {
                         let input = &inputs[0];
                         let text = matcher
-                            .correct_spoken(input, "")
+                            .correct_spoken(input, case.writing.writing())
                             .map_or_else(|| input.clone(), |corrected| corrected.text);
                         (text.clone(), vec![text])
                     }
@@ -506,6 +515,8 @@ pub fn fixtures() -> Result<Suite> {
                 value.get("pairs").cloned().unwrap_or(json!([])),
             )?,
             project_terms: Vec::new(),
+            project_folders: Vec::new(),
+            writing: CaseWriting::Commands,
             targets: Vec::new(),
             legacy_whole: None,
             legacy_segments: None,
@@ -858,7 +869,7 @@ mod tests {
                 continue;
             }
             let dictated = Vocabulary::default()
-                .correct_spoken(&case.spoken_reference, "")
+                .correct_spoken(&case.spoken_reference, Writing::Commands)
                 .map_or_else(|| case.spoken_reference.clone(), |corrected| corrected.text);
             assert_eq!(case.written_reference, dictated, "{}", case.id);
         }
@@ -866,14 +877,68 @@ mod tests {
 
     #[test]
     fn streaming_replay_spaces_spoken_symbols_and_uses_the_decoders_sentence_reading() {
-        let inputs = ["open src.", "slash main.", "then stop."].map(str::to_owned);
+        let inputs = ["open src.", "forward slash main.", "then stop."].map(str::to_owned);
         let (typed, segments) = corrected_stream(
             &inputs,
             &[None, Some(false), Some(true)],
             &Vocabulary::default(),
+            Writing::Commands,
         );
         assert_eq!(typed, "open src/main. then stop.");
         assert_eq!(segments, ["open src", "/main", ". then stop", "."]);
+    }
+
+    #[test]
+    fn a_project_folder_glues_a_slash_only_in_the_project() {
+        let mut case = fixtures().unwrap().cases.remove(0);
+        case.spoken_reference = "open crates forward slash aria".into();
+        case.written_reference = "open crates/aria".into();
+        case.whole_input = Some(case.spoken_reference.clone());
+        case.segments = Some(vec![case.spoken_reference.clone()]);
+        case.project_terms.clear();
+        case.project_folders = vec!["crates".into()];
+        case.targets.clear();
+        let report = evaluated(&Suite {
+            schema: 1,
+            evidence: "test".into(),
+            cases: vec![case],
+        });
+        let output = |condition: &str| {
+            report["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["condition"] == condition && row["mode"] == "whole_input")
+                .unwrap()["output"]
+                .clone()
+        };
+        assert_eq!(output("project"), "open crates/aria");
+        assert_eq!(output("personal"), "open crates /aria");
+    }
+
+    #[test]
+    fn a_prose_case_is_corrected_as_prose() {
+        let mut case = fixtures().unwrap().cases.remove(0);
+        case.spoken_reference = "read and forward slash or write".into();
+        case.written_reference = "read and/or write".into();
+        case.whole_input = Some(case.spoken_reference.clone());
+        case.segments = Some(vec!["read and forward slash".into(), "or write".into()]);
+        case.project_terms.clear();
+        case.targets.clear();
+        case.writing = CaseWriting::Prose;
+        let report = evaluated(&Suite {
+            schema: 1,
+            evidence: "test".into(),
+            cases: vec![case],
+        });
+        let outputs: Vec<_> = report["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["condition"] == "personal")
+            .map(|row| row["output"].clone())
+            .collect();
+        assert_eq!(outputs, ["read and/or write", "read and/or write"]);
     }
 
     #[test]

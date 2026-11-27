@@ -4,8 +4,8 @@ use std::sync::LazyLock;
 use std::time::Instant;
 
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::check_cancelled;
 use aria_kit::transcription::layer::{Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats};
+use aria_kit::transcription::{Attachment, Writing, check_cancelled};
 
 use super::{LlmCleanup, LlmCleanupError, llm};
 use crate::config::DictationConfig;
@@ -96,23 +96,32 @@ impl<L: Layer> Rewrites<L> {
     pub(crate) fn finish(
         &self,
         transcript: Transcript,
-        cleanup: Cleanup,
-        vocabulary: Option<&Vocabulary>,
+        correction: CorrectionSettings<'_>,
         cancel: &CancelToken,
-    ) -> Result<Transcript, TranscriptionError> {
+    ) -> Result<CorrectedTranscript, TranscriptionError> {
+        let CorrectionSettings {
+            cleanup,
+            vocabulary,
+            writing,
+        } = correction;
         let mut text = transcript.into_text();
         if cleanup.enabled && cleanup.backtrack {
             Backtrack.apply(&mut text, cancel)?;
         }
         self.clean(&mut text, cleanup, cancel)?;
-        if let Some(corrected) = spoken(vocabulary).correct_spoken(&text, "") {
+        let mut attachment = Attachment::default();
+        if let Some(corrected) = spoken(vocabulary).correct_spoken(&text, writing) {
             text = corrected.text;
+            attachment = corrected.attachment;
         }
         check_cancelled(cancel)?;
         // Cleanup can leave nothing, and then this fails as `NoSpeech`.
         let transcript = Transcript::new(text)?;
         if !self.reaches_model(cleanup) {
-            return Ok(transcript);
+            return Ok(CorrectedTranscript {
+                transcript,
+                attachment,
+            });
         }
         let started = Instant::now();
         let mut text = transcript.as_str().to_owned();
@@ -125,7 +134,10 @@ impl<L: Layer> Rewrites<L> {
                 elapsed_ms = started.elapsed().as_millis(),
                 "dictation cleanup failed; delivering deterministic text"
             );
-            return Ok(transcript);
+            return Ok(CorrectedTranscript {
+                transcript,
+                attachment,
+            });
         }
         result?;
         tracing::info!(
@@ -133,8 +145,36 @@ impl<L: Layer> Rewrites<L> {
             elapsed_ms = started.elapsed().as_millis(),
             "dictation cleanup model applied"
         );
-        Transcript::new(text)
+        // `.env` stays apart only while the model's text still opens on `.`.
+        let symbol: String = transcript
+            .as_str()
+            .trim_start()
+            .chars()
+            .take_while(|c| !c.is_alphanumeric() && !c.is_whitespace())
+            .collect();
+        if !text.trim_start().starts_with(&symbol) {
+            attachment = Attachment::default();
+        }
+        Ok(CorrectedTranscript {
+            transcript: Transcript::new(text)?,
+            attachment,
+        })
     }
+}
+
+/// A corrected whole transcript and its attachment. After `open`, "dot env
+/// file" → `open .env file`.
+pub(crate) struct CorrectedTranscript {
+    pub(crate) transcript: Transcript,
+    pub(crate) attachment: Attachment,
+}
+
+/// What a press corrects its whole transcript with.
+#[derive(Clone, Copy)]
+pub(crate) struct CorrectionSettings<'a> {
+    pub(crate) cleanup: Cleanup,
+    pub(crate) vocabulary: Option<&'a Vocabulary>,
+    pub(crate) writing: Writing,
 }
 
 /// The vocabulary a press corrects with. A press with none still writes
@@ -160,11 +200,15 @@ mod tests {
         Rewrites::new()
             .finish(
                 Transcript::new(heard).unwrap(),
-                Cleanup::default(),
-                vocabulary,
+                CorrectionSettings {
+                    cleanup: Cleanup::default(),
+                    vocabulary,
+                    writing: Writing::Commands,
+                },
                 &CancelToken::never(),
             )
             .unwrap()
+            .transcript
             .into_text()
     }
 
@@ -195,16 +239,20 @@ mod tests {
             rewrites
                 .finish(
                     Transcript::new("um meet at 2 actually 3").unwrap(),
-                    Cleanup {
-                        enabled,
-                        fillers,
-                        backtrack,
-                        llm,
+                    CorrectionSettings {
+                        cleanup: Cleanup {
+                            enabled,
+                            fillers,
+                            backtrack,
+                            llm,
+                        },
+                        vocabulary: None,
+                        writing: Writing::Commands,
                     },
-                    None,
                     &CancelToken::never(),
                 )
                 .unwrap()
+                .transcript
                 .into_text()
         }
         let rules = Rewrites::new().with(());
@@ -235,6 +283,43 @@ mod tests {
     }
 
     #[test]
+    fn the_model_keeps_an_apart_opening_only_while_it_keeps_the_symbol() {
+        let finish = |model: fn(&mut String)| {
+            Rewrites::new()
+                .with(FinalLayer(move |text: &mut String, _: &CancelToken| {
+                    model(text);
+                    Ok(())
+                }))
+                .finish(
+                    Transcript::new("dot env file").unwrap(),
+                    CorrectionSettings {
+                        cleanup: Cleanup {
+                            enabled: true,
+                            fillers: false,
+                            backtrack: false,
+                            llm: true,
+                        },
+                        vocabulary: None,
+                        writing: Writing::Commands,
+                    },
+                    &CancelToken::never(),
+                )
+                .unwrap()
+                .attachment
+        };
+
+        assert_eq!(finish(|text| text.push('.')), Attachment::Spaced);
+        assert_eq!(
+            finish(|text| *text = ".env, then restart the app".to_owned()),
+            Attachment::Spaced
+        );
+        assert_eq!(
+            finish(|text| *text = ", then the env file".to_owned()),
+            Attachment::Auto
+        );
+    }
+
+    #[test]
     fn backtracking_is_local_to_each_completed_transcript() {
         let rewrites = Rewrites::new();
         for text in ["meet at 2", "actually 3", "scratch", "that to Sara"] {
@@ -242,11 +327,15 @@ mod tests {
                 rewrites
                     .finish(
                         Transcript::new(text).unwrap(),
-                        BACKTRACK,
-                        None,
+                        CorrectionSettings {
+                            cleanup: BACKTRACK,
+                            vocabulary: None,
+                            writing: Writing::Commands
+                        },
                         &CancelToken::never()
                     )
                     .unwrap()
+                    .transcript
                     .as_str(),
                 text
             );
@@ -256,8 +345,11 @@ mod tests {
         assert!(matches!(
             rewrites.finish(
                 Transcript::new("meet at 2 actually 3").unwrap(),
-                BACKTRACK,
-                None,
+                CorrectionSettings {
+                    cleanup: BACKTRACK,
+                    vocabulary: None,
+                    writing: Writing::Commands
+                },
                 &cancel
             ),
             Err(TranscriptionError::Cancelled)
@@ -284,12 +376,18 @@ mod tests {
             let transcript = rewrites
                 .finish(
                     Transcript::new(&text).unwrap(),
-                    BACKTRACK,
-                    None,
+                    CorrectionSettings {
+                        cleanup: BACKTRACK,
+                        vocabulary: None,
+                        writing: Writing::Commands,
+                    },
                     &CancelToken::never(),
                 )
                 .unwrap();
-            assert_eq!(transcript.as_str(), format!("{prefix} meet at 3"));
+            assert_eq!(
+                transcript.transcript.as_str(),
+                format!("{prefix} meet at 3")
+            );
         }
     }
 
@@ -299,18 +397,21 @@ mod tests {
             let transcript = Rewrites::new()
                 .finish(
                     Transcript::new("send the the um report").unwrap(),
-                    Cleanup {
-                        enabled,
-                        fillers: true,
-                        backtrack: false,
-                        llm: true,
+                    CorrectionSettings {
+                        cleanup: Cleanup {
+                            enabled,
+                            fillers: true,
+                            backtrack: false,
+                            llm: true,
+                        },
+                        vocabulary: None,
+                        writing: Writing::Commands,
                     },
-                    None,
                     &CancelToken::never(),
                 )
                 .unwrap();
 
-            assert_eq!(transcript.as_str(), expected);
+            assert_eq!(transcript.transcript.as_str(), expected);
         }
     }
 
@@ -318,13 +419,16 @@ mod tests {
     fn a_whole_transcript_of_only_fillers_is_no_speech() {
         let result = Rewrites::new().finish(
             Transcript::new("um").unwrap(),
-            Cleanup {
-                enabled: true,
-                fillers: true,
-                backtrack: false,
-                llm: true,
+            CorrectionSettings {
+                cleanup: Cleanup {
+                    enabled: true,
+                    fillers: true,
+                    backtrack: false,
+                    llm: true,
+                },
+                vocabulary: None,
+                writing: Writing::Commands,
             },
-            None,
             &CancelToken::never(),
         );
 

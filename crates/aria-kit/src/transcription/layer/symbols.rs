@@ -1,19 +1,31 @@
+//! The spoken-symbols correction step: "user underscore id" → `user_id`.
+
 use std::borrow::Cow;
 
-use super::claim::{Claimed, Word};
-use super::symbol_words::{is_symbol, symbol};
+use super::claim::{Claimed, Place, Word};
+use super::correction::{JoinContext, Writing};
+use super::symbol_words::{
+    Joins, SymbolName, is_one_word_name, is_symbol, joins_always, leading_name, opens_a_join_after,
+    opens_a_name,
+};
+use super::vocabulary::is_english;
 
-/// Claims each run of words that spoken symbols join as one word, as in
-/// "user underscore id" → `user_id`. Two words that both have a joined
-/// form, as numbers do, join in that form.
-pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
-    let words = claimed.take_words();
-    let links = links(text, &words);
+/// Claims each run of words that symbols join: "user underscore id" →
+/// `user_id`.
+///
+/// Returns the start of each claim that opens with a symbol glued to no
+/// word before it, as `--amend` in `git commit --amend`.
+pub(super) fn claim<'a>(
+    text: &str,
+    reading: JoinContext<'_>,
+    claimed: &mut Claimed<'a>,
+) -> Vec<usize> {
+    let (words, names) = merge_names(text, claimed.take_words());
+    let glues = glues(text, &words, &names, reading);
+    let link = |index: usize| glues.get(index).copied().flatten().and_then(Glue::between);
     let in_joined_form = |index: usize| {
-        let pair = |link: usize| {
-            links[link].is_some()
-                && words[link - 1].joined.is_some()
-                && words[link + 1].joined.is_some()
+        let pair = |at: usize| {
+            link(at).is_some() && words[at - 1].joined.is_some() && words[at + 1].joined.is_some()
         };
         (index >= 2 && pair(index - 1)) || (index + 2 < words.len() && pair(index + 1))
     };
@@ -21,98 +33,391 @@ pub(super) fn claim<'a>(text: &str, claimed: &mut Claimed<'a>) {
         Some(joined) if in_joined_form(index) => joined.as_ref(),
         _ => words[index].typed(text),
     };
+    let mut apart = Vec::new();
     let mut index = 0;
     while index < words.len() {
-        let mut last = index;
-        while links.get(last + 1).is_some_and(Option::is_some) {
+        if glues[index] == Some(Glue::Neither) || prefix_run_alone(text, &words, &names, index) {
+            let span = words[index].span.clone();
+            apart.push(span.start);
+            claimed.push(Word::claimed(span, Cow::Owned(typed(names[index]))));
+            index += 1;
+            continue;
+        }
+        let opening = match glues[index] {
+            Some(Glue::After(opening)) => Some(opening),
+            _ => None,
+        };
+        let opens = opening.is_some();
+        let first = index + usize::from(opens);
+        let mut last = first;
+        while link(last + 1).is_some() {
             last += 2;
         }
-        if last == index {
+        let closing = glues.get(last + 1) == Some(&Some(Glue::Before));
+        if last == index && !closing {
             claimed.push(words[index].clone());
             index += 1;
             continue;
         }
-        let mut typed = word_typed(index).to_owned();
-        for link in (index + 1..last).step_by(2) {
-            typed.extend(links[link]);
-            typed.push_str(word_typed(link + 1));
+        let mut typed_run = opening.unwrap_or_default().to_owned();
+        typed_run.push_str(word_typed(first));
+        for at in (first + 1..last).step_by(2) {
+            typed_run.push_str(link(at).unwrap_or_default());
+            typed_run.push_str(word_typed(at + 1));
+        }
+        if closing {
+            last += 1;
+            typed_run.push_str(&typed(names[last]));
         }
         let span = words[index].span.start..words[last].span.end;
-        claimed.push(Word::claimed(span, Cow::Owned(typed)));
+        if opens {
+            apart.push(span.start);
+        }
+        claimed.push(Word::claimed(span, Cow::Owned(typed_run)));
         index = last + 1;
     }
+    apart
 }
 
-/// Defers the symbol words at the edge of the deferred words that may
-/// still link, as "underscore" in "user underscore". Each one defers the
-/// word before it too when that word has a joined form, as "two" in "two
-/// dot": it can't be typed alone yet. When the word before can join, it
-/// defers the same words whether the cut falls before the symbol word or
-/// after it.
+/// Defers a symbol at the end that the next text may join: "user
+/// underscore" types `user` and defers "underscore".
 ///
-/// A deferred symbol word whose left word can't join defers that word as
-/// well: once typed, its words would read as if they could.
-pub(super) fn defer(text: &str, claimed: &mut Claimed<'_>) {
-    while let Some(at) = symbol_to_defer(text, claimed.words(), claimed.deferred_from()) {
+/// The word before defers too when it has a joined form, as "two" in "two
+/// dot". A name the text ends partway through defers whole: "back".
+pub(super) fn defer(text: &str, reading: JoinContext<'_>, claimed: &mut Claimed<'_>) {
+    let heard = claimed.words();
+    let open = unfinished_name_at_end(text, heard);
+    let (named, open) = heard.split_at(open.unwrap_or(heard.len()));
+    let (mut words, mut names) = merge_names(text, named.to_vec());
+    let mut names_a_symbol: Vec<bool> = names.iter().map(Option::is_some).collect();
+    let open = open.first().zip(open.last());
+    let open = open.map(|(first, last)| first.span.start..last.span.end);
+    if let Some(open) = &open {
+        words.push(Word::plain(open.clone()));
+        names_a_symbol.push(true);
+        names.push(None);
+    }
+    let cut = claimed.deferred_from();
+    let cut_inside = words
+        .iter()
+        .zip(&names_a_symbol)
+        .find(|(word, names)| **names && word.span.start < cut && cut < word.span.end)
+        .map(|(word, _)| word.span.start);
+    for at in cut_inside.into_iter().chain(open.map(|open| open.start)) {
+        claimed.defer_at(at);
+    }
+    let glues = glues(text, &words, &names, reading);
+    while let Some(at) = cut_for_edge_symbol(
+        text,
+        &words,
+        &names,
+        &names_a_symbol,
+        &glues,
+        claimed.deferred_from(),
+    ) {
         claimed.defer_at(at);
     }
 }
 
-/// Where the symbol word at the edge of the words from `deferred_from` on
-/// defers the text from, when it must: the first deferred word, else the
-/// last word before them.
-fn symbol_to_defer(text: &str, words: &[Word<'_>], deferred_from: usize) -> Option<usize> {
+/// Whether `text` ends on the name of a slash or backslash with no mark
+/// after it, as "src forward slash" and "dot dot forward slash" do.
+pub(super) fn ends_on_named_slash(text: &str) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    (0..words.len()).any(|index| {
+        leading_name(words[index..].iter().copied()).is_some_and(|name| {
+            name.word_count == words.len() - index
+                && name.sentence_mark.is_none()
+                && name.typed.ends_with(joins_always)
+        })
+    })
+}
+
+/// Which words beside it a symbol word glues to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Glue {
+    /// "user underscore id" → `user_id`.
+    Both(&'static str),
+    /// "dot env" → `.env`.
+    After(&'static str),
+    /// "src forward slash" → `src/`.
+    Before,
+    /// "go back slash" → `go \`.
+    Neither,
+}
+
+impl Glue {
+    fn between(self) -> Option<&'static str> {
+        match self {
+            Self::Both(link) => Some(link),
+            Self::After(_) | Self::Before | Self::Neither => None,
+        }
+    }
+}
+
+/// How each word glues: `None` for a plain word or a symbol left a word.
+/// A slash reads the word before it as typed so far: "user underscore id
+/// forward slash x" → `user_id/x`, but "run forward slash x" → `run /x`.
+fn glues(
+    text: &str,
+    words: &[Word<'_>],
+    names: &[Option<SymbolName>],
+    reading: JoinContext<'_>,
+) -> Vec<Option<Glue>> {
+    let count = words.len();
+    let mut glues = vec![None; count];
+    // `goes_on` is what a symbol glued onto the next plain word: `user_`
+    // before `id`.
+    let mut typed_so_far = String::new();
+    let mut goes_on: Option<String> = None;
+    for index in 0..count {
+        let Some(name) = names[index] else {
+            typed_so_far = goes_on.take().unwrap_or_default() + words[index].typed(text);
+            continue;
+        };
+        goes_on = None;
+        if name.joins == Joins::Always {
+            let before = plain_word_before(text, words, names, index)
+                && (reading.writing == Writing::Prose
+                    || words[index - 1].joined.is_some()
+                    || reads_as_a_path(last_word(&typed_so_far), reading));
+            let after = glues_to_next(text, words, names, index);
+            glues[index] = Some(match (before, after) {
+                (true, true) => Glue::Both(name.typed),
+                (false, true) => Glue::After(name.typed),
+                (true, false) => Glue::Before,
+                (false, false) => Glue::Neither,
+            });
+            if after {
+                goes_on = Some(match before {
+                    true => format!("{typed_so_far}{}", name.typed),
+                    false => name.typed.to_owned(),
+                });
+            }
+            continue;
+        }
+        if let Some(link) = link(text, words, names, index) {
+            glues[index] = Some(Glue::Both(link));
+            goes_on = Some(format!("{typed_so_far}{link}"));
+        } else if let Some(opening) = opening(text, words, names, reading.place, index) {
+            glues[index] = Some(Glue::After(opening));
+            goes_on = Some(opening.to_owned());
+        }
+    }
+    glues
+}
+
+/// Whether the symbol at `index` glues to the next plain word, with no
+/// line break or mark between.
+fn glues_to_next(
+    text: &str,
+    words: &[Word<'_>],
+    names: &[Option<SymbolName>],
+    index: usize,
+) -> bool {
+    index + 1 < words.len()
+        && names[index + 1].is_none()
+        && names[index].is_some_and(|name| name.sentence_mark.is_none())
+        && !line_break(text, words, index)
+        && !words[index + 1]
+            .typed(text)
+            .starts_with(|c: char| c.is_ascii_punctuation())
+}
+
+/// Whether a plain word ends right before `index`, with no line break or
+/// mark between.
+fn plain_word_before(
+    text: &str,
+    words: &[Word<'_>],
+    names: &[Option<SymbolName>],
+    index: usize,
+) -> bool {
+    index > 0
+        && names[index - 1].is_none()
+        && !line_break(text, words, index - 1)
+        && !words[index - 1]
+            .typed(text)
+            .ends_with(|c: char| c.is_ascii_punctuation())
+}
+
+/// The last word of `typed`, all a later segment sees of it: "Bucket" of
+/// `S3 Bucket`.
+fn last_word(typed: &str) -> &str {
+    typed.split_whitespace().next_back().unwrap_or_default()
+}
+
+/// Whether a slash after `typed` glues to it: `src/`, `.local/`, but
+/// `run /`. An English word glues only as a project path: `build-tools/`.
+fn reads_as_a_path(typed: &str, reading: JoinContext<'_>) -> bool {
+    // Only the typed text counts, so a later segment that sees only it
+    // decides the same.
+    let word = typed
+        .trim_start_matches(['(', '[', '{', '"', '\'', '’'])
+        .replace('’', "'");
+    let letter = |c: char| c.is_alphabetic() || matches!(c, '\'' | '-');
+    reading.vocabulary.names_a_path(&word)
+        || !word.chars().all(letter)
+        || !is_english(&word.to_lowercase())
+}
+
+/// What a name types: "forward slash." → `/.`.
+fn typed(name: Option<SymbolName>) -> String {
+    let Some(name) = name else {
+        return String::new();
+    };
+    let mut typed = name.typed.to_owned();
+    typed.extend(name.sentence_mark);
+    typed
+}
+
+/// What the symbol at `index` types when it joins only the next word:
+/// "hyphen hyphen amend" → `--amend`, or "dot env" → `.env` at the start.
+fn opening(
+    text: &str,
+    words: &[Word<'_>],
+    names: &[Option<SymbolName>],
+    place: Place,
+    index: usize,
+) -> Option<&'static str> {
+    let name = names[index]?;
+    let opens = name.joins == Joins::After || (index == 0 && place == Place::Start);
+    let next = words.get(index + 1)?;
+    let joins = !line_break(text, words, index) && joinable_after_a_symbol(next.typed(text));
+    (opens && joins && name.sentence_mark.is_none()).then_some(name.typed)
+}
+
+/// Whether `index` names a run like `../` with no word after it to join:
+/// "cd dot dot forward slash" → `cd ../`.
+fn prefix_run_alone(
+    text: &str,
+    words: &[Word<'_>],
+    names: &[Option<SymbolName>],
+    index: usize,
+) -> bool {
+    let Some(name) = names[index].filter(|name| name.joins == Joins::After) else {
+        return false;
+    };
+    let nothing_after =
+        index + 1 == words.len() || line_break(text, words, index) || name.sentence_mark.is_some();
+    nothing_after && name.typed.ends_with(joins_always)
+}
+
+/// Merges each name said in several words, as "back slash", into one
+/// word, and returns each word's name.
+fn merge_names<'a>(text: &str, words: Vec<Word<'a>>) -> (Vec<Word<'a>>, Vec<Option<SymbolName>>) {
+    let mut whole = Vec::with_capacity(words.len());
+    let mut names = Vec::with_capacity(words.len());
+    let mut index = 0;
+    while index < words.len() {
+        let Some(name) = leading_name(unclaimed_words_from(text, &words, index)) else {
+            whole.push(words[index].clone());
+            names.push(None);
+            index += 1;
+            continue;
+        };
+        let last = index + name.word_count - 1;
+        whole.push(Word::plain(words[index].span.start..words[last].span.end));
+        names.push(Some(name));
+        index = last + 1;
+    }
+    (whole, names)
+}
+
+/// The words from `index` that may say a name together: unclaimed, with no
+/// joined form, and on one line.
+fn unclaimed_words_from<'s>(
+    text: &'s str,
+    words: &'s [Word<'_>],
+    index: usize,
+) -> impl Iterator<Item = &'s str> + Clone {
+    words[index..]
+        .iter()
+        .enumerate()
+        .take_while(move |(offset, word)| {
+            word.claim.is_none()
+                && word.joined.is_none()
+                && (*offset == 0 || !line_break(text, words, index + offset - 1))
+        })
+        .map(move |(_, word)| word.typed(text))
+}
+
+/// Where a name the text ends on starts, while more words may change it:
+/// at "back" in "cd back".
+fn unfinished_name_at_end(text: &str, words: &[Word<'_>]) -> Option<usize> {
+    let mut first = 0;
+    while first < words.len() {
+        let said = unclaimed_words_from(text, words, first);
+        let left = words.len() - first;
+        let named = leading_name(said.clone()).map_or(0, |name| name.word_count);
+        let open = (named < left && opens_a_name(said.clone())) || opens_a_join_after(said.clone());
+        if open && said.count() == left {
+            return Some(first);
+        }
+        first += named.max(1);
+    }
+    None
+}
+
+/// Where the cut moves for the symbol word beside it, `None` if it stays:
+/// at "underscore" in "user underscore". A symbol that joins always moves
+/// it even after a word it won't glue to: "go forward slash".
+fn cut_for_edge_symbol(
+    text: &str,
+    words: &[Word<'_>],
+    names: &[Option<SymbolName>],
+    names_a_symbol: &[bool],
+    glues: &[Option<Glue>],
+    deferred_from: usize,
+) -> Option<usize> {
     let first = words.partition_point(|word| word.span.start < deferred_from);
-    let at_cut = words
-        .get(first)
-        .is_some_and(|word| unclaimed_symbol(text, word).is_some());
+    let at_cut = names_a_symbol.get(first).is_some_and(|names| *names);
     let index = if at_cut { first } else { first.checked_sub(1)? };
-    unclaimed_symbol(text, &words[index])?;
+    if !names_a_symbol[index] {
+        return None;
+    }
     let Some(left) = index.checked_sub(1) else {
         return (!at_cut).then(|| words[index].span.start);
     };
-    let joins = joins_after(text, words, left);
+    let always = names[index].is_some_and(|name| name.joins == Joins::Always);
+    let joins = match always {
+        true => matches!(glues[index], Some(Glue::Both(_) | Glue::Before)),
+        false => joins_after(text, words, left),
+    };
+    // An English word before a slash, as `run` in `run /`, types now. The
+    // next text reads it the same way.
+    let reads_apart = always && plain_word_before(text, words, names, index);
     let defers_left = match joins {
-        false => at_cut,
+        false => at_cut && !reads_apart,
         true => words[left].joined.is_some(),
     };
     if defers_left {
         return Some(words[left].span.start);
     }
-    (joins && !at_cut).then(|| words[index].span.start)
+    ((joins || always) && !at_cut).then(|| words[index].span.start)
 }
 
-/// The symbol each word becomes when it links its two neighbors.
-fn links(text: &str, words: &[Word<'_>]) -> Vec<Option<char>> {
-    let mut links = vec![None; words.len()];
-    for index in 1..words.len().saturating_sub(1) {
-        let Some(character) = unclaimed_symbol(text, &words[index]) else {
-            continue;
-        };
-        let (left, right) = (&words[index - 1], &words[index + 1]);
-        // Each side types its joined form only when both sides have one.
-        let joined = left.joined.is_some() && right.joined.is_some();
-        let form = |word| {
-            if joined {
-                in_join(text, word)
-            } else {
-                word.typed(text)
-            }
-        };
-        let breaks = line_break(text, words, index - 1) || line_break(text, words, index);
-        if !breaks && joinable_before_a_symbol(form(left)) && joinable_after_a_symbol(form(right)) {
-            links[index] = Some(character);
+/// What the symbol at `index` types between two joinable words on one
+/// line: `_` in "user underscore id".
+fn link(
+    text: &str,
+    words: &[Word<'_>],
+    names: &[Option<SymbolName>],
+    index: usize,
+) -> Option<&'static str> {
+    let symbol = names[index]
+        .filter(|name| name.joins == Joins::Both)
+        .map(|name| name.typed)?;
+    let (left, right) = (words.get(index.checked_sub(1)?)?, words.get(index + 1)?);
+    let joined = left.joined.is_some() && right.joined.is_some();
+    let form = |word| {
+        if joined {
+            in_join(text, word)
+        } else {
+            word.typed(text)
         }
-    }
-    links
-}
-
-/// The symbol `word` names, when no step claimed it.
-fn unclaimed_symbol(text: &str, word: &Word<'_>) -> Option<char> {
-    match word.claim {
-        Some(_) => None,
-        None => symbol(word.typed(text)),
-    }
+    };
+    let breaks = line_break(text, words, index - 1) || line_break(text, words, index);
+    (!breaks && joinable_before_a_symbol(form(left)) && joinable_after_a_symbol(form(right)))
+        .then_some(symbol)
 }
 
 /// Whether the word at `left` may join through the symbol word after it,
@@ -149,15 +454,17 @@ fn is_joinable(word: &str) -> bool {
     word.starts_with(char::is_alphanumeric)
         && word.ends_with(char::is_alphanumeric)
         && word.chars().all(|c| c.is_alphanumeric() || is_symbol(c))
-        && symbol(word).is_none()
+        && !is_one_word_name(word)
 }
 
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
+    use super::super::super::Attachment;
+    use super::super::correction::Preceding;
     use super::super::vocabulary::PersonalRules;
-    use super::super::{JoinSymbols, Layer, Vocabulary};
+    use super::super::{JoinSymbols, Layer, Vocabulary, Writing};
     use crate::cancel::CancelToken;
 
     fn applied(heard: &str) -> String {
@@ -178,13 +485,27 @@ mod tests {
     #[case::extra_spaces_around_the_symbol("user   underscore  id", "user_id")]
     #[case::spacing_elsewhere_is_kept("say  user underscore id  now", "say  user_id  now")]
     #[case::non_ascii_word("café underscore menu", "café_menu")]
-    #[case::slash_between_words("src slash main", "src/main")]
+    #[case::slash_between_words("src forward slash main", "src/main")]
     #[case::backslash_between_words("c backslash windows", "c\\windows")]
-    #[case::joined_slash_as_neighbor("src/main slash lib", "src/main/lib")]
+    #[case::backslash_said_apart("c Back  Slash windows", "c\\windows")]
+    #[case::repeated_symbol("x underscore underscore init", "x__init")]
+    #[case::repeated_name_said_apart("c back slash back slash server", "c\\\\server")]
+    #[case::repeated_name_said_both_ways("c backslash back slash server", "c\\\\server")]
+    #[case::listed_with_commas("c forward slash, forward slash, server", "c//server")]
+    #[case::joined_slash_as_neighbor("src/main forward slash lib", "src/main/lib")]
     #[case::small_word_neighbor("to underscore string", "to_string")]
+    #[case::flag_after_a_word("git commit hyphen hyphen amend", "git commit --amend")]
+    #[case::flag_after_a_comma("then, hyphen hyphen verbose", "then, --verbose")]
+    #[case::flag_first("hyphen hyphen verbose", "--verbose")]
+    #[case::path_from_here("run dot forward slash build", "run ./build")]
+    #[case::path_from_the_parent(
+        "cd dot dot forward slash src forward slash main",
+        "cd ../src/main"
+    )]
+    #[case::join_before_a_flag("user underscore id hyphen hyphen all", "user_id --all")]
     // Accepted risk: a symbol word in ordinary prose still joins.
     #[case::symbol_word_in_prose("add a hyphen here", "add a-here")]
-    #[case::slash_in_prose("read and slash or write", "read and/or write")]
+    #[case::listed_repeat_in_prose("connect the dot, dot the i", "connect the..the i")]
     fn joins(#[case] heard: &str, #[case] typed: &str) {
         assert_eq!(applied(heard), typed);
     }
@@ -198,12 +519,179 @@ mod tests {
     #[case::comma_before_symbol("user, underscore id")]
     #[case::comma_after_symbol("user underscore, id")]
     #[case::bracket_before_right_word("user underscore (id)")]
-    #[case::repeated_symbol_word("x underscore underscore y")]
     #[case::apostrophe_in_word("user's underscore id")]
     #[case::symbol_inside_longer_word("hyphenated underscored dotted")]
     #[case::line_break_between_words("user\nunderscore id")]
+    #[case::line_break_inside_a_name("c back\nslash windows")]
+    #[case::unlisted_symbols_in_a_row("x underscore dot y")]
+    #[case::slash_between_words_of_prose("read and slash or write")]
+    #[case::comma_inside_a_name("Come back, slash the price")]
+    #[case::flag_said_last("go hyphen hyphen")]
+    #[case::line_break_after_a_flag("hyphen hyphen\nverbose")]
     fn leaves_unchanged(#[case] heard: &str) {
         assert_eq!(applied(heard), heard);
+    }
+
+    #[rstest]
+    #[case::name_said_last("src forward slash", "src/")]
+    #[case::name_said_alone("forward slash", "/")]
+    #[case::name_opening_later_text("forward slash conf", "/conf")]
+    #[case::name_said_apart_last("cd back slash", "cd\\")]
+    #[case::comma_after_the_name("c back slash, windows", "c\\windows")]
+    #[case::comma_before_the_name("path, forward slash usr", "path, /usr")]
+    #[case::line_break_before_the_name("src\nforward slash main", "src\n/main")]
+    #[case::sentence_ending_on_the_name("src forward slash.", "src/.")]
+    #[case::repeated_name("forward slash forward slash host", "//host")]
+    #[case::after_another_symbols_name("x underscore forward slash y", "x underscore /y")]
+    #[case::run_said_last("cd dot dot forward slash", "cd ../")]
+    #[case::run_alone("dot forward slash", "./")]
+    #[case::run_ending_a_sentence("type dot forward slash? Okay", "type ./? Okay")]
+    #[case::run_ending_a_sentence_before_a_word(
+        "type dot forward slash? run forward slash help",
+        "type ./? run /help"
+    )]
+    #[case::run_before_a_line_break("cd dot dot forward slash\nls", "cd ../\nls")]
+    fn a_named_slash_always_types(#[case] heard: &str, #[case] typed: &str) {
+        assert_eq!(applied(heard), typed);
+    }
+
+    #[rstest]
+    #[case::after_a_command("run forward slash review", "run /review")]
+    #[case::said_last("go back slash", "go \\")]
+    #[case::in_a_path_from_the_root("forward slash users forward slash x", "/users/x")]
+    #[case::in_a_path_from_the_parent(
+        "cd dot dot forward slash crates forward slash aria",
+        "cd ../crates/aria"
+    )]
+    #[case::after_a_spoken_compound("build hyphen tools forward slash main", "build-tools /main")]
+    #[case::after_a_spoken_compound_of_a_path("user underscore id forward slash x", "user_id/x")]
+    #[case::after_a_number("24 forward slash 7", "24/7")]
+    #[case::after_a_contraction("let's forward slash review", "let's /review")]
+    #[case::after_a_hyphenated_word("re-run forward slash test", "re-run /test")]
+    #[case::after_a_typographic_apostrophe("it’s forward slash x", "it’s /x")]
+    fn a_named_slash_stands_apart_unless_the_word_before_reads_as_a_path(
+        #[case] heard: &str,
+        #[case] typed: &str,
+    ) {
+        assert_eq!(applied(heard), typed);
+    }
+
+    #[rstest]
+    #[case::pair_of_words("read and forward slash or write", "read and/or write")]
+    #[case::after_a_comma("done, forward slash review", "done, /review")]
+    #[case::after_a_line_break("done\nforward slash review", "done\n/review")]
+    #[case::opening_the_dictation("forward slash review", "/review")]
+    fn a_named_slash_joins_a_plain_word_in_prose(#[case] heard: &str, #[case] typed: &str) {
+        let corrected = Vocabulary::default().correct_spoken(heard, Writing::Prose);
+        assert_eq!(
+            corrected.map(|corrected| corrected.text).as_deref(),
+            Some(typed)
+        );
+    }
+
+    #[test]
+    fn a_named_slash_glues_to_a_hyphenated_project_folder() {
+        let vocabulary = Vocabulary::new(["aria-kit"])
+            .unwrap()
+            .with_path_names(["aria-kit"], usize::MAX)
+            .unwrap();
+        let corrected = vocabulary
+            .correct_spoken("aria dash kit forward slash src", Writing::Commands)
+            .unwrap();
+        assert_eq!(corrected.text, "aria-kit/src");
+    }
+
+    #[rstest]
+    #[case::listed_folder(&["crates"], "crates forward slash aria", "crates/aria")]
+    #[case::listed_in_capitals(&["Crates"], "crates forward slash aria", "crates/aria")]
+    #[case::unlisted_folder(&["src"], "crates forward slash aria", "crates /aria")]
+    #[case::spoken_hyphenated_folder(
+        &["build-tools"],
+        "build hyphen tools forward slash main",
+        "build-tools/main"
+    )]
+    fn a_named_slash_glues_to_a_project_folder(
+        #[case] folders: &[&str],
+        #[case] heard: &str,
+        #[case] typed: &str,
+    ) {
+        let vocabulary = Vocabulary::default()
+            .with_path_names(folders, usize::MAX)
+            .unwrap();
+        let corrected = vocabulary.correct_spoken(heard, Writing::Commands).unwrap();
+        assert_eq!(corrected.text, typed);
+    }
+
+    #[rstest]
+    #[case::chain("forward slash src forward slash main", "/src/main")]
+    #[case::listed_with_commas("Backslash, backslash, confidence.", "\\\\confidence.")]
+    #[case::before_a_slash("dot local forward slash share", ".local/share")]
+    fn a_symbol_opening_the_dictation_joins_the_word_after(
+        #[case] heard: &str,
+        #[case] typed: &str,
+    ) {
+        let corrected = Vocabulary::default().correct_spoken(heard, Writing::Commands);
+        assert_eq!(
+            corrected.map(|corrected| corrected.text).as_deref(),
+            Some(typed)
+        );
+    }
+
+    #[rstest]
+    #[case::opening_symbol("dot env", Preceding::Start, ".env")]
+    #[case::opening_run("dot dot forward slash src", Preceding::Start, "../src")]
+    #[case::run_after_typed_text("dot forward slash build", Preceding::Text("run"), "./build")]
+    #[case::run_after_a_sentence("hyphen hyphen verbose", Preceding::SentenceEnd, "--verbose")]
+    fn text_opening_on_a_symbol_that_joins_only_the_word_after_stands_apart(
+        #[case] heard: &str,
+        #[case] before: Preceding<'_>,
+        #[case] typed: &str,
+    ) {
+        let corrected = Vocabulary::default()
+            .correct_spoken_after(heard, before, Writing::Commands)
+            .unwrap();
+        assert_eq!(
+            (corrected.text.as_str(), corrected.attachment),
+            (typed, Attachment::Spaced)
+        );
+    }
+
+    #[test]
+    fn empty_typed_text_is_nothing_typed() {
+        let corrected = Vocabulary::default().correct_spoken_after(
+            "dot env",
+            Preceding::Text(""),
+            Writing::Commands,
+        );
+        assert_eq!(
+            corrected.map(|corrected| corrected.text).as_deref(),
+            Some(".env")
+        );
+    }
+
+    #[test]
+    fn a_symbol_after_a_sentence_end_stays_a_word() {
+        let corrected = Vocabulary::default().correct_spoken_after(
+            "dot env",
+            Preceding::SentenceEnd,
+            Writing::Commands,
+        );
+        assert_eq!(corrected, None);
+    }
+
+    #[test]
+    fn a_named_slash_after_a_sentence_end_types_apart() {
+        let corrected = Vocabulary::default()
+            .correct_spoken_after(
+                "forward slash conf",
+                Preceding::SentenceEnd,
+                Writing::Commands,
+            )
+            .unwrap();
+        assert_eq!(
+            (corrected.text.as_str(), corrected.attachment),
+            ("/conf", Attachment::Spaced)
+        );
     }
 
     #[rstest]
@@ -211,10 +699,14 @@ mod tests {
     #[case::match_keeps_declared_casing("kit dash pro hyphen test", "Kit-Pro-test")]
     #[case::symbols_beside_a_match("aria-stt and user underscore id", "aria-stt and user_id")]
     #[case::match_spoken_with_a_slash("run ci slash cd", "run CI/CD")]
+    #[case::match_spoken_with_a_forward_slash("run ci forward slash cd", "run CI/CD")]
+    #[case::match_spoken_with_a_backslash("open tools backslash kit", "open Tools\\Kit")]
+    #[case::match_spoken_with_a_name_said_apart("open tools back slash kit", "open Tools\\Kit")]
     fn joins_through_vocabulary(#[case] heard: &str, #[case] typed: &str) {
-        let vocabulary = Vocabulary::new(["aria-stt", "Cargo.toml", "Kit-Pro", "CI/CD"]).unwrap();
+        let vocabulary =
+            Vocabulary::new(["aria-stt", "Cargo.toml", "Kit-Pro", "CI/CD", "Tools\\Kit"]).unwrap();
         let corrected = vocabulary
-            .correct_spoken(heard, "")
+            .correct_spoken(heard, Writing::Commands)
             .map(|corrected| corrected.text);
         assert_eq!(corrected.as_deref().unwrap_or(heard), typed);
     }
@@ -224,27 +716,38 @@ mod tests {
     #[case::chain("max", "underscore retry underscore count", Some(("_retry_count", true)))]
     #[case::dot_after_a_digit("2", "dot 5", Some((".5", true)))]
     #[case::hyphen_before_a_digit("3", "hyphen 5", Some(("-5", true)))]
-    #[case::slash_before_a_digit("24", "slash 7", Some(("/7", true)))]
-    #[case::numbers_around_a_slash("", "one slash two", Some(("1/2", false)))]
+    #[case::slash_before_a_digit("24", "forward slash 7", Some(("/7", true)))]
+    #[case::numbers_around_a_slash("", "one forward slash two", Some(("1/2", false)))]
     #[case::hyphen_before_a_number_word("utf", "hyphen sixteen", Some(("-16", true)))]
     #[case::hyphen_before_a_long_number("version", "hyphen twenty five", Some(("-25", true)))]
     #[case::hyphen_after_a_symbol_word("the end, underscore", "hyphen twenty", Some(("hyphen 20", false)))]
     #[case::digits_after_digits_typed("30", "dot one zero zero", Some((".100", true)))]
     #[case::digits_after_an_opening_symbol("python", "underscore three dot twelve", Some(("_3.12", true)))]
-    #[case::space_typed_after("src ", "slash main", None)]
-    #[case::line_break_typed_after("src\n", "slash main", None)]
-    #[case::nothing_typed("", "underscore id", None)]
+    #[case::space_typed_after("src ", "forward slash main", Some(("/main", false)))]
+    #[case::line_break_typed_after("src\n", "forward slash main", Some(("/main", false)))]
+    #[case::slash_the_recognizer_typed_last("run it /", "compact", None)]
+    #[case::path_typed_last("/Users", "forward slash x", Some(("/x", true)))]
+    #[case::english_word_typed_last("run", "forward slash review", Some(("/review", false)))]
     #[case::punctuation_typed("user,", "underscore id", None)]
     fn opens_onto_the_word_typed_before(
         #[case] before: &str,
         #[case] heard: &str,
         #[case] typed: Option<(&str, bool)>,
     ) {
-        let corrected = Vocabulary::default().correct_spoken(heard, before);
+        let corrected = Vocabulary::default().correct_spoken_after(
+            heard,
+            if before.is_empty() {
+                Preceding::Start
+            } else {
+                Preceding::Text(before)
+            },
+            Writing::Commands,
+        );
         assert_eq!(
-            corrected
-                .as_ref()
-                .map(|corrected| (corrected.text.as_str(), corrected.joins_before)),
+            corrected.as_ref().map(|corrected| (
+                corrected.text.as_str(),
+                corrected.attachment == Attachment::Joined
+            )),
             typed
         );
     }
@@ -252,7 +755,10 @@ mod tests {
     #[test]
     fn a_term_never_reads_across_the_word_typed_before() {
         let vocabulary = Vocabulary::new(["New York"]).unwrap();
-        assert_eq!(vocabulary.correct_spoken("york", "new"), None);
+        assert_eq!(
+            vocabulary.correct_spoken_after("york", Preceding::Text("new"), Writing::Commands),
+            None
+        );
     }
 
     #[test]
@@ -261,7 +767,7 @@ mod tests {
         let vocabulary = Vocabulary::compile(&[], personal).unwrap();
         assert_eq!(
             vocabulary
-                .correct_spoken("teh user underscore id", "")
+                .correct_spoken("teh user underscore id", Writing::Commands)
                 .map(|corrected| corrected.text)
                 .as_deref(),
             Some("the user_id")

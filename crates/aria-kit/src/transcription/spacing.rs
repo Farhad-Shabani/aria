@@ -22,17 +22,43 @@ pub struct Caret {
     /// from a closing one.
     before_that: Option<char>,
     after: Option<char>,
+    /// The last insert left out its space before `after`, which
+    /// [`Caret::close`] types.
+    closing_space_due: bool,
 }
 
 /// How inserted text meets the text around the caret.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Spacing {
-    /// The text opens with a spoken symbol that joins the last word typed,
-    /// as "src" then "slash main" types `src/main`. No space comes before it.
-    pub joins_before: bool,
-    /// The text's closing mark is held back for the next text, so its end
-    /// stays open, as [`Caret::insert_open`] leaves it.
-    pub defers_ending: bool,
+    pub attachment: Attachment,
+    pub ending: Ending,
+}
+
+/// Whether a space comes before inserted text.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Attachment {
+    /// After `Hello`, `world` → ` world` but `,` → `,`.
+    #[default]
+    Auto,
+    /// No space. After `src`, `/main` → `/main`.
+    Joined,
+    /// Spaced like a word, even with a symbol first. After `cd`, `../src`
+    /// → ` ../src`.
+    Spaced,
+}
+
+/// Whether a space follows inserted text before a word after the caret.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Ending {
+    /// Before `notes`, `open src` → `open src `.
+    #[default]
+    Spaced,
+    /// Before `notes`, `open src` → `open src`, so the next text can join
+    /// it. The next insert or [`Caret::close`] types the space.
+    Open,
+    /// Like [`Self::Open`]. The next text starts with this one's held-back
+    /// mark, as `. Then rest`.
+    MarkDeferred,
 }
 
 impl Caret {
@@ -44,6 +70,7 @@ impl Caret {
             before: preceding.next(),
             before_that: preceding.next(),
             after: after.chars().next(),
+            closing_space_due: false,
         }
     }
 
@@ -59,7 +86,7 @@ impl Caret {
     #[must_use = "the caret has moved past text that must be typed"]
     pub fn insert_open(&mut self, text: &str) -> String {
         let spacing = Spacing {
-            defers_ending: true,
+            ending: Ending::Open,
             ..Spacing::default()
         };
         self.insert_with(text, spacing)
@@ -68,8 +95,12 @@ impl Caret {
     /// Like [`Caret::insert`], with the spaces `spacing` leaves out.
     #[must_use = "the caret has moved past text that must be typed"]
     pub fn insert_with(&mut self, text: &str, spacing: Spacing) -> String {
-        let leading = !spacing.joins_before && self.needs_leading_space(text);
-        let trailing = !spacing.defers_ending && self.needs_trailing_space(text);
+        let leading = self.needs_leading_space(text, spacing.attachment);
+        let trailing = spacing.ending == Ending::Spaced
+            && text
+                .chars()
+                .last()
+                .is_some_and(|last| self.needs_space_after(last));
         let mut spaced = String::with_capacity(text.len() + 2);
         if leading {
             spaced.push(' ');
@@ -79,6 +110,7 @@ impl Caret {
         if let Some(last) = typed.next() {
             self.before_that = typed.next().or(self.before);
             self.before = Some(last);
+            self.closing_space_due = spacing.ending != Ending::Spaced;
         }
         if trailing {
             spaced.push(' ');
@@ -88,7 +120,25 @@ impl Caret {
         spaced
     }
 
-    fn needs_leading_space(&self, text: &str) -> bool {
+    /// The space an open insert left out before the word after the caret,
+    /// once: `open src` before `notes` gets ` `. Empty when none is due.
+    #[must_use = "the caret has moved past a space that must be typed"]
+    pub fn close(&mut self) -> String {
+        let owed =
+            self.closing_space_due && self.before.is_some_and(|last| self.needs_space_after(last));
+        self.closing_space_due = false;
+        if !owed {
+            return String::new();
+        }
+        self.before_that = self.before;
+        self.before = Some(' ');
+        " ".to_owned()
+    }
+
+    fn needs_leading_space(&self, text: &str, attachment: Attachment) -> bool {
+        if attachment == Attachment::Joined {
+            return false;
+        }
         let Some(previous) = self.before else {
             return false;
         };
@@ -98,16 +148,13 @@ impl Caret {
         !previous.is_whitespace()
             && !self.opens_after(previous)
             && !first.is_whitespace()
-            && !attaches_before(text)
+            && (attachment == Attachment::Spaced || !attaches_before(text))
             && !unspaced_script(previous)
             && !unspaced_script(first)
     }
 
-    fn needs_trailing_space(&self, text: &str) -> bool {
+    fn needs_space_after(&self, last: char) -> bool {
         let Some(next) = self.after else {
-            return false;
-        };
-        let Some(last) = text.chars().last() else {
             return false;
         };
         next.is_alphanumeric()
@@ -178,13 +225,28 @@ mod tests {
     }
 
     #[test]
+    fn text_that_opens_apart_takes_a_space_before_its_symbol() {
+        let apart = Spacing {
+            attachment: Attachment::Spaced,
+            ..Spacing::default()
+        };
+        assert_eq!(Caret::between("cd", "").insert("../src"), "../src");
+        assert_eq!(
+            Caret::between("cd", "").insert_with("../src", apart),
+            " ../src"
+        );
+        assert_eq!(Caret::between("", "").insert_with(".env", apart), ".env");
+        assert_eq!(Caret::between("(", "").insert_with(".env", apart), ".env");
+    }
+
+    #[test]
     fn only_joined_text_attaches_to_the_word_before() {
         let joins = Spacing {
-            joins_before: true,
+            attachment: Attachment::Joined,
             ..Spacing::default()
         };
         let joins_open = Spacing {
-            defers_ending: true,
+            ending: Ending::Open,
             ..joins
         };
         assert_eq!(
@@ -284,6 +346,24 @@ mod tests {
         ];
 
         assert_eq!(typed, [" we should", ". Ship it", ". "]);
+    }
+
+    #[test]
+    fn closing_types_the_space_an_open_insert_left_out_once() {
+        let mut caret = Caret::between("", "notes");
+        assert_eq!(caret.insert_open("open src"), "open src");
+        assert_eq!(caret.close(), " ");
+        assert_eq!(caret.close(), "");
+
+        let mut closed = Caret::between("", "notes");
+        assert_eq!(closed.insert("open src"), "open src ");
+        assert_eq!(closed.close(), "");
+
+        let mut at_the_end = Caret::between("", "");
+        assert_eq!(at_the_end.insert_open("open src"), "open src");
+        assert_eq!(at_the_end.close(), "");
+
+        assert_eq!(Caret::between("key", "board").close(), "");
     }
 
     #[test]

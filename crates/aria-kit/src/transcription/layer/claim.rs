@@ -1,6 +1,15 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
+/// Whether dictated text starts its dictation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Place {
+    /// The dictation starts here. "dot env" → `.env`.
+    Start,
+    /// Words came before, typed or not. "dot env" stays `dot env`.
+    MidDictation,
+}
+
 /// A span of the text: plain text between spaces or claims, a run of words
 /// a step kept whole, or a claim of any length.
 #[derive(Clone)]

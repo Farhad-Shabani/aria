@@ -6,6 +6,7 @@ use crate::stt::Language;
 use aria_kit::audio::{AutoStop, Inputs, SilenceDuration};
 use aria_settings::DeliveryMode;
 
+mod application;
 mod cursor;
 mod event;
 mod execution;
@@ -161,6 +162,22 @@ impl DictationSettings {
     /// Whether the app in front at admission has Aria switched off.
     pub fn application_excluded(&self) -> bool {
         self.target.excludes(self.application.as_ref())
+    }
+
+    /// Prose or commands, by the app in front at admission.
+    pub(crate) fn writing(&self) -> aria_kit::transcription::Writing {
+        application::writing(self.application.as_ref())
+    }
+
+    pub(crate) fn correction<'a>(
+        &self,
+        vocabulary: Option<&'a crate::vocabulary::Vocabulary>,
+    ) -> rewrites::CorrectionSettings<'a> {
+        rewrites::CorrectionSettings {
+            cleanup: self.cleanup,
+            vocabulary,
+            writing: self.writing(),
+        }
     }
 }
 

@@ -14,7 +14,7 @@ use super::claim::{Claimed, Word};
 use super::number_words::{
     Next, compound_ordinal, continues, is_digit, is_number_word, is_oh, is_ordinal, ordinal_value,
 };
-use super::symbol_words::{is_symbol, symbol};
+use super::symbol_words::{MAX_NAME_WORDS, is_symbol, leading_name};
 
 /// Claims each run of number words that has one clear written form as
 /// digits: "two point five" → `2.5`, "twenty fifteen" → `2015`, "nine five
@@ -263,8 +263,17 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         let Some(before) = start.checked_sub(1) else {
             return false;
         };
-        self.following(before).is_some()
-            && self.word(before).is_some_and(|word| symbol(word).is_some())
+        self.following(before).is_some() && self.ends_a_symbol_name(before)
+    }
+
+    /// Whether the words ending at `last` name a symbol, as "back slash"
+    /// does in "thirty back slash o one" → `30\01`.
+    fn ends_a_symbol_name(&self, last: usize) -> bool {
+        let earliest = (last + 1).saturating_sub(MAX_NAME_WORDS);
+        (earliest..=last).rev().any(|first| {
+            let said = (first..=last).map_while(|index| self.word(index));
+            leading_name(said).is_some_and(|name| name.word_count == last - first + 1)
+        })
     }
 
     /// The number run that opens at `start`. A "point" or "and" the run
@@ -516,11 +525,11 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
 mod tests {
     use rstest::rstest;
 
-    use super::super::Vocabulary;
+    use super::super::{Vocabulary, Writing};
 
     fn written(heard: &str) -> String {
         Vocabulary::default()
-            .correct_spoken(heard, "")
+            .correct_spoken(heard, Writing::Commands)
             .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
     }
 
@@ -563,6 +572,7 @@ mod tests {
     #[case::digits_on_both_sides("one nine two dot one six eight", "192.168")]
     #[case::digits_after_a_version("version two dot one zero", "version 2.10")]
     #[case::oh_opening_digits_after_a_symbol("thirty dot o one", "30.01")]
+    #[case::oh_after_a_name_of_two_words("thirty back slash o one", "30\\01")]
     #[case::oh_inside_digits_after_a_symbol("three dot one oh one", "3.101")]
     #[case::digits_the_model_wrote_before_a_symbol("30 dot one zero zero", "30.100")]
     #[case::digit_word_beside_a_scale_word("two million dot five", "2 million dot five")]
@@ -570,7 +580,7 @@ mod tests {
     #[case::digit_word_beside_a_scale_alone("hundred dot five", "hundred.five")]
     #[case::number_before_a_measure("twenty kilograms", "20 kilograms")]
     #[case::number_after_a_hyphen("utf hyphen sixteen", "utf-16")]
-    #[case::number_after_a_hyphen_with_nothing_before("hyphen nineteen", "hyphen 19")]
+    #[case::number_after_a_hyphen_opening_the_dictation("hyphen nineteen", "-19")]
     #[case::dollars_before_other_words("five dollars and twenty people", "$5 and 20 people")]
     // "x minus ten" may be a sum, so "minus" never signs a number.
     #[case::minus_stays_a_word("x minus ten", "x minus 10")]

@@ -23,7 +23,7 @@ struct ApplicationSettings: View {
                 } content: {
                     Section {
                         if !excluded {
-                            ForEach(AppSetting.shown(for: bundleID, overrides: overrides), id: \.self) { setting in
+                            ForEach(AppSetting.allCases, id: \.self) { setting in
                                 control(setting, overrides: overrides, editor)
                             }
                         }

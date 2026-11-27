@@ -220,6 +220,17 @@ impl TextDelivery for LinuxTextDelivery {
         Err(DeliveryError::SubmissionUnsupported)
     }
 
+    // Linux never reads the caret, so no dictation here asks for a closing
+    // space.
+    fn deliver_closing_space(
+        &self,
+        _prepared: &Self::Prepared,
+        _space: &str,
+        _should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        Err(DeliveryError::TargetUnverified)
+    }
+
     fn deliver(
         &self,
         prepared: &Self::Prepared,

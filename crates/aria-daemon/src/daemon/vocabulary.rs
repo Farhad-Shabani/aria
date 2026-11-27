@@ -8,10 +8,11 @@ use aria_settings::rpc::RpcErrorCode;
 use aria_settings::{Directory, SettingsStore};
 use aria_voice::vocabulary::{
     Activity, Completeness, Failure, List, MatchError, PersonalRules, Status, Term, Vocabulary,
+    branches,
     catalog::{self, Catalog},
     collection::{self, Collector},
     dictionary::{AddWordOutcome, Dictionary, DictionaryError, RemoveWordOutcome, Stamp},
-    discover, select,
+    discover, path_names, select,
 };
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -101,6 +102,14 @@ impl<E: std::error::Error + Send + Sync + 'static> From<collection::Error<E>> fo
     }
 }
 
+impl From<branches::Error> for Error {
+    fn from(error: branches::Error) -> Self {
+        match error {
+            branches::Error::Cancelled => Self::Busy,
+        }
+    }
+}
+
 impl From<select::Error> for Error {
     fn from(error: select::Error) -> Self {
         tracing::debug!(%error, "vocabulary selection stopped");
@@ -125,6 +134,7 @@ impl From<MatchError> for Error {
 #[derive(Clone)]
 struct Prepared {
     terms: Arc<[Term]>,
+    path_names: Arc<[String]>,
     matcher: Arc<Vocabulary>,
     catalog_revision: Option<u64>,
     found: usize,
@@ -1173,8 +1183,12 @@ impl<C: Collector> Worker<C> {
         // New rules can grow a list past the size it was admitted at, so
         // the build itself stops at the room left beside the live lists.
         let used = self.personal.estimated_bytes() + self.runtime.registry().live_bytes();
-        let compiled =
-            self.compile_within(&prepared.terms, LIVE_BYTES.saturating_sub(used), &token);
+        let compiled = self.compile_within(
+            &prepared.terms,
+            &prepared.path_names,
+            LIVE_BYTES.saturating_sub(used),
+            &token,
+        );
         let result = if deadline.expired() {
             Err(Error::TooLarge)
         } else {
@@ -1224,12 +1238,14 @@ impl<C: Collector> Worker<C> {
         let cached = self.catalog(catalog, token)?.load(&root, &key)?;
         if let Some(cached) = &cached {
             let selection = select::terms(&cached.sources, token)?;
-            let matcher = self.compile(&selection.terms, token)?;
+            let path_names = path_names(selection.folder_names, &root, token)?;
+            let matcher = self.compile(&selection.terms, &path_names, token)?;
             self.runtime.publish(
                 directory,
                 &root,
                 Prepared {
                     terms: selection.terms.into(),
+                    path_names: path_names.into(),
                     matcher,
                     catalog_revision: Some(cached.revision),
                     found: selection.found,
@@ -1253,7 +1269,8 @@ impl<C: Collector> Worker<C> {
         }
         drop(previous);
         let selection = select::terms(&discovery.sources, token)?;
-        let matcher = self.compile(&selection.terms, token)?;
+        let path_names = path_names(selection.folder_names, &root, token)?;
+        let matcher = self.compile(&selection.terms, &path_names, token)?;
         self.runtime.interrupted(cancel)?;
         // How far a scan gets in time depends on the machine's load, so a
         // short one goes live without replacing a longer stored scan.
@@ -1285,6 +1302,7 @@ impl<C: Collector> Worker<C> {
             &root,
             Prepared {
                 terms: selection.terms.into(),
+                path_names: path_names.into(),
                 matcher,
                 catalog_revision,
                 found: selection.found,
@@ -1295,13 +1313,19 @@ impl<C: Collector> Worker<C> {
         Ok(self.runtime.catalog_status(Some(directory)))
     }
 
-    fn compile(&self, terms: &[Term], token: &CancelToken) -> Result<Arc<Vocabulary>, Error> {
-        self.compile_within(terms, usize::MAX, token)
+    fn compile(
+        &self,
+        terms: &[Term],
+        path_names: &[String],
+        token: &CancelToken,
+    ) -> Result<Arc<Vocabulary>, Error> {
+        self.compile_within(terms, path_names, usize::MAX, token)
     }
 
     fn compile_within(
         &self,
         terms: &[Term],
+        path_names: &[String],
         limit: usize,
         token: &CancelToken,
     ) -> Result<Arc<Vocabulary>, Error> {
@@ -1313,12 +1337,9 @@ impl<C: Collector> Worker<C> {
         if self.personal.estimated_bytes() > limit {
             return Err(Error::TooLarge);
         }
-        let matcher = Arc::new(Vocabulary::compile_within(
-            terms,
-            self.personal.clone(),
-            limit,
-            token,
-        )?);
+        let matcher = Vocabulary::compile_within(terms, self.personal.clone(), limit, token)?
+            .with_path_names(path_names, limit)?;
+        let matcher = Arc::new(matcher);
         if token.is_cancelled() {
             return Err(Error::Busy);
         }
@@ -1407,6 +1428,7 @@ impl<C: Collector> Worker<C> {
 mod tests {
     use super::super::log::testing::CapturedLogs;
     use super::*;
+    use aria_kit::transcription::Writing;
     use aria_voice::vocabulary::extract::{self, Extractor, LocalExtractor, TextInput};
     use aria_voice::vocabulary::{
         Candidate, Coverage, Discovery, Source, SourceKind, cache_key, discover::LocalCollector,
@@ -1443,6 +1465,7 @@ mod tests {
     fn prepared(matcher: &Arc<Vocabulary>, revision: u64) -> Prepared {
         Prepared {
             terms: Arc::from([]),
+            path_names: Arc::from([]),
             matcher: Arc::clone(matcher),
             catalog_revision: Some(revision),
             found: 1,
@@ -2019,6 +2042,12 @@ mod tests {
     async fn a_dictionary_edit_recompiles_each_ready_folder_without_rescanning() {
         let root = tempfile::tempdir().unwrap();
         let [first, second] = ["Aria-Kit", "Other-Kit"].map(|name| project(root.path(), name));
+        let crates = first.as_path().join("crates");
+        std::fs::create_dir(&crates).unwrap();
+        std::fs::write(crates.join("lib.rs"), "").unwrap();
+        let heads = first.as_path().join(".git/refs/heads/feature");
+        std::fs::create_dir_all(&heads).unwrap();
+        std::fs::write(heads.join("login"), "0\n").unwrap();
         let (runtime, worker) = local_runtime(root.path());
         let shutdown = CancellationToken::new();
         let task = tokio::spawn(worker.run(shutdown.clone()));
@@ -2050,14 +2079,18 @@ mod tests {
             let snapshot = runtime.snapshot(Some(folder));
             let text = snapshot
                 .matcher
-                .correct_spoken(said, "")
+                .correct_spoken(said, Writing::Commands)
                 .map(|result| result.text);
             (runtime.catalog_status(Some(folder)), text)
         };
+        let folder = corrected(&first, "crates forward slash aria");
+        let branch = corrected(&first, "feature forward slash login");
         let first = corrected(&first, "use aria dash kit with d b two");
         let second = corrected(&second, "use other dash kit with d b two");
         shutdown.cancel();
         task.await.unwrap();
+        assert_eq!(folder.1.as_deref(), Some("crates/aria"));
+        assert_eq!(branch.1.as_deref(), Some("feature/login"));
         assert_eq!(first, (first_ready, Some("use Aria-Kit with db2".into())));
         assert_eq!(
             second,

@@ -137,6 +137,17 @@ pub trait TextDelivery: Send + Sync + 'static {
         should_cancel: impl Fn() -> bool,
     ) -> Result<DeliveryOutcome, DeliveryError>;
 
+    /// Types the closing space: "open src" streamed before `notes` →
+    /// `open src notes`. Refuses unless the caret sits right after the typed
+    /// text with nothing selected. A field that can't set its selection, as
+    /// a terminal's, takes it where a segment would type.
+    fn deliver_closing_space(
+        &self,
+        prepared: &Self::Prepared,
+        space: &str,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError>;
+
     /// The application keystrokes would reach now. `None` where the
     /// platform cannot tell.
     fn frontmost(&self) -> Option<Application>;

@@ -130,7 +130,7 @@ const ENGLISH_WORDS: &[u8] = include_bytes!("english.fst");
 
 /// "river's" and "red-shift" are real because "river", "red" and "shift"
 /// are, though the list holds no possessives or compounds.
-fn is_english(folded: &str) -> bool {
+pub(in super::super) fn is_english(folded: &str) -> bool {
     folded
         .split('-')
         .all(|part| english_words().contains(part) || english_words().contains(possessive(part).0))

@@ -14,6 +14,10 @@ to say. So Aria keeps `Cargo.toml` and `vex16.rs`, and skips `README` and
 `icon-1024-dark.png`. It stores the names it keeps, and their paths, in
 `~/.aria/vocabulary` on your computer.
 
+When the folder holds a git repository, Aria also reads its branch names, such
+as `origin/main`, from git's own files. Then “origin forward slash main” types
+`origin/main`. Aria keeps branch names in memory only.
+
 Complete [setup](./installation.md#setup) and keep the background service
 running. Then choose the folder in the Mac app or in a terminal.
 

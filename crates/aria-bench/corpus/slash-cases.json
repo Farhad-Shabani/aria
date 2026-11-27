@@ -1,0 +1,1647 @@
+{
+  "schema": 1,
+  "evidence": "Hand-authored synthetic slash uses: commands, paths, URLs, branches, MIME types, units, prose pairs and acronyms. Each expected text is what a careful writer types. Not recorded speech, and not population accuracy evidence.",
+  "cases": [
+    {
+      "id": "command_1",
+      "group": "command",
+      "category": "command",
+      "spoken_reference": "run forward slash review",
+      "written_reference": "run /review",
+      "whole_input": "run forward slash review",
+      "segments": [
+        "run forward slash",
+        "review"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_2",
+      "group": "command",
+      "category": "command",
+      "spoken_reference": "type forward slash help",
+      "written_reference": "type /help",
+      "whole_input": "type forward slash help",
+      "segments": [
+        "type forward slash",
+        "help"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_3",
+      "group": "command",
+      "category": "command",
+      "spoken_reference": "use forward slash compact now",
+      "written_reference": "use /compact now",
+      "whole_input": "use forward slash compact now",
+      "segments": [
+        "use forward slash",
+        "compact now"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_4",
+      "group": "command",
+      "category": "command",
+      "spoken_reference": "then forward slash clear",
+      "written_reference": "then /clear",
+      "whole_input": "then forward slash clear",
+      "segments": [
+        "then forward slash",
+        "clear"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_5",
+      "group": "command",
+      "category": "command",
+      "spoken_reference": "try forward slash init",
+      "written_reference": "try /init",
+      "whole_input": "try forward slash init",
+      "segments": [
+        "try forward slash",
+        "init"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_6",
+      "group": "command",
+      "category": "command",
+      "spoken_reference": "send forward slash remind me tomorrow",
+      "written_reference": "send /remind me tomorrow",
+      "whole_input": "send forward slash remind me tomorrow",
+      "segments": [
+        "send forward slash",
+        "remind me tomorrow"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_7",
+      "group": "command",
+      "category": "command",
+      "spoken_reference": "switch with forward slash model",
+      "written_reference": "switch with /model",
+      "whole_input": "switch with forward slash model",
+      "segments": [
+        "switch with forward slash",
+        "model"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_8",
+      "group": "command",
+      "category": "command",
+      "spoken_reference": "forward slash review",
+      "written_reference": "/review",
+      "whole_input": "forward slash review",
+      "segments": [
+        "forward slash",
+        "review"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_9",
+      "group": "command",
+      "category": "command",
+      "spoken_reference": "please run forward slash review on this",
+      "written_reference": "please run /review on this",
+      "whole_input": "please run forward slash review on this",
+      "segments": [
+        "please run forward slash",
+        "review on this"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_10",
+      "group": "command",
+      "category": "command",
+      "spoken_reference": "start with forward slash plan",
+      "written_reference": "start with /plan",
+      "whole_input": "start with forward slash plan",
+      "segments": [
+        "start with forward slash",
+        "plan"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_tool_name_1",
+      "group": "command_tool_name",
+      "category": "command_tool_name",
+      "spoken_reference": "ask claude forward slash review",
+      "written_reference": "ask claude /review",
+      "whole_input": "ask claude forward slash review",
+      "segments": [
+        "ask claude forward slash",
+        "review"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_tool_name_2",
+      "group": "command_tool_name",
+      "category": "command_tool_name",
+      "spoken_reference": "in vim forward slash search",
+      "written_reference": "in vim /search",
+      "whole_input": "in vim forward slash search",
+      "segments": [
+        "in vim forward slash",
+        "search"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_tool_name_3",
+      "group": "command_tool_name",
+      "category": "command_tool_name",
+      "spoken_reference": "in slack forward slash remind",
+      "written_reference": "in slack /remind",
+      "whole_input": "in slack forward slash remind",
+      "segments": [
+        "in slack forward slash",
+        "remind"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_tool_name_4",
+      "group": "command_tool_name",
+      "category": "command_tool_name",
+      "spoken_reference": "in discord forward slash play",
+      "written_reference": "in discord /play",
+      "whole_input": "in discord forward slash play",
+      "segments": [
+        "in discord forward slash",
+        "play"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_tool_name_5",
+      "group": "command_tool_name",
+      "category": "command_tool_name",
+      "spoken_reference": "in claude code forward slash compact",
+      "written_reference": "in claude code /compact",
+      "whole_input": "in claude code forward slash compact",
+      "segments": [
+        "in claude code forward slash",
+        "compact"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "command_tool_name_6",
+      "group": "command_tool_name",
+      "category": "command_tool_name",
+      "spoken_reference": "tell gemini forward slash help",
+      "written_reference": "tell gemini /help",
+      "whole_input": "tell gemini forward slash help",
+      "segments": [
+        "tell gemini forward slash",
+        "help"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_project_1",
+      "group": "path_project",
+      "category": "path_project",
+      "spoken_reference": "open crates forward slash aria",
+      "written_reference": "open crates/aria",
+      "whole_input": "open crates forward slash aria",
+      "segments": [
+        "open crates forward slash",
+        "aria"
+      ],
+      "project_terms": [],
+      "project_folders": [
+        "crates",
+        "src",
+        "docs",
+        "tests",
+        "tools",
+        "clients"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_project_2",
+      "group": "path_project",
+      "category": "path_project",
+      "spoken_reference": "look in src forward slash main",
+      "written_reference": "look in src/main",
+      "whole_input": "look in src forward slash main",
+      "segments": [
+        "look in src forward slash",
+        "main"
+      ],
+      "project_terms": [],
+      "project_folders": [
+        "crates",
+        "src",
+        "docs",
+        "tests",
+        "tools",
+        "clients"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_project_3",
+      "group": "path_project",
+      "category": "path_project",
+      "spoken_reference": "edit docs forward slash readme",
+      "written_reference": "edit docs/readme",
+      "whole_input": "edit docs forward slash readme",
+      "segments": [
+        "edit docs forward slash",
+        "readme"
+      ],
+      "project_terms": [],
+      "project_folders": [
+        "crates",
+        "src",
+        "docs",
+        "tests",
+        "tools",
+        "clients"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_project_4",
+      "group": "path_project",
+      "category": "path_project",
+      "spoken_reference": "run tests forward slash unit",
+      "written_reference": "run tests/unit",
+      "whole_input": "run tests forward slash unit",
+      "segments": [
+        "run tests forward slash",
+        "unit"
+      ],
+      "project_terms": [],
+      "project_folders": [
+        "crates",
+        "src",
+        "docs",
+        "tests",
+        "tools",
+        "clients"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_project_5",
+      "group": "path_project",
+      "category": "path_project",
+      "spoken_reference": "check tools forward slash bench",
+      "written_reference": "check tools/bench",
+      "whole_input": "check tools forward slash bench",
+      "segments": [
+        "check tools forward slash",
+        "bench"
+      ],
+      "project_terms": [],
+      "project_folders": [
+        "crates",
+        "src",
+        "docs",
+        "tests",
+        "tools",
+        "clients"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_project_6",
+      "group": "path_project",
+      "category": "path_project",
+      "spoken_reference": "see clients forward slash mac",
+      "written_reference": "see clients/mac",
+      "whole_input": "see clients forward slash mac",
+      "segments": [
+        "see clients forward slash",
+        "mac"
+      ],
+      "project_terms": [],
+      "project_folders": [
+        "crates",
+        "src",
+        "docs",
+        "tests",
+        "tools",
+        "clients"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_project_7",
+      "group": "path_project",
+      "category": "path_project",
+      "spoken_reference": "open crates forward slash aria dash kit forward slash src",
+      "written_reference": "open crates/aria-kit/src",
+      "whole_input": "open crates forward slash aria dash kit forward slash src",
+      "segments": [
+        "open crates forward slash aria dash kit forward slash",
+        "src"
+      ],
+      "project_terms": [
+        "aria-kit"
+      ],
+      "project_folders": [
+        "crates",
+        "src",
+        "docs",
+        "tests",
+        "tools",
+        "clients"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_project_prose_1",
+      "group": "path_project_prose",
+      "category": "path_project_prose",
+      "spoken_reference": "run the tests forward slash review",
+      "written_reference": "run the tests /review",
+      "whole_input": "run the tests forward slash review",
+      "segments": [
+        "run the tests forward slash",
+        "review"
+      ],
+      "project_terms": [],
+      "project_folders": [
+        "crates",
+        "src",
+        "docs",
+        "tests",
+        "tools",
+        "clients"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_project_prose_2",
+      "group": "path_project_prose",
+      "category": "path_project_prose",
+      "spoken_reference": "update the docs forward slash help",
+      "written_reference": "update the docs /help",
+      "whole_input": "update the docs forward slash help",
+      "segments": [
+        "update the docs forward slash",
+        "help"
+      ],
+      "project_terms": [],
+      "project_folders": [
+        "crates",
+        "src",
+        "docs",
+        "tests",
+        "tools",
+        "clients"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_project_prose_3",
+      "group": "path_project_prose",
+      "category": "path_project_prose",
+      "spoken_reference": "fix the tools forward slash plan",
+      "written_reference": "fix the tools /plan",
+      "whole_input": "fix the tools forward slash plan",
+      "segments": [
+        "fix the tools forward slash",
+        "plan"
+      ],
+      "project_terms": [],
+      "project_folders": [
+        "crates",
+        "src",
+        "docs",
+        "tests",
+        "tools",
+        "clients"
+      ],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_unix_1",
+      "group": "path_unix",
+      "category": "path_unix",
+      "spoken_reference": "cd forward slash users forward slash x",
+      "written_reference": "cd /users/x",
+      "whole_input": "cd forward slash users forward slash x",
+      "segments": [
+        "cd forward slash users forward slash",
+        "x"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_unix_2",
+      "group": "path_unix",
+      "category": "path_unix",
+      "spoken_reference": "cat forward slash etc forward slash hosts",
+      "written_reference": "cat /etc/hosts",
+      "whole_input": "cat forward slash etc forward slash hosts",
+      "segments": [
+        "cat forward slash etc forward slash",
+        "hosts"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_unix_3",
+      "group": "path_unix",
+      "category": "path_unix",
+      "spoken_reference": "open forward slash tmp",
+      "written_reference": "open /tmp",
+      "whole_input": "open forward slash tmp",
+      "segments": [
+        "open forward slash",
+        "tmp"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_unix_4",
+      "group": "path_unix",
+      "category": "path_unix",
+      "spoken_reference": "cd dot dot forward slash src",
+      "written_reference": "cd ../src",
+      "whole_input": "cd dot dot forward slash src",
+      "segments": [
+        "cd dot dot forward slash",
+        "src"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_unix_5",
+      "group": "path_unix",
+      "category": "path_unix",
+      "spoken_reference": "run dot forward slash build",
+      "written_reference": "run ./build",
+      "whole_input": "run dot forward slash build",
+      "segments": [
+        "run dot forward slash",
+        "build"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_unix_6",
+      "group": "path_unix",
+      "category": "path_unix",
+      "spoken_reference": "tail forward slash var forward slash log",
+      "written_reference": "tail /var/log",
+      "whole_input": "tail forward slash var forward slash log",
+      "segments": [
+        "tail forward slash var forward slash",
+        "log"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_unix_7",
+      "group": "path_unix",
+      "category": "path_unix",
+      "spoken_reference": "cd users forward slash x",
+      "written_reference": "cd users/x",
+      "whole_input": "cd users forward slash x",
+      "segments": [
+        "cd users forward slash",
+        "x"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_unix_8",
+      "group": "path_unix",
+      "category": "path_unix",
+      "spoken_reference": "ls home forward slash x",
+      "written_reference": "ls home/x",
+      "whole_input": "ls home forward slash x",
+      "segments": [
+        "ls home forward slash",
+        "x"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_unix_9",
+      "group": "path_unix",
+      "category": "path_unix",
+      "spoken_reference": "add usr forward slash local forward slash bin",
+      "written_reference": "add usr/local/bin",
+      "whole_input": "add usr forward slash local forward slash bin",
+      "segments": [
+        "add usr forward slash local forward slash",
+        "bin"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_unix_10",
+      "group": "path_unix",
+      "category": "path_unix",
+      "spoken_reference": "open library forward slash logs",
+      "written_reference": "open library/logs",
+      "whole_input": "open library forward slash logs",
+      "segments": [
+        "open library forward slash",
+        "logs"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_windows_1",
+      "group": "path_windows",
+      "category": "path_windows",
+      "spoken_reference": "c back slash windows",
+      "written_reference": "c\\windows",
+      "whole_input": "c back slash windows",
+      "segments": [
+        "c back slash",
+        "windows"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_windows_2",
+      "group": "path_windows",
+      "category": "path_windows",
+      "spoken_reference": "c back slash users back slash x",
+      "written_reference": "c\\users\\x",
+      "whole_input": "c back slash users back slash x",
+      "segments": [
+        "c back slash users back slash",
+        "x"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_windows_3",
+      "group": "path_windows",
+      "category": "path_windows",
+      "spoken_reference": "back slash back slash server",
+      "written_reference": "\\\\server",
+      "whole_input": "back slash back slash server",
+      "segments": [
+        "back slash back slash",
+        "server"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_windows_4",
+      "group": "path_windows",
+      "category": "path_windows",
+      "spoken_reference": "d backslash data",
+      "written_reference": "d\\data",
+      "whole_input": "d backslash data",
+      "segments": [
+        "d backslash",
+        "data"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "path_windows_5",
+      "group": "path_windows",
+      "category": "path_windows",
+      "spoken_reference": "open users back slash x",
+      "written_reference": "open users\\x",
+      "whole_input": "open users back slash x",
+      "segments": [
+        "open users back slash",
+        "x"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "url_1",
+      "group": "url",
+      "category": "url",
+      "spoken_reference": "example dot com forward slash docs",
+      "written_reference": "example.com/docs",
+      "whole_input": "example dot com forward slash docs",
+      "segments": [
+        "example dot com forward slash",
+        "docs"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "url_2",
+      "group": "url",
+      "category": "url",
+      "spoken_reference": "github dot com forward slash user forward slash repo",
+      "written_reference": "github.com/user/repo",
+      "whole_input": "github dot com forward slash user forward slash repo",
+      "segments": [
+        "github dot com forward slash user forward slash",
+        "repo"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "url_3",
+      "group": "url",
+      "category": "url",
+      "spoken_reference": "docs dot rs forward slash serde",
+      "written_reference": "docs.rs/serde",
+      "whole_input": "docs dot rs forward slash serde",
+      "segments": [
+        "docs dot rs forward slash",
+        "serde"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "url_4",
+      "group": "url",
+      "category": "url",
+      "spoken_reference": "localhost forward slash api",
+      "written_reference": "localhost/api",
+      "whole_input": "localhost forward slash api",
+      "segments": [
+        "localhost forward slash",
+        "api"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "url_5",
+      "group": "url",
+      "category": "url",
+      "spoken_reference": "open example dot com forward slash about",
+      "written_reference": "open example.com/about",
+      "whole_input": "open example dot com forward slash about",
+      "segments": [
+        "open example dot com forward slash",
+        "about"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "branch_1",
+      "group": "branch",
+      "category": "branch",
+      "spoken_reference": "git checkout origin forward slash main",
+      "written_reference": "git checkout origin/main",
+      "whole_input": "git checkout origin forward slash main",
+      "segments": [
+        "git checkout origin forward slash",
+        "main"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "branch_2",
+      "group": "branch",
+      "category": "branch",
+      "spoken_reference": "make feature forward slash login",
+      "written_reference": "make feature/login",
+      "whole_input": "make feature forward slash login",
+      "segments": [
+        "make feature forward slash",
+        "login"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "branch_3",
+      "group": "branch",
+      "category": "branch",
+      "spoken_reference": "push fix forward slash typo",
+      "written_reference": "push fix/typo",
+      "whole_input": "push fix forward slash typo",
+      "segments": [
+        "push fix forward slash",
+        "typo"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "branch_4",
+      "group": "branch",
+      "category": "branch",
+      "spoken_reference": "merge upstream forward slash main",
+      "written_reference": "merge upstream/main",
+      "whole_input": "merge upstream forward slash main",
+      "segments": [
+        "merge upstream forward slash",
+        "main"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "branch_5",
+      "group": "branch",
+      "category": "branch",
+      "spoken_reference": "tag release forward slash v2",
+      "written_reference": "tag release/v2",
+      "whole_input": "tag release forward slash v2",
+      "segments": [
+        "tag release forward slash",
+        "v2"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "mime_1",
+      "group": "mime",
+      "category": "mime",
+      "spoken_reference": "application forward slash json",
+      "written_reference": "application/json",
+      "whole_input": "application forward slash json",
+      "segments": [
+        "application forward slash",
+        "json"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "mime_2",
+      "group": "mime",
+      "category": "mime",
+      "spoken_reference": "text forward slash html",
+      "written_reference": "text/html",
+      "whole_input": "text forward slash html",
+      "segments": [
+        "text forward slash",
+        "html"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "mime_3",
+      "group": "mime",
+      "category": "mime",
+      "spoken_reference": "image forward slash png",
+      "written_reference": "image/png",
+      "whole_input": "image forward slash png",
+      "segments": [
+        "image forward slash",
+        "png"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "mime_4",
+      "group": "mime",
+      "category": "mime",
+      "spoken_reference": "audio forward slash wav",
+      "written_reference": "audio/wav",
+      "whole_input": "audio forward slash wav",
+      "segments": [
+        "audio forward slash",
+        "wav"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "unit_ratio_1",
+      "group": "unit_ratio",
+      "category": "unit_ratio",
+      "spoken_reference": "km forward slash h",
+      "written_reference": "km/h",
+      "whole_input": "km forward slash h",
+      "segments": [
+        "km forward slash",
+        "h"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "unit_ratio_2",
+      "group": "unit_ratio",
+      "category": "unit_ratio",
+      "spoken_reference": "24 forward slash 7",
+      "written_reference": "24/7",
+      "whole_input": "24 forward slash 7",
+      "segments": [
+        "24 forward slash",
+        "7"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "unit_ratio_3",
+      "group": "unit_ratio",
+      "category": "unit_ratio",
+      "spoken_reference": "one forward slash two",
+      "written_reference": "1/2",
+      "whole_input": "one forward slash two",
+      "segments": [
+        "one forward slash",
+        "two"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "unit_ratio_4",
+      "group": "unit_ratio",
+      "category": "unit_ratio",
+      "spoken_reference": "3 forward slash 4 cup",
+      "written_reference": "3/4 cup",
+      "whole_input": "3 forward slash 4 cup",
+      "segments": [
+        "3 forward slash",
+        "4 cup"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "unit_ratio_5",
+      "group": "unit_ratio",
+      "category": "unit_ratio",
+      "spoken_reference": "the date 12 forward slash 25",
+      "written_reference": "the date 12/25",
+      "whole_input": "the date 12 forward slash 25",
+      "segments": [
+        "the date 12 forward slash",
+        "25"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "unit_ratio_6",
+      "group": "unit_ratio",
+      "category": "unit_ratio",
+      "spoken_reference": "requests forward slash second",
+      "written_reference": "requests/second",
+      "whole_input": "requests forward slash second",
+      "segments": [
+        "requests forward slash",
+        "second"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "unit_ratio_7",
+      "group": "unit_ratio",
+      "category": "unit_ratio",
+      "spoken_reference": "miles forward slash hour",
+      "written_reference": "miles/hour",
+      "whole_input": "miles forward slash hour",
+      "segments": [
+        "miles forward slash",
+        "hour"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "prose_pair_1",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "read and forward slash or write",
+      "written_reference": "read and/or write",
+      "whole_input": "read and forward slash or write",
+      "segments": [
+        "read and forward slash",
+        "or write"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_2",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "he forward slash she",
+      "written_reference": "he/she",
+      "whole_input": "he forward slash she",
+      "segments": [
+        "he forward slash",
+        "she"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_3",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "his forward slash her",
+      "written_reference": "his/her",
+      "whole_input": "his forward slash her",
+      "segments": [
+        "his forward slash",
+        "her"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_4",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "a yes forward slash no question",
+      "written_reference": "a yes/no question",
+      "whole_input": "a yes forward slash no question",
+      "segments": [
+        "a yes forward slash",
+        "no question"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_5",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "read forward slash write access",
+      "written_reference": "read/write access",
+      "whole_input": "read forward slash write access",
+      "segments": [
+        "read forward slash",
+        "write access"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_6",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "input forward slash output",
+      "written_reference": "input/output",
+      "whole_input": "input forward slash output",
+      "segments": [
+        "input forward slash",
+        "output"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_7",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "an either forward slash or choice",
+      "written_reference": "an either/or choice",
+      "whole_input": "an either forward slash or choice",
+      "segments": [
+        "an either forward slash",
+        "or choice"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_8",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "the on forward slash off switch",
+      "written_reference": "the on/off switch",
+      "whole_input": "the on forward slash off switch",
+      "segments": [
+        "the on forward slash",
+        "off switch"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_9",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "client forward slash server",
+      "written_reference": "client/server",
+      "whole_input": "client forward slash server",
+      "segments": [
+        "client forward slash",
+        "server"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_10",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "true forward slash false",
+      "written_reference": "true/false",
+      "whole_input": "true forward slash false",
+      "segments": [
+        "true forward slash",
+        "false"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_11",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "list the pros forward slash cons",
+      "written_reference": "list the pros/cons",
+      "whole_input": "list the pros forward slash cons",
+      "segments": [
+        "list the pros forward slash",
+        "cons"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_pair_12",
+      "group": "prose_pair",
+      "category": "prose_pair",
+      "spoken_reference": "the start forward slash end date",
+      "written_reference": "the start/end date",
+      "whole_input": "the start forward slash end date",
+      "segments": [
+        "the start forward slash",
+        "end date"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "acronym_1",
+      "group": "acronym",
+      "category": "acronym",
+      "spoken_reference": "tcp forward slash ip",
+      "written_reference": "tcp/ip",
+      "whole_input": "tcp forward slash ip",
+      "segments": [
+        "tcp forward slash",
+        "ip"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "acronym_2",
+      "group": "acronym",
+      "category": "acronym",
+      "spoken_reference": "i forward slash o",
+      "written_reference": "i/o",
+      "whole_input": "i forward slash o",
+      "segments": [
+        "i forward slash",
+        "o"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "acronym_3",
+      "group": "acronym",
+      "category": "acronym",
+      "spoken_reference": "a forward slash b testing",
+      "written_reference": "a/b testing",
+      "whole_input": "a forward slash b testing",
+      "segments": [
+        "a forward slash",
+        "b testing"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "acronym_4",
+      "group": "acronym",
+      "category": "acronym",
+      "spoken_reference": "ci forward slash cd",
+      "written_reference": "ci/cd",
+      "whole_input": "ci forward slash cd",
+      "segments": [
+        "ci forward slash",
+        "cd"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "acronym_5",
+      "group": "acronym",
+      "category": "acronym",
+      "spoken_reference": "n forward slash a",
+      "written_reference": "n/a",
+      "whole_input": "n forward slash a",
+      "segments": [
+        "n forward slash",
+        "a"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "acronym_6",
+      "group": "acronym",
+      "category": "acronym",
+      "spoken_reference": "c forward slash o",
+      "written_reference": "c/o",
+      "whole_input": "c forward slash o",
+      "segments": [
+        "c forward slash",
+        "o"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "prose_word_1",
+      "group": "prose_word",
+      "category": "prose_word",
+      "spoken_reference": "we slash prices",
+      "written_reference": "we slash prices",
+      "whole_input": "we slash prices",
+      "segments": [
+        "we slash prices"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_word_2",
+      "group": "prose_word",
+      "category": "prose_word",
+      "spoken_reference": "press the slash key",
+      "written_reference": "press the slash key",
+      "whole_input": "press the slash key",
+      "segments": [
+        "press the slash key"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_word_3",
+      "group": "prose_word",
+      "category": "prose_word",
+      "spoken_reference": "they slash the budget again",
+      "written_reference": "they slash the budget again",
+      "whole_input": "they slash the budget again",
+      "segments": [
+        "they slash the budget again"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_word_4",
+      "group": "prose_word",
+      "category": "prose_word",
+      "spoken_reference": "read and slash or write",
+      "written_reference": "read and slash or write",
+      "whole_input": "read and slash or write",
+      "segments": [
+        "read and slash or write"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "prose_word_5",
+      "group": "prose_word",
+      "category": "prose_word",
+      "spoken_reference": "a slash through the zero",
+      "written_reference": "a slash through the zero",
+      "whole_input": "a slash through the zero",
+      "segments": [
+        "a slash through the zero"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null,
+      "writing": "prose"
+    },
+    {
+      "id": "punctuation_1",
+      "group": "punctuation",
+      "category": "punctuation",
+      "spoken_reference": "done, forward slash review",
+      "written_reference": "done, /review",
+      "whole_input": "done, forward slash review",
+      "segments": [
+        "done, forward slash",
+        "review"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "punctuation_2",
+      "group": "punctuation",
+      "category": "punctuation",
+      "spoken_reference": "okay. forward slash help",
+      "written_reference": "okay. /help",
+      "whole_input": "okay. forward slash help",
+      "segments": [
+        "okay. forward slash",
+        "help"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "punctuation_3",
+      "group": "punctuation",
+      "category": "punctuation",
+      "spoken_reference": "next: forward slash plan",
+      "written_reference": "next: /plan",
+      "whole_input": "next: forward slash plan",
+      "segments": [
+        "next: forward slash",
+        "plan"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "contraction_1",
+      "group": "contraction",
+      "category": "contraction",
+      "spoken_reference": "let's forward slash review",
+      "written_reference": "let's /review",
+      "whole_input": "let's forward slash review",
+      "segments": [
+        "let's forward slash",
+        "review"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "contraction_2",
+      "group": "contraction",
+      "category": "contraction",
+      "spoken_reference": "re-run forward slash test",
+      "written_reference": "re-run /test",
+      "whole_input": "re-run forward slash test",
+      "segments": [
+        "re-run forward slash",
+        "test"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    },
+    {
+      "id": "contraction_3",
+      "group": "contraction",
+      "category": "contraction",
+      "spoken_reference": "don't forward slash clear",
+      "written_reference": "don't /clear",
+      "whole_input": "don't forward slash clear",
+      "segments": [
+        "don't forward slash",
+        "clear"
+      ],
+      "project_terms": [],
+      "targets": [],
+      "legacy_whole": null,
+      "legacy_segments": null,
+      "error": null
+    }
+  ]
+}

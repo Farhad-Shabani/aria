@@ -10,6 +10,10 @@
 //! began, the anchor checks only the field from then on. It waits for a slow
 //! app to move the caret, unless Accessibility cannot set the field's
 //! selection. Terminals answer so, and one look then decides.
+//!
+//! The closing space types last, before a word already after the caret:
+//! "open src" streamed before `notes` → `open src notes`. Outside a
+//! terminal, it needs the caret at its expected offset with nothing selected.
 
 use std::time::{Duration, Instant};
 
@@ -76,6 +80,15 @@ impl Anchoring {
         }
     }
 
+    /// Refuses unless a read field shows the caret right after the typed
+    /// text with nothing selected. A terminal gets a segment's check.
+    pub(super) fn before_closing_space(&mut self) -> Result<(), DeliveryError> {
+        match self {
+            Self::Anchored(anchor) => anchor.check_closing_space(),
+            Self::Pending | Self::Unavailable => Err(DeliveryError::TargetUnverified),
+        }
+    }
+
     /// The field and its caret offset, while the caret rests where the next
     /// segment types.
     pub(super) fn resting_caret(
@@ -99,6 +112,12 @@ impl Anchoring {
         }
     }
 
+    pub(super) fn after_closing_space(&mut self, space: &str) {
+        if let Self::Anchored(anchor) = self {
+            anchor.after_closing_space(space);
+        }
+    }
+
     pub(super) fn is_unavailable(&self) -> bool {
         matches!(self, Self::Unavailable)
     }
@@ -112,6 +131,15 @@ pub struct Anchor {
     /// The end of the text typed last. `None` before the first segment.
     ending: Option<String>,
     tracking: Tracking,
+}
+
+/// What types once a check passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Insertion {
+    /// A segment or a Return. May type over an inline completion.
+    Segment,
+    /// The closing space. Never types over a selection.
+    ClosingSpace,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -160,9 +188,13 @@ impl Anchor {
             Tracking::Untested(_) => {
                 let settable = element::is_selection_settable(&self.field, deadline);
                 let polls_until = first_check_polls_until(started, settable);
-                wait_for_caret(polls_until, || self.observe(ending, deadline))
+                wait_for_caret(polls_until, || {
+                    self.observe(ending, Insertion::Segment, deadline)
+                })
             }
-            Tracking::Caret => wait_for_caret(deadline, || self.observe(ending, deadline)),
+            Tracking::Caret => wait_for_caret(deadline, || {
+                self.observe(ending, Insertion::Segment, deadline)
+            }),
             Tracking::Field => self.observe_field(deadline),
         };
         // Past one poll, the app was still applying the last segment.
@@ -173,26 +205,50 @@ impl Anchor {
                 "waited for the last segment to land"
             );
         }
-        self.settle(settled)
+        self.settle(settled, Insertion::Segment)
+    }
+
+    fn check_closing_space(&mut self) -> Result<(), DeliveryError> {
+        let deadline = Instant::now() + CATCH_UP_BUDGET;
+        if element::is_selection_settable(&self.field, deadline) == Ok(false) {
+            return self.check();
+        }
+        let Some(ending) = &self.ending else {
+            return Err(DeliveryError::TargetUnverified);
+        };
+        let settled = wait_for_caret(deadline, || {
+            self.observe(ending, Insertion::ClosingSpace, deadline)
+        });
+        self.settle(settled, Insertion::ClosingSpace)
     }
 
     /// The first check comes a whole segment after the first one landed. A
-    /// caret still at its start by then means the field never moves it.
-    fn settle(&mut self, settled: Settled) -> Result<(), DeliveryError> {
+    /// caret still at its start by then means the field never moves it. For
+    /// the closing space, a caret short of the text always refuses.
+    fn settle(&mut self, settled: Settled, insertion: Insertion) -> Result<(), DeliveryError> {
         match settled {
+            // The closing space proves the caret moves too, so a later
+            // Return refuses a caret back at the start.
             Settled::After(caret) => {
                 self.expected_caret = caret;
                 if matches!(self.tracking, Tracking::Untested(_)) {
                     self.tracking = Tracking::Caret;
                 }
             }
-            Settled::Short(caret) if self.tracking == Tracking::Untested(caret) => {
+            Settled::Short(caret)
+                if insertion == Insertion::Segment
+                    && self.tracking == Tracking::Untested(caret) =>
+            {
                 tracing::info!("caret stays put as text lands; only the field is checked");
                 self.tracking = Tracking::Field;
             }
             Settled::Short(_) => return Err(caret_moved("caret short of the typed text")),
             Settled::Moved(reason) => return Err(caret_moved(reason)),
             Settled::Left => return Err(target_changed("another field took focus")),
+            Settled::Unknown(reason) if insertion == Insertion::ClosingSpace => {
+                tracing::info!(reason, "insertion point unreadable; the space is not typed");
+                return Err(DeliveryError::TargetUnverified);
+            }
             Settled::Unknown(reason) => {
                 tracing::debug!(reason, "insertion point unreadable; typing goes on");
             }
@@ -200,9 +256,18 @@ impl Anchor {
         Ok(())
     }
 
+    /// Ends on this segment's text alone, since an app may fix earlier
+    /// text, as `dont` → `don't`.
     fn after_typing(&mut self, text: &str) {
         self.expected_caret = advanced(self.expected_caret, text);
         self.ending = Some(ending_of(text));
+    }
+
+    /// A lone space would match any caret after a space, so it extends the
+    /// segment's ending.
+    fn after_closing_space(&mut self, space: &str) {
+        self.expected_caret = advanced(self.expected_caret, space);
+        self.ending = Some(ending_after(self.ending.as_deref(), space));
     }
 
     fn resting_caret(&self, deadline: Instant) -> Option<(arc::R<ax::UiElement>, cf::Index)> {
@@ -226,14 +291,19 @@ impl Anchor {
             .then_some((focused, selection.loc))
     }
 
-    fn observe(&self, ending: &str, deadline: Instant) -> Result<Verdict, &'static str> {
+    fn observe(
+        &self,
+        ending: &str,
+        insertion: Insertion,
+        deadline: Instant,
+    ) -> Result<Verdict, &'static str> {
         let focused = element::focused_field(&self.application, deadline)?;
         if !self.field.equal(&focused) {
             return Ok(Verdict::Left);
         }
         let selection = element::selection(&self.field, deadline)?;
         let at_expected = selection.loc == self.expected_caret;
-        let before = (selection.len == 0 && !at_expected)
+        let before = (insertion == Insertion::Segment && selection.len == 0 && !at_expected)
             .then(|| self.text_before(ending, selection.loc, deadline))
             .flatten();
         let field_length = (selection.len > 0 && at_expected)
@@ -243,6 +313,7 @@ impl Anchor {
             self.expected_caret,
             ending,
             selection,
+            insertion,
             before.as_deref(),
             field_length,
         ))
@@ -283,12 +354,16 @@ fn judge(
     expected_caret: cf::Index,
     ending: &str,
     selection: cf::Range,
+    insertion: Insertion,
     before: Option<&str>,
     field_length: Option<i64>,
 ) -> Verdict {
     let at_expected = selection.loc == expected_caret;
     if at_expected && selection.len == 0 {
         return Verdict::Continues(expected_caret);
+    }
+    if insertion == Insertion::ClosingSpace && selection.len > 0 {
+        return Verdict::Moved("text selected");
     }
     // Inline completion selects from the caret to the field's end. The next
     // segment types over it.
@@ -300,7 +375,9 @@ fn judge(
     if at_expected && reaches_field_end {
         return Verdict::Continues(expected_caret);
     }
-    if selection.len == 0 && before == Some(ending) {
+    // A short ending can repeat elsewhere, so the closing space never
+    // follows the ending to a new offset.
+    if insertion == Insertion::Segment && selection.len == 0 && before == Some(ending) {
         return Verdict::Continues(selection.loc);
     }
     if selection.len == 0 && selection.loc < expected_caret {
@@ -313,6 +390,10 @@ fn judge(
 fn advanced(caret: cf::Index, text: &str) -> cf::Index {
     let units = cf::Index::try_from(text.encode_utf16().count()).unwrap_or(cf::Index::MAX);
     caret.saturating_add(units)
+}
+
+fn ending_after(previous: Option<&str>, text: &str) -> String {
+    ending_of(&format!("{}{text}", previous.unwrap_or_default()))
 }
 
 /// The last units of `text`, decoded like a field read that starts mid-pair.
@@ -388,43 +469,174 @@ mod tests {
 
     #[test]
     fn a_bare_caret_at_the_expected_offset_continues() {
-        assert_eq!(judge(5, "", caret(5), None, None), Verdict::Continues(5));
+        assert_eq!(
+            judge(5, "", caret(5), Insertion::Segment, None, None),
+            Verdict::Continues(5)
+        );
     }
 
     #[test]
     fn inline_completion_to_the_field_end_continues() {
         let suggestion = cf::Range { loc: 5, len: 3 };
         assert_eq!(
-            judge(5, "", suggestion, None, Some(8)),
+            judge(5, "", suggestion, Insertion::Segment, None, Some(8)),
             Verdict::Continues(5)
         );
         assert_eq!(
-            judge(5, "", suggestion, None, Some(9)),
+            judge(5, "", suggestion, Insertion::Segment, None, Some(9)),
             Verdict::Moved("caret moved")
+        );
+    }
+
+    #[test]
+    fn the_owed_space_never_types_over_a_selection() {
+        let suggestion = cf::Range { loc: 5, len: 3 };
+        assert_eq!(
+            judge(5, "", suggestion, Insertion::ClosingSpace, None, Some(8)),
+            Verdict::Moved("text selected")
+        );
+        assert_eq!(
+            judge(5, "", caret(5), Insertion::ClosingSpace, None, None),
+            Verdict::Continues(5)
+        );
+    }
+
+    #[test]
+    fn the_owed_space_never_resyncs_on_a_repeated_ending() {
+        assert_eq!(
+            judge(
+                9,
+                " go",
+                caret(12),
+                Insertion::ClosingSpace,
+                Some(" go"),
+                None
+            ),
+            Verdict::Moved("caret moved")
+        );
+    }
+
+    #[test]
+    fn the_owed_space_needs_the_caret_seen_after_the_text() {
+        assert!(
+            typed_anchor()
+                .settle(Settled::After(9), Insertion::ClosingSpace)
+                .is_ok()
+        );
+        assert!(matches!(
+            typed_anchor().settle(Settled::Unknown("no selection"), Insertion::ClosingSpace),
+            Err(DeliveryError::TargetUnverified)
+        ));
+        assert!(matches!(
+            typed_anchor().settle(Settled::Short(4), Insertion::ClosingSpace),
+            Err(DeliveryError::CaretMoved)
+        ));
+    }
+
+    #[test]
+    fn the_owed_space_never_takes_a_caret_at_its_start_for_a_field_that_stays_put() {
+        let mut anchor = typed_anchor();
+        anchor.tracking = Tracking::Untested(4);
+
+        assert!(matches!(
+            anchor.settle(Settled::Short(4), Insertion::ClosingSpace),
+            Err(DeliveryError::CaretMoved)
+        ));
+        assert_eq!(anchor.tracking, Tracking::Untested(4));
+    }
+
+    #[test]
+    fn a_return_after_the_space_refuses_a_caret_moved_back_to_the_start() {
+        let mut anchor = typed_anchor();
+        anchor.tracking = Tracking::Untested(4);
+
+        assert!(
+            anchor
+                .settle(Settled::After(9), Insertion::ClosingSpace)
+                .is_ok()
+        );
+        assert_eq!(anchor.tracking, Tracking::Caret);
+        assert!(matches!(
+            anchor.settle(Settled::Short(4), Insertion::Segment),
+            Err(DeliveryError::CaretMoved)
+        ));
+    }
+
+    #[test]
+    fn a_field_checked_only_for_focus_still_reads_the_caret_for_the_space() {
+        // Pid 1 exposes no field, so every read fails.
+        let mut anchoring = Anchoring::Anchored(Anchor {
+            tracking: Tracking::Field,
+            ..typed_anchor()
+        });
+
+        assert!(matches!(
+            anchoring.before_closing_space(),
+            Err(DeliveryError::TargetUnverified)
+        ));
+    }
+
+    #[test]
+    fn a_segment_ends_on_its_own_text_and_the_space_on_the_segment() {
+        let mut anchor = typed_anchor();
+        anchor.after_typing(" go");
+        assert_eq!(anchor.ending.as_deref(), Some(" go"));
+        anchor.after_closing_space(" ");
+        assert_eq!(anchor.ending.as_deref(), Some(" go "));
+        assert_eq!(anchor.expected_caret, 13);
+
+        let long = "a".repeat(ENDING_UNITS);
+        assert_eq!(
+            ending_after(Some(&long), " ").encode_utf16().count(),
+            ENDING_UNITS
         );
     }
 
     #[test]
     fn a_length_change_resyncs_on_the_typed_ending() {
         assert_eq!(
-            judge(9, "lo there", caret(10), Some("lo there"), None),
+            judge(
+                9,
+                "lo there",
+                caret(10),
+                Insertion::Segment,
+                Some("lo there"),
+                None
+            ),
             Verdict::Continues(10)
         );
         assert_eq!(
-            judge(9, "lo there", caret(10), Some("o therex"), None),
+            judge(
+                9,
+                "lo there",
+                caret(10),
+                Insertion::Segment,
+                Some("o therex"),
+                None
+            ),
             Verdict::Moved("caret moved")
         );
     }
 
     #[test]
     fn a_caret_short_of_the_text_may_still_catch_up() {
-        assert_eq!(judge(9, "there", caret(4), None, None), Verdict::Behind(4));
+        assert_eq!(
+            judge(9, "there", caret(4), Insertion::Segment, None, None),
+            Verdict::Behind(4)
+        );
     }
 
     #[test]
     fn a_user_selection_stops_typing() {
         assert_eq!(
-            judge(5, "", cf::Range { loc: 2, len: 3 }, None, None),
+            judge(
+                5,
+                "",
+                cf::Range { loc: 2, len: 3 },
+                Insertion::Segment,
+                None,
+                None
+            ),
             Verdict::Moved("caret moved")
         );
     }
@@ -459,7 +671,7 @@ mod tests {
         let mut anchor = typed_anchor();
         anchor.tracking = Tracking::Untested(4);
 
-        let result = anchor.settle(Settled::Short(4));
+        let result = anchor.settle(Settled::Short(4), Insertion::Segment);
 
         assert!(result.is_ok());
         assert_eq!(anchor.tracking, Tracking::Field);
@@ -470,7 +682,7 @@ mod tests {
         let mut anchor = typed_anchor();
         anchor.tracking = Tracking::Untested(4);
 
-        let result = anchor.settle(Settled::After(10));
+        let result = anchor.settle(Settled::After(10), Insertion::Segment);
 
         assert!(result.is_ok());
         assert_eq!(anchor.tracking, Tracking::Caret);
@@ -482,7 +694,7 @@ mod tests {
         let mut anchor = typed_anchor();
         anchor.tracking = Tracking::Untested(4);
 
-        let result = anchor.settle(Settled::Short(6));
+        let result = anchor.settle(Settled::Short(6), Insertion::Segment);
 
         assert!(matches!(result, Err(DeliveryError::CaretMoved)));
     }
@@ -491,7 +703,7 @@ mod tests {
     fn a_tracked_caret_back_at_the_start_stops_typing() {
         let mut anchor = typed_anchor();
 
-        let result = anchor.settle(Settled::Short(4));
+        let result = anchor.settle(Settled::Short(4), Insertion::Segment);
 
         assert!(matches!(result, Err(DeliveryError::CaretMoved)));
     }
@@ -539,11 +751,11 @@ mod tests {
         let mut anchor = typed_anchor();
 
         assert!(matches!(
-            anchor.settle(Settled::Left),
+            anchor.settle(Settled::Left, Insertion::Segment),
             Err(DeliveryError::TargetChanged)
         ));
         assert!(matches!(
-            anchor.settle(Settled::Moved("caret moved")),
+            anchor.settle(Settled::Moved("caret moved"), Insertion::Segment),
             Err(DeliveryError::CaretMoved)
         ));
     }

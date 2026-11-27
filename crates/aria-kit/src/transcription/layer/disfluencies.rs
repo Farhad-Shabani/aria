@@ -1,5 +1,6 @@
 use crate::cancel::CancelToken;
 
+use super::symbol_words::leading_name;
 use super::{Layer, TranscriptionError};
 
 const FILLERS: &[&str] = &[
@@ -20,7 +21,8 @@ impl Layer for RemoveHesitations {
 
 /// Drops the second of two identical spoken words in a row, even valid
 /// English such as "had had". Punctuation between them keeps both, as in
-/// "very, very good".
+/// "very, very good". A symbol's name said twice stays, as "backslash
+/// backslash" for `\\`.
 ///
 /// Apply it after [`RemoveHesitations`]. A filler between two copies, as in
 /// "the um the", hides the repeat.
@@ -32,12 +34,18 @@ impl Layer for RemoveRepeats {
         remove_words(text, DroppedCapital::Discard, |previous, word| {
             let core = word.core();
             is_spoken(&core)
+                && !names_a_run_twice(&core)
                 && previous.is_some_and(|previous| {
                     !previous.ends_with_punctuation() && previous.core() == core
                 })
         });
         Ok(())
     }
+}
+
+/// Whether `word` said twice names a listed run, as "dot dot" names `..`.
+fn names_a_run_twice(word: &str) -> bool {
+    leading_name([word, word].into_iter()).is_some_and(|name| name.word_count == 2)
 }
 
 /// Whether a dropped capitalized word passes its capital to the word after
@@ -250,6 +258,14 @@ mod tests {
         assert_eq!(
             applied(RemoveHesitations, "report.\num, by friday"),
             "report.\nby friday"
+        );
+    }
+
+    #[test]
+    fn a_repeated_symbol_word_stays() {
+        assert_eq!(
+            applied(RemoveRepeats, "Backslash backslash conf"),
+            "Backslash backslash conf"
         );
     }
 

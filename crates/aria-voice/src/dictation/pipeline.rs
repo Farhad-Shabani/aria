@@ -8,7 +8,7 @@ use aria_kit::speaker::{Admission, Gate, Released, Speaker, Timeline, TurnFeed};
 use aria_kit::transcription::Heard;
 use aria_kit::transcription::layer::Layer;
 use aria_kit::transcription::{
-    Corrected, DeferredWords, Punctuated, SentenceEnds, Spacing, Unheld, check_cancelled,
+    Attachment, Punctuated, SegmentCorrector, Spacing, Writing, check_cancelled,
 };
 use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector};
 
@@ -31,6 +31,7 @@ use aria_segmentation::pyannote::Pyannote;
 use aria_settings::StreamingSupport;
 use aria_speaker::wespeaker::WeSpeaker;
 
+use super::rewrites::{CorrectedTranscript, CorrectionSettings};
 use super::{
     CaptionSnapshot, Delivered, DeliveredRecording, DeliveryMode, DictationError,
     DictationEventEmitter, DictationResult, DictationSettings, DictationStage, ExecutionControl,
@@ -237,16 +238,20 @@ where
         engine: &'static str,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
-        let (transcript, served_by) = self.transcribe_served(
+        // No app receives this text, so it is written as commands.
+        let (finished, served_by) = self.transcribe_served(
             recording,
             language,
             own_voice_only,
-            vocabulary,
-            cleanup,
+            CorrectionSettings {
+                cleanup,
+                vocabulary,
+                writing: Writing::Commands,
+            },
             cancel,
         )?;
         Ok(Transcribed {
-            transcript,
+            transcript: finished.transcript,
             engine: served_by.unwrap_or(engine),
         })
     }
@@ -258,10 +263,9 @@ where
         recording: &mut RecordingReader,
         language: &Language,
         own_voice_only: bool,
-        vocabulary: Option<&Vocabulary>,
-        cleanup: Cleanup,
+        correction: CorrectionSettings<'_>,
         cancel: &CancelToken,
-    ) -> Result<(Transcript, Option<&'static str>), DictationError> {
+    ) -> Result<(CorrectedTranscript, Option<&'static str>), DictationError> {
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled);
         }
@@ -306,8 +310,7 @@ where
             }
         };
         Ok((
-            self.rewrites
-                .finish(transcript, cleanup, vocabulary, cancel)?,
+            self.rewrites.finish(transcript, correction, cancel)?,
             served_by,
         ))
     }
@@ -522,12 +525,11 @@ where
             move || control.is_cancelled()
         });
         let result = (|| {
-            let (transcript, served_by) = self.transcribe_served(
+            let (finished, served_by) = self.transcribe_served(
                 recording,
                 &settings.stt_language,
                 settings.own_voice_only,
-                vocabulary,
-                settings.cleanup,
+                settings.correction(vocabulary),
                 &cancel,
             )?;
             if let Some(engine) = served_by {
@@ -542,13 +544,13 @@ where
             check_execution(control)?;
             events.emit(DictationStage::Delivering);
             deliver_transcript(
-                &transcript,
+                &finished,
                 &mut Completion::Pending,
                 recording,
                 control,
                 sinks,
             )?;
-            Ok(transcript.into_text())
+            Ok(finished.transcript.into_text())
         })();
         sinks.recording_finished(&mut whole, result.as_ref().map(|_| ()));
         if let Ok(text) = &result {
@@ -623,7 +625,7 @@ where
             drop(meter);
             log_capture_stage(&recording, stage_started);
             let Dictated {
-                transcript,
+                finished,
                 mut completion,
                 own_voice,
             } = heard?;
@@ -641,10 +643,10 @@ where
             if settings.delivery_mode == DeliveryMode::Complete {
                 check_execution(control)?;
                 events.emit(DictationStage::Delivering);
-                deliver_transcript(&transcript, &mut completion, &recording, control, sinks)?;
+                deliver_transcript(&finished, &mut completion, &recording, control, sinks)?;
             }
             Ok(DictationResult {
-                text: transcript.into_text(),
+                text: finished.transcript.into_text(),
                 own_voice,
             })
         })()
@@ -770,17 +772,25 @@ where
                 |timeline| announced.update(timeline, events),
             );
         }
-        let previews = (published.caption.is_some() || published.streaming) && M::INCREMENTAL;
+        let previews = (published.delivery.caption.is_some() || published.delivery.streaming)
+            && M::INCREMENTAL;
         let deliver = |published: &mut Published<'_>, sinks: &mut S, released: Released| {
             let Released { heard, speaker, .. } = released;
-            let segment = self
+            let typed = self
                 .rewritten(&heard, published, settings.cleanup, &cancel)
-                .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
+                .map_err(|error| {
+                    published
+                        .delivery
+                        .failure
+                        .take()
+                        .unwrap_or_else(|| started(error))
+                })?;
             let speaker = speaker.as_ref().and_then(Label::enrolled).cloned();
-            published.publish(heard, &segment, speaker, sinks)
+            published.publish(heard, typed, speaker, sinks)
         };
         let failed = |error: HearingError, published: &mut Published<'_>| match error {
             HearingError::Transcription(_) => published
+                .delivery
                 .failure
                 .take()
                 .unwrap_or_else(|| hearing_failed(error, control, started_at)),
@@ -792,13 +802,13 @@ where
          -> Result<(), DictationError> {
             match event {
                 Event::Timeline(timeline) => announced.update(&timeline, events),
-                Event::Preview(shown) => published.provisional(&shown, sinks),
+                Event::Preview(shown) => published.delivery.provisional(&shown, sinks),
                 Event::Idle => {}
                 Event::Released(released) => {
                     deliver(published, sinks, released)?;
                 }
             }
-            published.retry(sinks);
+            published.delivery.retry(sinks);
             Ok(())
         };
         let ended = std::thread::scope(|scope| {
@@ -833,14 +843,17 @@ where
                 return Err(error);
             }
         };
-        let transcript = match settings.delivery_mode {
+        let finished = match settings.delivery_mode {
             DeliveryMode::Complete => self
                 .rewrites
-                .finish(ended.transcript, settings.cleanup, vocabulary, &cancel)
+                .finish(ended.transcript, settings.correction(vocabulary), &cancel)
                 .map_err(started)?,
-            DeliveryMode::Streaming => ended.transcript,
+            DeliveryMode::Streaming => CorrectedTranscript {
+                transcript: ended.transcript,
+                attachment: Attachment::default(),
+            },
         };
-        published.finish(transcript, ended.own_voice, sinks)
+        published.finish(finished, ended.own_voice, sinks)
     }
 
     /// Complete delivery with only the owner's words: the turn thread hears
@@ -859,7 +872,7 @@ where
         cancel: &CancelToken,
         heard: impl FnMut(&Timeline),
     ) -> Result<Dictated, DictationError> {
-        let (control, started_at) = (published.control, published.started_at);
+        let (control, started_at) = (published.delivery.control, published.delivery.started_at);
         let started = |error| log_transcription_error(error, control, started_at);
         let timeline = hear_to_end(feed, cancel, heard)
             .map_err(|error| hearing_failed(error, control, started_at))?;
@@ -876,9 +889,9 @@ where
                 DictationError::Transcription(error) => started(error),
                 error => check_execution(control).err().unwrap_or(error),
             })?;
-        let transcript = self
+        let finished = self
             .rewrites
-            .finish(decoded.transcript, settings.cleanup, vocabulary, cancel)
+            .finish(decoded.transcript, settings.correction(vocabulary), cancel)
             .map_err(started)?;
         if let Some(engine) = decoded.served_by {
             sinks.served_by(engine);
@@ -891,87 +904,74 @@ where
                 None => timeline.owner_name(),
             }
             .cloned();
-            let segment = self
+            let typed = self
                 .rewritten(&heard, &mut published, settings.cleanup, cancel)
                 .map_err(started)?;
-            published.publish(heard, &segment, speaker, sinks)?;
+            published.publish(heard, typed, speaker, sinks)?;
         }
-        published.finish(transcript, timeline.admitted_is_owner(), sinks)
+        published.finish(finished, timeline.admitted_is_owner(), sinks)
     }
 
-    /// What one released segment publishes now: its fillers dropped, the
-    /// words more speech may still change held back, and the rest corrected
-    /// after what the press published before it.
+    /// What one released segment types now: its fillers dropped, the words
+    /// more speech may still change held back, and the rest corrected after
+    /// what the press typed before it.
     fn rewritten(
         &self,
         heard: &Heard,
         published: &mut Published<'_>,
         cleanup: Cleanup,
         cancel: &CancelToken,
-    ) -> Result<CorrectedSegment, TranscriptionError> {
+    ) -> Result<Option<Punctuated>, TranscriptionError> {
         let mut text = heard.segment.as_str().to_owned();
         self.rewrites.clean(&mut text, cleanup, cancel)?;
-        // Nothing fails after this check: the words `hold` takes back would
+        // Nothing fails after this check: the words `push` takes back would
         // be lost.
         check_cancelled(cancel)?;
-        let unheld = published.hold(&text, heard);
-        Ok(published.correct(unheld))
+        Ok(published
+            .ends
+            .push(&text, heard.segment.sentence_ended_before()))
     }
 }
 
-/// A segment's text once corrected, ready to punctuate and type.
-struct CorrectedSegment {
-    corrected: Corrected,
-    sentence_ended_before: Option<bool>,
-}
-
-/// What a stream holds back at each segment's end: the closing mark, and
-/// words the next segment may still change.
-#[derive(Default)]
-struct SegmentEnds {
-    sentences: SentenceEnds,
-    words: DeferredWords,
+/// What a stream holds back at each segment's end, the closing mark and
+/// words the next segment may still change, with when it began to hold
+/// them.
+struct SegmentEnds<'a> {
+    corrector: SegmentCorrector<'a>,
     /// When a segment last left words held, so a pause is noticed.
     held_since: Option<Instant>,
 }
 
-impl SegmentEnds {
-    /// What of `text` publishes now: the words held before, then `text`
-    /// up to the ones more speech may still change.
-    fn hold(
-        &mut self,
-        text: &str,
-        sentence_ended_before: Option<bool>,
-        vocabulary: &Vocabulary,
-    ) -> Unheld {
-        let unheld = self.words.hold(text, sentence_ended_before, vocabulary);
-        self.held_since = self.words.is_holding().then(Instant::now);
-        unheld
+impl<'a> SegmentEnds<'a> {
+    fn new(corrector: SegmentCorrector<'a>) -> Self {
+        Self {
+            corrector,
+            held_since: None,
+        }
     }
 
-    /// The held words, once nothing follows them.
-    fn finish_words(&mut self) -> Option<Unheld> {
-        self.held_since = None;
-        self.words.finish()
+    fn push(&mut self, text: &str, sentence_ended_before: Option<bool>) -> Option<Punctuated> {
+        let typed = self.corrector.push(text, sentence_ended_before);
+        self.held_since = self.corrector.is_holding().then(Instant::now);
+        typed
+    }
+
+    /// Releases deferred words after a pause. "cd forward slash" keeps
+    /// waiting for its next word, and its wait starts over.
+    fn release_paused(&mut self) -> Option<Punctuated> {
+        let released = self.corrector.release_paused();
+        self.held_since = self.corrector.is_holding().then(Instant::now);
+        released
     }
 
     fn is_holding(&self) -> bool {
-        self.held_since.is_some()
+        self.corrector.is_holding()
     }
 
     /// Whether the held words have waited [`HELD_WAIT`] by `now`.
     fn is_overdue(&self, now: Instant) -> bool {
         self.held_since
             .is_some_and(|since| now.duration_since(since) >= HELD_WAIT)
-    }
-
-    /// The typed text a symbol opening the next text may join. A sentence
-    /// end between them leaves none.
-    fn context<'a>(&self, sentence_ended_before: Option<bool>, typed: &'a str) -> &'a str {
-        if !self.sentences.reads_on(sentence_ended_before) {
-            return "";
-        }
-        typed
     }
 }
 
@@ -982,16 +982,18 @@ const QUEUE_RETRY: Duration = Duration::from_millis(250);
 /// detector, how long they wait. By then the speaker has moved on.
 const HELD_WAIT: Duration = Duration::from_millis(1500);
 
-/// What one dictation has put out so far, with the events and logs each
-/// step owes.
+/// What one dictation has put out so far: what its segments still hold
+/// back, and their delivery.
 struct Published<'a> {
+    ends: SegmentEnds<'a>,
+    delivery: Delivery<'a>,
+}
+
+/// Where a dictation's text goes, with the events and logs each step owes.
+struct Delivery<'a> {
     streaming: bool,
-    /// Every segment's text so far, spaced as the cursor typed it. Text
-    /// that failed to type counts too, so no word is lost.
-    written: String,
     /// The ghost text shown, until the next segment lands.
     ghost: Option<Arc<str>>,
-    ends: SegmentEnds,
     /// Where the last segment was decoded through: where its held mark
     /// lands.
     heard_to: u64,
@@ -1001,8 +1003,6 @@ struct Published<'a> {
     retried: Option<Instant>,
     caption: Option<CaptionSnapshot>,
     completion: Completion,
-    /// What corrects each segment, and decides which words may be held.
-    vocabulary: &'a Vocabulary,
     control: &'a ExecutionControl,
     events: &'a DictationEventEmitter,
     started_at: Instant,
@@ -1016,63 +1016,43 @@ impl<'a> Published<'a> {
         events: &'a DictationEventEmitter,
         started_at: Instant,
     ) -> Self {
-        Self {
-            streaming: settings.delivery_mode == DeliveryMode::Streaming,
-            written: String::new(),
-            ghost: None,
-            ends: SegmentEnds::default(),
-            heard_to: 0,
-            failure: None,
-            retried: None,
-            caption: settings
-                .route
-                .delivers()
-                .then(|| CaptionSnapshot::empty(control.recording_id(), false)),
-            completion: Completion::Pending,
-            vocabulary,
-            control,
-            events,
-            started_at,
-        }
-    }
-
-    /// What of `text` publishes now, the rest held for the next segment.
-    fn hold(&mut self, text: &str, heard: &Heard) -> Unheld {
+        let streaming = settings.delivery_mode == DeliveryMode::Streaming;
         // Complete delivery types the decoder's whole transcript, which
-        // keeps every mark, so no reading drops a held one.
-        let sentence_ended_before = self
-            .streaming
-            .then(|| heard.segment.sentence_ended_before())
-            .flatten();
-        self.ends.hold(text, sentence_ended_before, self.vocabulary)
-    }
-
-    /// Corrects `unheld` after what the press published before it.
-    fn correct(&self, unheld: Unheld) -> CorrectedSegment {
-        let before = self
-            .ends
-            .context(unheld.sentence_ended_before, &self.written);
-        let corrected = self
-            .vocabulary
-            .correct_spoken(&unheld.text, before)
-            .unwrap_or(Corrected {
-                text: unheld.text,
-                joins_before: false,
-            });
-        CorrectedSegment {
-            corrected,
-            sentence_ended_before: unheld.sentence_ended_before,
+        // keeps every mark.
+        let corrector = if streaming {
+            SegmentCorrector::new(vocabulary)
+        } else {
+            SegmentCorrector::keeping_marks(vocabulary)
+        }
+        .with_writing(settings.writing());
+        Self {
+            ends: SegmentEnds::new(corrector),
+            delivery: Delivery {
+                streaming,
+                ghost: None,
+                heard_to: 0,
+                failure: None,
+                retried: None,
+                caption: settings
+                    .route
+                    .delivers()
+                    .then(|| CaptionSnapshot::empty(control.recording_id(), false)),
+                completion: Completion::Pending,
+                control,
+                events,
+                started_at,
+            },
         }
     }
 
-    /// Publishes what `heard` let through: `segment` may open with words
-    /// held from an earlier segment and leave out its own last ones.
-    /// `speaker` is the enrolled voice of the press so far, which clients
-    /// show; the segment's own label is what history keeps.
+    /// Publishes what `heard` let through: `typed` may open with words held
+    /// from an earlier segment and leave out its own last ones. `speaker` is
+    /// the enrolled voice of the press so far, which clients show; the
+    /// segment's own label is what history keeps.
     fn publish<S>(
         &mut self,
         heard: Heard,
-        segment: &CorrectedSegment,
+        typed: Option<Punctuated>,
         speaker: Option<SpeakerName>,
         sinks: &mut S,
     ) -> Result<(), DictationError>
@@ -1080,15 +1060,16 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        if let Some(caption) = &mut self.caption {
+        let delivery = &mut self.delivery;
+        if let Some(caption) = &mut delivery.caption {
             caption.provisional = Arc::from("");
         }
-        self.ghost = None;
-        self.heard_to = heard.window.end;
+        delivery.ghost = None;
+        delivery.heard_to = heard.window.end;
         // A streamed segment of only fillers or held words has nothing to type.
-        if segment.corrected.text.is_empty() {
+        let Some(typed) = typed else {
             return Ok(());
-        }
+        };
         // Words held back end the span, so the typed ones end earlier, at a
         // point no one tracks.
         let spoken_to = heard
@@ -1096,41 +1077,16 @@ impl<'a> Published<'a> {
             .as_ref()
             .filter(|_| !self.ends.is_holding())
             .map(|span| span.end);
-        self.type_text(
-            segment,
-            heard.window.start,
-            heard.span,
-            spoken_to,
-            speaker,
-            sinks,
-        )
-        .or_else(|error| self.undelivered(error))
-    }
-
-    /// A streamed delivery that failed stops the press, which still drains
-    /// so history keeps every word. Any other delivery fails at once.
-    fn undelivered(&mut self, error: DictationError) -> Result<(), DictationError> {
-        if !self.streaming {
-            return Err(error);
-        }
-        self.give_up(error);
-        Ok(())
-    }
-
-    /// Publishes the words still held, corrected as a last segment. A
-    /// failure fails the press, as it does for any segment.
-    fn publish_held<S>(&mut self, sinks: &mut S) -> Result<(), DictationError>
-    where
-        S: TranscriptSink,
-        S::Error: Into<DictationError>,
-    {
-        let Some(held) = self.ends.finish_words() else {
-            return Ok(());
-        };
-        let held = self.correct(held);
-        // Held words close the last segment, so they end where it was heard to.
-        self.type_text(&held, self.heard_to, None, Some(self.heard_to), None, sinks)
-            .or_else(|error| self.undelivered(error))
+        delivery
+            .type_text(
+                &typed,
+                heard.window.start,
+                heard.span,
+                spoken_to,
+                speaker,
+                sinks,
+            )
+            .or_else(|error| delivery.undelivered(error))
     }
 
     /// With no audio to judge, held words wait [`HELD_WAIT`] by `now`.
@@ -1150,32 +1106,94 @@ impl<'a> Published<'a> {
             Pause::NotYet => false,
             Pause::Unjudged => self.ends.is_overdue(now),
         };
-        if !self.streaming || !paused {
+        if !self.delivery.streaming || !paused {
             return Ok(());
         }
-        self.publish_held(sinks)
+        let held = self.ends.release_paused();
+        self.delivery.publish_held(held, sinks)
+    }
+
+    fn publish_ends<S>(self, sinks: &mut S) -> Result<String, DictationError>
+    where
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+    {
+        let Self { ends, mut delivery } = self;
+        delivery.publish_ends(ends, sinks)
+    }
+
+    fn finish<S>(
+        self,
+        finished: CorrectedTranscript,
+        own_voice: bool,
+        sinks: &mut S,
+    ) -> Result<Dictated, DictationError>
+    where
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+    {
+        let Self { ends, mut delivery } = self;
+        let typed = delivery.publish_ends(ends, sinks)?;
+        delivery.finish(typed, finished, own_voice, sinks)
+    }
+}
+
+impl Delivery<'_> {
+    /// A streamed delivery that failed stops the press, which still drains
+    /// so history keeps every word. Any other delivery fails at once.
+    fn undelivered(&mut self, error: DictationError) -> Result<(), DictationError> {
+        if !self.streaming {
+            return Err(error);
+        }
+        self.give_up(error);
+        Ok(())
+    }
+
+    /// Publishes the deferred words `held`, corrected as a last segment. A
+    /// failure fails the press, as it does for any segment.
+    fn publish_held<S>(
+        &mut self,
+        held: Option<Punctuated>,
+        sinks: &mut S,
+    ) -> Result<(), DictationError>
+    where
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+    {
+        let Some(held) = held else {
+            return Ok(());
+        };
+        // Held words close the last segment, so they end where it was heard to.
+        self.type_text(&held, self.heard_to, None, Some(self.heard_to), None, sinks)
+            .or_else(|error| self.undelivered(error))
     }
 
     /// Publishes what the last segment still owes once nothing follows: its
-    /// held words, then its closing mark. A cancelled press owes nothing.
-    fn publish_ends<S>(&mut self, sinks: &mut S) -> Result<(), DictationError>
+    /// held words, then its closing mark. Returns everything the press
+    /// typed. A cancelled press owes nothing.
+    fn publish_ends<S>(
+        &mut self,
+        ends: SegmentEnds<'_>,
+        sinks: &mut S,
+    ) -> Result<String, DictationError>
     where
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
         if self.control.is_cancelled() {
-            return Ok(());
+            return Ok(ends.corrector.text().to_owned());
         }
-        let held = self.publish_held(sinks);
-        self.close_last_sentence(sinks);
-        held
+        let end = ends.corrector.finish();
+        let held = self.publish_held(end.words, sinks);
+        self.close_last_sentence(end.mark, sinks);
+        held.map(|()| end.text)
     }
 
-    /// Punctuates `segment` and types it at `at`. The error is a delivery
-    /// that failed, already logged. The text is kept either way.
+    /// Types `typed` at `at`. The error is a delivery that failed, already
+    /// logged.
     fn type_text<S>(
         &mut self,
-        segment: &CorrectedSegment,
+        typed: &Punctuated,
         at: u64,
         span: Option<std::ops::Range<u64>>,
         spoken_to: Option<u64>,
@@ -1186,29 +1204,13 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        // Complete delivery types the decoder's own transcript, so joining
-        // here would only make the caption disagree with it.
-        let punctuated = if self.streaming {
-            self.ends
-                .sentences
-                .punctuate(&segment.corrected.text, segment.sentence_ended_before)
-        } else {
-            Punctuated {
-                text: segment.corrected.text.clone(),
-                defers_ending: false,
-            }
-        };
-        let spacing = Spacing {
-            joins_before: segment.corrected.joins_before,
-            defers_ending: punctuated.defers_ending,
-        };
-        self.keep(&punctuated.text, spacing);
         if self.failure.is_some() {
             return Ok(());
         }
+        let spacing = typed.spacing;
         // History keeps no names for dictation: the ring shows them.
         let utterance = Utterance {
-            text: &punctuated.text,
+            text: &typed.text,
             speaker: None,
             at,
             span,
@@ -1221,13 +1223,13 @@ impl<'a> Published<'a> {
         }
         let typed_at = Instant::now();
         // Queued text lands later, on a retry, so it was not typed here.
-        let typed = self.streaming && !sinks.is_queueing();
-        self.announce(&punctuated.text, spacing, speaker, sinks);
-        if typed {
+        let is_typed = self.streaming && !sinks.is_queueing();
+        self.announce(&typed.text, spacing, speaker, sinks);
+        if is_typed {
             // After the text and its announcement, so neither waits on the log.
             tracing::info!(
                 stage = "delivery",
-                words = punctuated.text.split_whitespace().count(),
+                words = typed.text.split_whitespace().count(),
                 elapsed_ms = typed_at.duration_since(self.started_at).as_millis(),
                 typing_ms = typed_at.duration_since(typing).as_millis(),
                 spoken_to_ms = spoken_to.map(|end| canonical_duration(end).as_millis()),
@@ -1277,24 +1279,23 @@ impl<'a> Published<'a> {
     /// Types the mark the last segment owes. A failure is only logged,
     /// unless queued words were still waiting: they can't land then, so the
     /// press fails.
-    fn close_last_sentence<S>(&mut self, sinks: &mut S)
+    fn close_last_sentence<S>(&mut self, mark: Option<Punctuated>, sinks: &mut S)
     where
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let Some(closing) = self.ends.sentences.finish() else {
+        let Some(mark) = mark else {
             return;
         };
-        self.keep(&closing, Spacing::default());
         if self.failure.is_some() {
             return;
         }
         let utterance = Utterance {
-            text: &closing,
+            text: &mark.text,
             speaker: None,
             at: self.heard_to,
             span: None,
-            spacing: Spacing::default(),
+            spacing: mark.spacing,
         };
         let words_waited = sinks.is_queueing();
         if let Err(error) = sinks.segment(utterance) {
@@ -1310,12 +1311,7 @@ impl<'a> Published<'a> {
             );
             return;
         }
-        self.announce(&closing, Spacing::default(), None, sinks);
-    }
-
-    fn keep(&mut self, text: &str, spacing: Spacing) {
-        let spaced = Caret::between(&self.written, "").insert_with(text, spacing);
-        self.written.push_str(&spaced);
+        self.announce(&mark.text, mark.spacing, None, sinks);
     }
 
     /// Tells clients what was published, and when streaming, whether it
@@ -1347,9 +1343,12 @@ impl<'a> Published<'a> {
         }
     }
 
+    /// `typed` is every segment's text, spaced as the cursor typed it. Text
+    /// that failed to type counts too, so no word is lost.
     fn finish<S>(
         mut self,
-        transcript: Transcript,
+        typed: String,
+        finished: CorrectedTranscript,
         own_voice: bool,
         sinks: &mut S,
     ) -> Result<Dictated, DictationError>
@@ -1357,17 +1356,19 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        self.publish_ends(sinks)?;
         if !self.streaming {
             return Ok(Dictated {
-                transcript,
+                finished,
                 completion: self.completion,
                 own_voice,
             });
         }
-        let transcript = Transcript::new(std::mem::take(&mut self.written))
+        let transcript = Transcript::new(typed)
             .map_err(|error| log_transcription_error(error, self.control, self.started_at))?;
-        let completed = self.completion.publish(Some(&transcript), sinks);
+        // Streaming already typed each segment with its own spacing.
+        let completed = self
+            .completion
+            .publish(Some(&transcript), Attachment::default(), sinks);
         if let Some(error) = self.failure.take() {
             if let Err(error) = completed {
                 let error: DictationError = error.into();
@@ -1391,7 +1392,10 @@ impl<'a> Published<'a> {
             "dictation streaming delivery completed"
         );
         Ok(Dictated {
-            transcript,
+            finished: CorrectedTranscript {
+                transcript,
+                attachment: Attachment::default(),
+            },
             completion: self.completion,
             own_voice,
         })
@@ -1465,7 +1469,7 @@ fn log_transcription_error(
 /// Complete delivery: the whole transcript reaches the sinks at once, history
 /// first, so a cursor that then refuses it cannot lose the utterance.
 fn deliver_transcript<S>(
-    transcript: &Transcript,
+    finished: &CorrectedTranscript,
     completion: &mut Completion,
     recording: &RecordingReader,
     control: &ExecutionControl,
@@ -1478,7 +1482,7 @@ where
     tracing::info!(stage = "delivery", "dictation stage started");
     let stage_started = Instant::now();
     completion
-        .publish(Some(transcript), sinks)
+        .publish(Some(&finished.transcript), finished.attachment, sinks)
         .map_err(|error| map_sink_error(error, control))
         .map_err(|error| log_delivery_error(stage_started.elapsed(), error))?;
     tracing::info!(
@@ -1572,7 +1576,7 @@ fn kept_recording(kept: &[f32]) -> Result<RecordingReader, DictationError> {
 
 /// A press's text once hearing has ended.
 struct Dictated {
-    transcript: Transcript,
+    finished: CorrectedTranscript,
     /// Whether the sinks still owe the completed transcript.
     completion: Completion,
     /// Every word typed was the owner's, judged on the whole recording.
@@ -1588,6 +1592,7 @@ impl Completion {
     fn publish<S: TranscriptSink>(
         &mut self,
         transcript: Option<&Transcript>,
+        attachment: Attachment,
         sinks: &mut S,
     ) -> Result<(), S::Error> {
         if matches!(self, Self::Published) {
@@ -1596,7 +1601,9 @@ impl Completion {
         let Some(transcript) = transcript else {
             return Ok(());
         };
-        sinks.completed(Utterance::anonymous(transcript.as_str()))?;
+        let mut utterance = Utterance::anonymous(transcript.as_str());
+        utterance.spacing.attachment = attachment;
+        sinks.completed(utterance)?;
         *self = Self::Published;
         Ok(())
     }
@@ -1800,8 +1807,8 @@ mod tests {
     use super::*;
     use crate::dictation::testing::FinalLayer;
     use crate::dictation::testing::{
-        CallLog, Hypotheses, Loud, Operations, PLACED, PlacedDelivery, RecordingDelivery, settings,
-        timed,
+        CallLog, FieldWithText, Hypotheses, Loud, Operations, PLACED, PlacedDelivery,
+        RecordingDelivery, settings, timed,
     };
     use crate::dictation::{Cursor, RecordingId};
     use crate::speaker::testing::{OWN, Voice, diarizer, tracker};
@@ -2333,9 +2340,11 @@ mod tests {
         let log = CallLog::default();
         let mut sinks = (log.history(), log.cursor());
         sinks.dictation_started(&settings, &control).unwrap();
-        published.provisional("turn lift at the light", &sinks);
-        published.provisional("turn left", &sinks);
-        published.provisional("", &sinks);
+        published
+            .delivery
+            .provisional("turn lift at the light", &sinks);
+        published.delivery.provisional("turn left", &sinks);
+        published.delivery.provisional("", &sinks);
         assert_eq!(log.entries(), ["prepare:Insert"]);
 
         drop(published);
@@ -2358,8 +2367,8 @@ mod tests {
         sinks.dictation_started(&settings, &control).unwrap();
         let heard = heard("turn left");
 
-        published.provisional("uncommitted guess", &sinks);
-        publish_whole(&mut published, heard, "turn left", &mut sinks).unwrap();
+        published.delivery.provisional("uncommitted guess", &sinks);
+        publish_corrected(&mut published, heard, "turn left", &mut sinks).unwrap();
 
         assert_eq!(log.entries(), ["prepare:Insert", "segment:turn left"]);
         drop(published);
@@ -2379,7 +2388,7 @@ mod tests {
         let mut published =
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let sink = CallLog::default().history();
-        published.provisional(&text, &sink);
+        published.delivery.provisional(&text, &sink);
         drop(published);
         drop(events);
         assert_eq!(
@@ -2720,6 +2729,57 @@ mod tests {
                 .try_iter()
                 .any(|stage| matches!(stage, DictationStage::Capturing { .. }))
         );
+    }
+
+    #[test]
+    fn a_whole_transcript_opening_on_a_symbol_stands_apart() {
+        let (_directory, capture) = capture();
+        let typed = CallLog::default();
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::complete(Answering("dot dot forward slash src")),
+            (typed.history(), CallLog::default().cursor()),
+        );
+        let result = pipeline
+            .run(settings(DeliveryMode::Complete, OutputMode::Insert))
+            .expect("the press completes");
+        assert_eq!(result.text, "../src");
+        assert!(
+            typed
+                .entries()
+                .contains(&"completed apart:../src".to_owned()),
+            "{:?}",
+            typed.entries()
+        );
+    }
+
+    #[test]
+    fn a_relayed_recording_into_a_prose_app_writes_prose() {
+        let (directory, capture) = capture();
+        let pipeline = DictationPipeline::new(
+            capture,
+            Transcription::complete(Answering("read and forward slash or write")),
+            (CallLog::default().history(), CallLog::default().cursor()),
+        );
+        let mut settings = settings(DeliveryMode::Complete, OutputMode::Insert);
+        settings.application = Some(aria_platform::delivery::Application {
+            name: "Notes".into(),
+            bundle_id: Some("com.apple.Notes".into()),
+        });
+        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
+            .expect("the fixture reads");
+        let (events, _) = stage_events();
+        let text = pipeline
+            .deliver_recording(
+                &mut recording,
+                settings,
+                &ExecutionControl::for_test(StopMode::Manual),
+                &events,
+                None,
+            )
+            .expect("the relayed recording completes")
+            .text;
+        assert_eq!(text, "read and/or write");
     }
 
     /// The relay goes through this path, so a change to how a press reaches
@@ -3209,8 +3269,9 @@ mod tests {
         })).unwrap();
     }
 
-    /// Publishes `text` as all of `heard`, read as its decode read it.
-    fn publish_whole<S>(
+    /// Publishes `text` as streaming does: deferred words held, then
+    /// corrected.
+    fn publish_corrected<S>(
         published: &mut Published<'_>,
         heard: Heard,
         text: &str,
@@ -3220,14 +3281,17 @@ mod tests {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let segment = CorrectedSegment {
-            corrected: Corrected {
-                text: text.to_owned(),
-                joins_before: false,
-            },
-            sentence_ended_before: heard.segment.sentence_ended_before(),
-        };
-        published.publish(heard, &segment, None, sinks)
+        let typed = published
+            .ends
+            .push(text, heard.segment.sentence_ended_before());
+        published.publish(heard, typed, None, sinks)
+    }
+
+    fn finished(transcript: Transcript) -> super::CorrectedTranscript {
+        super::CorrectedTranscript {
+            transcript,
+            attachment: Attachment::default(),
+        }
     }
 
     fn no_terms() -> &'static Vocabulary {
@@ -3285,9 +3349,30 @@ mod tests {
 
     #[test]
     fn a_symbol_opening_a_segment_joins_the_word_typed_before() {
-        let (text, log) = streamed_parts(&["open src", "slash main."], streaming());
+        let (text, log) = streamed_parts(&["open src", "forward slash main."], streaming());
         assert_eq!(text, "open src/main.");
         assert_eq!(delivered(&log), "open src/main.");
+    }
+
+    #[test]
+    fn a_slash_joins_the_words_beside_it_in_a_prose_app() {
+        let mut settings = streaming();
+        settings.application = Some(aria_platform::delivery::Application {
+            name: "Notes".into(),
+            bundle_id: Some("com.apple.Notes".into()),
+        });
+        let (text, log) = streamed_parts(&["read and forward slash", "or write."], settings);
+        assert_eq!(text, "read and/or write.");
+        assert_eq!(delivered(&log), "read and/or write.");
+        let (text, _) = streamed_parts(&["read and forward slash", "or write."], streaming());
+        assert_eq!(text, "read and /or write.");
+    }
+
+    #[test]
+    fn a_symbol_opening_the_dictation_joins_the_word_after() {
+        let (text, log) = streamed_parts(&["forward slash", "conf."], streaming());
+        assert_eq!(text, "/conf.");
+        assert_eq!(delivered(&log), "/conf.");
     }
 
     #[test]
@@ -3328,10 +3413,16 @@ mod tests {
                     caret.insert(segment)
                 } else if let Some(joined) = entry.strip_prefix("joined:") {
                     let joins = Spacing {
-                        joins_before: true,
+                        attachment: Attachment::Joined,
                         ..Spacing::default()
                     };
                     caret.insert_with(joined, joins)
+                } else if let Some(apart) = entry.strip_prefix("apart:") {
+                    let apart_from = Spacing {
+                        attachment: Attachment::Spaced,
+                        ..Spacing::default()
+                    };
+                    caret.insert_with(apart, apart_from)
                 } else {
                     continue;
                 };
@@ -3776,15 +3867,18 @@ mod tests {
                 ("run d b two", Some("run db2")),
             ] {
                 let heard = heard(text);
-                publish_whole(&mut published, heard, corrected.unwrap_or(text), &mut sinks)
+                publish_corrected(&mut published, heard, corrected.unwrap_or(text), &mut sinks)
                     .unwrap();
             }
             assert_eq!(capture.should_stop(), fail);
-            let result = published.finish(whole, false, &mut sinks);
+            let result = published.finish(finished(whole), false, &mut sinks);
             if fail {
                 assert!(matches!(result, Err(DictationError::Delivery(_))));
             } else {
-                assert_eq!(result.unwrap().transcript.as_str(), "d b two run db2");
+                assert_eq!(
+                    result.unwrap().finished.transcript.as_str(),
+                    "d b two run db2"
+                );
             }
             let log = log.entries();
             assert_eq!(
@@ -3828,11 +3922,11 @@ mod tests {
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let mut sinks = (CallLog::default().history(), Cursor::new(PlacedDelivery));
         sinks.dictation_started(&settings, &control).unwrap();
-        published.provisional("turn lift", &sinks);
+        published.delivery.provisional("turn lift", &sinks);
 
         let heard = heard("turn left");
-        publish_whole(&mut published, heard, "turn left", &mut sinks).unwrap();
-        published.provisional("", &sinks);
+        publish_corrected(&mut published, heard, "turn left", &mut sinks).unwrap();
+        published.delivery.provisional("", &sinks);
         drop(published);
         drop(events);
 
@@ -3863,17 +3957,17 @@ mod tests {
             }),
         );
         sinks.dictation_started(&settings, &control).unwrap();
-        published.provisional("one", &sinks);
+        published.delivery.provisional("red", &sinks);
 
-        let heard = heard("one");
-        publish_whole(&mut published, heard, "one", &mut sinks).unwrap();
+        let heard = heard("red");
+        publish_corrected(&mut published, heard, "red", &mut sinks).unwrap();
         // The recording drains after the failure, so previews keep arriving.
-        published.provisional("one two", &sinks);
+        published.delivery.provisional("red green", &sinks);
         drop(published);
         drop(events);
 
         let texts: Vec<_> = ghosts.iter().map(|ghost| ghost.text.to_string()).collect();
-        assert_eq!(texts, ["one", ""]);
+        assert_eq!(texts, ["red", ""]);
     }
 
     #[test]
@@ -4809,6 +4903,15 @@ mod tests {
             Err(DeliveryError::TargetUnavailable)
         }
 
+        fn deliver_closing_space(
+            &self,
+            prepared: &Self::Prepared,
+            space: &str,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            self.deliver(prepared, space, should_cancel).map(|_| ())
+        }
+
         fn deliver(
             &self,
             _prepared: &(),
@@ -4843,13 +4946,13 @@ mod tests {
             }),
         );
         sinks.dictation_started(&settings, &control).unwrap();
-        for text in ["one", "two"] {
+        for text in ["red", "green"] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
-        assert!(published.failure.is_none());
-        assert_eq!(log.entries(), ["segment:one", "segment:two"]);
+        assert!(published.delivery.failure.is_none());
+        assert_eq!(log.entries(), ["segment:red", "segment:green"]);
         drop(published);
         drop(events);
         let typed: Vec<_> = stages
@@ -4910,6 +5013,15 @@ mod tests {
             Err(DeliveryError::TargetUnavailable)
         }
 
+        fn deliver_closing_space(
+            &self,
+            prepared: &Self::Prepared,
+            space: &str,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            self.deliver(prepared, space, should_cancel).map(|_| ())
+        }
+
         fn deliver(
             &self,
             _prepared: &(),
@@ -4942,18 +5054,18 @@ mod tests {
             }),
         );
         sinks.dictation_started(&settings, &control).unwrap();
-        for text in ["one", "two"] {
+        for text in ["red", "green"] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
         // The first retry is still refused. A second one within the interval
         // would type, so a queue still waiting proves it never asked.
-        published.retry(&mut sinks);
-        published.retry(&mut sinks);
+        published.delivery.retry(&mut sinks);
+        published.delivery.retry(&mut sinks);
         assert!(sinks.is_queueing());
-        published.retried = None;
-        published.retry(&mut sinks);
+        published.delivery.retried = None;
+        published.delivery.retry(&mut sinks);
         assert!(!sinks.is_queueing());
         drop(published);
         drop(events);
@@ -4995,12 +5107,16 @@ mod tests {
                 }),
             );
             sinks.dictation_started(&settings, &control).unwrap();
-            for text in ["one", "two"] {
+            for text in ["red", "green"] {
                 let heard = heard(text);
-                publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+                publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
             }
 
-            let result = published.finish(Transcript::new("one two").unwrap(), false, &mut sinks);
+            let result = published.finish(
+                finished(Transcript::new("red green").unwrap()),
+                false,
+                &mut sinks,
+            );
 
             assert!(result.is_ok());
             assert_eq!(
@@ -5051,6 +5167,15 @@ mod tests {
             Err(DeliveryError::TargetUnavailable)
         }
 
+        fn deliver_closing_space(
+            &self,
+            prepared: &Self::Prepared,
+            space: &str,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            self.deliver(prepared, space, should_cancel).map(|_| ())
+        }
+
         fn deliver(
             &self,
             _prepared: &(),
@@ -5088,10 +5213,14 @@ mod tests {
         sinks.dictation_started(&settings, &control).unwrap();
         for text in ["one", "two."] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
-        let result = published.finish(Transcript::new("one two.").unwrap(), false, &mut sinks);
+        let result = published.finish(
+            finished(Transcript::new("one two.").unwrap()),
+            false,
+            &mut sinks,
+        );
 
         assert!(matches!(result, Err(DictationError::DeliveryInterrupted)));
     }
@@ -5112,12 +5241,16 @@ mod tests {
             }),
         );
         sinks.dictation_started(&settings, &control).unwrap();
-        for text in ["one", "two"] {
+        for text in ["red", "green"] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
-        let result = published.finish(Transcript::new("one two").unwrap(), false, &mut sinks);
+        let result = published.finish(
+            finished(Transcript::new("red green").unwrap()),
+            false,
+            &mut sinks,
+        );
 
         assert!(matches!(result, Err(DictationError::DeliveryInterrupted)));
     }
@@ -5134,13 +5267,16 @@ mod tests {
         sinks.dictation_started(&settings, &control).unwrap();
         for (text, corrected) in [("um", Some("")), ("run", None)] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, corrected.unwrap_or(text), &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, corrected.unwrap_or(text), &mut sinks)
+                .unwrap();
         }
         let whole = Transcript::new("um run").unwrap();
 
-        let result = published.finish(whole, false, &mut sinks).unwrap();
+        let result = published
+            .finish(finished(whole), false, &mut sinks)
+            .unwrap();
 
-        assert_eq!(result.transcript.as_str(), "run");
+        assert_eq!(result.finished.transcript.as_str(), "run");
         assert_eq!(delivered(&log.entries()), "run");
     }
 
@@ -5196,7 +5332,7 @@ mod tests {
         for (text, end) in [("first part", 1_600), ("second part", 16_000)] {
             let mut heard = heard(text);
             heard.span = Some(0..end);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
         let log = captured.text();
@@ -5234,14 +5370,16 @@ mod tests {
         ] {
             let mut heard = heard(text);
             heard.segment = heard.segment.with_sentence_ended_before(ended_before);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
         let whole = Transcript::new("unused").unwrap();
 
-        let result = published.finish(whole, false, &mut sinks).unwrap();
+        let result = published
+            .finish(finished(whole), false, &mut sinks)
+            .unwrap();
 
         let said = "with the capital character while it shouldn't. Ship it.";
-        assert_eq!(result.transcript.as_str(), said);
+        assert_eq!(result.finished.transcript.as_str(), said);
         assert_eq!(delivered(&log.entries()), said);
         let announced: Vec<_> = stages
             .try_iter()
@@ -5271,7 +5409,7 @@ mod tests {
         let mut published =
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let heard = heard("we should.");
-        publish_whole(&mut published, heard, "we should.", &mut history).unwrap();
+        publish_corrected(&mut published, heard, "we should.", &mut history).unwrap();
         assert!(control.cancel());
 
         published.publish_ends(&mut history).unwrap();
@@ -5306,12 +5444,14 @@ mod tests {
         let mut published =
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let heard = heard("we should.");
-        publish_whole(&mut published, heard, "we should.", &mut FailingPeriod).unwrap();
+        publish_corrected(&mut published, heard, "we should.", &mut FailingPeriod).unwrap();
         let whole = Transcript::new("unused").unwrap();
 
-        let result = published.finish(whole, false, &mut FailingPeriod).unwrap();
+        let result = published
+            .finish(finished(whole), false, &mut FailingPeriod)
+            .unwrap();
 
-        assert_eq!(result.transcript.as_str(), "we should.");
+        assert_eq!(result.finished.transcript.as_str(), "we should.");
     }
 
     /// A streaming press that heard "it is twenty" and holds "twenty".
@@ -5327,9 +5467,7 @@ mod tests {
     {
         let mut published = Published::new(settings, no_terms(), control, events, Instant::now());
         let heard = heard("it is twenty");
-        let unheld = published.hold("it is twenty", &heard);
-        let segment = published.correct(unheld);
-        published.publish(heard, &segment, None, sinks).unwrap();
+        publish_corrected(&mut published, heard, "it is twenty", sinks).unwrap();
         published
     }
 
@@ -5358,6 +5496,86 @@ mod tests {
             .publish_after_pause(Pause::Heard, Instant::now(), &mut sinks)
             .unwrap();
         assert_eq!(segments(&log), ["segment:it is", "segment:20"]);
+    }
+
+    #[test]
+    fn a_path_split_anywhere_types_whole_before_the_text_after_the_caret() {
+        let splits: [&[&'static str]; 2] = [
+            &["open src forward slash", "main"],
+            &["open src", "forward slash main"],
+        ];
+        for segments in splits {
+            let control = ExecutionControl::for_test(StopMode::Manual);
+            let events = DictationEventEmitter::unsubscribed();
+            let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+            let log = CallLog::default();
+            let field = FieldWithText::new(log.clone(), Caret::between("", "notes"));
+            let mut sinks = (log.history(), Cursor::new(field));
+            sinks.1.dictation_started(&settings, &control).unwrap();
+            let mut published =
+                Published::new(&settings, no_terms(), &control, &events, Instant::now());
+            for text in segments {
+                let heard = heard(text);
+                publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
+            }
+            sinks
+                .1
+                .completed(Utterance::anonymous("open src/main"))
+                .unwrap();
+            let delivered: Vec<String> = log
+                .entries()
+                .into_iter()
+                .filter(|entry| entry.starts_with("deliver:") || entry.starts_with("space:"))
+                .collect();
+            assert_eq!(
+                delivered,
+                ["deliver:open src", "deliver:/main", "space: "],
+                "{segments:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_closing_mark_leaves_the_space_before_the_text_after_the_caret_to_the_end() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let log = CallLog::default();
+        let field = FieldWithText::new(log.clone(), Caret::between("", "notes"));
+        let mut sinks = (log.history(), Cursor::new(field));
+        sinks.1.dictation_started(&settings, &control).unwrap();
+        let mut published =
+            Published::new(&settings, no_terms(), &control, &events, Instant::now());
+
+        publish_corrected(&mut published, heard("we ship."), "we ship.", &mut sinks).unwrap();
+        published.publish_ends(&mut sinks).unwrap();
+        sinks.1.completed(Utterance::anonymous("we ship.")).unwrap();
+
+        let delivered: Vec<String> = log
+            .entries()
+            .into_iter()
+            .filter(|entry| entry.starts_with("deliver:") || entry.starts_with("space:"))
+            .collect();
+        assert_eq!(delivered, ["deliver:we ship", "deliver:.", "space: "]);
+    }
+
+    #[test]
+    fn a_pause_leaves_a_slash_waiting_for_its_word() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
+        let log = CallLog::default();
+        let mut sinks = (log.history(), log.cursor());
+        let mut published =
+            Published::new(&settings, no_terms(), &control, &events, Instant::now());
+        for text in ["open src forward slash", "main"] {
+            let heard = heard(text);
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
+            published
+                .publish_after_pause(Pause::Heard, Instant::now(), &mut sinks)
+                .unwrap();
+        }
+        assert_eq!(log.entries(), ["segment:open src", "joined:/main"]);
     }
 
     #[test]
@@ -5404,7 +5622,7 @@ mod tests {
             pipeline.rewritten(&heard("one"), &mut published, settings.cleanup, &cancel);
 
         assert!(rewritten.is_err());
-        assert!(published.ends.words.is_holding());
+        assert!(published.ends.is_holding());
     }
 
     #[test]
@@ -5682,11 +5900,7 @@ mod tests {
             heard.segment = heard
                 .segment
                 .with_sentence_ended_before(sentence_ended_before);
-            let unheld = published.hold(text, &heard);
-            let segment = published.correct(unheld);
-            published
-                .publish(heard, &segment, None, &mut sinks)
-                .unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
         // The whole transcript, "I have twenty. one apple.", types the same.
@@ -5781,14 +5995,16 @@ mod tests {
         let mut published =
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let heard = heard("it is twenty one");
-        let unheld = published.hold("it is twenty one", &heard);
-        let segment = published.correct(unheld);
-        published
-            .publish(heard, &segment, None, &mut FailingNumber)
-            .unwrap();
+        publish_corrected(
+            &mut published,
+            heard,
+            "it is twenty one",
+            &mut FailingNumber,
+        )
+        .unwrap();
         let whole = Transcript::new("unused").unwrap();
 
-        let result = published.finish(whole, false, &mut FailingNumber);
+        let result = published.finish(finished(whole), false, &mut FailingNumber);
 
         assert!(matches!(result, Err(DictationError::DeliveryTargetChanged)));
     }
@@ -5804,7 +6020,7 @@ mod tests {
         let mut sinks = (log.history(), log.cursor());
         for text in ["we should.", "And ship it."] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
         assert_eq!(

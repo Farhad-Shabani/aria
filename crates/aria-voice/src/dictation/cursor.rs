@@ -3,7 +3,7 @@ use super::{
     Delivered, DeliveryMode, DeliveryOutcome, DictationError, DictationSettings, ExecutionControl,
     ReturnOffer, TranscriptSink, Utterance,
 };
-use aria_kit::transcription::Spacing;
+use aria_kit::transcription::{Ending, Spacing};
 use aria_platform::delivery::{
     Caret, DeliveryError, Finished, OutputMode, Placement, TextDelivery,
 };
@@ -114,6 +114,34 @@ impl<D: TextDelivery> Cursor<D> {
         self.type_queue()
     }
 
+    /// Types the closing space: "open src" streamed before `notes` →
+    /// `open src notes`.
+    fn type_closing_space(&mut self) -> Result<(), DeliveryError> {
+        let Some(target) = self.target.as_mut() else {
+            return Ok(());
+        };
+        let Some(mut caret) = target.caret else {
+            return Ok(());
+        };
+        let space = caret.close();
+        if space.is_empty() {
+            return Ok(());
+        }
+        // Saved first, so a field that refuses the space isn't asked again.
+        target.caret = Some(caret);
+        // Typed even when cancelled, or the last word runs into the next.
+        target
+            .policy
+            .confirm_front(&*self.delivery)
+            .and_then(|()| {
+                self.delivery
+                    .deliver_closing_space(&target.prepared, &space, || false)
+            })
+            .inspect_err(|error| {
+                tracing::warn!(%error, "the space after the typed text was not typed");
+            })
+    }
+
     /// Types every queued utterance at once. When the press queues, a
     /// refusal that typed nothing keeps the queue.
     fn type_queue(&mut self) -> Result<(), DeliveryError> {
@@ -141,7 +169,7 @@ impl<D: TextDelivery> Cursor<D> {
                 target.owes_mark = target
                     .queue
                     .last()
-                    .is_some_and(|last| last.spacing.defers_ending);
+                    .is_some_and(|last| last.spacing.ending == Ending::MarkDeferred);
                 target.queue.clear();
                 target.delivered = Some(Delivered {
                     outcome: outcome.into(),
@@ -350,6 +378,7 @@ where
                 self.leave_queue()?;
             }
         }
+        let closed = self.type_closing_space();
         let Some(target) = self.target.as_mut() else {
             return Ok(());
         };
@@ -359,6 +388,14 @@ where
         // Text left behind, in history or on the clipboard, means a Return
         // would send something else.
         if target.delivered.map(|delivered| delivered.outcome) != Some(DeliveryOutcome::Inserted) {
+            return Ok(());
+        }
+        // Without the closing space the text runs into the next word, so no
+        // Return may send it.
+        if closed.is_err() {
+            if target.output == OutputMode::InsertAndSubmit {
+                target.control.drop_submitted_return();
+            }
             return Ok(());
         }
         let finished = match self
@@ -425,6 +462,8 @@ where
         // A press that heard no speech still owes the person their Return.
         // A failure keeps it: the text was cut short. Only a field bound as
         // the press started shows the Return lands where it was pressed.
+        // `type_closing_space` logs its own failure, and nothing waits on it now.
+        let _ = self.type_closing_space();
         let Some(mut target) = self.target.take() else {
             return;
         };
@@ -466,8 +505,9 @@ fn streaming_output_mode(mode: OutputMode) -> Option<OutputMode> {
 mod tests {
     use crate::dictation::StopMode;
     use crate::dictation::testing::{
-        CallLog, PlacedDelivery, RecordingDelivery, TYPED_PROCESS, settings,
+        CallLog, FieldWithText, PlacedDelivery, RecordingDelivery, TYPED_PROCESS, settings,
     };
+    use aria_kit::transcription::Attachment;
 
     use super::*;
     use crate::dictation::ActiveDictation;
@@ -525,6 +565,15 @@ mod tests {
             should_cancel: impl Fn() -> bool,
         ) -> Result<Finished, DeliveryError> {
             self.delivery.finish(prepared, should_cancel)
+        }
+
+        fn deliver_closing_space(
+            &self,
+            prepared: &Self::Prepared,
+            space: &str,
+            should_cancel: impl Fn() -> bool,
+        ) -> Result<(), DeliveryError> {
+            self.deliver(prepared, space, should_cancel).map(|_| ())
         }
 
         fn deliver(
@@ -603,10 +652,21 @@ mod tests {
         }
     }
 
+    /// A streamed segment, whose end the next segment may still join.
+    fn streamed(text: &str) -> Utterance<'_> {
+        Utterance {
+            spacing: Spacing {
+                ending: Ending::Open,
+                ..Spacing::default()
+            },
+            ..Utterance::anonymous(text)
+        }
+    }
+
     fn deferring(text: &str) -> Utterance<'_> {
         Utterance {
             spacing: Spacing {
-                defers_ending: true,
+                ending: Ending::MarkDeferred,
                 ..Spacing::default()
             },
             ..Utterance::anonymous(text)
@@ -935,6 +995,26 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_space_keeps_the_joined_text_from_being_submitted() {
+        let log = CallLog::default();
+        let delivery = wandering(&log);
+        *delivery.caret.lock().unwrap() = Caret::between("", "notes");
+        let mut cursor = Cursor::new(delivery);
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        cursor
+            .dictation_started(
+                &settings(DeliveryMode::Streaming, OutputMode::InsertAndSubmit),
+                &control,
+            )
+            .unwrap();
+        cursor.segment(streamed("hello")).unwrap();
+        cursor.delivery.leave(|| DeliveryError::TargetChanged);
+        cursor.completed(Utterance::anonymous("hello")).unwrap();
+        assert_eq!(log.entries(), ["prepare:InsertAndSubmit", "deliver:hello"]);
+        assert!(control.return_dropped());
+    }
+
+    #[test]
     fn nothing_is_typed_when_the_overridden_app_is_not_in_front() {
         let (log, mut cursor) = cursor();
         let control = ExecutionControl::for_test(StopMode::Manual);
@@ -1254,14 +1334,7 @@ mod tests {
 
     #[test]
     fn a_delivery_with_no_target_process_offers_no_return() {
-        let mut cursor = Cursor::new(FieldWithText {
-            delivery: RecordingDelivery {
-                log: CallLog::default(),
-                fail: false,
-            },
-            caret: Caret::default(),
-            front: None,
-        });
+        let mut cursor = Cursor::new(FieldWithText::new(CallLog::default(), Caret::default()));
         cursor
             .dictation_started(
                 &settings(DeliveryMode::Complete, OutputMode::Insert),
@@ -1396,6 +1469,15 @@ mod tests {
             ) -> Result<(), DeliveryError> {
                 // Names no target process, so it never takes a Return.
                 Err(DeliveryError::TargetUnavailable)
+            }
+
+            fn deliver_closing_space(
+                &self,
+                prepared: &Self::Prepared,
+                space: &str,
+                should_cancel: impl Fn() -> bool,
+            ) -> Result<(), DeliveryError> {
+                self.deliver(prepared, space, should_cancel).map(|_| ())
             }
 
             fn deliver(
@@ -1573,76 +1655,24 @@ mod tests {
         );
     }
 
-    /// A field that reports `caret`, in the application `front`.
-    struct FieldWithText {
-        delivery: RecordingDelivery,
-        caret: Caret,
-        front: Option<aria_platform::delivery::Application>,
+    fn completes(cursor: &mut Cursor<FieldWithText>, _: &ExecutionControl) {
+        cursor.completed(Utterance::anonymous("")).unwrap();
+        cursor.dictation_finished(Ok(()));
     }
 
-    impl TextDelivery for FieldWithText {
-        type Prepared = OutputMode;
-        const DEFAULT_MODE: OutputMode = OutputMode::Insert;
-
-        const OUTLIVES_PROCESS: bool = true;
-
-        fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
-            self.front.clone()
-        }
-
-        fn prepare(
-            &self,
-            mode: OutputMode,
-            should_cancel: impl Fn() -> bool,
-        ) -> Result<OutputMode, DeliveryError> {
-            self.delivery.prepare(mode, should_cancel)
-        }
-
-        fn finish(
-            &self,
-            prepared: &OutputMode,
-            should_cancel: impl Fn() -> bool,
-        ) -> Result<Finished, DeliveryError> {
-            self.delivery.finish(prepared, should_cancel)
-        }
-
-        fn press_return(
-            &self,
-            _prepared: &Self::Prepared,
-            _should_cancel: impl Fn() -> bool,
-        ) -> Result<(), DeliveryError> {
-            // Names no target process, so it never takes a Return.
-            Err(DeliveryError::TargetUnavailable)
-        }
-
-        fn deliver(
-            &self,
-            prepared: &OutputMode,
-            text: &str,
-            should_cancel: impl Fn() -> bool,
-        ) -> Result<Posted, DeliveryError> {
-            self.delivery.deliver(prepared, text, should_cancel)
-        }
-
-        fn caret(&self, _prepared: &OutputMode) -> Caret {
-            self.caret
-        }
-    }
-
-    fn streamed_into<'a>(
+    /// What streaming `utterances` between `before` and `after` types,
+    /// once `end` ends the dictation.
+    fn streamed_then<'a>(
         before: &str,
         after: &str,
         utterances: impl IntoIterator<Item = Utterance<'a>>,
+        end: impl FnOnce(&mut Cursor<FieldWithText>, &ExecutionControl),
     ) -> Vec<String> {
         let log = CallLog::default();
-        let mut cursor = Cursor::new(FieldWithText {
-            delivery: RecordingDelivery {
-                log: log.clone(),
-                fail: false,
-            },
-            caret: Caret::between(before, after),
-            front: None,
-        });
+        let mut cursor = Cursor::new(FieldWithText::new(
+            log.clone(),
+            Caret::between(before, after),
+        ));
         let control = ExecutionControl::for_test(StopMode::Manual);
         cursor
             .dictation_started(
@@ -1653,6 +1683,7 @@ mod tests {
         for utterance in utterances {
             cursor.segment(utterance).unwrap();
         }
+        end(&mut cursor, &control);
         log.entries()[1..].to_vec()
     }
 
@@ -1660,12 +1691,8 @@ mod tests {
     fn nothing_is_typed_into_an_app_with_aria_off() {
         let log = CallLog::default();
         let mut cursor = Cursor::new(FieldWithText {
-            delivery: RecordingDelivery {
-                log: log.clone(),
-                fail: false,
-            },
-            caret: Caret::between("", ""),
             front: Some(app("Vault", "com.secret")),
+            ..FieldWithText::new(log.clone(), Caret::between("", ""))
         });
         let mut settings = settings(DeliveryMode::Streaming, OutputMode::Insert);
         settings.target.excluded = vec!["com.secret".into()];
@@ -1678,9 +1705,36 @@ mod tests {
     }
 
     #[test]
+    fn streamed_text_owes_the_space_before_the_text_after_the_caret_until_it_ends() {
+        let joined = Utterance {
+            spacing: Spacing {
+                attachment: Attachment::Joined,
+                ending: Ending::Open,
+            },
+            ..Utterance::anonymous("/main")
+        };
+        let typed = streamed_then("", "notes", [streamed("open src"), joined], completes);
+        assert_eq!(typed, ["deliver:open src", "deliver:/main", "space: "]);
+    }
+
+    #[test]
+    fn a_cancelled_dictation_still_types_the_space_its_text_owes() {
+        let typed = streamed_then("", "notes", [streamed("open src")], |cursor, control| {
+            assert!(control.cancel());
+            cursor.dictation_finished(Err(&DictationError::Cancelled));
+        });
+        assert_eq!(typed, ["deliver:open src", "space: "]);
+    }
+
+    #[test]
     fn text_after_a_sentence_starts_with_a_space() {
         assert_eq!(
-            streamed_into("Hello.", "", ["How are you"].map(Utterance::anonymous)),
+            streamed_then(
+                "Hello.",
+                "",
+                ["How are you"].map(Utterance::anonymous),
+                |_, _| {}
+            ),
             ["deliver: How are you"]
         );
     }
@@ -1688,11 +1742,21 @@ mod tests {
     #[test]
     fn later_segments_are_spaced_by_what_was_typed() {
         assert_eq!(
-            streamed_into("(", "", ["hello", "there"].map(Utterance::anonymous)),
+            streamed_then(
+                "(",
+                "",
+                ["hello", "there"].map(Utterance::anonymous),
+                |_, _| {}
+            ),
             ["deliver:hello", "deliver: there"]
         );
         assert_eq!(
-            streamed_into("", "", ["你好", "世界"].map(Utterance::anonymous)),
+            streamed_then(
+                "",
+                "",
+                ["你好", "世界"].map(Utterance::anonymous),
+                |_, _| {}
+            ),
             ["deliver:你好", "deliver:世界"]
         );
     }
@@ -1700,8 +1764,8 @@ mod tests {
     #[test]
     fn a_word_after_the_caret_keeps_its_distance() {
         assert_eq!(
-            streamed_into("", "w", ["hello", "there"].map(Utterance::anonymous)),
-            ["deliver:hello ", "deliver:there "]
+            streamed_then("", "w", ["hello", "there"].map(streamed), completes),
+            ["deliver:hello", "deliver: there", "space: "]
         );
     }
 
@@ -1710,12 +1774,17 @@ mod tests {
         let utterances = [
             deferring("we should"),
             deferring(". Ship it"),
-            Utterance::anonymous("."),
+            streamed("."),
         ];
 
         assert_eq!(
-            streamed_into("foo", "bar", utterances),
-            ["deliver: we should", "deliver:. Ship it", "deliver:. "]
+            streamed_then("foo", "bar", utterances, completes),
+            [
+                "deliver: we should",
+                "deliver:. Ship it",
+                "deliver:.",
+                "space: "
+            ]
         );
     }
 }
