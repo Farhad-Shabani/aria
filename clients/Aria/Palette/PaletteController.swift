@@ -491,6 +491,11 @@ final class PaletteController: ObservableObject {
         Task { await unsaved.discard(transcript) }
     }
 
+    func saveShownTranscript() {
+        guard case .unsavedTranscript(let transcript) = model.page else { return }
+        save(transcript)
+    }
+
     func toggleMenu() {
         model.toggleMenu(count: hasMenu ? actions.count : 0)
     }

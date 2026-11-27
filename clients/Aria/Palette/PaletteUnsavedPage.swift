@@ -37,6 +37,7 @@ struct PaletteUnsavedPage: View {
             "Discard This Transcript?", isPresented: $controller.model.isConfirmingTranscriptDiscard,
             titleVisibility: .visible
         ) {
+            Button("Save…") { controller.saveShownTranscript() }
             Button("Discard", role: .destructive) { controller.discardShownTranscript() }
             Button("Cancel", role: .cancel) {}
         } message: {
