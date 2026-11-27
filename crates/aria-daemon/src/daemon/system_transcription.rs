@@ -36,16 +36,11 @@ pub(super) struct SystemTranscriptionState {
     events: SystemTranscriptionEventEmitter,
     vocabulary: Arc<super::vocabulary::Runtime>,
     history: Arc<HistoryStore>,
-    active: Mutex<Guarded>,
+    active: Mutex<Slot>,
     /// Taken before `active` and held while the unsaved folder removes files,
     /// and by Start while it makes a session's file. So a listing never
     /// removes a file a session is about to write.
     files: Mutex<()>,
-}
-
-/// What the slot's lock guards.
-struct Guarded {
-    slot: Slot,
 }
 
 enum Slot {
@@ -95,7 +90,7 @@ impl SystemTranscriptionState {
             events,
             vocabulary,
             history,
-            active: Mutex::new(Guarded { slot: Slot::Idle }),
+            active: Mutex::new(Slot::Idle),
             files: Mutex::new(()),
         }
     }
@@ -114,9 +109,9 @@ impl SystemTranscriptionState {
             ));
         }
         let _files = self.lock_files();
-        let mut guarded = self.lock();
-        harvest(&mut guarded.slot);
-        match &guarded.slot {
+        let mut slot = self.lock();
+        harvest(&mut slot);
+        match &*slot {
             Slot::Running(active) => {
                 return Ok(SystemTranscriptionStarted {
                     already_running: true,
@@ -127,7 +122,7 @@ impl SystemTranscriptionState {
             Slot::Idle | Slot::Ended { .. } => {}
         }
         // `files` keeps another Start out until this one fills the slot.
-        drop(guarded);
+        drop(slot);
 
         let internal = |error: aria_settings::config::ConfigError| {
             RpcFailure::new(RpcErrorCode::Internal, error_chain(&error))
@@ -185,15 +180,15 @@ impl SystemTranscriptionState {
             .map_err(|error| RpcFailure::new(RpcErrorCode::Internal, error_chain(&error)))?;
         // Capture starts only while `active` is held and fills the slot
         // before release, so a Stop never finds it running unseen.
-        let mut guarded = self.lock();
+        let mut slot = self.lock();
         debug_assert!(
-            !matches!(guarded.slot, Slot::Running(_)),
+            !matches!(*slot, Slot::Running(_)),
             "`files` keeps another Start out"
         );
         let (capture, recording) = match SystemAudioCapture::spawn() {
             Ok(spawned) => spawned,
             Err(error) => {
-                drop(guarded);
+                drop(slot);
                 drop(send);
                 // The worker had nothing to run, so it has ended.
                 let _ = thread.join();
@@ -203,7 +198,7 @@ impl SystemTranscriptionState {
                 return Err(failure);
             }
         };
-        guarded.slot = Slot::Running(ActiveSystemTranscription {
+        *slot = Slot::Running(ActiveSystemTranscription {
             stopper: capture.stopper(),
             cancel,
             thread,
@@ -218,7 +213,7 @@ impl SystemTranscriptionState {
             sink,
             kept,
         });
-        drop(guarded);
+        drop(slot);
         tracing::info!(transcript = %transcript.display(), "system transcription started");
         Ok(SystemTranscriptionStarted {
             already_running: false,
@@ -232,8 +227,8 @@ impl SystemTranscriptionState {
     pub(super) fn stop(&self) -> Result<SystemTranscriptionStopped, RpcFailure> {
         // The lock is held through the join so a concurrent Start cannot
         // open a second capture while this one winds down.
-        let mut guarded = self.lock();
-        let previous = std::mem::replace(&mut guarded.slot, Slot::Idle);
+        let mut slot = self.lock();
+        let previous = std::mem::replace(&mut *slot, Slot::Idle);
         match previous {
             Slot::Idle => Ok(SystemTranscriptionStopped {
                 was_running: false,
@@ -257,9 +252,9 @@ impl SystemTranscriptionState {
     }
 
     pub(super) fn status(&self) -> SystemTranscriptionSnapshot {
-        let mut guarded = self.lock();
-        harvest(&mut guarded.slot);
-        match &guarded.slot {
+        let mut slot = self.lock();
+        harvest(&mut slot);
+        match &*slot {
             Slot::Idle => SystemTranscriptionSnapshot {
                 running: false,
                 transcript: PathBuf::new(),
@@ -308,12 +303,12 @@ impl SystemTranscriptionState {
     }
 
     fn running(&self) -> Option<PathBuf> {
-        let mut guarded = self.lock();
-        harvest(&mut guarded.slot);
-        running(&guarded.slot).map(Path::to_path_buf)
+        let mut slot = self.lock();
+        harvest(&mut slot);
+        running(&slot).map(Path::to_path_buf)
     }
 
-    fn lock(&self) -> MutexGuard<'_, Guarded> {
+    fn lock(&self) -> MutexGuard<'_, Slot> {
         self.active
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -329,7 +324,7 @@ impl SystemTranscriptionState {
 /// Daemon shutdown ends capture and preserves the transcript tail.
 impl Drop for SystemTranscriptionState {
     fn drop(&mut self) {
-        let previous = std::mem::replace(&mut self.lock().slot, Slot::Idle);
+        let previous = std::mem::replace(&mut *self.lock(), Slot::Idle);
         if let Slot::Running(active) = previous
             && let Err(failure) = join(active)
         {

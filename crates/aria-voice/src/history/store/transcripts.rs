@@ -145,7 +145,7 @@ impl Store {
         let mut state = self.lock();
         let entry = self.insert_into(
             &mut state,
-            transcript_entry(transcript, String::new(), created_at_ms, None),
+            transcript_entry(transcript, created_at_ms),
             None,
             None,
             None,
@@ -399,7 +399,7 @@ impl Store {
         Ok(self
             .transcripts()?
             .into_iter()
-            .filter(|(_, transcript)| is_transcript_gone(transcript))
+            .filter(|(_, transcript)| transcript_file::is_gone(transcript))
             .collect())
     }
 
@@ -442,12 +442,7 @@ impl Store {
     }
 }
 
-fn transcript_entry(
-    transcript: &Path,
-    excerpt: String,
-    created_at_ms: u64,
-    duration_ms: Option<u64>,
-) -> HistoryEntry {
+fn transcript_entry(transcript: &Path, created_at_ms: u64) -> HistoryEntry {
     HistoryEntry {
         id: 0,
         title: None,
@@ -456,11 +451,11 @@ fn transcript_entry(
             read: None,
         },
         created_at_ms,
-        duration_ms,
+        duration_ms: None,
         source: HistorySource::Local,
         application: None,
         project: None,
-        text: excerpt,
+        text: String::new(),
         complete: true,
         result_count: 0,
         status: HistoryStatus::Success,
@@ -574,7 +569,7 @@ fn read_ending(transcript: &Path) -> Option<Ending> {
     let mut file = match transcript_file::open(transcript) {
         Ok(file) => file,
         Err(OpenError::Missing) => {
-            return is_transcript_gone(transcript).then_some(Ending::Missing);
+            return transcript_file::is_gone(transcript).then_some(Ending::Missing);
         }
         Err(OpenError::Foreign) => return Some(Ending::Foreign),
         Err(OpenError::Io(error)) => {
@@ -593,12 +588,6 @@ fn read_ending(transcript: &Path) -> Option<Ending> {
             None
         }
     }
-}
-
-/// Gone only while its folder is there, so an unmounted volume doesn't
-/// empty the section.
-pub(super) fn is_transcript_gone(transcript: &Path) -> bool {
-    transcript_file::is_gone(transcript)
 }
 
 #[cfg(test)]

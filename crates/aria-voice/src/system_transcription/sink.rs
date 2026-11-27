@@ -4,7 +4,6 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aria_kit::audio::canonical_duration;
@@ -79,7 +78,7 @@ impl TranscriptFile {
     /// a name nothing has on disk or in history. Returns the entry's id.
     pub(crate) fn create_recorded(
         directory: &Path,
-        history: &Arc<Store>,
+        history: &Store,
     ) -> Result<(Self, PathBuf, u64), CreateError> {
         let (file, path, id) = history.create_transcript(directory)?;
         Ok((Self::opened(file, path.clone(), Creation::New), path, id))
@@ -388,6 +387,7 @@ mod tests {
     use aria_kit::audio::CANONICAL_SAMPLE_RATE;
     use aria_platform::sqlite::AtRest;
     use std::fs;
+    use std::sync::Arc;
 
     fn enrolled(name: &str) -> Label {
         Label::Enrolled(SpeakerName::new(name).expect("a usable name"))

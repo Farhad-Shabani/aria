@@ -4,18 +4,16 @@ import os
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "UnsavedTranscripts")
 
 /// A Mac Audio transcript no history entry names yet, waiting for the person to save or discard it.
-struct UnsavedTranscript: Identifiable, Equatable, Sendable {
+struct UnsavedTranscript: Equatable, Sendable {
     /// The file's name, which the daemon's Read and Discard take.
     let name: String
     let path: URL
     let startedAt: Date
     /// How long the session wrote to it.
     let duration: TimeInterval
-
-    var id: String { name }
 }
 
-struct UnsavedTranscriptList: Equatable, Sendable {
+struct UnsavedTranscriptList: Sendable {
     var transcripts: [UnsavedTranscript]
     /// Whether Mac Audio history is full, so new sessions run unsaved.
     var isHistoryFull: Bool

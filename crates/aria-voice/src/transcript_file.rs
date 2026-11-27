@@ -276,10 +276,7 @@ pub(crate) fn create(path: &Path, creation: Creation) -> io::Result<File> {
         .custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits() as i32)
         .open(path)?;
     let metadata = file.metadata()?;
-    if !metadata.is_file()
-        || metadata.uid() != rustix::process::getuid().as_raw()
-        || metadata.nlink() != 1
-    {
+    if !is_ours(metadata.is_file(), metadata.uid()) || metadata.nlink() != 1 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "the transcript file belongs to another user or has other links",

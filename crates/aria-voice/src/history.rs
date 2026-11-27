@@ -413,16 +413,6 @@ impl From<rusqlite::Error> for HistoryError {
     }
 }
 
-impl From<OpenError> for HistoryError {
-    fn from(error: OpenError) -> Self {
-        match error {
-            OpenError::Missing => Self::Missing,
-            OpenError::Foreign => Self::TranscriptUnreadable,
-            OpenError::Io(error) => Self::storage(error),
-        }
-    }
-}
-
 impl From<ReadError> for HistoryError {
     fn from(error: ReadError) -> Self {
         match error {

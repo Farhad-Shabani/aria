@@ -720,10 +720,7 @@ struct PaletteModel: Equatable {
             renaming = nil
             return false
         }
-        if case .unsavedTranscript = page {
-            isConfirmingTranscriptDiscard = true
-            return false
-        }
+        guard closeRequested() else { return false }
         if page == .prompt {
             if draft?.hasChanges == true {
                 waitingDraft = nil

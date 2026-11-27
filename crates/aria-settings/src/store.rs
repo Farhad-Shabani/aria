@@ -96,7 +96,7 @@ impl SettingsStore {
 
     pub fn snapshot(&self) -> Result<SettingsSnapshot, StoreError> {
         let loaded = self.cache.snapshot();
-        snapshot_of(&loaded, self.cache.home())
+        self.snapshot_of(&loaded)
     }
 
     /// A client's patch against the revision it read.
@@ -163,12 +163,12 @@ impl SettingsStore {
         let updated = match written {
             Written::Applied(loaded) | Written::AppliedRestartKey(loaded) => {
                 UpdateResult::Updated {
-                    snapshot: snapshot_of(&loaded, self.cache.home())?,
+                    snapshot: self.snapshot_of(&loaded)?,
                     restart_required: self.cache.restart_required(),
                 }
             }
             Written::Refused(Refusal::Conflict { current }) => {
-                UpdateResult::Conflict(snapshot_of(&current, self.cache.home())?)
+                UpdateResult::Conflict(self.snapshot_of(&current)?)
             }
             Written::Refused(Refusal::FileInvalid(error)) => {
                 return Err(StoreError::FileInvalid(error).into());
@@ -217,15 +217,15 @@ impl SettingsStore {
         }
         Ok(view::patch(current, &next)?)
     }
-}
 
-fn snapshot_of(loaded: &Loaded, home: &std::path::Path) -> Result<SettingsSnapshot, StoreError> {
-    Ok(SettingsSnapshot {
-        revision: loaded.revision.get(),
-        settings: Settings::from_file(&loaded.settings)?,
-        streaming_unavailable: StreamingSupport::of(loaded.settings.choices()),
-        transcripts_dir: home.join(crate::TRANSCRIPTS_DIRECTORY),
-    })
+    fn snapshot_of(&self, loaded: &Loaded) -> Result<SettingsSnapshot, StoreError> {
+        Ok(SettingsSnapshot {
+            revision: loaded.revision.get(),
+            settings: Settings::from_file(&loaded.settings)?,
+            streaming_unavailable: StreamingSupport::of(loaded.settings.choices()),
+            transcripts_dir: self.cache.home().join(crate::TRANSCRIPTS_DIRECTORY),
+        })
+    }
 }
 
 impl SettingsPatch {

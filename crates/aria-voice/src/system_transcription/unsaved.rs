@@ -53,16 +53,12 @@ impl UnsavedFolder {
     /// `list(Some(running))` → `[2026-11-25T10-00-00Z-1a2b3c4d.txt]`, without the
     /// running session's file or a blank one.
     pub fn list(&self, running: Option<&Path>) -> Result<UnsavedTranscriptList, UnsavedError> {
-        let apart = match self.folders.check() {
-            Ok(()) => true,
+        match self.folders.check() {
+            Ok(()) => self.remove_blank(running)?,
             Err(FolderError::Unchecked(error)) => {
                 tracing::warn!(error = %error_chain(&error), "unsaved transcripts listed without a folder check");
-                false
             }
             Err(error) => return Err(error.into()),
-        };
-        if apart {
-            self.remove_blank(running)?;
         }
         Ok(UnsavedTranscriptList {
             transcripts: self.transcripts(running)?,

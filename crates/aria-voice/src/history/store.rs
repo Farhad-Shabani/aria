@@ -27,7 +27,7 @@ use crate::transcript_file::{self, EXCERPT_BYTES};
 
 pub(super) mod transcripts;
 
-use transcripts::{EXCERPTS_SCHEMA, REMOVALS_SCHEMA, is_removal_waiting, is_transcript_gone};
+use transcripts::{EXCERPTS_SCHEMA, REMOVALS_SCHEMA, is_removal_waiting};
 
 pub const DIRECTORY: &str = ".aria/history";
 pub const DB_FILE: &str = "history.db";
@@ -1005,7 +1005,7 @@ impl Store {
                 || (!state.recording.contains(&entry.id)
                     && transcript_path(&entry.content).is_some_and(|transcript| {
                         gone.get(&entry.id).is_some_and(|seen| seen == transcript)
-                            && is_transcript_gone(transcript)
+                            && transcript_file::is_gone(transcript)
                     }))
             {
                 self.mark_delete(state, entry.id)?;

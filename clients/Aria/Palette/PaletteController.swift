@@ -776,8 +776,7 @@ final class PaletteController: ObservableObject {
         Task { await setup.refresh() }
         if model.keepsHistory { history.open() }
         // A session that ended while the palette was closed may have left one.
-        let unsaved = unsaved
-        Task { await unsaved.refresh() }
+        unsaved.spawnRefresh()
         nameAssistants()
         readDictionary()
         panel.show(
