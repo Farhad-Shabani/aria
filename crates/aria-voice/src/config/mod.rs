@@ -113,7 +113,6 @@ impl SttBackend {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemTranscriptionConfig {
     pub engine: SystemTranscriptionEngine,
-    pub transcripts_dir: PathBuf,
 }
 
 /// An engine that recognizes a live stream. Only a config whose engine

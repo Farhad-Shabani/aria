@@ -50,7 +50,6 @@ impl SystemTranscriptionConfig {
             .unwrap_or_else(|| local(LocalStt::Parakeet, None, SttDevice::Cpu, home));
         Ok(Self {
             engine: SystemTranscriptionEngine::new(transcription)?,
-            transcripts_dir: home.join(aria_settings::TRANSCRIPTS_DIRECTORY),
         })
     }
 }
@@ -686,7 +685,6 @@ mod tests {
                     model_directory: PathBuf::from("/home/user/.aria/models/moonshine/base"),
                 })
                 .unwrap(),
-                transcripts_dir: PathBuf::from("/home/user/.aria/transcripts"),
             }
         );
     }
