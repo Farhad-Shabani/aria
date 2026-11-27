@@ -4,8 +4,8 @@
 
 Aria saves completed dictations so you can review their text. These controls
 apply to both Mac and terminal dictation. History also lists each transcript
-that [Transcription](./transcribe-system-audio.md) saves to the default folder,
-and each request you send in a [chat](./chat.md), with its reply. The
+that [Transcription](./transcribe-system-audio.md) saves to your transcripts
+folder, and each request you send in a [chat](./chat.md), with its reply. The
 assistant keeps its own conversation records.
 
 ## Saving
@@ -13,12 +13,15 @@ assistant keeps its own conversation records.
 Saving is on by default. In the Mac app, turn it off under
 **Settings → Privacy → Save history**, or run
 `aria settings set history.enabled off`. This stops future saves and leaves
-existing entries until you delete them or they expire.
+existing entries until you delete them or they expire. With history off, a
+transcript waits unsaved until you save it with **Save…** or discard it, as
+[Transcript files](./transcribe-system-audio.md#transcript-files) describes.
 
-Aria deletes old history on its own, so personal text doesn't pile up on
-your Mac. It deletes text after 30 days. A transcript's entry keeps the first
-KiB of its text, and the transcript file holds the rest. When the entry
-expires, the transcript file stays.
+Aria deletes old dictations and chats on its own, so personal text doesn't
+pile up on your Mac. It deletes them after 30 days. Transcripts stay until you
+delete them. A transcript's entry keeps the first KiB of its text, and the
+transcript file holds the rest. History holds up to 10,000 transcripts. When
+it's full, Aria deletes none, and a new transcript waits unsaved instead.
 
 By default, only recordings Aria couldn't transcribe keep their original
 audio. Retained recordings last up to 24 hours, with a 128 MiB total limit.
@@ -31,7 +34,8 @@ On a Mac, [open Aria](./prompts.md#pick-a-prompt-in-aria). Your dictations,
 transcripts, and chats show by day, each with its own icon. Type to search
 them. Press **⌘↩** to read one. Click **Copy**, or press **⌘C**, to use the
 text elsewhere. For a chat, Copy takes the reply. A long transcript shows its
-first 1 MiB.
+first 1 MiB. To find a transcript's file, select it, press **⌘K**, and choose
+**Show in Finder**.
 
 Press **Return** to type an entry's text into the app you came from. With no app
 behind Aria, **Return** opens the entry instead. Text over 64 KiB is too long to
@@ -209,7 +213,9 @@ Existing recordings continue to expire.
 
 In Aria, open an entry and click **Delete…** to remove it. To remove every
 entry and retained recording, type “clear” and choose **Clear All History…**.
-Clear includes entries outside the current search.
+Clear includes entries outside the current search. If a Mac Audio transcript
+is on a drive that isn't connected, or in a folder Aria can't change, Aria
+deletes it once it can reach the file again.
 
 To delete a chat, select or open it, then press **⌘⌫**. Aria deletes
 its questions, replies, and prompt results, but not the assistant's own
