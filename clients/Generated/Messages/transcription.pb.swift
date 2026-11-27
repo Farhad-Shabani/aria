@@ -193,10 +193,6 @@ public nonisolated struct Aria_Daemon_V1_ListUnsavedTranscriptsResponse: Sendabl
   /// on runs unsaved. False while history can't open.
   public var historyFull: Bool = false
 
-  /// Aria's two folders. A copy saved in either, or below it, isn't the
-  /// person's own, since Aria removes files there.
-  public var transcriptsDir: String = String()
-
   public var unsavedDir: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -283,6 +279,35 @@ public nonisolated struct Aria_Daemon_V1_DiscardUnsavedTranscriptResponse: Senda
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_SaveUnsavedTranscriptRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var name: String = String()
+
+  /// An absolute file path.
+  public var destination: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Aria_Daemon_V1_SaveUnsavedTranscriptResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The copy is saved, but the unsaved transcript stayed, because removing
+  /// it failed or another file took its name.
+  public var kept: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -506,7 +531,7 @@ nonisolated extension Aria_Daemon_V1_ListUnsavedTranscriptsRequest: SwiftProtobu
 
 nonisolated extension Aria_Daemon_V1_ListUnsavedTranscriptsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListUnsavedTranscriptsResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}transcripts\0\u{3}history_full\0\u{3}transcripts_dir\0\u{3}unsaved_dir\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}transcripts\0\u{3}history_full\0\u{4}\u{2}unsaved_dir\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -516,7 +541,6 @@ nonisolated extension Aria_Daemon_V1_ListUnsavedTranscriptsResponse: SwiftProtob
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedMessageField(value: &self.transcripts) }()
       case 2: try { try decoder.decodeSingularBoolField(value: &self.historyFull) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.transcriptsDir) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.unsavedDir) }()
       default: break
       }
@@ -530,9 +554,6 @@ nonisolated extension Aria_Daemon_V1_ListUnsavedTranscriptsResponse: SwiftProtob
     if self.historyFull != false {
       try visitor.visitSingularBoolField(value: self.historyFull, fieldNumber: 2)
     }
-    if !self.transcriptsDir.isEmpty {
-      try visitor.visitSingularStringField(value: self.transcriptsDir, fieldNumber: 3)
-    }
     if !self.unsavedDir.isEmpty {
       try visitor.visitSingularStringField(value: self.unsavedDir, fieldNumber: 4)
     }
@@ -542,7 +563,6 @@ nonisolated extension Aria_Daemon_V1_ListUnsavedTranscriptsResponse: SwiftProtob
   public static func ==(lhs: Aria_Daemon_V1_ListUnsavedTranscriptsResponse, rhs: Aria_Daemon_V1_ListUnsavedTranscriptsResponse) -> Bool {
     if lhs.transcripts != rhs.transcripts {return false}
     if lhs.historyFull != rhs.historyFull {return false}
-    if lhs.transcriptsDir != rhs.transcriptsDir {return false}
     if lhs.unsavedDir != rhs.unsavedDir {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
@@ -702,6 +722,71 @@ nonisolated extension Aria_Daemon_V1_DiscardUnsavedTranscriptResponse: SwiftProt
   }
 
   public static func ==(lhs: Aria_Daemon_V1_DiscardUnsavedTranscriptResponse, rhs: Aria_Daemon_V1_DiscardUnsavedTranscriptResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_SaveUnsavedTranscriptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SaveUnsavedTranscriptRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}destination\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.destination) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.destination.isEmpty {
+      try visitor.visitSingularStringField(value: self.destination, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_SaveUnsavedTranscriptRequest, rhs: Aria_Daemon_V1_SaveUnsavedTranscriptRequest) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.destination != rhs.destination {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Aria_Daemon_V1_SaveUnsavedTranscriptResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SaveUnsavedTranscriptResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kept\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.kept) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.kept != false {
+      try visitor.visitSingularBoolField(value: self.kept, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Aria_Daemon_V1_SaveUnsavedTranscriptResponse, rhs: Aria_Daemon_V1_SaveUnsavedTranscriptResponse) -> Bool {
+    if lhs.kept != rhs.kept {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

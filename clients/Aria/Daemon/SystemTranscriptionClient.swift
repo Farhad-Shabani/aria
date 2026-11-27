@@ -40,15 +40,11 @@ enum SystemTranscriptionClient {
             try await Aria_Daemon_V1_SystemTranscriptionService.Client(wrapping: client)
                 .listUnsaved(request: ClientRequest(message: .init()), options: options) { response in
                     let message = try response.message
-                    guard !message.transcriptsDir.isEmpty, !message.unsavedDir.isEmpty else {
-                        throw DaemonFailure.invalidResponse
-                    }
+                    guard !message.unsavedDir.isEmpty else { throw DaemonFailure.invalidResponse }
                     let unsavedDir = URL(filePath: message.unsavedDir, directoryHint: .isDirectory)
                     return UnsavedTranscriptList(
                         transcripts: try message.transcripts.map { try UnsavedTranscript($0, in: unsavedDir) },
-                        isHistoryFull: message.historyFull,
-                        transcriptsDir: URL(filePath: message.transcriptsDir, directoryHint: .isDirectory),
-                        unsavedDir: unsavedDir)
+                        isHistoryFull: message.historyFull, unsavedDir: unsavedDir)
                 }
         }
     }
@@ -77,6 +73,18 @@ enum SystemTranscriptionClient {
         try await DaemonTransport.call { client, options in
             _ = try await Aria_Daemon_V1_SystemTranscriptionService.Client(wrapping: client)
                 .discardUnsaved(request: ClientRequest(message: sent), options: options) { try $0.message }
+        }
+    }
+
+    /// Returns whether the unsaved transcript stayed after its copy was saved.
+    static func saveUnsaved(_ transcript: UnsavedTranscript, to destination: URL) async throws -> Bool {
+        let sent = Aria_Daemon_V1_SaveUnsavedTranscriptRequest.with {
+            $0.name = transcript.name
+            $0.destination = destination.path(percentEncoded: false)
+        }
+        return try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_SystemTranscriptionService.Client(wrapping: client)
+                .saveUnsaved(request: ClientRequest(message: sent), options: options) { try $0.message.kept }
         }
     }
 
