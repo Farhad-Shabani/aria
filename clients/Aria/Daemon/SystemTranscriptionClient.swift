@@ -76,15 +76,25 @@ enum SystemTranscriptionClient {
         }
     }
 
-    /// Returns whether the unsaved transcript stayed after its copy was saved.
-    static func saveUnsaved(_ transcript: UnsavedTranscript, to destination: URL) async throws -> Bool {
-        let sent = Aria_Daemon_V1_SaveUnsavedTranscriptRequest.with {
+    /// A long transcript written to a network volume can outlast the default.
+    static let exportTimeout = Duration.seconds(60)
+
+    /// Hands the transcript to `receive` a chunk at a time, in order, once the daemon accepts
+    /// `destination`. It's whole only once this returns.
+    static func exportUnsaved(
+        _ transcript: UnsavedTranscript, to destination: URL, receive: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        let sent = Aria_Daemon_V1_ExportUnsavedTranscriptRequest.with {
             $0.name = transcript.name
             $0.destination = destination.path(percentEncoded: false)
         }
-        return try await DaemonTransport.call { client, options in
+        try await DaemonTransport.call(timeout: exportTimeout) { client, options in
             try await Aria_Daemon_V1_SystemTranscriptionService.Client(wrapping: client)
-                .saveUnsaved(request: ClientRequest(message: sent), options: options) { try $0.message.kept }
+                .exportUnsaved(request: ClientRequest(message: sent), options: options) { response in
+                    for try await message in response.messages {
+                        try receive(message.chunk)
+                    }
+                }
         }
     }
 

@@ -42,9 +42,8 @@ final class UnsavedTranscripts: ObservableObject {
         var list: () async throws -> UnsavedTranscriptList
         var discard: (UnsavedTranscript) async throws -> Void
         var read: (UnsavedTranscript) async throws -> UnsavedTranscriptText
-        /// Copies the transcript over whatever is at the destination, then discards it. Returns
-        /// whether it stayed anyway.
-        var save: (_ transcript: UnsavedTranscript, _ destination: URL) async throws -> Bool
+        /// Copies the transcript over whatever is at the destination.
+        var copy: (_ transcript: UnsavedTranscript, _ destination: URL) async throws -> Void
     }
 
     /// Oldest first, as the daemon lists them.
@@ -96,34 +95,48 @@ final class UnsavedTranscripts: ObservableObject {
         }
     }
 
-    /// Saves the transcript to `destination`, then discards it. Returns whether it was discarded.
+    /// Copies the transcript to `destination`, then discards it. Returns whether it was discarded.
     @discardableResult
     func save(_ transcript: UnsavedTranscript, to destination: URL) async -> Bool {
         guard begin() else { return false }
         defer { isChanging = false }
-        let isKept: Bool
         do {
-            isKept = try await effects.save(transcript, destination)
+            try await effects.copy(transcript, destination)
         } catch {
-            log.error("Saving an unsaved transcript failed: \(String(describing: error), privacy: .private)")
+            log.error("Copying an unsaved transcript failed: \(String(describing: error), privacy: .private)")
             if Self.isGone(error) {
                 showGone()
                 return false
             }
             switch error as? DaemonFailure {
-            case .refused(.historyUnavailable):
-                self.error = "Aria can’t save this transcript right now. Try again later."
             case .refused(.invalidRequest):
                 self.error = "Aria uses that file for its own transcripts. Choose another place."
+            case .refused(.busy):
+                self.error = "Aria is writing to that file now. Choose another place."
+            case .refused(.historyUnavailable):
+                self.error = "Aria can’t save this transcript right now. Try again later."
             default:
                 self.error = Self.message(
                     for: error, otherwise: "Aria couldn’t save the transcript there. Choose another place.")
             }
             return false
         }
-        guard !isKept else {
-            self.error = "Aria saved a copy but couldn’t remove this one. Click **Discard** to remove it."
-            spawnRefresh()
+        do {
+            try await effects.discard(transcript)
+        } catch {
+            log.error("Discarding a copied transcript failed: \(String(describing: error), privacy: .private)")
+            if Self.isGone(error) {
+                self.error = "Aria saved a copy. This transcript changed since, so Aria left it."
+                spawnRefresh()
+                return false
+            }
+            if case .refused(.historyUnavailable) = error as? DaemonFailure {
+                self.error = "Aria saved a copy. Click **Discard** to remove this one once history opens."
+                return false
+            }
+            // The copy exists whatever the discard failure, so the message says that first.
+            let offline = (error as? DaemonFailure)?.isOffline == true ? " \(DaemonFailure.offlineMessage)" : ""
+            self.error = "Aria saved a copy but couldn’t remove this one. Click **Discard** to remove it.\(offline)"
             return false
         }
         remove(transcript)
@@ -206,6 +219,39 @@ extension UnsavedTranscripts.Effects {
             list: { try await SystemTranscriptionClient.listUnsaved() },
             discard: { try await SystemTranscriptionClient.discardUnsaved($0) },
             read: { try await SystemTranscriptionClient.readUnsaved($0) },
-            save: { try await SystemTranscriptionClient.saveUnsaved($0, to: $1) })
+            copy: { transcript, destination in
+                try await write(to: destination) { receive in
+                    try await SystemTranscriptionClient.exportUnsaved(transcript, to: destination, receive: receive)
+                }
+            })
+    }
+
+    /// Writes what `export` hands over at `destination`, over any file there. The save panel
+    /// already asked before replacing one, and granted this app the place. The copy is made on
+    /// that volume first, so one that fails partway leaves nothing at `destination`.
+    static func write(
+        to destination: URL,
+        from export: @escaping @Sendable (_ receive: @escaping @Sendable (Data) throws -> Void) async throws -> Void
+    ) async throws {
+        try await Task.detached {
+            let files = FileManager.default
+            let scratch = try files.url(
+                for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: destination, create: true)
+            defer { try? files.removeItem(at: scratch) }
+            let copy = scratch.appending(path: destination.lastPathComponent)
+            guard
+                files.createFile(
+                    atPath: copy.path(percentEncoded: false), contents: nil, attributes: [.posixPermissions: 0o600])
+            else { throw CocoaError(.fileWriteUnknown) }
+            let written = try FileHandle(forWritingTo: copy)
+            defer { try? written.close() }
+            try await export { chunk in try written.write(contentsOf: chunk) }
+            try written.synchronize()
+            if files.fileExists(atPath: destination.path(percentEncoded: false)) {
+                _ = try files.replaceItemAt(destination, withItemAt: copy)
+            } else {
+                try files.moveItem(at: copy, to: destination)
+            }
+        }.value
     }
 }

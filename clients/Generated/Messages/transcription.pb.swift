@@ -10,6 +10,11 @@
 
 // SPDX-License-Identifier: Apache-2.0
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 import SwiftProtobuf
 
 // If the compiler emits an error on this type, it is because this file
@@ -285,7 +290,7 @@ public nonisolated struct Aria_Daemon_V1_DiscardUnsavedTranscriptResponse: Senda
   public init() {}
 }
 
-public nonisolated struct Aria_Daemon_V1_SaveUnsavedTranscriptRequest: Sendable {
+public nonisolated struct Aria_Daemon_V1_ExportUnsavedTranscriptRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -300,14 +305,13 @@ public nonisolated struct Aria_Daemon_V1_SaveUnsavedTranscriptRequest: Sendable 
   public init() {}
 }
 
-public nonisolated struct Aria_Daemon_V1_SaveUnsavedTranscriptResponse: Sendable {
+public nonisolated struct Aria_Daemon_V1_ExportUnsavedTranscriptResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// The copy is saved, but the unsaved transcript stayed, because removing
-  /// it failed or another file took its name.
-  public var kept: Bool = false
+  /// At most 64 KiB.
+  public var chunk: Data = Data()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -727,8 +731,8 @@ nonisolated extension Aria_Daemon_V1_DiscardUnsavedTranscriptResponse: SwiftProt
   }
 }
 
-nonisolated extension Aria_Daemon_V1_SaveUnsavedTranscriptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".SaveUnsavedTranscriptRequest"
+nonisolated extension Aria_Daemon_V1_ExportUnsavedTranscriptRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExportUnsavedTranscriptRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}destination\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
@@ -754,7 +758,7 @@ nonisolated extension Aria_Daemon_V1_SaveUnsavedTranscriptRequest: SwiftProtobuf
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Daemon_V1_SaveUnsavedTranscriptRequest, rhs: Aria_Daemon_V1_SaveUnsavedTranscriptRequest) -> Bool {
+  public static func ==(lhs: Aria_Daemon_V1_ExportUnsavedTranscriptRequest, rhs: Aria_Daemon_V1_ExportUnsavedTranscriptRequest) -> Bool {
     if lhs.name != rhs.name {return false}
     if lhs.destination != rhs.destination {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
@@ -762,9 +766,9 @@ nonisolated extension Aria_Daemon_V1_SaveUnsavedTranscriptRequest: SwiftProtobuf
   }
 }
 
-nonisolated extension Aria_Daemon_V1_SaveUnsavedTranscriptResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".SaveUnsavedTranscriptResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kept\0")
+nonisolated extension Aria_Daemon_V1_ExportUnsavedTranscriptResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExportUnsavedTranscriptResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}chunk\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -772,21 +776,21 @@ nonisolated extension Aria_Daemon_V1_SaveUnsavedTranscriptResponse: SwiftProtobu
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularBoolField(value: &self.kept) }()
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.chunk) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.kept != false {
-      try visitor.visitSingularBoolField(value: self.kept, fieldNumber: 1)
+    if !self.chunk.isEmpty {
+      try visitor.visitSingularBytesField(value: self.chunk, fieldNumber: 1)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: Aria_Daemon_V1_SaveUnsavedTranscriptResponse, rhs: Aria_Daemon_V1_SaveUnsavedTranscriptResponse) -> Bool {
-    if lhs.kept != rhs.kept {return false}
+  public static func ==(lhs: Aria_Daemon_V1_ExportUnsavedTranscriptResponse, rhs: Aria_Daemon_V1_ExportUnsavedTranscriptResponse) -> Bool {
+    if lhs.chunk != rhs.chunk {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
