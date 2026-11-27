@@ -1,6 +1,6 @@
 use crate::cancel::CancelToken;
 
-use super::symbol_words::name_at;
+use super::symbol_words::leading_name;
 use super::{Layer, TranscriptionError};
 
 const FILLERS: &[&str] = &[
@@ -34,7 +34,7 @@ impl Layer for RemoveRepeats {
         remove_words(text, DroppedCapital::Discard, |previous, word| {
             let core = word.core();
             is_spoken(&core)
-                && !repeats_on_purpose(&core)
+                && !names_a_run_twice(&core)
                 && previous.is_some_and(|previous| {
                     !previous.ends_with_punctuation() && previous.core() == core
                 })
@@ -44,8 +44,8 @@ impl Layer for RemoveRepeats {
 }
 
 /// Whether `word` said twice names a listed run, as "dot dot" names `..`.
-fn repeats_on_purpose(word: &str) -> bool {
-    name_at([word, word].into_iter()).is_some_and(|name| name.words == 2)
+fn names_a_run_twice(word: &str) -> bool {
+    leading_name([word, word].into_iter()).is_some_and(|name| name.word_count == 2)
 }
 
 /// Whether a dropped capitalized word passes its capital to the word after

@@ -24,7 +24,7 @@ pub struct Caret {
     after: Option<char>,
     /// The last insert left out its space before `after`, which
     /// [`Caret::close`] types.
-    open: bool,
+    closing_space_due: bool,
 }
 
 /// How inserted text meets the text around the caret.
@@ -39,12 +39,12 @@ pub struct Spacing {
 pub enum Attachment {
     /// After `Hello`, `world` → ` world` but `,` → `,`.
     #[default]
-    AsWritten,
+    Auto,
     /// No space. After `src`, `/main` → `/main`.
     Joined,
     /// Spaced like a word, even with a symbol first. After `cd`, `../src`
     /// → ` ../src`.
-    Apart,
+    Spaced,
 }
 
 /// Whether a space follows inserted text before a word after the caret.
@@ -52,7 +52,7 @@ pub enum Attachment {
 pub enum Ending {
     /// Before `notes`, `open src` → `open src `.
     #[default]
-    Closed,
+    Spaced,
     /// Before `notes`, `open src` → `open src`, so the next text can join
     /// it. The next insert or [`Caret::close`] types the space.
     Open,
@@ -70,7 +70,7 @@ impl Caret {
             before: preceding.next(),
             before_that: preceding.next(),
             after: after.chars().next(),
-            open: false,
+            closing_space_due: false,
         }
     }
 
@@ -96,7 +96,7 @@ impl Caret {
     #[must_use = "the caret has moved past text that must be typed"]
     pub fn insert_with(&mut self, text: &str, spacing: Spacing) -> String {
         let leading = self.needs_leading_space(text, spacing.attachment);
-        let trailing = spacing.ending == Ending::Closed
+        let trailing = spacing.ending == Ending::Spaced
             && text
                 .chars()
                 .last()
@@ -110,7 +110,7 @@ impl Caret {
         if let Some(last) = typed.next() {
             self.before_that = typed.next().or(self.before);
             self.before = Some(last);
-            self.open = spacing.ending != Ending::Closed;
+            self.closing_space_due = spacing.ending != Ending::Spaced;
         }
         if trailing {
             spaced.push(' ');
@@ -124,8 +124,9 @@ impl Caret {
     /// once: `open src` before `notes` gets ` `. Empty when none is due.
     #[must_use = "the caret has moved past a space that must be typed"]
     pub fn close(&mut self) -> String {
-        let owed = self.open && self.before.is_some_and(|last| self.needs_space_after(last));
-        self.open = false;
+        let owed =
+            self.closing_space_due && self.before.is_some_and(|last| self.needs_space_after(last));
+        self.closing_space_due = false;
         if !owed {
             return String::new();
         }
@@ -147,7 +148,7 @@ impl Caret {
         !previous.is_whitespace()
             && !self.opens_after(previous)
             && !first.is_whitespace()
-            && (attachment == Attachment::Apart || !attaches_before(text))
+            && (attachment == Attachment::Spaced || !attaches_before(text))
             && !unspaced_script(previous)
             && !unspaced_script(first)
     }
@@ -226,7 +227,7 @@ mod tests {
     #[test]
     fn text_that_opens_apart_takes_a_space_before_its_symbol() {
         let apart = Spacing {
-            attachment: Attachment::Apart,
+            attachment: Attachment::Spaced,
             ..Spacing::default()
         };
         assert_eq!(Caret::between("cd", "").insert("../src"), "../src");

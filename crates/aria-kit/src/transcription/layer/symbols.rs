@@ -3,9 +3,10 @@
 use std::borrow::Cow;
 
 use super::claim::{Claimed, Place, Word};
-use super::correction::{Reading, Writing};
+use super::correction::{JoinContext, Writing};
 use super::symbol_words::{
-    Joins, Name, is_name, is_symbol, joins_always, name_at, opens_a_join_after, opens_a_name,
+    Joins, SymbolName, is_one_word_name, is_symbol, joins_always, leading_name, opens_a_join_after,
+    opens_a_name,
 };
 use super::vocabulary::is_english;
 
@@ -14,10 +15,14 @@ use super::vocabulary::is_english;
 ///
 /// Returns the start of each claim that opens with a symbol glued to no
 /// word before it, as `--amend` in `git commit --amend`.
-pub(super) fn claim<'a>(text: &str, reading: Reading<'_>, claimed: &mut Claimed<'a>) -> Vec<usize> {
+pub(super) fn claim<'a>(
+    text: &str,
+    reading: JoinContext<'_>,
+    claimed: &mut Claimed<'a>,
+) -> Vec<usize> {
     let (words, names) = merge_names(text, claimed.take_words());
-    let joining = joining(text, &words, &names, reading);
-    let link = |index: usize| joining.get(index).copied().flatten().and_then(Glue::link);
+    let glues = glues(text, &words, &names, reading);
+    let link = |index: usize| glues.get(index).copied().flatten().and_then(Glue::between);
     let in_joined_form = |index: usize| {
         let pair = |at: usize| {
             link(at).is_some() && words[at - 1].joined.is_some() && words[at + 1].joined.is_some()
@@ -31,14 +36,14 @@ pub(super) fn claim<'a>(text: &str, reading: Reading<'_>, claimed: &mut Claimed<
     let mut apart = Vec::new();
     let mut index = 0;
     while index < words.len() {
-        if joining[index] == Some(Glue::Neither) || run_said_last(text, &words, &names, index) {
+        if glues[index] == Some(Glue::Neither) || prefix_run_alone(text, &words, &names, index) {
             let span = words[index].span.clone();
             apart.push(span.start);
             claimed.push(Word::claimed(span, Cow::Owned(typed(names[index]))));
             index += 1;
             continue;
         }
-        let opening = match joining[index] {
+        let opening = match glues[index] {
             Some(Glue::After(opening)) => Some(opening),
             _ => None,
         };
@@ -48,7 +53,7 @@ pub(super) fn claim<'a>(text: &str, reading: Reading<'_>, claimed: &mut Claimed<
         while link(last + 1).is_some() {
             last += 2;
         }
-        let closing = joining.get(last + 1) == Some(&Some(Glue::Before));
+        let closing = glues.get(last + 1) == Some(&Some(Glue::Before));
         if last == index && !closing {
             claimed.push(words[index].clone());
             index += 1;
@@ -79,9 +84,9 @@ pub(super) fn claim<'a>(text: &str, reading: Reading<'_>, claimed: &mut Claimed<
 ///
 /// The word before defers too when it has a joined form, as "two" in "two
 /// dot". A name the text ends partway through defers whole: "back".
-pub(super) fn defer(text: &str, reading: Reading<'_>, claimed: &mut Claimed<'_>) {
+pub(super) fn defer(text: &str, reading: JoinContext<'_>, claimed: &mut Claimed<'_>) {
     let heard = claimed.words();
-    let open = name_open_at_end(text, heard);
+    let open = unfinished_name_at_end(text, heard);
     let (named, open) = heard.split_at(open.unwrap_or(heard.len()));
     let (mut words, mut names) = merge_names(text, named.to_vec());
     let mut names_a_symbol: Vec<bool> = names.iter().map(Option::is_some).collect();
@@ -101,13 +106,13 @@ pub(super) fn defer(text: &str, reading: Reading<'_>, claimed: &mut Claimed<'_>)
     for at in cut_inside.into_iter().chain(open.map(|open| open.start)) {
         claimed.defer_at(at);
     }
-    let joining = joining(text, &words, &names, reading);
-    while let Some(at) = symbol_to_defer(
+    let glues = glues(text, &words, &names, reading);
+    while let Some(at) = cut_for_edge_symbol(
         text,
         &words,
         &names,
         &names_a_symbol,
-        &joining,
+        &glues,
         claimed.deferred_from(),
     ) {
         claimed.defer_at(at);
@@ -116,12 +121,12 @@ pub(super) fn defer(text: &str, reading: Reading<'_>, claimed: &mut Claimed<'_>)
 
 /// Whether `text` ends on the name of a slash or backslash with no mark
 /// after it, as "src forward slash" and "dot dot forward slash" do.
-pub(super) fn waits_for_its_word(text: &str) -> bool {
+pub(super) fn ends_on_named_slash(text: &str) -> bool {
     let words: Vec<&str> = text.split_whitespace().collect();
     (0..words.len()).any(|index| {
-        name_at(words[index..].iter().copied()).is_some_and(|name| {
-            name.words == words.len() - index
-                && name.mark.is_none()
+        leading_name(words[index..].iter().copied()).is_some_and(|name| {
+            name.word_count == words.len() - index
+                && name.sentence_mark.is_none()
                 && name.typed.ends_with(joins_always)
         })
     })
@@ -141,7 +146,7 @@ enum Glue {
 }
 
 impl Glue {
-    fn link(self) -> Option<&'static str> {
+    fn between(self) -> Option<&'static str> {
         match self {
             Self::Both(link) => Some(link),
             Self::After(_) | Self::Before | Self::Neither => None,
@@ -152,14 +157,14 @@ impl Glue {
 /// How each word glues: `None` for a plain word or a symbol left a word.
 /// A slash reads the word before it as typed so far: "user underscore id
 /// forward slash x" → `user_id/x`, but "run forward slash x" → `run /x`.
-fn joining(
+fn glues(
     text: &str,
     words: &[Word<'_>],
-    names: &[Option<Name>],
-    reading: Reading<'_>,
+    names: &[Option<SymbolName>],
+    reading: JoinContext<'_>,
 ) -> Vec<Option<Glue>> {
     let count = words.len();
-    let mut joining = vec![None; count];
+    let mut glues = vec![None; count];
     // `goes_on` is what a symbol glued onto the next plain word: `user_`
     // before `id`.
     let mut typed_so_far = String::new();
@@ -171,12 +176,12 @@ fn joining(
         };
         goes_on = None;
         if name.joins == Joins::Always {
-            let before = sits_before(text, words, names, index)
+            let before = plain_word_before(text, words, names, index)
                 && (reading.writing == Writing::Prose
                     || words[index - 1].joined.is_some()
                     || reads_as_a_path(last_word(&typed_so_far), reading));
-            let after = glues_after(text, words, names, index);
-            joining[index] = Some(match (before, after) {
+            let after = glues_to_next(text, words, names, index);
+            glues[index] = Some(match (before, after) {
                 (true, true) => Glue::Both(name.typed),
                 (false, true) => Glue::After(name.typed),
                 (true, false) => Glue::Before,
@@ -191,22 +196,27 @@ fn joining(
             continue;
         }
         if let Some(link) = link(text, words, names, index) {
-            joining[index] = Some(Glue::Both(link));
+            glues[index] = Some(Glue::Both(link));
             goes_on = Some(format!("{typed_so_far}{link}"));
         } else if let Some(opening) = opening(text, words, names, reading.place, index) {
-            joining[index] = Some(Glue::After(opening));
+            glues[index] = Some(Glue::After(opening));
             goes_on = Some(opening.to_owned());
         }
     }
-    joining
+    glues
 }
 
 /// Whether the symbol at `index` glues to the next plain word, with no
 /// line break or mark between.
-fn glues_after(text: &str, words: &[Word<'_>], names: &[Option<Name>], index: usize) -> bool {
+fn glues_to_next(
+    text: &str,
+    words: &[Word<'_>],
+    names: &[Option<SymbolName>],
+    index: usize,
+) -> bool {
     index + 1 < words.len()
         && names[index + 1].is_none()
-        && names[index].is_some_and(|name| name.mark.is_none())
+        && names[index].is_some_and(|name| name.sentence_mark.is_none())
         && !line_break(text, words, index)
         && !words[index + 1]
             .typed(text)
@@ -215,7 +225,12 @@ fn glues_after(text: &str, words: &[Word<'_>], names: &[Option<Name>], index: us
 
 /// Whether a plain word ends right before `index`, with no line break or
 /// mark between.
-fn sits_before(text: &str, words: &[Word<'_>], names: &[Option<Name>], index: usize) -> bool {
+fn plain_word_before(
+    text: &str,
+    words: &[Word<'_>],
+    names: &[Option<SymbolName>],
+    index: usize,
+) -> bool {
     index > 0
         && names[index - 1].is_none()
         && !line_break(text, words, index - 1)
@@ -232,7 +247,7 @@ fn last_word(typed: &str) -> &str {
 
 /// Whether a slash after `typed` glues to it: `src/`, `.local/`, but
 /// `run /`. An English word glues only as a project path: `build-tools/`.
-fn reads_as_a_path(typed: &str, reading: Reading<'_>) -> bool {
+fn reads_as_a_path(typed: &str, reading: JoinContext<'_>) -> bool {
     // Only the typed text counts, so a later segment that sees only it
     // decides the same.
     let word = typed
@@ -245,12 +260,12 @@ fn reads_as_a_path(typed: &str, reading: Reading<'_>) -> bool {
 }
 
 /// What a name types: "forward slash." → `/.`.
-fn typed(name: Option<Name>) -> String {
+fn typed(name: Option<SymbolName>) -> String {
     let Some(name) = name else {
         return String::new();
     };
     let mut typed = name.typed.to_owned();
-    typed.extend(name.mark);
+    typed.extend(name.sentence_mark);
     typed
 }
 
@@ -259,42 +274,47 @@ fn typed(name: Option<Name>) -> String {
 fn opening(
     text: &str,
     words: &[Word<'_>],
-    names: &[Option<Name>],
+    names: &[Option<SymbolName>],
     place: Place,
     index: usize,
 ) -> Option<&'static str> {
     let name = names[index]?;
-    let opens = name.joins == Joins::After || (index == 0 && place == Place::First);
+    let opens = name.joins == Joins::After || (index == 0 && place == Place::Start);
     let next = words.get(index + 1)?;
     let joins = !line_break(text, words, index) && joinable_after_a_symbol(next.typed(text));
-    (opens && joins && name.mark.is_none()).then_some(name.typed)
+    (opens && joins && name.sentence_mark.is_none()).then_some(name.typed)
 }
 
 /// Whether `index` names a run like `../` with no word after it to join:
 /// "cd dot dot forward slash" → `cd ../`.
-fn run_said_last(text: &str, words: &[Word<'_>], names: &[Option<Name>], index: usize) -> bool {
+fn prefix_run_alone(
+    text: &str,
+    words: &[Word<'_>],
+    names: &[Option<SymbolName>],
+    index: usize,
+) -> bool {
     let Some(name) = names[index].filter(|name| name.joins == Joins::After) else {
         return false;
     };
     let nothing_after =
-        index + 1 == words.len() || line_break(text, words, index) || name.mark.is_some();
+        index + 1 == words.len() || line_break(text, words, index) || name.sentence_mark.is_some();
     nothing_after && name.typed.ends_with(joins_always)
 }
 
 /// Merges each name said in several words, as "back slash", into one
 /// word, and returns each word's name.
-fn merge_names<'a>(text: &str, words: Vec<Word<'a>>) -> (Vec<Word<'a>>, Vec<Option<Name>>) {
+fn merge_names<'a>(text: &str, words: Vec<Word<'a>>) -> (Vec<Word<'a>>, Vec<Option<SymbolName>>) {
     let mut whole = Vec::with_capacity(words.len());
     let mut names = Vec::with_capacity(words.len());
     let mut index = 0;
     while index < words.len() {
-        let Some(name) = name_at(nameable(text, &words, index)) else {
+        let Some(name) = leading_name(unclaimed_words_from(text, &words, index)) else {
             whole.push(words[index].clone());
             names.push(None);
             index += 1;
             continue;
         };
-        let last = index + name.words - 1;
+        let last = index + name.word_count - 1;
         whole.push(Word::plain(words[index].span.start..words[last].span.end));
         names.push(Some(name));
         index = last + 1;
@@ -304,7 +324,7 @@ fn merge_names<'a>(text: &str, words: Vec<Word<'a>>) -> (Vec<Word<'a>>, Vec<Opti
 
 /// The words from `index` that may say a name together: unclaimed, with no
 /// joined form, and on one line.
-fn nameable<'s>(
+fn unclaimed_words_from<'s>(
     text: &'s str,
     words: &'s [Word<'_>],
     index: usize,
@@ -322,12 +342,12 @@ fn nameable<'s>(
 
 /// Where a name the text ends on starts, while more words may change it:
 /// at "back" in "cd back".
-fn name_open_at_end(text: &str, words: &[Word<'_>]) -> Option<usize> {
+fn unfinished_name_at_end(text: &str, words: &[Word<'_>]) -> Option<usize> {
     let mut first = 0;
     while first < words.len() {
-        let said = nameable(text, words, first);
+        let said = unclaimed_words_from(text, words, first);
         let left = words.len() - first;
-        let named = name_at(said.clone()).map_or(0, |name| name.words);
+        let named = leading_name(said.clone()).map_or(0, |name| name.word_count);
         let open = (named < left && opens_a_name(said.clone())) || opens_a_join_after(said.clone());
         if open && said.count() == left {
             return Some(first);
@@ -340,12 +360,12 @@ fn name_open_at_end(text: &str, words: &[Word<'_>]) -> Option<usize> {
 /// Where the cut moves for the symbol word beside it, `None` if it stays:
 /// at "underscore" in "user underscore". A symbol that joins always moves
 /// it even after a word it won't glue to: "go forward slash".
-fn symbol_to_defer(
+fn cut_for_edge_symbol(
     text: &str,
     words: &[Word<'_>],
-    names: &[Option<Name>],
+    names: &[Option<SymbolName>],
     names_a_symbol: &[bool],
-    joining: &[Option<Glue>],
+    glues: &[Option<Glue>],
     deferred_from: usize,
 ) -> Option<usize> {
     let first = words.partition_point(|word| word.span.start < deferred_from);
@@ -359,12 +379,12 @@ fn symbol_to_defer(
     };
     let always = names[index].is_some_and(|name| name.joins == Joins::Always);
     let joins = match always {
-        true => matches!(joining[index], Some(Glue::Both(_) | Glue::Before)),
+        true => matches!(glues[index], Some(Glue::Both(_) | Glue::Before)),
         false => joins_after(text, words, left),
     };
     // An English word before a slash, as `run` in `run /`, types now. The
     // next text reads it the same way.
-    let reads_apart = always && sits_before(text, words, names, index);
+    let reads_apart = always && plain_word_before(text, words, names, index);
     let defers_left = match joins {
         false => at_cut && !reads_apart,
         true => words[left].joined.is_some(),
@@ -380,7 +400,7 @@ fn symbol_to_defer(
 fn link(
     text: &str,
     words: &[Word<'_>],
-    names: &[Option<Name>],
+    names: &[Option<SymbolName>],
     index: usize,
 ) -> Option<&'static str> {
     let symbol = names[index]
@@ -434,7 +454,7 @@ fn is_joinable(word: &str) -> bool {
     word.starts_with(char::is_alphanumeric)
         && word.ends_with(char::is_alphanumeric)
         && word.chars().all(|c| c.is_alphanumeric() || is_symbol(c))
-        && !is_name(word)
+        && !is_one_word_name(word)
 }
 
 #[cfg(test)]
@@ -442,7 +462,7 @@ mod tests {
     use rstest::rstest;
 
     use super::super::super::Attachment;
-    use super::super::correction::TypedBefore;
+    use super::super::correction::Preceding;
     use super::super::vocabulary::PersonalRules;
     use super::super::{JoinSymbols, Layer, Vocabulary, Writing};
     use crate::cancel::CancelToken;
@@ -618,13 +638,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case::opening_symbol("dot env", TypedBefore::Nothing, ".env")]
-    #[case::opening_run("dot dot forward slash src", TypedBefore::Nothing, "../src")]
-    #[case::run_after_typed_text("dot forward slash build", TypedBefore::Text("run"), "./build")]
-    #[case::run_after_a_sentence("hyphen hyphen verbose", TypedBefore::Apart, "--verbose")]
+    #[case::opening_symbol("dot env", Preceding::Start, ".env")]
+    #[case::opening_run("dot dot forward slash src", Preceding::Start, "../src")]
+    #[case::run_after_typed_text("dot forward slash build", Preceding::Text("run"), "./build")]
+    #[case::run_after_a_sentence("hyphen hyphen verbose", Preceding::SentenceEnd, "--verbose")]
     fn text_opening_on_a_symbol_that_joins_only_the_word_after_stands_apart(
         #[case] heard: &str,
-        #[case] before: TypedBefore<'_>,
+        #[case] before: Preceding<'_>,
         #[case] typed: &str,
     ) {
         let corrected = Vocabulary::default()
@@ -632,7 +652,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             (corrected.text.as_str(), corrected.attachment),
-            (typed, Attachment::Apart)
+            (typed, Attachment::Spaced)
         );
     }
 
@@ -640,7 +660,7 @@ mod tests {
     fn empty_typed_text_is_nothing_typed() {
         let corrected = Vocabulary::default().correct_spoken_after(
             "dot env",
-            TypedBefore::Text(""),
+            Preceding::Text(""),
             Writing::Commands,
         );
         assert_eq!(
@@ -653,7 +673,7 @@ mod tests {
     fn a_symbol_after_a_sentence_end_stays_a_word() {
         let corrected = Vocabulary::default().correct_spoken_after(
             "dot env",
-            TypedBefore::Apart,
+            Preceding::SentenceEnd,
             Writing::Commands,
         );
         assert_eq!(corrected, None);
@@ -662,11 +682,15 @@ mod tests {
     #[test]
     fn a_named_slash_after_a_sentence_end_types_apart() {
         let corrected = Vocabulary::default()
-            .correct_spoken_after("forward slash conf", TypedBefore::Apart, Writing::Commands)
+            .correct_spoken_after(
+                "forward slash conf",
+                Preceding::SentenceEnd,
+                Writing::Commands,
+            )
             .unwrap();
         assert_eq!(
             (corrected.text.as_str(), corrected.attachment),
-            ("/conf", Attachment::Apart)
+            ("/conf", Attachment::Spaced)
         );
     }
 
@@ -713,9 +737,9 @@ mod tests {
         let corrected = Vocabulary::default().correct_spoken_after(
             heard,
             if before.is_empty() {
-                TypedBefore::Nothing
+                Preceding::Start
             } else {
-                TypedBefore::Text(before)
+                Preceding::Text(before)
             },
             Writing::Commands,
         );
@@ -732,7 +756,7 @@ mod tests {
     fn a_term_never_reads_across_the_word_typed_before() {
         let vocabulary = Vocabulary::new(["New York"]).unwrap();
         assert_eq!(
-            vocabulary.correct_spoken_after("york", TypedBefore::Text("new"), Writing::Commands),
+            vocabulary.correct_spoken_after("york", Preceding::Text("new"), Writing::Commands),
             None
         );
     }

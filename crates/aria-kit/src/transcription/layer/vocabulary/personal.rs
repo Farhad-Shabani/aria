@@ -6,7 +6,7 @@ use crate::cancel::CancelToken;
 
 use super::super::claim::{Claimed, Place, Word};
 use super::super::number_words::{is_up_to_twenty, word_for};
-use super::super::symbol_words::name_at;
+use super::super::symbol_words::leading_name;
 use super::fuzzy::{AfterCut, apply_fuzzy, capitals, waiting_from};
 use super::{MatchError, is_word};
 
@@ -487,7 +487,7 @@ impl PersonalRules {
             let form = self
                 .form_at(&chars, position, &|| Ok::<_, std::convert::Infallible>(()))
                 .unwrap_or_else(|never| match never {});
-            let opens = place == Place::First && text[..byte(position)].trim().is_empty();
+            let opens = place == Place::Start && text[..byte(position)].trim().is_empty();
             let waits =
                 |length: usize| waits_on_a_symbol(&chars[position..position + length], opens);
             let Some((length, typed)) = form.filter(|(length, _)| !waits(*length)) else {
@@ -531,17 +531,17 @@ fn unclaimed_around(words: &[Word<'_>], len: usize, at: usize) -> Option<Range<u
 fn waits_on_a_symbol(spoken: &[char], opens_the_dictation: bool) -> bool {
     let spoken: String = spoken.iter().collect();
     let words: Vec<&str> = spoken.split_whitespace().collect();
-    let name_from = |from: usize| name_at(words[from..].iter().copied());
+    let name_from = |from: usize| leading_name(words[from..].iter().copied());
     let mut named = 0;
     while let Some(name) = name_from(named) {
-        named += name.words;
+        named += name.word_count;
     }
     if named == words.len() {
         return false;
     }
     let opens = named > 0 && !opens_the_dictation;
     let ends = (1..words.len())
-        .any(|from| name_from(from).is_some_and(|name| from + name.words == words.len()));
+        .any(|from| name_from(from).is_some_and(|name| from + name.word_count == words.len()));
     opens || ends
 }
 

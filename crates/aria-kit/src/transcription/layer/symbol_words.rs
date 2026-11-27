@@ -24,7 +24,7 @@ const RUNS: [(&str, Joins); 8] = [
 ];
 
 /// The most words any name takes: "dot dot forward slash" → `../`.
-pub(super) const LONGEST_NAME: usize = 4;
+pub(super) const MAX_NAME_WORDS: usize = 4;
 
 /// Which words beside it a symbol joins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,12 +39,12 @@ pub(super) enum Joins {
 
 /// A symbol's or a run's name at the start of some words: "back slash" → `\`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Name {
-    pub words: usize,
+pub(super) struct SymbolName {
+    pub word_count: usize,
     pub typed: &'static str,
     pub joins: Joins,
     /// "forward slash." → `/.`, and no word after it joins.
-    pub mark: Option<char>,
+    pub sentence_mark: Option<char>,
 }
 
 /// The longest name `words` start with: "dot dot forward slash" → `../`.
@@ -52,33 +52,37 @@ pub(super) struct Name {
 /// Commas inside a run drop: "dot, dot, dot" → `...`. A comma inside a
 /// name, as "back, slash", or after a lone symbol leaves plain words,
 /// unless the symbol [joins always](Joins::Always): "back slash," → `\`.
-pub(super) fn name_at<'a>(mut words: impl Iterator<Item = &'a str> + Clone) -> Option<Name> {
+pub(super) fn leading_name<'a>(
+    mut words: impl Iterator<Item = &'a str> + Clone,
+) -> Option<SymbolName> {
     let mut longest = None;
     let mut runs = RUNS.map(|(run, _)| Some(run));
     let (mut count, mut listed) = (0, false);
-    while let Some(said) = symbol_at(words.clone()) {
+    while let Some(said) = leading_symbol(words.clone()) {
         runs = runs.map(|run| run?.strip_prefix(said.symbol));
         let named = match count {
             0 => Some((said.symbol, said.joins)),
             _ => completed_run(&runs),
         };
-        count += said.words;
+        count += said.word_count;
         let named = named.filter(|(_, joins)| {
-            !said.comma || listed || (said.joins == Joins::Always && *joins == Joins::Always)
+            !said.ends_in_comma
+                || listed
+                || (said.joins == Joins::Always && *joins == Joins::Always)
         });
         if let Some((typed, joins)) = named {
-            longest = Some(Name {
-                words: count,
+            longest = Some(SymbolName {
+                word_count: count,
                 typed,
                 joins,
-                mark: said.mark,
+                sentence_mark: said.sentence_mark,
             });
         }
-        if said.mark.is_some() || !goes_on(&runs) {
+        if said.sentence_mark.is_some() || !run_can_grow(&runs) {
             break;
         }
-        listed |= said.comma;
-        words.nth(said.words - 1);
+        listed |= said.ends_in_comma;
+        words.nth(said.word_count - 1);
     }
     longest
 }
@@ -115,27 +119,27 @@ fn opens<'a>(
         if words.clone().next().is_none() {
             return symbols > 0;
         }
-        let Some(said) = symbol_at(words.clone()) else {
-            return begun_symbol(words).is_some_and(|symbol| {
+        let Some(said) = leading_symbol(words.clone()) else {
+            return partly_said_symbol(words).is_some_and(|symbol| {
                 (symbols == 0 && what == Opens::ALongerName)
                     || runs.iter().flatten().any(|rest| rest.starts_with(symbol))
             });
         };
         runs = runs.map(|run| run?.strip_prefix(said.symbol));
         let open = match what {
-            Opens::ALongerName => goes_on(&runs),
+            Opens::ALongerName => run_can_grow(&runs),
             Opens::ARun => runs.iter().any(Option::is_some),
         };
         if !open {
             return false;
         }
         symbols += 1;
-        words.nth(said.words - 1);
+        words.nth(said.word_count - 1);
     }
 }
 
-pub(super) fn is_name(word: &str) -> bool {
-    name_at(std::iter::once(word)).is_some()
+pub(super) fn is_one_word_name(word: &str) -> bool {
+    leading_name(std::iter::once(word)).is_some()
 }
 
 /// The names of `character`: `\` → "backslash", "back slash". Empty when
@@ -174,18 +178,18 @@ pub(super) fn is_symbol(character: char) -> bool {
 }
 
 /// A symbol's name at the start of some words: "dot," → `.`.
-struct Said {
+struct SpokenSymbol {
     symbol: &'static str,
     joins: Joins,
-    words: usize,
+    word_count: usize,
     /// "dot," ends in a comma.
-    comma: bool,
+    ends_in_comma: bool,
     /// "forward slash." ends a sentence. Only a symbol that joins always
     /// takes a mark.
-    mark: Option<char>,
+    sentence_mark: Option<char>,
 }
 
-fn symbol_at<'a>(words: impl Iterator<Item = &'a str> + Clone) -> Option<Said> {
+fn leading_symbol<'a>(words: impl Iterator<Item = &'a str> + Clone) -> Option<SpokenSymbol> {
     each_name().find_map(|(symbol, name, joins)| {
         let mut words = words.clone();
         let mut parts = name.split(' ').peekable();
@@ -207,18 +211,18 @@ fn symbol_at<'a>(words: impl Iterator<Item = &'a str> + Clone) -> Option<Said> {
                 return None;
             }
         }
-        Some(Said {
+        Some(SpokenSymbol {
             symbol,
             joins,
-            words: name.split(' ').count(),
-            comma,
-            mark,
+            word_count: name.split(' ').count(),
+            ends_in_comma: comma,
+            sentence_mark: mark,
         })
     })
 }
 
 /// The symbol whose name `words` start but don't finish: "back" → `\`.
-fn begun_symbol<'a>(words: impl Iterator<Item = &'a str> + Clone) -> Option<&'static str> {
+fn partly_said_symbol<'a>(words: impl Iterator<Item = &'a str> + Clone) -> Option<&'static str> {
     each_name().find_map(|(symbol, name, _)| {
         let mut parts = name.split(' ');
         let begun = words.clone().all(|word| {
@@ -244,7 +248,7 @@ fn completed_run(runs: &[Option<&'static str>; RUNS.len()]) -> Option<(&'static 
 }
 
 /// Whether one more symbol could make a longer run: "dot dot" → `...`.
-fn goes_on(runs: &[Option<&'static str>; RUNS.len()]) -> bool {
+fn run_can_grow(runs: &[Option<&'static str>; RUNS.len()]) -> bool {
     runs.iter().flatten().any(|rest| !rest.is_empty())
 }
 
@@ -273,11 +277,12 @@ mod tests {
             .chain(RUNS.iter().map(|(run, _)| *run))
             .map(|symbol| {
                 let said = longest_said(symbol);
-                let name = name_at(said.split(' ')).expect("each listed name names its symbol");
+                let name =
+                    leading_name(said.split(' ')).expect("each listed name names its symbol");
                 assert_eq!(name.typed, symbol, "{said}");
-                name.words
+                name.word_count
             })
             .max();
-        assert_eq!(longest, Some(LONGEST_NAME));
+        assert_eq!(longest, Some(MAX_NAME_WORDS));
     }
 }

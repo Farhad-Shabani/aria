@@ -63,8 +63,8 @@ impl TranscriptSink for RecordingSink {
     fn segment(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
         let kind = match utterance.spacing.attachment {
             Attachment::Joined => "joined",
-            Attachment::Apart => "apart",
-            Attachment::AsWritten => "segment",
+            Attachment::Spaced => "apart",
+            Attachment::Auto => "segment",
         };
         self.log.push(format!("{kind}:{}", utterance.text));
         Ok(())
@@ -73,8 +73,8 @@ impl TranscriptSink for RecordingSink {
     fn completed(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
         let kind = match utterance.spacing.attachment {
             Attachment::Joined => "completed joined",
-            Attachment::Apart => "completed apart",
-            Attachment::AsWritten => "completed",
+            Attachment::Spaced => "completed apart",
+            Attachment::Auto => "completed",
         };
         self.log.push(format!("{kind}:{}", utterance.text));
         Ok(())

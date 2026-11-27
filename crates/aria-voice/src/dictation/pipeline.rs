@@ -3421,7 +3421,7 @@ mod tests {
                     caret.insert_with(joined, joins)
                 } else if let Some(apart) = entry.strip_prefix("apart:") {
                     let apart_from = Spacing {
-                        attachment: Attachment::Apart,
+                        attachment: Attachment::Spaced,
                         ..Spacing::default()
                     };
                     caret.insert_with(apart, apart_from)

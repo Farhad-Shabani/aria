@@ -19,10 +19,10 @@ impl Layer for JoinSymbols {
         let corrected = vocabulary.correct_with(
             text,
             |claimed| {
-                let reading = Reading {
+                let reading = JoinContext {
                     vocabulary: &vocabulary,
                     writing: Writing::default(),
-                    place: Place::Later,
+                    place: Place::MidDictation,
                 };
                 claim_each(&[Step::Symbols], text, reading, claimed);
             },
@@ -75,7 +75,7 @@ pub(super) enum Step {
 /// What a join depends on besides the words. "and forward slash or" →
 /// `and/or` in prose, `and /or` in commands.
 #[derive(Clone, Copy)]
-pub(super) struct Reading<'a> {
+pub(super) struct JoinContext<'a> {
     pub(super) vocabulary: &'a Vocabulary,
     pub(super) writing: Writing,
     pub(super) place: Place,
@@ -100,7 +100,12 @@ const _: () = {
 };
 
 impl Step {
-    fn claim<'a>(self, text: &str, reading: Reading<'a>, claimed: &mut Claimed<'a>) -> Vec<usize> {
+    fn claim<'a>(
+        self,
+        text: &str,
+        reading: JoinContext<'a>,
+        claimed: &mut Claimed<'a>,
+    ) -> Vec<usize> {
         match self {
             Self::Forms => reading.vocabulary.claim_forms(text, reading.place, claimed),
             Self::Numbers => numbers::claim(text, claimed),
@@ -110,7 +115,7 @@ impl Step {
     }
 
     /// Defers more words, given where the cut now falls.
-    fn defer(self, text: &str, reading: Reading<'_>, claimed: &mut Claimed<'_>) {
+    fn defer(self, text: &str, reading: JoinContext<'_>, claimed: &mut Claimed<'_>) {
         match self {
             Self::Forms => reading.vocabulary.defer_waiting_forms(text, claimed),
             Self::Numbers => {}
@@ -140,7 +145,7 @@ impl Step {
 fn claim_each<'a>(
     steps: &[Step],
     text: &str,
-    reading: Reading<'a>,
+    reading: JoinContext<'a>,
     claimed: &mut Claimed<'a>,
 ) -> Vec<usize> {
     steps
@@ -152,46 +157,46 @@ fn claim_each<'a>(
 /// What sits right before new dictated text. A spoken symbol at the
 /// start of the new text joins only a word right before it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TypedBefore<'a> {
+pub(super) enum Preceding<'a> {
     /// The dictation starts here. "dot env" → `.env`.
-    Nothing,
+    Start,
     /// Text typed earlier. After `src`, "forward slash main" → `src/main`.
     /// A trailing space in the text stops the join. Empty text is
-    /// [`Self::Nothing`].
+    /// [`Self::Start`].
     Text(&'a str),
     /// A finished sentence. "forward slash main" → ` /main`.
-    Apart,
+    SentenceEnd,
 }
 
 impl Vocabulary {
     /// Corrects a dictation's whole `text` in one pass: terms, spoken forms,
     /// numbers, symbols, then personal rules on what nothing claimed.
     pub fn correct_spoken(&self, text: &str, writing: Writing) -> Option<Corrected> {
-        self.correct_spoken_after(text, TypedBefore::Nothing, writing)
+        self.correct_spoken_after(text, Preceding::Start, writing)
     }
 
     /// Like [`Self::correct_spoken`], for text typed after `before`.
     pub(super) fn correct_spoken_after(
         &self,
         text: &str,
-        before: TypedBefore<'_>,
+        before: Preceding<'_>,
         writing: Writing,
     ) -> Option<Corrected> {
         let (typed, place) = match before {
-            TypedBefore::Nothing | TypedBefore::Text("") => (None, Place::First),
-            TypedBefore::Apart => (None, Place::Later),
-            TypedBefore::Text(before) => (
+            Preceding::Start | Preceding::Text("") => (None, Place::Start),
+            Preceding::SentenceEnd => (None, Place::MidDictation),
+            Preceding::Text(before) => (
                 before
                     .split_whitespace()
                     .next_back()
                     .filter(|_| !before.ends_with(char::is_whitespace)),
-                Place::Later,
+                Place::MidDictation,
             ),
         };
         let lead = text.len() - text.trim_start().len();
         let attachment = |apart: &[usize], start: usize| match apart.contains(&start) {
-            true => Attachment::Apart,
-            false => Attachment::AsWritten,
+            true => Attachment::Spaced,
+            false => Attachment::Auto,
         };
         let Some(typed) = typed else {
             let (text, apart) = self.spoken(text, 0, place, writing)?;
@@ -230,7 +235,7 @@ impl Vocabulary {
     ) -> Option<(String, Vec<usize>)> {
         let mut apart = Vec::new();
         let corrected = self.correct_spoken_with(text, typed_len, |claimed| {
-            let reading = Reading {
+            let reading = JoinContext {
                 vocabulary: self,
                 writing,
                 place,
@@ -259,10 +264,10 @@ impl Vocabulary {
         // The hold can't see the typed text, so it reads `text` as
         // mid-dictation. A form that starts with a symbol then stays
         // unclaimed, which only holds more words.
-        let reading = Reading {
+        let reading = JoinContext {
             vocabulary: self,
             writing,
-            place: Place::Later,
+            place: Place::MidDictation,
         };
         let mut claimed = self.claimed_spoken(text, 0, |claimed| {
             claim_each(unjoined, text, reading, claimed);

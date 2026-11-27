@@ -101,7 +101,7 @@ impl DeferredWords {
         let waits = self
             .held
             .as_ref()
-            .is_some_and(|held| symbols::waits_for_its_word(without_closing_mark(&held.words)));
+            .is_some_and(|held| symbols::ends_on_named_slash(without_closing_mark(&held.words)));
         if waits {
             return None;
         }
@@ -150,7 +150,7 @@ mod tests {
     use rstest::rstest;
 
     use super::super::super::Attachment;
-    use super::super::correction::TypedBefore;
+    use super::super::correction::Preceding;
     use super::super::corrector::tests::{crowded, listing, names, streamed};
     use super::*;
 
@@ -167,7 +167,7 @@ mod tests {
         );
         let next = words.hold("id", None, &vocabulary, writing).text;
         assert_eq!(next, "underscore id");
-        let before = TypedBefore::Text("user");
+        let before = Preceding::Text("user");
         let corrected = vocabulary
             .correct_spoken_after(&next, before, writing)
             .unwrap();

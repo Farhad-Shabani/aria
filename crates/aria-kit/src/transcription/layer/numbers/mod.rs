@@ -14,7 +14,7 @@ use super::claim::{Claimed, Word};
 use super::number_words::{
     Next, compound_ordinal, continues, is_digit, is_number_word, is_oh, is_ordinal, ordinal_value,
 };
-use super::symbol_words::{LONGEST_NAME, is_symbol, name_at};
+use super::symbol_words::{MAX_NAME_WORDS, is_symbol, leading_name};
 
 /// Claims each run of number words that has one clear written form as
 /// digits: "two point five" → `2.5`, "twenty fifteen" → `2015`, "nine five
@@ -263,16 +263,16 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         let Some(before) = start.checked_sub(1) else {
             return false;
         };
-        self.following(before).is_some() && self.ends_a_name(before)
+        self.following(before).is_some() && self.ends_a_symbol_name(before)
     }
 
     /// Whether the words ending at `last` name a symbol, as "back slash"
     /// does in "thirty back slash o one" → `30\01`.
-    fn ends_a_name(&self, last: usize) -> bool {
-        let earliest = (last + 1).saturating_sub(LONGEST_NAME);
+    fn ends_a_symbol_name(&self, last: usize) -> bool {
+        let earliest = (last + 1).saturating_sub(MAX_NAME_WORDS);
         (earliest..=last).rev().any(|first| {
             let said = (first..=last).map_while(|index| self.word(index));
-            name_at(said).is_some_and(|name| name.words == last - first + 1)
+            leading_name(said).is_some_and(|name| name.word_count == last - first + 1)
         })
     }
 

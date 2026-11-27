@@ -308,14 +308,14 @@ mod tests {
                 .attachment
         };
 
-        assert_eq!(finish(|text| text.push('.')), Attachment::Apart);
+        assert_eq!(finish(|text| text.push('.')), Attachment::Spaced);
         assert_eq!(
             finish(|text| *text = ".env, then restart the app".to_owned()),
-            Attachment::Apart
+            Attachment::Spaced
         );
         assert_eq!(
             finish(|text| *text = ", then the env file".to_owned()),
-            Attachment::AsWritten
+            Attachment::Auto
         );
     }
 

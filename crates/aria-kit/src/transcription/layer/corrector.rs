@@ -2,7 +2,7 @@
 
 use super::super::sentences::{Punctuated, SentenceEnds};
 use super::super::spacing::{Attachment, Caret, Ending, Spacing};
-use super::correction::TypedBefore;
+use super::correction::Preceding;
 use super::deferred::{DeferredWords, Unheld};
 use super::{Corrected, Vocabulary, Writing};
 
@@ -141,7 +141,7 @@ impl<'a> SegmentCorrector<'a> {
                 );
                 // The next segment may still join this one, so the space
                 // before a word after the caret waits for the end.
-                if punctuated.spacing.ending == Ending::Closed {
+                if punctuated.spacing.ending == Ending::Spaced {
                     punctuated.spacing.ending = Ending::Open;
                 }
                 punctuated
@@ -150,7 +150,7 @@ impl<'a> SegmentCorrector<'a> {
                 text: corrected.text,
                 spacing: Spacing {
                     attachment: corrected.attachment,
-                    ending: Ending::Closed,
+                    ending: Ending::Spaced,
                 },
             },
         };
@@ -188,19 +188,19 @@ pub struct StreamEnd {
 }
 
 /// What sits before a streamed segment typed after `typed`. It is
-/// [`TypedBefore::Apart`] when `sentence_ended_before` says a sentence
+/// [`Preceding::SentenceEnd`] when `sentence_ended_before` says a sentence
 /// ended, or when it is `None` and `sentences` holds back a closing mark.
 fn preceding<'a>(
     typed: &'a str,
     sentences: &SentenceEnds,
     sentence_ended_before: Option<bool>,
-) -> TypedBefore<'a> {
+) -> Preceding<'a> {
     if typed.is_empty() {
-        TypedBefore::Nothing
+        Preceding::Start
     } else if sentences.reads_on(sentence_ended_before) {
-        TypedBefore::Text(typed)
+        Preceding::Text(typed)
     } else {
-        TypedBefore::Apart
+        Preceding::SentenceEnd
     }
 }
 
@@ -250,7 +250,7 @@ pub(super) mod tests {
             SegmentCorrector::new(&vocabulary).with_closing_mark(ClosingMark::AsDecoded);
         let should = corrector.push("We should.", Some(false)).unwrap();
         assert_eq!(should.text, "We should.");
-        assert_eq!(should.spacing.ending, Ending::Closed);
+        assert_eq!(should.spacing.ending, Ending::Spaced);
         assert_eq!(typed(&mut corrector, "Ship it.", Some(false)), "Ship it.");
         let end = corrector.finish();
         assert_eq!(end.mark, None);
@@ -510,7 +510,7 @@ pub(super) mod tests {
         let next = vocabulary
             .correct_spoken_after(
                 "for id and kubernets",
-                TypedBefore::Text("set x='id then ask"),
+                Preceding::Text("set x='id then ask"),
                 Writing::Commands,
             )
             .unwrap();
