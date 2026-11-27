@@ -13,7 +13,9 @@ pub mod select;
 pub use aria_kit::transcription::layer::vocabulary::{MatchError, PersonalRules, Term, Vocabulary};
 
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use aria_kit::cancel::CancelToken;
 
 /// Under the home directory: the dictionary and the project vocabulary's
 /// catalog.
@@ -100,4 +102,14 @@ pub fn cache_key(extractor_key: &str) -> Option<String> {
         return None;
     }
     Some(format!("names1:terms{SELECTED_TERMS}:{extractor_key}"))
+}
+
+/// `folders`, then the path names from the git branches at `root`.
+pub fn path_names(
+    mut folders: Vec<String>,
+    root: &Path,
+    cancel: &CancelToken,
+) -> Result<Vec<String>, branches::Error> {
+    folders.extend(branches::path_names(root, cancel)?);
+    Ok(folders)
 }

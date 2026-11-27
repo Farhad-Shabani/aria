@@ -12,7 +12,7 @@ use aria_voice::vocabulary::{
     catalog::{self, Catalog},
     collection::{self, Collector},
     dictionary::{AddWordOutcome, Dictionary, DictionaryError, RemoveWordOutcome, Stamp},
-    discover, select,
+    discover, path_names, select,
 };
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -128,16 +128,6 @@ impl From<MatchError> for Error {
             MatchError::InvalidName => Self::Unavailable(None),
         }
     }
-}
-
-/// `folders`, then the path names from the git branches at `root`.
-fn path_names(
-    mut folders: Vec<String>,
-    root: &Path,
-    token: &CancelToken,
-) -> Result<Vec<String>, Error> {
-    folders.extend(branches::path_names(root, token)?);
-    Ok(folders)
 }
 
 /// A compiled list and what status reports about it.
