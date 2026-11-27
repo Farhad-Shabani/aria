@@ -30,11 +30,7 @@ const MAX_PARAGRAPH_CHARS: usize = 600;
 pub struct TranscriptFile {
     file: File,
     path: PathBuf,
-    /// `New`: Aria made the file in its own folder, so its path is the
-    /// session's, and a rewrite replaces the file. `Append`: the file is the
-    /// caller's, and any program may append to it while the session runs,
-    /// so Aria only appends and never rewrites it.
-    creation: Creation,
+    owner: Owner,
     paragraph: String,
     /// Seconds into the recording at the open paragraph's first and latest
     /// segments.
@@ -62,13 +58,26 @@ struct Paragraph {
     text: String,
 }
 
+/// Whose path a session's file sits at, which decides whether a rewrite may
+/// replace the file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Owner {
+    /// Aria made the file in its own folder, so its path is the session's.
+    Aria,
+    /// The caller named the file, and any program may append to it while the
+    /// session runs. Aria only appends to it and never rewrites it.
+    Caller,
+}
+
 impl TranscriptFile {
     /// A new file in `directory`, under a name no session had before.
     pub(crate) fn create(directory: &Path) -> io::Result<(Self, PathBuf)> {
         for name in transcript_file::names_at(OffsetDateTime::now_utc()) {
-            match Self::open(directory.join(name?), Creation::New) {
+            let path = directory.join(name?);
+            match transcript_file::create(&path, Creation::New) {
+                Ok(file) => return Ok((Self::opened(file, path.clone(), Owner::Aria), path)),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                opened => return opened,
+                Err(error) => return Err(error),
             }
         }
         Err(transcript_file::taken())
@@ -81,31 +90,27 @@ impl TranscriptFile {
         history: &Store,
     ) -> Result<(Self, PathBuf, u64), CreateError> {
         let (file, path, id) = history.create_transcript(directory)?;
-        Ok((Self::opened(file, path.clone(), Creation::New), path, id))
+        Ok((Self::opened(file, path.clone(), Owner::Aria), path, id))
     }
 
     /// The caller's exact file, appended to when it already exists. A file or
     /// folder this creates is private to its owner. An existing file keeps
     /// its mode.
     pub(crate) fn append_to(path: PathBuf) -> io::Result<(Self, PathBuf)> {
-        Self::open(path, Creation::Append)
+        let file = transcript_file::create(&path, Creation::Append)?;
+        Ok((Self::opened(file, path.clone(), Owner::Caller), path))
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    fn open(path: PathBuf, creation: Creation) -> io::Result<(Self, PathBuf)> {
-        let file = transcript_file::create(&path, creation)?;
-        Ok((Self::opened(file, path.clone(), creation), path))
-    }
-
-    fn opened(file: File, path: PathBuf, creation: Creation) -> Self {
+    fn opened(file: File, path: PathBuf, owner: Owner) -> Self {
         let now = Instant::now();
         Self {
             file,
             path,
-            creation,
+            owner,
             paragraph: String::new(),
             paragraph_at: 0,
             paragraph_ended: 0,
@@ -144,7 +149,7 @@ impl TranscriptFile {
         label: impl FnOnce(&[Option<Range<u64>>]) -> Vec<Option<Label>>,
     ) -> io::Result<()> {
         self.flush_paragraph()?;
-        if self.history.is_empty() || matches!(self.creation, Creation::Append) {
+        if self.history.is_empty() || self.owner == Owner::Caller {
             return Ok(());
         }
         let mut labels = label(&self.paragraph_spans());
