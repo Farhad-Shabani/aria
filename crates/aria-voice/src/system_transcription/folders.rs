@@ -10,7 +10,7 @@ use aria_settings::rpc::RpcErrorCode;
 use super::TranscriptSaving;
 use super::sink::TranscriptFile;
 use super::unsaved::{self, UnsavedSession};
-use crate::history::{CreateError, HistoryError, Store};
+use crate::history::{CreateError, HistoryError, OwnedFiles, Store};
 use crate::transcript_file::{self, is_within};
 
 /// Aria's transcripts folder and unsaved folder under one home. Only Aria
@@ -58,21 +58,30 @@ pub enum FolderError {
 pub enum StartError {
     #[error(transparent)]
     Folders(#[from] FolderError),
+    #[error(transparent)]
+    Output(#[from] OutputError),
+    #[error(transparent)]
+    History(#[from] HistoryError),
+    #[error(transparent)]
+    Io(io::Error),
+}
+
+/// Why a file of the person's can't take a transcript: an `--output` file,
+/// or where Save puts a copy.
+#[derive(Debug, thiserror::Error)]
+pub enum OutputError {
     #[error("an output path can't contain . or ..")]
-    DottedOutput,
+    Dotted,
     /// Delete or Discard would remove it.
     #[error(
         "an output file can't go in ~/.aria/transcripts or ~/.aria/unsaved; choose another folder"
     )]
-    OutputInAriaFolder,
-    /// Deleting its entry, or a removal still pending, would take the
-    /// appended text too.
+    InAriaFolder,
+    /// Deleting its entry, or a removal still pending, would remove it too.
     #[error("that file is a transcript history saved; choose another")]
-    SavedOutput,
+    Saved,
     #[error("history can't check whether that file is a saved transcript; choose a new file")]
-    UncheckedOutput,
-    #[error(transparent)]
-    History(#[from] HistoryError),
+    Unchecked,
     #[error(transparent)]
     Io(io::Error),
 }
@@ -90,12 +99,21 @@ impl From<&StartError> for RpcErrorCode {
     fn from(error: &StartError) -> Self {
         match error {
             StartError::Folders(error) => error.into(),
-            StartError::DottedOutput | StartError::OutputInAriaFolder | StartError::SavedOutput => {
-                Self::InvalidRequest
-            }
-            StartError::UncheckedOutput => Self::HistoryUnavailable,
+            StartError::Output(error) => error.into(),
             StartError::History(error) => error.into(),
             StartError::Io(_) => Self::Internal,
+        }
+    }
+}
+
+impl From<&OutputError> for RpcErrorCode {
+    fn from(error: &OutputError) -> Self {
+        match error {
+            OutputError::Dotted | OutputError::InAriaFolder | OutputError::Saved => {
+                Self::InvalidRequest
+            }
+            OutputError::Unchecked => Self::HistoryUnavailable,
+            OutputError::Io(_) => Self::Internal,
         }
     }
 }
@@ -130,7 +148,8 @@ impl TranscriptFolders {
     ) -> Result<(TranscriptFile, Kept), StartError> {
         self.check()?;
         if let Some(output) = output {
-            self.check_output(&output, history.as_deref())?;
+            let owned = history.as_deref().map(Store::owned_files).transpose()?;
+            self.check_destination(&output, owned.as_ref())?;
             let (sink, path) = TranscriptFile::append_to(output).map_err(StartError::Io)?;
             return Ok((sink, Kept::Output(path)));
         }
@@ -193,31 +212,35 @@ impl TranscriptFolders {
         Ok(())
     }
 
-    /// Refuses an output file in either folder, however a link or letter
-    /// case spells it. Also refuses a file history owns. Without history
-    /// nothing says which files it owns, so it accepts only a new file.
-    fn check_output(&self, output: &Path, history: Option<&Store>) -> Result<(), StartError> {
-        if output
+    /// Refuses `destination` in either folder, however a link or letter
+    /// case spells it. Also refuses a file history owns. With `owned` `None`
+    /// nothing says which files history owns, so it accepts only a new file.
+    pub(crate) fn check_destination(
+        &self,
+        destination: &Path,
+        owned: Option<&OwnedFiles>,
+    ) -> Result<(), OutputError> {
+        if destination
             .components()
             .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
         {
-            return Err(StartError::DottedOutput);
+            return Err(OutputError::Dotted);
         }
-        let inside = is_within(output, &self.transcripts)
-            .and_then(|inside| Ok(inside || is_within(output, &self.unsaved)?))
-            .map_err(StartError::Io)?;
+        let inside = is_within(destination, &self.transcripts)
+            .and_then(|inside| Ok(inside || is_within(destination, &self.unsaved)?))
+            .map_err(OutputError::Io)?;
         if inside {
-            return Err(StartError::OutputInAriaFolder);
+            return Err(OutputError::InAriaFolder);
         }
-        let owned = match history {
-            Some(store) => store.owned_files()?.contains(output),
-            None if output.symlink_metadata().is_ok() => {
-                return Err(StartError::UncheckedOutput);
+        let saved = match owned {
+            Some(owned) => owned.contains(destination),
+            None if destination.symlink_metadata().is_ok() => {
+                return Err(OutputError::Unchecked);
             }
             None => false,
         };
-        if owned {
-            return Err(StartError::SavedOutput);
+        if saved {
+            return Err(OutputError::Saved);
         }
         Ok(())
     }

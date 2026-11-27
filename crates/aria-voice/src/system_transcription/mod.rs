@@ -11,7 +11,7 @@ pub mod unsaved;
 
 pub use event::{EVENT_THREAD, SystemTranscriptionEventEmitter};
 pub use event::{SystemAudioLevel, SystemTranscriptionEvent, SystemTranscriptionStage};
-pub use folders::{FolderError, Kept, SaveHistory, StartError, TranscriptFolders};
+pub use folders::{FolderError, Kept, OutputError, SaveHistory, StartError, TranscriptFolders};
 pub use session::run_session;
 pub use sink::TranscriptFile;
 pub use sink::{GAP_BREAK, stamp};
