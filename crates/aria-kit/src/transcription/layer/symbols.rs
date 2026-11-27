@@ -558,8 +558,7 @@ mod tests {
     #[case::after_a_line_break("done\nforward slash review", "done\n/review")]
     #[case::opening_the_dictation("forward slash review", "/review")]
     fn a_named_slash_joins_a_plain_word_in_prose(#[case] heard: &str, #[case] typed: &str) {
-        let corrected =
-            Vocabulary::default().correct_spoken(heard, TypedBefore::Nothing, Writing::Prose);
+        let corrected = Vocabulary::default().correct_spoken(heard, Writing::Prose);
         assert_eq!(
             corrected.map(|corrected| corrected.text).as_deref(),
             Some(typed)
@@ -573,11 +572,7 @@ mod tests {
             .with_path_names(["aria-kit"], usize::MAX)
             .unwrap();
         let corrected = vocabulary
-            .correct_spoken(
-                "aria dash kit forward slash src",
-                TypedBefore::Nothing,
-                Writing::Commands,
-            )
+            .correct_spoken("aria dash kit forward slash src", Writing::Commands)
             .unwrap();
         assert_eq!(corrected.text, "aria-kit/src");
     }
@@ -599,9 +594,7 @@ mod tests {
         let vocabulary = Vocabulary::default()
             .with_path_names(folders, usize::MAX)
             .unwrap();
-        let corrected = vocabulary
-            .correct_spoken(heard, TypedBefore::Nothing, Writing::Commands)
-            .unwrap();
+        let corrected = vocabulary.correct_spoken(heard, Writing::Commands).unwrap();
         assert_eq!(corrected.text, typed);
     }
 
@@ -613,8 +606,7 @@ mod tests {
         #[case] heard: &str,
         #[case] typed: &str,
     ) {
-        let corrected =
-            Vocabulary::default().correct_spoken(heard, TypedBefore::Nothing, Writing::Commands);
+        let corrected = Vocabulary::default().correct_spoken(heard, Writing::Commands);
         assert_eq!(
             corrected.map(|corrected| corrected.text).as_deref(),
             Some(typed)
@@ -632,7 +624,7 @@ mod tests {
         #[case] typed: &str,
     ) {
         let corrected = Vocabulary::default()
-            .correct_spoken(heard, before, Writing::Commands)
+            .correct_spoken_after(heard, before, Writing::Commands)
             .unwrap();
         assert_eq!(
             (corrected.text.as_str(), corrected.attachment),
@@ -642,7 +634,7 @@ mod tests {
 
     #[test]
     fn empty_typed_text_is_nothing_typed() {
-        let corrected = Vocabulary::default().correct_spoken(
+        let corrected = Vocabulary::default().correct_spoken_after(
             "dot env",
             TypedBefore::Text(""),
             Writing::Commands,
@@ -655,15 +647,18 @@ mod tests {
 
     #[test]
     fn a_symbol_after_a_sentence_end_stays_a_word() {
-        let corrected =
-            Vocabulary::default().correct_spoken("dot env", TypedBefore::Apart, Writing::Commands);
+        let corrected = Vocabulary::default().correct_spoken_after(
+            "dot env",
+            TypedBefore::Apart,
+            Writing::Commands,
+        );
         assert_eq!(corrected, None);
     }
 
     #[test]
     fn a_named_slash_after_a_sentence_end_types_apart() {
         let corrected = Vocabulary::default()
-            .correct_spoken("forward slash conf", TypedBefore::Apart, Writing::Commands)
+            .correct_spoken_after("forward slash conf", TypedBefore::Apart, Writing::Commands)
             .unwrap();
         assert_eq!(
             (corrected.text.as_str(), corrected.attachment),
@@ -683,7 +678,7 @@ mod tests {
         let vocabulary =
             Vocabulary::new(["aria-stt", "Cargo.toml", "Kit-Pro", "CI/CD", "Tools\\Kit"]).unwrap();
         let corrected = vocabulary
-            .correct_spoken(heard, TypedBefore::Nothing, Writing::Commands)
+            .correct_spoken(heard, Writing::Commands)
             .map(|corrected| corrected.text);
         assert_eq!(corrected.as_deref().unwrap_or(heard), typed);
     }
@@ -711,7 +706,7 @@ mod tests {
         #[case] heard: &str,
         #[case] typed: Option<(&str, bool)>,
     ) {
-        let corrected = Vocabulary::default().correct_spoken(
+        let corrected = Vocabulary::default().correct_spoken_after(
             heard,
             if before.is_empty() {
                 TypedBefore::Nothing
@@ -733,7 +728,7 @@ mod tests {
     fn a_term_never_reads_across_the_word_typed_before() {
         let vocabulary = Vocabulary::new(["New York"]).unwrap();
         assert_eq!(
-            vocabulary.correct_spoken("york", TypedBefore::Text("new"), Writing::Commands),
+            vocabulary.correct_spoken_after("york", TypedBefore::Text("new"), Writing::Commands),
             None
         );
     }
@@ -744,11 +739,7 @@ mod tests {
         let vocabulary = Vocabulary::compile(&[], personal).unwrap();
         assert_eq!(
             vocabulary
-                .correct_spoken(
-                    "teh user underscore id",
-                    TypedBefore::Nothing,
-                    Writing::Commands
-                )
+                .correct_spoken("teh user underscore id", Writing::Commands)
                 .map(|corrected| corrected.text)
                 .as_deref(),
             Some("the user_id")

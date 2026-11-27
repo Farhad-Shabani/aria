@@ -8,7 +8,7 @@ use std::time::Instant;
 use aria_harness::artifact::{Provenance, fingerprint, fingerprint_value, write_json};
 use aria_harness::stats::bootstrap;
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{SegmentCorrector, TypedBefore, Writing};
+use aria_kit::transcription::{SegmentCorrector, Writing};
 use aria_voice::vocabulary::{PersonalRules, Term, Vocabulary};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -419,7 +419,7 @@ pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
                     Some(matcher) => {
                         let input = &inputs[0];
                         let text = matcher
-                            .correct_spoken(input, TypedBefore::Nothing, case.writing.writing())
+                            .correct_spoken(input, case.writing.writing())
                             .map_or_else(|| input.clone(), |corrected| corrected.text);
                         (text.clone(), vec![text])
                     }
@@ -869,11 +869,7 @@ mod tests {
                 continue;
             }
             let dictated = Vocabulary::default()
-                .correct_spoken(
-                    &case.spoken_reference,
-                    TypedBefore::Nothing,
-                    Writing::Commands,
-                )
+                .correct_spoken(&case.spoken_reference, Writing::Commands)
                 .map_or_else(|| case.spoken_reference.clone(), |corrected| corrected.text);
             assert_eq!(case.written_reference, dictated, "{}", case.id);
         }

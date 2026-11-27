@@ -12,8 +12,8 @@ mod spacing;
 pub use corrector::{Endings, SegmentCorrector, StreamEnd};
 pub use heard::{Heard, HeardUpdate, next_heard, next_heard_update};
 pub use layer::{
-    Backtrack, Corrected, DeferredWords, JoinSymbols, Layer, Layered, RemoveHesitations,
-    RemoveRepeats, TypedBefore, Unheld, Vocabulary, Writing,
+    Backtrack, Corrected, JoinSymbols, Layer, Layered, RemoveHesitations, RemoveRepeats,
+    Vocabulary, Writing,
 };
 pub use sentences::{Punctuated, SentenceEnds};
 pub use spacing::{Attachment, Caret, Ending, Spacing};

@@ -1438,7 +1438,7 @@ impl<C: Collector> Worker<C> {
 mod tests {
     use super::super::log::testing::CapturedLogs;
     use super::*;
-    use aria_kit::transcription::{TypedBefore, Writing};
+    use aria_kit::transcription::Writing;
     use aria_voice::vocabulary::extract::{self, Extractor, LocalExtractor, TextInput};
     use aria_voice::vocabulary::{
         Candidate, Coverage, Discovery, Source, SourceKind, cache_key, discover::LocalCollector,
@@ -2089,7 +2089,7 @@ mod tests {
             let snapshot = runtime.snapshot(Some(folder));
             let text = snapshot
                 .matcher
-                .correct_spoken(said, TypedBefore::Nothing, Writing::Commands)
+                .correct_spoken(said, Writing::Commands)
                 .map(|result| result.text);
             (runtime.catalog_status(Some(folder)), text)
         };

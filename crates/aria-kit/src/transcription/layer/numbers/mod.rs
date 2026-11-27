@@ -525,11 +525,11 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
 mod tests {
     use rstest::rstest;
 
-    use super::super::{TypedBefore, Vocabulary, Writing};
+    use super::super::{Vocabulary, Writing};
 
     fn written(heard: &str) -> String {
         Vocabulary::default()
-            .correct_spoken(heard, TypedBefore::Nothing, Writing::Commands)
+            .correct_spoken(heard, Writing::Commands)
             .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
     }
 

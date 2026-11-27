@@ -867,7 +867,7 @@ fn spoken_words(part: &str) -> Vec<&str> {
 mod tests {
     use rstest::rstest;
 
-    use super::super::{TypedBefore, Writing};
+    use super::super::Writing;
     use super::*;
 
     #[test]
@@ -941,7 +941,7 @@ mod tests {
     fn dictated_names_keep_the_stored_casing(#[case] heard: &str, #[case] typed: &str) {
         let vocabulary = Vocabulary::new(["aria-kit", "main.rs"]).unwrap();
         let corrected = vocabulary
-            .correct_spoken(heard, TypedBefore::Nothing, Writing::Commands)
+            .correct_spoken(heard, Writing::Commands)
             .map(|c| c.text);
         assert_eq!(corrected.as_deref(), Some(typed));
     }
@@ -1069,7 +1069,7 @@ mod tests {
     fn a_name_matches_what_a_pair_corrects(#[case] heard: &str, #[case] typed: &str) {
         let matcher = compile(&["aria-kit"], pairs(&[("arya", "aria"), ("a ria", "aria")]));
         let corrected = matcher
-            .correct_spoken(heard, TypedBefore::Nothing, Writing::Commands)
+            .correct_spoken(heard, Writing::Commands)
             .map(|c| c.text);
         assert_eq!(corrected.as_deref(), Some(typed));
         assert_eq!(matcher.correct(heard).as_deref(), Some(typed));

@@ -81,14 +81,14 @@ impl SentenceEnds {
         }
     }
 
-    pub fn is_deferring(&self) -> bool {
+    fn is_deferring(&self) -> bool {
         self.deferred.is_some()
     }
 
     /// Whether a segment read as `sentence_ended_before` goes on from the
     /// text before it. Without a reading, it does unless a closing mark
     /// waits.
-    pub fn reads_on(&self, sentence_ended_before: Option<bool>) -> bool {
+    pub(crate) fn reads_on(&self, sentence_ended_before: Option<bool>) -> bool {
         match sentence_ended_before {
             Some(ended) => !ended,
             None => !self.is_deferring(),

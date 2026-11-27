@@ -125,7 +125,7 @@ fn claim_each<'a>(
 /// What sits right before new dictated text. A spoken symbol at the
 /// start of the new text joins only a word right before it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TypedBefore<'a> {
+pub(crate) enum TypedBefore<'a> {
     /// The dictation starts here. "dot env" → `.env`.
     Nothing,
     /// Text typed earlier. After `src`, "forward slash main" → `src/main`.
@@ -140,7 +140,7 @@ impl<'a> TypedBefore<'a> {
     /// What sits before a streamed segment typed after `typed`. It is
     /// [`Self::Apart`] when `sentence_ended_before` says a sentence ended,
     /// or when it is `None` and `sentences` holds back a closing mark.
-    pub fn streamed(
+    pub(crate) fn streamed(
         typed: &'a str,
         sentences: &SentenceEnds,
         sentence_ended_before: Option<bool>,
@@ -176,9 +176,14 @@ pub struct Corrected {
 }
 
 impl Vocabulary {
-    /// Corrects dictated `text` in one pass: terms, spoken forms, numbers,
-    /// symbols, then personal rules on what nothing claimed.
-    pub fn correct_spoken(
+    /// Corrects a dictation's whole `text` in one pass: terms, spoken forms,
+    /// numbers, symbols, then personal rules on what nothing claimed.
+    pub fn correct_spoken(&self, text: &str, writing: Writing) -> Option<Corrected> {
+        self.correct_spoken_after(text, TypedBefore::Nothing, writing)
+    }
+
+    /// Like [`Self::correct_spoken`], for text typed after `before`.
+    pub(crate) fn correct_spoken_after(
         &self,
         text: &str,
         before: TypedBefore<'_>,
@@ -306,7 +311,7 @@ mod tests {
     use rstest::rstest;
 
     use super::super::vocabulary::PersonalRules;
-    use super::super::{TypedBefore, Vocabulary, Writing};
+    use super::super::{Vocabulary, Writing};
 
     fn corrected(heard: &str, terms: &[&str], learned: &[(&str, &str)]) -> String {
         let terms = terms.iter().map(|term| (*term).to_owned()).collect();
@@ -316,7 +321,7 @@ mod tests {
             .collect();
         let vocabulary = Vocabulary::compile(&[], PersonalRules::new(terms, learned)).unwrap();
         vocabulary
-            .correct_spoken(heard, TypedBefore::Nothing, Writing::Commands)
+            .correct_spoken(heard, Writing::Commands)
             .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
     }
 
@@ -350,12 +355,12 @@ mod tests {
     fn a_term_keeps_its_number_words() {
         let vocabulary = Vocabulary::new(["Area Fifty One"]).unwrap();
         assert_eq!(
-            vocabulary.correct_spoken("area fifty one", TypedBefore::Nothing, Writing::Commands),
+            vocabulary.correct_spoken("area fifty one", Writing::Commands),
             None
         );
         assert_eq!(
             Vocabulary::default()
-                .correct_spoken("area fifty one", TypedBefore::Nothing, Writing::Commands)
+                .correct_spoken("area fifty one", Writing::Commands)
                 .map(|corrected| corrected.text)
                 .as_deref(),
             Some("area 51")

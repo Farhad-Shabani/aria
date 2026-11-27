@@ -149,7 +149,7 @@ impl<'a> SegmentCorrector<'a> {
             TypedBefore::streamed(&self.text, &self.sentences, unheld.sentence_ended_before);
         let corrected = self
             .vocabulary
-            .correct_spoken(&unheld.text, before, self.writing)
+            .correct_spoken_after(&unheld.text, before, self.writing)
             .unwrap_or(Corrected {
                 text: unheld.text,
                 attachment: Attachment::default(),

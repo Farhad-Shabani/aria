@@ -14,7 +14,7 @@ const MAX_HELD_WORDS: usize = 8;
 ///
 /// Streaming can split "user underscore id", "twenty one" or "aria hyphen
 /// kit" across segments. Correct what [`hold`](Self::hold) releases with
-/// [`Vocabulary::correct_spoken`], after the text already typed.
+/// [`Vocabulary::correct_spoken_after`], after the text already typed.
 ///
 /// Who decides what:
 ///
@@ -29,25 +29,8 @@ const MAX_HELD_WORDS: usize = 8;
 ///   segment's end and for held words alike.
 /// - The caller decides when held words go out with nothing after them,
 ///   with [`finish`](Self::finish).
-///
-/// ```
-/// use aria_kit::transcription::{Attachment, DeferredWords, TypedBefore, Vocabulary, Writing};
-///
-/// let vocabulary = Vocabulary::default();
-/// let writing = Writing::Commands;
-/// let mut words = DeferredWords::default();
-/// assert_eq!(words.hold("user underscore", None, &vocabulary, writing).text, "user");
-/// let next = words.hold("id", None, &vocabulary, writing).text;
-/// assert_eq!(next, "underscore id");
-/// let before = TypedBefore::Text("user");
-/// let corrected = vocabulary.correct_spoken(&next, before, writing).unwrap();
-/// assert_eq!(corrected.text, "_id");
-/// // Type it with no space after "user".
-/// assert_eq!(corrected.attachment, Attachment::Joined);
-/// assert!(words.finish().is_none());
-/// ```
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct DeferredWords {
+pub(crate) struct DeferredWords {
     held: Option<Held>,
 }
 
@@ -73,11 +56,11 @@ fn waits_for_its_word(text: &str) -> bool {
 
 /// Text a stream can type now, once [`DeferredWords`] has taken its share.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Unheld {
-    pub text: String,
+pub(crate) struct Unheld {
+    pub(crate) text: String,
     /// Whether a sentence ended before `text`. Words held from an earlier
     /// segment keep that segment's reading.
-    pub sentence_ended_before: Option<bool>,
+    pub(crate) sentence_ended_before: Option<bool>,
 }
 
 impl DeferredWords {
@@ -87,7 +70,7 @@ impl DeferredWords {
     /// own words. The held words keep their closing mark unless
     /// `sentence_ended_before` says the sentence goes on.
     #[must_use = "held words are owed to the transcript"]
-    pub fn hold(
+    pub(crate) fn hold(
         &mut self,
         text: &str,
         sentence_ended_before: Option<bool>,
@@ -120,7 +103,7 @@ impl DeferredWords {
         unheld
     }
 
-    pub fn is_holding(&self) -> bool {
+    pub(crate) fn is_holding(&self) -> bool {
         self.held.is_some()
     }
 
@@ -128,7 +111,7 @@ impl DeferredWords {
     /// slash or backslash. Those wait for the next word, as "dot dot forward
     /// slash" waits to type `../src`.
     #[must_use = "held words are owed to the transcript"]
-    pub fn release_paused(&mut self) -> Option<Unheld> {
+    pub(crate) fn release_paused(&mut self) -> Option<Unheld> {
         let waits = self
             .held
             .as_ref()
@@ -141,7 +124,7 @@ impl DeferredWords {
 
     /// Releases the held words once nothing follows.
     #[must_use = "held words are owed to the transcript"]
-    pub fn finish(&mut self) -> Option<Unheld> {
+    pub(crate) fn finish(&mut self) -> Option<Unheld> {
         self.held.take().map(|held| Unheld {
             text: held.words,
             sentence_ended_before: held.sentence_ended_before,
@@ -195,10 +178,11 @@ mod tests {
         let mut typed = String::new();
         let put = |text: &str, typed: &mut String| {
             let mut caret = Caret::between(typed, "");
-            let (text, attachment) = match vocabulary.correct_spoken(text, before(typed), writing) {
-                Some(corrected) => (corrected.text, corrected.attachment),
-                None => (text.to_owned(), Attachment::default()),
-            };
+            let (text, attachment) =
+                match vocabulary.correct_spoken_after(text, before(typed), writing) {
+                    Some(corrected) => (corrected.text, corrected.attachment),
+                    None => (text.to_owned(), Attachment::default()),
+                };
             let spacing = Spacing {
                 attachment,
                 ending: Ending::Open,
@@ -227,7 +211,7 @@ mod tests {
     /// What the whole text types in one go.
     fn whole(heard: &str, vocabulary: &Vocabulary, writing: Writing) -> String {
         vocabulary
-            .correct_spoken(heard, TypedBefore::Nothing, writing)
+            .correct_spoken(heard, writing)
             .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
     }
 
@@ -312,6 +296,29 @@ mod tests {
             streamed(pieces, &Vocabulary::default(), Writing::Commands),
             typed
         );
+    }
+
+    #[test]
+    fn a_held_symbol_joins_the_word_typed_before_it() {
+        let vocabulary = Vocabulary::default();
+        let writing = Writing::Commands;
+        let mut words = DeferredWords::default();
+        assert_eq!(
+            words
+                .hold("user underscore", None, &vocabulary, writing)
+                .text,
+            "user"
+        );
+        let next = words.hold("id", None, &vocabulary, writing).text;
+        assert_eq!(next, "underscore id");
+        let before = TypedBefore::Text("user");
+        let corrected = vocabulary
+            .correct_spoken_after(&next, before, writing)
+            .unwrap();
+        assert_eq!(corrected.text, "_id");
+        // Type it with no space after "user".
+        assert_eq!(corrected.attachment, Attachment::Joined);
+        assert!(words.finish().is_none());
     }
 
     #[test]
@@ -542,7 +549,7 @@ mod tests {
         assert_eq!(vocabulary.correct(heard).as_deref(), Some(expected));
         assert_any_split_types_the_whole(heard, &vocabulary, Writing::Commands);
         let next = vocabulary
-            .correct_spoken(
+            .correct_spoken_after(
                 "for id and kubernets",
                 TypedBefore::Text("set x='id then ask"),
                 Writing::Commands,

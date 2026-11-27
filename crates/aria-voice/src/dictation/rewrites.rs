@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::layer::{Backtrack, Layer, Layered, RemoveHesitations, RemoveRepeats};
-use aria_kit::transcription::{Attachment, TypedBefore, Writing, check_cancelled};
+use aria_kit::transcription::{Attachment, Writing, check_cancelled};
 
 use super::{LlmCleanup, LlmCleanupError, llm};
 use crate::config::DictationConfig;
@@ -110,9 +110,7 @@ impl<L: Layer> Rewrites<L> {
         }
         self.clean(&mut text, cleanup, cancel)?;
         let mut attachment = Attachment::default();
-        if let Some(corrected) =
-            spoken(vocabulary).correct_spoken(&text, TypedBefore::Nothing, writing)
-        {
+        if let Some(corrected) = spoken(vocabulary).correct_spoken(&text, writing) {
             text = corrected.text;
             attachment = corrected.attachment;
         }
