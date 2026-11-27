@@ -4,9 +4,9 @@ use std::ops::Range;
 
 use crate::cancel::CancelToken;
 
-use super::super::claim::{Claimed, Word};
+use super::super::claim::{Claimed, Place, Word};
 use super::super::number_words::{is_up_to_twenty, word_for};
-use super::super::symbol_words::symbol;
+use super::super::symbol_words::name_at;
 use super::fuzzy::{AfterCut, apply_fuzzy, capitals, waiting_from};
 use super::{MatchError, is_word};
 
@@ -292,7 +292,7 @@ impl PersonalRules {
     /// split around it, as "teh," is. A form that opens or ends on a symbol
     /// word waits: only the symbol's own join can attach it to the word
     /// beside it, as "dot com" attaches to "example".
-    pub(super) fn claim<'a>(&'a self, text: &str, claimed: &mut Claimed<'a>) {
+    pub(super) fn claim<'a>(&'a self, text: &str, place: Place, claimed: &mut Claimed<'a>) {
         if self.forms.is_empty() {
             return;
         }
@@ -304,11 +304,17 @@ impl PersonalRules {
                 unclaimed.push(word);
                 continue;
             }
-            self.claim_between(text, start..word.span.start, unclaimed.drain(..), claimed);
+            self.claim_between(
+                text,
+                place,
+                start..word.span.start,
+                unclaimed.drain(..),
+                claimed,
+            );
             start = word.span.end;
             claimed.push(word);
         }
-        self.claim_between(text, start..text.len(), unclaimed.drain(..), claimed);
+        self.claim_between(text, place, start..text.len(), unclaimed.drain(..), claimed);
     }
 
     /// The spoken forms [`Self::apply_checked`] types in `chars`, text no
@@ -443,11 +449,12 @@ impl PersonalRules {
     fn claim_between<'a>(
         &'a self,
         text: &str,
+        place: Place,
         between: Range<usize>,
         words: impl Iterator<Item = Word<'a>>,
         claimed: &mut Claimed<'a>,
     ) {
-        let mut forms = self.forms_in(text, between).into_iter().peekable();
+        let mut forms = self.forms_in(text, place, between).into_iter().peekable();
         for word in words {
             let mut from = word.span.start;
             while let Some(form) = forms.peek().filter(|form| form.span.start < word.span.end) {
@@ -469,7 +476,7 @@ impl PersonalRules {
 
     /// Each spoken form in `between` that doesn't wait on a symbol, in
     /// order, as a claim on its bytes.
-    fn forms_in<'a>(&'a self, text: &str, between: Range<usize>) -> Vec<Word<'a>> {
+    fn forms_in<'a>(&'a self, text: &str, place: Place, between: Range<usize>) -> Vec<Word<'a>> {
         let (offsets, chars): (Vec<usize>, Vec<char>) =
             text[between.clone()].char_indices().unzip();
         let byte =
@@ -480,7 +487,9 @@ impl PersonalRules {
             let form = self
                 .form_at(&chars, position, &|| Ok::<_, std::convert::Infallible>(()))
                 .unwrap_or_else(|never| match never {});
-            let waits = |length: usize| edges_on_a_symbol(&chars[position..position + length]);
+            let opens = place == Place::First && text[..byte(position)].trim().is_empty();
+            let waits =
+                |length: usize| waits_on_a_symbol(&chars[position..position + length], opens);
             let Some((length, typed)) = form.filter(|(length, _)| !waits(*length)) else {
                 position += 1;
                 continue;
@@ -515,16 +524,28 @@ fn unclaimed_around(words: &[Word<'_>], len: usize, at: usize) -> Option<Range<u
     Some(start..end)
 }
 
-/// Whether `spoken` opens or ends on a symbol word, as "dot com" does.
-fn edges_on_a_symbol(spoken: &[char]) -> bool {
+/// Whether a form said as `spoken` waits for the symbol step: it opens or
+/// ends on a symbol's name, which may join the word beside the form, as
+/// "dot com" joins "example".
+///
+/// A form of symbol names alone is the speaker's own name for them, so it
+/// never waits. Nor does a symbol the form opens with when the form opens
+/// the dictation, since no word comes before it.
+fn waits_on_a_symbol(spoken: &[char], opens_the_dictation: bool) -> bool {
     let spoken: String = spoken.iter().collect();
-    let mut words = spoken.split_whitespace();
-    let first = words.next();
-    let last = words.next_back().or(first);
-    [first, last]
-        .into_iter()
-        .flatten()
-        .any(|word| symbol(word).is_some())
+    let words: Vec<&str> = spoken.split_whitespace().collect();
+    let name_from = |from: usize| name_at(words[from..].iter().copied());
+    let mut named = 0;
+    while let Some(name) = name_from(named) {
+        named += name.words;
+    }
+    if named == words.len() {
+        return false;
+    }
+    let opens = named > 0 && !opens_the_dictation;
+    let ends = (1..words.len())
+        .any(|from| name_from(from).is_some_and(|name| from + name.words == words.len()));
+    opens || ends
 }
 
 const MAX_VARIANTS: usize = 8;

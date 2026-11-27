@@ -1,6 +1,16 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
+/// Where dictated text stands in its dictation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Place {
+    /// It opens the dictation, so no word comes before its first: a symbol
+    /// it opens with joins the word after it, as "dot env" types `.env`.
+    First,
+    /// Words came before it, typed or not.
+    Later,
+}
+
 /// A span of the text: plain text between spaces or claims, a run of words
 /// a step kept whole, or a claim of any length.
 #[derive(Clone)]

@@ -337,6 +337,44 @@ impl TextDelivery for MacOsTextDelivery {
         })
     }
 
+    fn deliver_space(
+        &self,
+        prepared: &Self::Prepared,
+        space: &str,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        validate_text(space)?;
+        if should_cancel() {
+            return Err(DeliveryError::Cancelled);
+        }
+        autoreleasepool(|_| match prepared {
+            MacOsDeliveryTarget::ApplicationAndSubmit { submission, .. }
+                if submission.get() == Submission::Spent =>
+            {
+                Err(DeliveryError::SubmissionSpent)
+            }
+            MacOsDeliveryTarget::Application {
+                destination,
+                anchoring,
+            }
+            | MacOsDeliveryTarget::ApplicationAndSubmit {
+                destination,
+                anchoring,
+                ..
+            } => {
+                let mut anchoring = anchoring.borrow_mut();
+                anchoring.before_space()?;
+                insert(destination, space, self.timeout, &should_cancel, observe)?;
+                anchoring.after_space(space);
+                Ok(())
+            }
+            // A space alone never goes to the clipboard.
+            MacOsDeliveryTarget::ApplicationOrClipboard(_) | MacOsDeliveryTarget::Clipboard => {
+                Err(DeliveryError::TargetUnavailable)
+            }
+        })
+    }
+
     fn target_process(&self, prepared: &Self::Prepared) -> Option<u32> {
         match prepared {
             MacOsDeliveryTarget::Application { destination, .. }

@@ -4,7 +4,7 @@ use std::path::Component;
 use aria_kit::cancel::CancelToken;
 use aria_kit::transcription::layer::vocabulary::matching_forms;
 
-use super::{MAX_SOURCE_BYTES, MAX_TERMS, SELECTED_TERMS, Source, Term};
+use super::{MAX_SOURCE_BYTES, MAX_TERMS, SELECTED_TERMS, Source, SourceKind, Term};
 
 const MAX_WORDS: usize = 6;
 const MAX_NUMBER_DIGITS: usize = 2;
@@ -20,6 +20,9 @@ pub enum Error {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Selection {
     pub terms: Vec<Term>,
+    /// The plain folder names the sources' paths run through, shallow
+    /// first, up to the cap. Dictation glues a slash to them.
+    pub folders: Vec<String>,
     /// Names that pass the keep rules, before the cap.
     pub found: usize,
 }
@@ -89,6 +92,7 @@ pub fn terms(sources: &[Source], cancel: &CancelToken) -> Result<Selection, Erro
     let mut count = 0usize;
     let mut scratch = 64 * 1024;
     let mut depths: HashMap<&str, usize> = HashMap::new();
+    let mut folders: HashMap<&str, usize> = HashMap::new();
     for source in sources {
         check()?;
         count = count
@@ -102,6 +106,16 @@ pub fn terms(sources: &[Source], cancel: &CancelToken) -> Result<Selection, Erro
             .components()
             .filter(|component| matches!(component, Component::Normal(_)))
             .count();
+        for (depth, folder) in folders_of(source) {
+            check()?;
+            match folders.get_mut(folder) {
+                Some(shallowest) => *shallowest = (*shallowest).min(depth),
+                None => {
+                    charge(&mut scratch, 256)?;
+                    folders.insert(folder, depth);
+                }
+            }
+        }
         for candidate in &source.candidates {
             check()?;
             let canonical = candidate.canonical.as_str();
@@ -151,7 +165,49 @@ pub fn terms(sources: &[Source], cancel: &CancelToken) -> Result<Selection, Erro
             priority: 1,
         })
         .collect();
-    Ok(Selection { terms, found })
+    let mut folders: Vec<(usize, &str)> = folders
+        .into_iter()
+        .map(|(folder, depth)| (depth, folder))
+        .collect();
+    check()?;
+    folders.sort_unstable();
+    let folders = folders
+        .into_iter()
+        .take(SELECTED_TERMS)
+        .map(|(_, folder)| folder.to_owned())
+        .collect();
+    Ok(Selection {
+        terms,
+        folders,
+        found,
+    })
+}
+
+/// The plain names of the folders a source's path runs through, each with
+/// its depth: a folder's own name too, but not a file's. A name with a
+/// symbol other than a hyphen inside is a term already.
+fn folders_of(source: &Source) -> impl Iterator<Item = (usize, &str)> {
+    let mut names: Vec<&str> = source
+        .relative_path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(name) => name.to_str(),
+            _ => None,
+        })
+        .collect();
+    if source.kind == SourceKind::FileName {
+        names.pop();
+    }
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| (index + 1, name))
+        // A hyphen reads as a letter before a slash, so `aria-kit` must be
+        // listed to glue as `aria-kit/src`.
+        .filter(|(_, name)| {
+            name.chars().all(|c| c.is_alphanumeric() || c == '-')
+                && name.chars().any(char::is_alphabetic)
+        })
 }
 
 fn charge(scratch: &mut usize, bytes: usize) -> Result<(), Error> {
@@ -241,6 +297,22 @@ mod tests {
         assert_eq!(selected.found, SELECTED_TERMS + 1);
         assert_eq!(selected.terms.len(), SELECTED_TERMS);
         assert_eq!(canonicals(&selected)[0], "zeta-top.rs");
+    }
+
+    #[test]
+    fn folders_are_the_word_names_a_path_runs_through() {
+        let mut folder = source("tools/aria-cli", &["aria-cli"]);
+        folder.kind = SourceKind::DirectoryName;
+        let sources = [
+            source("crates/aria-kit/src/lib.rs", &["lib.rs"]),
+            source("docs/2024/notes.md", &["notes.md"]),
+            folder,
+        ];
+        let selected = terms(&sources, &CancelToken::never()).unwrap();
+        assert_eq!(
+            selected.folders,
+            ["crates", "docs", "tools", "aria-cli", "aria-kit", "src"]
+        );
     }
 
     #[test]

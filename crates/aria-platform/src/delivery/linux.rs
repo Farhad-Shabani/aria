@@ -220,6 +220,16 @@ impl TextDelivery for LinuxTextDelivery {
         Err(DeliveryError::SubmissionUnsupported)
     }
 
+    // The caret is never read here, so no space is ever owed.
+    fn deliver_space(
+        &self,
+        _prepared: &Self::Prepared,
+        _space: &str,
+        _should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        Err(DeliveryError::TargetUnverified)
+    }
+
     fn deliver(
         &self,
         prepared: &Self::Prepared,

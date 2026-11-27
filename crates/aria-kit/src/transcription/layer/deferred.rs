@@ -1,6 +1,7 @@
 use super::super::Caret;
 use super::super::sentences::{ends_sentence, goes_on, without_closing_mark};
-use super::Vocabulary;
+use super::symbol_words::{joins_always, name_at};
+use super::{Vocabulary, Writing};
 
 /// More held words than this are typed rather than held, which bounds the
 /// delay.
@@ -30,17 +31,19 @@ const MAX_HELD_WORDS: usize = 8;
 ///   with [`finish`](Self::finish).
 ///
 /// ```
-/// use aria_kit::transcription::{DeferredWords, Vocabulary};
+/// use aria_kit::transcription::{Attachment, DeferredWords, TypedBefore, Vocabulary, Writing};
 ///
 /// let vocabulary = Vocabulary::default();
+/// let writing = Writing::Commands;
 /// let mut words = DeferredWords::default();
-/// assert_eq!(words.hold("user underscore", None, &vocabulary).text, "user");
-/// let next = words.hold("id", None, &vocabulary).text;
+/// assert_eq!(words.hold("user underscore", None, &vocabulary, writing).text, "user");
+/// let next = words.hold("id", None, &vocabulary, writing).text;
 /// assert_eq!(next, "underscore id");
-/// let corrected = vocabulary.correct_spoken(&next, "user").unwrap();
+/// let before = TypedBefore::Text("user");
+/// let corrected = vocabulary.correct_spoken(&next, before, writing).unwrap();
 /// assert_eq!(corrected.text, "_id");
 /// // Type it with no space after "user".
-/// assert!(corrected.joins_before);
+/// assert_eq!(corrected.attachment, Attachment::Joined);
 /// assert!(words.finish().is_none());
 /// ```
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -53,6 +56,20 @@ struct Held {
     words: String,
     /// Whether a sentence ended before the first held word.
     sentence_ended_before: Option<bool>,
+}
+
+/// Whether `text` ends on a name that types a slash and joins the word
+/// after it, as "forward slash" in "src forward slash" or the run "dot dot
+/// forward slash" does.
+fn waits_for_its_word(text: &str) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    (0..words.len()).any(|index| {
+        name_at(words[index..].iter().copied()).is_some_and(|name| {
+            name.words == words.len() - index
+                && name.mark.is_none()
+                && name.typed.ends_with(joins_always)
+        })
+    })
 }
 
 /// Text a stream can type now, once [`DeferredWords`] has taken its share.
@@ -76,6 +93,7 @@ impl DeferredWords {
         text: &str,
         sentence_ended_before: Option<bool>,
         vocabulary: &Vocabulary,
+        writing: Writing,
     ) -> Unheld {
         // A segment with no words, as when it was all fillers, changes nothing held.
         if text.trim().is_empty() {
@@ -86,7 +104,7 @@ impl DeferredWords {
         }
         let mut unheld = self.release(text, sentence_ended_before);
         let unmarked = without_closing_mark(&unheld.text);
-        let from = vocabulary.spoken_deferred_from(unmarked, MAX_HELD_WORDS);
+        let from = vocabulary.spoken_deferred_from(unmarked, MAX_HELD_WORDS, writing);
         let (rest, held) = unheld.text.split_at(from);
         if from == unmarked.len() || held.split_whitespace().count() > MAX_HELD_WORDS {
             return unheld;
@@ -105,6 +123,22 @@ impl DeferredWords {
 
     pub fn is_holding(&self) -> bool {
         self.held.is_some()
+    }
+
+    /// Releases the held words a pause lets go: all of them, unless they end
+    /// on a name that types a slash and joins the word after it. Then they
+    /// all wait for that word, which may still change them, as `../` needs
+    /// its dots and "two" in "two forward slash" may type `2`.
+    #[must_use = "held words are owed to the transcript"]
+    pub fn release_paused(&mut self) -> Option<Unheld> {
+        let waits = self
+            .held
+            .as_ref()
+            .is_some_and(|held| waits_for_its_word(without_closing_mark(&held.words)));
+        if waits {
+            return None;
+        }
+        self.finish()
     }
 
     /// Releases the held words once nothing follows.
@@ -148,29 +182,34 @@ fn joined(held: &str, text: &str) -> String {
 mod tests {
     use rstest::rstest;
 
-    use super::super::super::Spacing;
+    use super::super::super::{Attachment, Ending, Spacing};
+    use super::super::TypedBefore;
     use super::super::vocabulary::{PersonalRules, Term};
     use super::*;
 
     /// Each piece is one segment, corrected after what the stream typed.
-    fn streamed(pieces: &[(&str, Option<bool>)], vocabulary: &Vocabulary) -> String {
+    fn streamed(
+        pieces: &[(&str, Option<bool>)],
+        vocabulary: &Vocabulary,
+        writing: Writing,
+    ) -> String {
         let mut words = DeferredWords::default();
         let mut typed = String::new();
         let put = |text: &str, typed: &mut String| {
             let mut caret = Caret::between(typed, "");
-            let (text, joins_before) = match vocabulary.correct_spoken(text, typed) {
-                Some(corrected) => (corrected.text, corrected.joins_before),
-                None => (text.to_owned(), false),
+            let (text, attachment) = match vocabulary.correct_spoken(text, before(typed), writing) {
+                Some(corrected) => (corrected.text, corrected.attachment),
+                None => (text.to_owned(), Attachment::default()),
             };
             let spacing = Spacing {
-                joins_before,
-                defers_ending: true,
+                attachment,
+                ending: Ending::Open,
             };
             let spaced = caret.insert_with(&text, spacing);
             typed.push_str(&spaced);
         };
         for (piece, sentence_ended_before) in pieces {
-            let unheld = words.hold(piece, *sentence_ended_before, vocabulary);
+            let unheld = words.hold(piece, *sentence_ended_before, vocabulary, writing);
             put(&unheld.text, &mut typed);
         }
         if let Some(held) = words.finish() {
@@ -179,10 +218,18 @@ mod tests {
         typed
     }
 
+    fn before(typed: &str) -> TypedBefore<'_> {
+        if typed.is_empty() {
+            TypedBefore::Nothing
+        } else {
+            TypedBefore::Text(typed)
+        }
+    }
+
     /// What the whole text types in one go.
-    fn whole(heard: &str, vocabulary: &Vocabulary) -> String {
+    fn whole(heard: &str, vocabulary: &Vocabulary, writing: Writing) -> String {
         vocabulary
-            .correct_spoken(heard, "")
+            .correct_spoken(heard, TypedBefore::Nothing, writing)
             .map_or_else(|| heard.to_owned(), |corrected| corrected.text)
     }
 
@@ -197,11 +244,18 @@ mod tests {
     #[case::number_after_an_opening_hyphen(&[("utf", None), ("hyphen sixteen", None)], "utf-16")]
     #[case::digits_around_a_hyphen(&[("3", None), ("hyphen", None), ("5", None)], "3-5")]
     #[case::hyphen_chain(&[("en hyphen us", None), ("hyphen posix", None)], "en-us-posix")]
-    #[case::slash_opens_a_segment(&[("src", None), ("slash main", None)], "src/main")]
+    #[case::slash_opens_a_segment(&[("src", None), ("forward slash main", None)], "src/main")]
     #[case::backslash_alone(&[("c", None), ("backslash", None), ("windows", None)], "c\\windows")]
+    #[case::backslash_said_apart(&[("c back", None), ("slash windows", None)], "c\\windows")]
+    #[case::symbol_opens_the_dictation(&[("forward slash", None), ("conf", None)], "/conf")]
+    #[case::repeated_symbol_split(&[("forward slash", None), ("forward slash conf", None)], "//conf")]
+    #[case::listed_run_split(&[("Backslash, backslash,", None), ("confidence.", None)], "\\\\confidence.")]
     #[case::long_join_holds_only_its_deferred_end(&[("a underscore b underscore c underscore d underscore e underscore twenty", None), ("one", None)], "a_b_c_d_e_21")]
     fn joins_across_segments(#[case] pieces: &[(&str, Option<bool>)], #[case] typed: &str) {
-        assert_eq!(streamed(pieces, &Vocabulary::default()), typed);
+        assert_eq!(
+            streamed(pieces, &Vocabulary::default(), Writing::Commands),
+            typed
+        );
     }
 
     #[rstest]
@@ -231,15 +285,20 @@ mod tests {
         #[case] pieces: &[(&str, Option<bool>)],
         #[case] typed: &str,
     ) {
-        assert_eq!(streamed(pieces, &Vocabulary::default()), typed);
+        assert_eq!(
+            streamed(pieces, &Vocabulary::default(), Writing::Commands),
+            typed
+        );
     }
 
     #[rstest]
     #[case::ordinary_words(&[("turn", None), ("left now", None)], "turn left now")]
+    #[case::press_ends_on_back(&[("go", None), ("back", None)], "go back")]
+    #[case::back_goes_on_without_a_slash(&[("go back", None), ("a little", None)], "go back a little")]
     #[case::press_ends_on_a_symbol(&[("user", None), ("underscore.", None)], "user underscore.")]
     #[case::sentence_ended_after_the_symbol(&[("the dot.", None), ("Then we rest.", Some(true))], "the dot. Then we rest.")]
     #[case::unread_cut_after_the_symbol(&[("the dot.", None), ("Then we rest.", None)], "the dot. Then we rest.")]
-    #[case::no_word_before(&[("hyphen", None), ("of the word", None)], "hyphen of the word")]
+    #[case::word_before_ends_a_sentence(&[("Done.", None), ("hyphen", None), ("of the word", None)], "Done. hyphen of the word")]
     #[case::digit_word_in_prose(&[("no", None), ("one", None), ("knows", None)], "no one knows")]
     #[case::sentence_ended_after_a_number(&[("twenty.", None), ("One more.", Some(true))], "20. One more.")]
     #[case::ellipsis_after_a_number(&[("I have twenty...", None), ("or so", Some(false))], "I have 20... or so")]
@@ -251,16 +310,29 @@ mod tests {
         #[case] pieces: &[(&str, Option<bool>)],
         #[case] typed: &str,
     ) {
-        assert_eq!(streamed(pieces, &Vocabulary::default()), typed);
+        assert_eq!(
+            streamed(pieces, &Vocabulary::default(), Writing::Commands),
+            typed
+        );
     }
 
     #[test]
     fn a_whole_held_segment_keeps_its_reading() {
         let vocabulary = Vocabulary::default();
         let mut words = DeferredWords::default();
-        assert_eq!(words.hold("Hello.", None, &vocabulary).text, "Hello.");
-        assert_eq!(words.hold("Twenty", Some(true), &vocabulary).text, "");
-        let unheld = words.hold("one apples.", Some(false), &vocabulary);
+        assert_eq!(
+            words
+                .hold("Hello.", None, &vocabulary, Writing::Commands)
+                .text,
+            "Hello."
+        );
+        assert_eq!(
+            words
+                .hold("Twenty", Some(true), &vocabulary, Writing::Commands)
+                .text,
+            ""
+        );
+        let unheld = words.hold("one apples.", Some(false), &vocabulary, Writing::Commands);
         assert_eq!(unheld.text, "Twenty one apples.");
         assert_eq!(unheld.sentence_ended_before, Some(true));
     }
@@ -270,10 +342,12 @@ mod tests {
         let vocabulary = Vocabulary::default();
         let mut words = DeferredWords::default();
         assert_eq!(
-            words.hold("It is. Twenty", Some(false), &vocabulary).text,
+            words
+                .hold("It is. Twenty", Some(false), &vocabulary, Writing::Commands)
+                .text,
             "It is."
         );
-        let unheld = words.hold("apples.", Some(false), &vocabulary);
+        let unheld = words.hold("apples.", Some(false), &vocabulary, Writing::Commands);
         assert_eq!(unheld.text, "Twenty apples.");
         assert_eq!(unheld.sentence_ended_before, Some(true));
     }
@@ -283,7 +357,9 @@ mod tests {
         let vocabulary = listing(&["db2"]);
         let mut words = DeferredWords::default();
         assert_eq!(
-            words.hold("run d b two", None, &vocabulary).text,
+            words
+                .hold("run d b two", None, &vocabulary, Writing::Commands)
+                .text,
             "run d b two"
         );
         assert!(words.finish().is_none());
@@ -294,7 +370,10 @@ mod tests {
         let vocabulary = Vocabulary::new(["Area Fifty One"]).unwrap();
         let mut words = DeferredWords::default();
         let heard = "visit area fifty one";
-        assert_eq!(words.hold(heard, None, &vocabulary).text, heard);
+        assert_eq!(
+            words.hold(heard, None, &vocabulary, Writing::Commands).text,
+            heard
+        );
         assert!(words.finish().is_none());
     }
 
@@ -313,7 +392,7 @@ mod tests {
         let personal = PersonalRules::new(vec!["s3".into(), "db2".into()], vec![]);
         let vocabulary = Vocabulary::compile(&[term], personal).unwrap();
         let pieces: Vec<_> = pieces.iter().map(|piece| (*piece, None)).collect();
-        assert_eq!(streamed(&pieces, &vocabulary), typed);
+        assert_eq!(streamed(&pieces, &vocabulary, Writing::Commands), typed);
     }
 
     #[test]
@@ -321,10 +400,17 @@ mod tests {
         let vocabulary = Vocabulary::default();
         let mut words = DeferredWords::default();
         assert_eq!(
-            words.hold("I have twenty.", None, &vocabulary).text,
+            words
+                .hold("I have twenty.", None, &vocabulary, Writing::Commands)
+                .text,
             "I have"
         );
-        assert_eq!(words.hold("", Some(false), &vocabulary).text, "");
+        assert_eq!(
+            words
+                .hold("", Some(false), &vocabulary, Writing::Commands)
+                .text,
+            ""
+        );
         assert_eq!(words.finish().unwrap().text, "twenty.");
     }
 
@@ -346,7 +432,7 @@ mod tests {
     #[case("meet at nine fifty five pm or three am")]
     #[case("on March twenty first twenty fifteen and June five")]
     fn any_split_types_what_the_whole_text_would(#[case] heard: &str) {
-        assert_any_split_types_the_whole(heard, &Vocabulary::default());
+        assert_any_split_types_the_whole(heard, &Vocabulary::default(), Writing::Commands);
     }
 
     /// Listed words whose spoken forms span words, hold a number word, or
@@ -359,13 +445,13 @@ mod tests {
     #[case("open aria dot toml now")]
     fn any_split_types_a_spoken_form_whole(#[case] heard: &str) {
         let vocabulary = listing(&["db1", "db1-backup", "i18n", "Aria"]);
-        assert_any_split_types_the_whole(heard, &vocabulary);
+        assert_any_split_types_the_whole(heard, &vocabulary, Writing::Commands);
     }
 
     #[test]
     fn any_split_types_a_merged_word_whole() {
         let vocabulary = listing(&["PostgreSQL"]);
-        assert_any_split_types_the_whole("use postgre sql now", &vocabulary);
+        assert_any_split_types_the_whole("use postgre sql now", &vocabulary, Writing::Commands);
     }
 
     #[rstest]
@@ -384,8 +470,11 @@ mod tests {
             vec![("my aria".into(), "Alias".into())],
         );
         let vocabulary = Vocabulary::compile(&[project], personal).unwrap();
-        assert_eq!(streamed(&[(heard, None)], &vocabulary), expected);
-        assert_any_split_types_the_whole(heard, &vocabulary);
+        assert_eq!(
+            streamed(&[(heard, None)], &vocabulary, Writing::Commands),
+            expected
+        );
+        assert_any_split_types_the_whole(heard, &vocabulary, Writing::Commands);
     }
 
     #[rstest]
@@ -397,24 +486,31 @@ mod tests {
     ) {
         let vocabulary = listing(&["PostgreSQL", "Kubernetes"]);
         let pieces: Vec<_> = segments.iter().map(|s| (*s, None)).collect();
-        assert_eq!(streamed(&pieces, &vocabulary), expected);
+        assert_eq!(streamed(&pieces, &vocabulary, Writing::Commands), expected);
     }
 
     #[test]
     fn only_fragments_that_can_reach_a_listed_word_wait() {
         let v = listing(&["PostgreSQL"]);
         for name in ["Pablo", "Priya", "PyTorch", "postgr2"] {
-            assert_eq!(DeferredWords::default().hold(name, None, &v).text, name);
+            assert_eq!(
+                DeferredWords::default()
+                    .hold(name, None, &v, Writing::Commands)
+                    .text,
+                name
+            );
         }
         // No ASCII word can supply a listed word's full-width digit.
         let wide = listing(&["Nvidia\u{ff12}"]);
         assert_eq!(
-            DeferredWords::default().hold("nvid", None, &wide).text,
+            DeferredWords::default()
+                .hold("nvid", None, &wide, Writing::Commands)
+                .text,
             "nvid"
         );
         for (start, end) in [("use postgre", "sql"), ("use pyst", "gresql")] {
             assert_eq!(
-                streamed(&[(start, None), (end, None)], &v),
+                streamed(&[(start, None), (end, None)], &v, Writing::Commands),
                 "use PostgreSQL"
             );
         }
@@ -435,8 +531,8 @@ mod tests {
     )]
     fn quoted_assignment_values_keep_their_words(#[case] heard: &str, #[case] expected: &str) {
         let vocabulary = listing(&["ID", "Kubernetes"]);
-        assert_eq!(whole(heard, &vocabulary), expected);
-        assert_any_split_types_the_whole(heard, &vocabulary);
+        assert_eq!(whole(heard, &vocabulary, Writing::Commands), expected);
+        assert_any_split_types_the_whole(heard, &vocabulary, Writing::Commands);
     }
 
     #[test]
@@ -444,11 +540,15 @@ mod tests {
         let vocabulary = listing(&["ID", "Kubernetes"]);
         let heard = "set x='id then ask for id and kubernets";
         let expected = "set x='id then ask for ID and Kubernetes";
-        assert_eq!(whole(heard, &vocabulary), expected);
+        assert_eq!(whole(heard, &vocabulary, Writing::Commands), expected);
         assert_eq!(vocabulary.correct(heard).as_deref(), Some(expected));
-        assert_any_split_types_the_whole(heard, &vocabulary);
+        assert_any_split_types_the_whole(heard, &vocabulary, Writing::Commands);
         let next = vocabulary
-            .correct_spoken("for id and kubernets", "set x='id then ask")
+            .correct_spoken(
+                "for id and kubernets",
+                TypedBefore::Text("set x='id then ask"),
+                Writing::Commands,
+            )
             .unwrap();
         assert_eq!(next.text, "for ID and Kubernetes");
     }
@@ -457,11 +557,17 @@ mod tests {
     fn an_unfinished_quote_obeys_the_stream_hold_limit() {
         let vocabulary = listing(&["ID"]);
         let mut words = DeferredWords::default();
-        assert_eq!(words.hold("set x='server", None, &vocabulary).text, "set");
+        assert_eq!(
+            words
+                .hold("set x='server", None, &vocabulary, Writing::Commands)
+                .text,
+            "set"
+        );
         let released = words.hold(
             "one two three four five six seven eight nine",
             None,
             &vocabulary,
+            Writing::Commands,
         );
         assert!(released.text.starts_with("x='server one two"));
     }
@@ -477,8 +583,8 @@ mod tests {
         let heard = "x='file dot aria aye dee' then file dot aria aye dee";
         let expected = "x='file dot aria aye dee' then file.aria ID";
         assert_eq!(vocabulary.correct(heard).as_deref(), Some(expected));
-        assert_eq!(whole(heard, &vocabulary), expected);
-        assert_any_split_types_the_whole(heard, &vocabulary);
+        assert_eq!(whole(heard, &vocabulary, Writing::Commands), expected);
+        assert_any_split_types_the_whole(heard, &vocabulary, Writing::Commands);
     }
 
     fn listing(words: &[&str]) -> Vocabulary {
@@ -487,8 +593,8 @@ mod tests {
     }
 
     /// Cuts `heard` at its spaces into two or three segments, every way.
-    fn assert_any_split_types_the_whole(heard: &str, vocabulary: &Vocabulary) {
-        let whole = whole(heard, vocabulary);
+    fn assert_any_split_types_the_whole(heard: &str, vocabulary: &Vocabulary, writing: Writing) {
+        let whole = whole(heard, vocabulary, writing);
         let words: Vec<&str> = heard.split(' ').collect();
         for first in 1..words.len() {
             for second in first..words.len() {
@@ -499,32 +605,172 @@ mod tests {
                     .filter(|piece| !piece.is_empty())
                     .map(|piece| (piece.as_str(), None))
                     .collect();
-                assert_eq!(streamed(&pieces, vocabulary), whole, "{pieces:?}");
+                assert_eq!(streamed(&pieces, vocabulary, writing), whole, "{pieces:?}");
             }
         }
     }
 
     #[rstest]
+    #[case::number_before_a_name_said_apart("version two back slash five")]
+    #[case::repeated_name_said_apart("c back slash back slash server")]
+    #[case::listed_with_commas("x forward slash, forward slash, y")]
+    #[case::run_before_a_join("dot dot forward slash src forward slash main")]
+    #[case::run_opens_the_dictation("hyphen hyphen verbose now")]
+    #[case::comma_inside_a_name("hyphen back, slash, b")]
+    #[case::name_after_a_comma("x, back slash y")]
+    #[case::name_after_a_symbol("x dot back slash")]
+    #[case::name_after_an_opening_symbol("dot back slash x")]
+    #[case::name_after_a_line_break("x\nback slash y")]
+    #[case::flag_after_a_word("git commit hyphen hyphen amend now")]
+    #[case::flag_after_a_comma("then, hyphen hyphen verbose")]
+    #[case::path_from_here("run dot forward slash build now")]
+    #[case::path_from_the_parent("cd dot dot forward slash src forward slash main")]
+    #[case::flag_after_a_number("version two hyphen hyphen all")]
+    #[case::slash_between_words("open src forward slash main now")]
+    #[case::slash_last("cd into src forward slash")]
+    #[case::slash_opens_the_dictation("forward slash conf now")]
+    #[case::slash_after_a_comma("path, forward slash usr now")]
+    #[case::slash_before_a_number("open twenty four forward slash seven now")]
+    #[case::slash_after_an_english_word("run forward slash review now")]
+    #[case::slash_after_a_contraction("let's forward slash review now")]
+    #[case::run_said_last("go up dot dot forward slash")]
+    #[case::slash_after_a_hyphenated_word("re-run forward slash test now")]
+    #[case::slash_after_a_typographic_apostrophe("it’s forward slash x now")]
+    #[case::slash_after_a_spoken_compound("build hyphen tools forward slash main now")]
+    #[case::slash_after_a_spoken_compound_of_a_path("user underscore id forward slash x now")]
+    #[case::slash_after_an_opening_symbol("dot local forward slash share now")]
+    #[case::slash_after_digits_said_one_by_one("open two five oh forward slash report now")]
+    #[case::slash_after_a_run_ending_a_sentence("type dot forward slash? run forward slash help")]
+    fn any_split_around_a_name_of_several_words_types_the_whole(#[case] heard: &str) {
+        assert_any_split_types_the_whole(heard, &Vocabulary::default(), Writing::Commands);
+    }
+
+    #[rstest]
+    #[case::pair_of_words("read and forward slash or write now")]
+    #[case::branch("push origin forward slash main now")]
+    #[case::after_a_comma("done, forward slash review now")]
+    fn any_split_in_prose_types_the_whole(#[case] heard: &str) {
+        assert_any_split_types_the_whole(heard, &Vocabulary::default(), Writing::Prose);
+    }
+
+    #[test]
+    fn any_split_after_a_term_of_several_words_types_the_whole() {
+        let vocabulary = listing(&["S3 Bucket"]);
+        let heard = "open s three bucket forward slash report";
+        assert_eq!(
+            whole(heard, &vocabulary, Writing::Commands),
+            "open S3 Bucket /report"
+        );
+        assert_any_split_types_the_whole(heard, &vocabulary, Writing::Commands);
+    }
+
+    #[rstest]
+    #[case::form_naming_a_listed_run("it was hyphen hyphen frankly", ("hyphen hyphen", "—"))]
+    #[case::form_naming_a_run_between_words("wait dot dot dot okay", ("dot dot dot", "…"))]
+    #[case::form_opening_the_dictation("dot net is great", ("dot net", ".NET"))]
+    #[case::form_opening_the_dictation_before_a_symbol("dot net underscore id", ("dot net", ".NET"))]
+    #[case::form_opening_on_a_symbol_after_a_word("use dot net now", ("dot net", ".NET"))]
+    #[case::form_begun_inside_a_name("x slash back slash now", ("slash command", "/command"))]
+    #[case::form_begun_inside_an_opening_name("slash back slash now", ("slash command", "/command"))]
+    fn any_split_around_a_form_on_symbol_words_types_the_whole(
+        #[case] heard: &str,
+        #[case] learned: (&str, &str),
+    ) {
+        let learned = vec![(learned.0.to_owned(), learned.1.to_owned())];
+        let vocabulary = Vocabulary::compile(&[], PersonalRules::new(vec![], learned)).unwrap();
+        assert_any_split_types_the_whole(heard, &vocabulary, Writing::Commands);
+    }
+
+    #[rstest]
     #[case::trailing_symbol("user underscore", "user ")]
     #[case::symbol_after_punctuation("user, underscore", "user, underscore")]
+    #[case::slash_after_an_english_word("run forward slash", "run ")]
     #[case::number_before_a_symbol("version two dot", "version ")]
     #[case::cents_may_follow("five dollars and", "")]
     #[case::number_word_in_prose("no one", "no ")]
     #[case::number_before_a_word("twenty one apples", "twenty one apples")]
     fn each_step_says_which_words_it_defers(#[case] heard: &str, #[case] typed: &str) {
-        let from =
-            Vocabulary::default().spoken_deferred_from(without_closing_mark(heard), MAX_HELD_WORDS);
+        let from = Vocabulary::default().spoken_deferred_from(
+            without_closing_mark(heard),
+            MAX_HELD_WORDS,
+            Writing::Commands,
+        );
         assert_eq!(&heard[..from.min(heard.len())], typed);
+    }
+
+    #[test]
+    fn a_pause_releases_held_words_but_a_slash_waits_for_its_word() {
+        let vocabulary = Vocabulary::default();
+        let mut words = DeferredWords::default();
+        let typed = words.hold(
+            "open src forward slash",
+            None,
+            &vocabulary,
+            Writing::Commands,
+        );
+        assert_eq!(typed.text, "open src");
+        assert!(words.release_paused().is_none());
+        let next = words.hold("main", None, &vocabulary, Writing::Commands);
+        assert_eq!(next.text, "forward slash main");
+
+        let mut words = DeferredWords::default();
+        let typed = words.hold("version two dot", None, &vocabulary, Writing::Commands);
+        assert_eq!(typed.text, "version");
+        let released = words.release_paused().map(|unheld| unheld.text);
+        assert_eq!(released.as_deref(), Some("two dot"));
+        assert!(!words.is_holding());
+    }
+
+    #[rstest]
+    #[case::a_relative_path("cd dot dot forward slash", "src", "cd", "dot dot forward slash src")]
+    #[case::a_number(
+        "say two forward slash",
+        "three apples",
+        "say",
+        "two forward slash three apples"
+    )]
+    #[case::a_provisional_mark(
+        "cd dot dot forward slash.",
+        "src",
+        "cd",
+        "dot dot forward slash src"
+    )]
+    #[case::a_provisional_mark_on_a_backslash(
+        "open src back slash.",
+        "main",
+        "open src",
+        "back slash main"
+    )]
+    fn a_pause_keeps_the_words_a_slash_may_still_change(
+        #[case] said: &str,
+        #[case] after_the_pause: &str,
+        #[case] typed: &str,
+        #[case] released: &str,
+    ) {
+        let vocabulary = Vocabulary::default();
+        let mut words = DeferredWords::default();
+        let first = words.hold(said, None, &vocabulary, Writing::Commands);
+        assert_eq!(first.text, typed);
+        assert!(words.release_paused().is_none());
+        let next = words.hold(after_the_pause, Some(false), &vocabulary, Writing::Commands);
+        assert_eq!(next.text, released);
     }
 
     #[test]
     fn a_form_waiting_on_its_symbol_is_held_whole() {
         let learned = vec![("tilde dot".to_owned(), "~.".to_owned())];
         let vocabulary = Vocabulary::compile(&[], PersonalRules::new(vec![], learned)).unwrap();
-        assert_eq!(streamed(&[("cd tilde dot", None)], &vocabulary), "cd ~.");
         assert_eq!(
-            streamed(&[("cd tilde dot", None), ("bashrc", None)], &vocabulary),
-            whole("cd tilde dot bashrc", &vocabulary)
+            streamed(&[("cd tilde dot", None)], &vocabulary, Writing::Commands),
+            "cd ~."
+        );
+        assert_eq!(
+            streamed(
+                &[("cd tilde dot", None), ("bashrc", None)],
+                &vocabulary,
+                Writing::Commands
+            ),
+            whole("cd tilde dot bashrc", &vocabulary, Writing::Commands)
         );
     }
 
@@ -535,9 +781,10 @@ mod tests {
         assert_eq!(
             streamed(
                 &[("visit new york dot five", None), ("six", None)],
-                &vocabulary
+                &vocabulary,
+                Writing::Commands
             ),
-            whole(heard, &vocabulary)
+            whole(heard, &vocabulary, Writing::Commands)
         );
     }
 
@@ -549,7 +796,8 @@ mod tests {
         assert_eq!(
             streamed(
                 &[("kubernets dot twenty", None), ("one", None)],
-                &vocabulary
+                &vocabulary,
+                Writing::Commands
             ),
             "Kubernetes.21"
         );
@@ -587,7 +835,10 @@ mod tests {
         let vocabulary = crowded();
         let heard = pieces.join(" ");
         let pieces: Vec<_> = pieces.iter().map(|piece| (*piece, None)).collect();
-        assert_eq!(streamed(&pieces, &vocabulary), whole(&heard, &vocabulary));
+        assert_eq!(
+            streamed(&pieces, &vocabulary, Writing::Commands),
+            whole(&heard, &vocabulary, Writing::Commands)
+        );
     }
 
     /// Every two-segment cut outside a term or spoken form types what the
@@ -615,14 +866,18 @@ mod tests {
                 })
             })
         };
-        let whole = whole(heard, &vocabulary);
+        let whole = whole(heard, &vocabulary, Writing::Commands);
         for cut in (1..words.len()).filter(|cut| !splits_a_unit(*cut)) {
             if words[..cut].ends_with(&["new", "york"]) {
                 continue;
             }
             let pieces = [words[..cut].join(" "), words[cut..].join(" ")];
             let pieces: Vec<_> = pieces.iter().map(|piece| (piece.as_str(), None)).collect();
-            assert_eq!(streamed(&pieces, &vocabulary), whole, "{pieces:?}");
+            assert_eq!(
+                streamed(&pieces, &vocabulary, Writing::Commands),
+                whole,
+                "{pieces:?}"
+            );
         }
     }
 
@@ -631,7 +886,10 @@ mod tests {
     #[test]
     fn a_symbol_opening_a_segment_joins_the_last_word_of_a_term() {
         let pieces = [("visit new york", None), ("dot five", None)];
-        assert_eq!(streamed(&pieces, &crowded()), "visit new york.five");
+        assert_eq!(
+            streamed(&pieces, &crowded(), Writing::Commands),
+            "visit new york.five"
+        );
     }
 
     fn names() -> Vocabulary {
@@ -649,7 +907,7 @@ mod tests {
     #[case("open app delegate dot swift now")]
     #[case::through_a_pair("open arya hyphen kit now")]
     fn any_split_types_a_name_whole(#[case] heard: &str) {
-        assert_any_split_types_the_whole(heard, &names());
+        assert_any_split_types_the_whole(heard, &names(), Writing::Commands);
     }
 
     #[rstest]
@@ -659,14 +917,14 @@ mod tests {
         #[case] pieces: &[(&str, Option<bool>)],
         #[case] typed: &str,
     ) {
-        assert_eq!(streamed(pieces, &names()), typed);
+        assert_eq!(streamed(pieces, &names(), Writing::Commands), typed);
     }
 
     #[test]
     fn a_name_start_past_the_word_bound_is_typed_and_a_shorter_one_held() {
         let vocabulary = Vocabulary::new(["a-b-c-d-e-f", "b-c", "d-e-g"]).unwrap();
         let heard = "x a dash b dash c dash d dash e";
-        let from = vocabulary.spoken_deferred_from(heard, MAX_HELD_WORDS);
+        let from = vocabulary.spoken_deferred_from(heard, MAX_HELD_WORDS, Writing::Commands);
         assert_eq!(&heard[..from], "x a dash b dash c dash ");
     }
 
@@ -680,7 +938,7 @@ mod tests {
     #[case::ends_on_a_multibyte_letter("open café", "open café")]
     fn a_segment_holds_the_start_of_a_spelled_name(#[case] heard: &str, #[case] typed: &str) {
         let vocabulary = names();
-        let from = vocabulary.spoken_deferred_from(heard, MAX_HELD_WORDS);
+        let from = vocabulary.spoken_deferred_from(heard, MAX_HELD_WORDS, Writing::Commands);
         assert_eq!(&heard[..from], typed);
     }
 
@@ -689,7 +947,9 @@ mod tests {
         let vocabulary = Vocabulary::new(["New York City"]).unwrap();
         let mut words = DeferredWords::default();
         assert_eq!(
-            words.hold("visit new york", None, &vocabulary).text,
+            words
+                .hold("visit new york", None, &vocabulary, Writing::Commands)
+                .text,
             "visit new york"
         );
         assert!(words.finish().is_none());
@@ -700,10 +960,16 @@ mod tests {
         let vocabulary = Vocabulary::default();
         let mut words = DeferredWords::default();
         let nine = "one two three four five six seven eight nine";
-        assert_eq!(words.hold(nine, None, &vocabulary).text, nine);
+        assert_eq!(
+            words.hold(nine, None, &vocabulary, Writing::Commands).text,
+            nine
+        );
         assert!(words.finish().is_none());
         let eight = "one two three four five six seven eight";
-        assert_eq!(words.hold(eight, None, &vocabulary).text, "");
+        assert_eq!(
+            words.hold(eight, None, &vocabulary, Writing::Commands).text,
+            ""
+        );
     }
 
     #[test]
@@ -711,10 +977,10 @@ mod tests {
         let vocabulary = crowded();
         let forms = "cd tilde dot tilde dot tilde dot tilde dot tilde dot tilde";
         assert_eq!(
-            vocabulary.spoken_deferred_from(forms, usize::MAX),
+            vocabulary.spoken_deferred_from(forms, usize::MAX, Writing::Commands),
             "cd ".len()
         );
-        let from = vocabulary.spoken_deferred_from(forms, 2);
+        let from = vocabulary.spoken_deferred_from(forms, 2, Writing::Commands);
         assert!(from > "cd ".len() && forms[from..].split_whitespace().count() > 2);
     }
 }

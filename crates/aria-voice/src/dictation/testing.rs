@@ -9,7 +9,7 @@ use crate::history::HistorySource;
 use crate::stt::{Hypothesis, Language, Recognizer, Transcript, TranscriptionError};
 use aria_kit::audio::{AutoStop, RecordingReader, SilenceDuration};
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{OperationSource, TimedWord};
+use aria_kit::transcription::{Attachment, Caret, OperationSource, TimedWord};
 use aria_kit::voice_activity::{VoiceActivityDetector, VoiceActivityError};
 use aria_platform::delivery::{
     DeliveryError, DeliveryOutcome, Finished, OutputMode, Placement, Rect, TextDelivery,
@@ -61,22 +61,110 @@ impl TranscriptSink for RecordingSink {
     type Error = DictationError;
 
     fn segment(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
-        let kind = if utterance.spacing.joins_before {
-            "joined"
-        } else {
-            "segment"
+        let kind = match utterance.spacing.attachment {
+            Attachment::Joined => "joined",
+            Attachment::Apart => "apart",
+            Attachment::AsWritten => "segment",
         };
         self.log.push(format!("{kind}:{}", utterance.text));
         Ok(())
     }
 
     fn completed(&mut self, utterance: Utterance<'_>) -> Result<(), DictationError> {
-        self.log.push(format!("completed:{}", utterance.text));
+        let kind = match utterance.spacing.attachment {
+            Attachment::Joined => "completed joined",
+            Attachment::Apart => "completed apart",
+            Attachment::AsWritten => "completed",
+        };
+        self.log.push(format!("{kind}:{}", utterance.text));
         Ok(())
     }
 
     fn served_by(&mut self, engine: &'static str) {
         self.log.push(format!("engine:{engine}"));
+    }
+}
+
+/// A field that reports `caret`, in the application `front`.
+pub struct FieldWithText {
+    pub delivery: RecordingDelivery,
+    pub caret: Caret,
+    pub front: Option<aria_platform::delivery::Application>,
+}
+
+impl FieldWithText {
+    /// A field in no app in particular that reports `caret` and types into
+    /// `log`.
+    pub fn new(log: CallLog, caret: Caret) -> Self {
+        Self {
+            delivery: RecordingDelivery { log, fail: false },
+            caret,
+            front: None,
+        }
+    }
+}
+
+impl TextDelivery for FieldWithText {
+    type Prepared = OutputMode;
+    const DEFAULT_MODE: OutputMode = OutputMode::Insert;
+
+    const OUTLIVES_PROCESS: bool = true;
+
+    fn frontmost(&self) -> Option<aria_platform::delivery::Application> {
+        self.front.clone()
+    }
+
+    fn prepare(
+        &self,
+        mode: OutputMode,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<OutputMode, DeliveryError> {
+        self.delivery.prepare(mode, should_cancel)
+    }
+
+    fn finish(
+        &self,
+        prepared: &OutputMode,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<Finished, DeliveryError> {
+        self.delivery.finish(prepared, should_cancel)
+    }
+
+    fn press_return(
+        &self,
+        _prepared: &Self::Prepared,
+        _should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        // Names no target process, so it never takes a Return.
+        Err(DeliveryError::TargetUnavailable)
+    }
+
+    fn deliver_space(
+        &self,
+        prepared: &Self::Prepared,
+        space: &str,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        if should_cancel() {
+            return Err(DeliveryError::Cancelled);
+        }
+        self.delivery.deliver_space(prepared, space, should_cancel)
+    }
+
+    fn deliver(
+        &self,
+        prepared: &OutputMode,
+        text: &str,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<DeliveryOutcome, DeliveryError> {
+        if should_cancel() {
+            return Err(DeliveryError::Cancelled);
+        }
+        self.delivery.deliver(prepared, text, should_cancel)
+    }
+
+    fn caret(&self, _prepared: &OutputMode) -> Caret {
+        self.caret
     }
 }
 
@@ -143,6 +231,20 @@ impl TextDelivery for RecordingDelivery {
         Ok(())
     }
 
+    fn deliver_space(
+        &self,
+        _prepared: &Self::Prepared,
+        space: &str,
+        _should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        self.log.push(format!("space:{space}"));
+        if self.fail {
+            Err(DeliveryError::TargetUnavailable)
+        } else {
+            Ok(())
+        }
+    }
+
     fn deliver(
         &self,
         _prepared: &Self::Prepared,
@@ -200,6 +302,15 @@ impl TextDelivery for PlacedDelivery {
     ) -> Result<(), DeliveryError> {
         // Names no target process, so it never takes a Return.
         Err(DeliveryError::TargetUnavailable)
+    }
+
+    fn deliver_space(
+        &self,
+        prepared: &Self::Prepared,
+        space: &str,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        self.deliver(prepared, space, should_cancel).map(|_| ())
     }
 
     fn deliver(

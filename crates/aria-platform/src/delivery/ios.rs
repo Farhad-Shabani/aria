@@ -68,6 +68,15 @@ impl TextDelivery for IosTextDelivery {
         Err(DeliveryError::InsertionUnsupported)
     }
 
+    fn deliver_space(
+        &self,
+        _prepared: &Self::Prepared,
+        _space: &str,
+        _should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError> {
+        Err(DeliveryError::InsertionUnsupported)
+    }
+
     fn deliver(
         &self,
         _prepared: &Self::Prepared,

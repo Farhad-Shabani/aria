@@ -137,6 +137,18 @@ pub trait TextDelivery: Send + Sync + 'static {
         should_cancel: impl Fn() -> bool,
     ) -> Result<DeliveryOutcome, DeliveryError>;
 
+    /// Types `space`, which separates the text typed last from the text
+    /// after the caret. It refuses unless the field shows the caret right
+    /// after that text, with nothing selected. A field that can't set its
+    /// selection, as a terminal, never types over one, so the space goes
+    /// wherever a segment would. No default: only a delivery that reads the field can tell.
+    fn deliver_space(
+        &self,
+        prepared: &Self::Prepared,
+        space: &str,
+        should_cancel: impl Fn() -> bool,
+    ) -> Result<(), DeliveryError>;
+
     /// The application keystrokes would reach now. `None` where the
     /// platform cannot tell.
     fn frontmost(&self) -> Option<Application>;

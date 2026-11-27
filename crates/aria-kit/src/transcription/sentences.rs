@@ -1,5 +1,7 @@
 //! Sentence endings across streamed segments.
 
+use super::spacing::{Attachment, Ending, Spacing};
+
 /// Holds back the mark that ends a streamed segment until the next one
 /// shows whether the sentence went on.
 ///
@@ -10,15 +12,16 @@
 /// [`SentenceEnds::finish`] when nothing follows.
 ///
 /// ```
-/// use aria_kit::transcription::SentenceEnds;
+/// use aria_kit::transcription::{Attachment, Ending, SentenceEnds};
 ///
 /// let mut sentences = SentenceEnds::default();
-/// let first = sentences.punctuate("I think we should.", None);
+/// let as_written = Attachment::AsWritten;
+/// let first = sentences.punctuate("I think we should.", as_written, None);
 /// assert_eq!(first.text, "I think we should");
-/// assert!(first.defers_ending);
-/// let goes_on = sentences.punctuate("ship it.", Some(false));
+/// assert_eq!(first.spacing.ending, Ending::MarkDeferred);
+/// let goes_on = sentences.punctuate("ship it.", as_written, Some(false));
 /// assert_eq!(goes_on.text, "ship it");
-/// let new_sentence = sentences.punctuate("Then rest.", Some(true));
+/// let new_sentence = sentences.punctuate("Then rest.", as_written, Some(true));
 /// assert_eq!(new_sentence.text, ". Then rest");
 /// assert_eq!(sentences.finish().unwrap(), ".");
 /// ```
@@ -35,9 +38,9 @@ pub struct SentenceEnds {
 pub struct Punctuated {
     /// Opens with the mark the segment before held back.
     pub text: String,
-    /// `text`'s own closing mark is held back. Type `text` with nothing
-    /// after it, so the mark can still attach.
-    pub defers_ending: bool,
+    /// How to type `text`. When its own closing mark is held back, type it
+    /// with nothing after, so the mark can still attach.
+    pub spacing: Spacing,
 }
 
 /// Abbreviations whose period ends no sentence, as in "etc. and more".
@@ -46,24 +49,33 @@ const ABBREVIATIONS: [&str; 2] = ["etc", "vs"];
 impl SentenceEnds {
     /// Returns `text` to type after the segment before, its own closing
     /// mark held back. `Some(false)` drops the mark that segment owes;
-    /// anything else opens `text` with it.
+    /// anything else opens `text` with it. `attachment` says how `text`
+    /// meets the text before it.
     #[must_use = "the deferred ending is owed to the previous segment"]
-    pub fn punctuate(&mut self, text: &str, sentence_ended_before: Option<bool>) -> Punctuated {
-        let mut text = match self.deferred.take() {
-            Some(mark) if !goes_on(sentence_ended_before) => format!("{mark} {text}"),
-            _ => text.to_owned(),
+    pub fn punctuate(
+        &mut self,
+        text: &str,
+        attachment: Attachment,
+        sentence_ended_before: Option<bool>,
+    ) -> Punctuated {
+        let (mut text, attachment) = match self.deferred.take() {
+            // The owed mark meets the text before it now, not `text`.
+            Some(mark) if !goes_on(sentence_ended_before) => {
+                (format!("{mark} {text}"), Attachment::AsWritten)
+            }
+            _ => (text.to_owned(), attachment),
         };
-        let defers_ending = match closing_mark(&text) {
+        let ending = match closing_mark(&text) {
             Some(mark) => {
                 text.pop();
                 self.deferred = Some(mark);
-                true
+                Ending::MarkDeferred
             }
-            None => false,
+            None => Ending::Closed,
         };
         Punctuated {
             text,
-            defers_ending,
+            spacing: Spacing { attachment, ending },
         }
     }
 
@@ -124,18 +136,22 @@ fn closing_mark(text: &str) -> Option<char> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::Caret;
     use super::*;
 
     fn after(previous: &str, ended: Option<bool>, next: &str) -> Punctuated {
         let mut sentences = SentenceEnds::default();
-        let _ = sentences.punctuate(previous, None);
-        sentences.punctuate(next, ended)
+        let _ = sentences.punctuate(previous, Attachment::AsWritten, None);
+        sentences.punctuate(next, Attachment::AsWritten, ended)
     }
 
-    fn typed(text: &str, defers_ending: bool) -> Punctuated {
+    fn typed(text: &str, ending: Ending) -> Punctuated {
         Punctuated {
             text: text.to_owned(),
-            defers_ending,
+            spacing: Spacing {
+                attachment: Attachment::AsWritten,
+                ending,
+            },
         }
     }
 
@@ -143,11 +159,11 @@ mod tests {
     fn a_sentence_the_recognizer_heard_go_on_drops_the_mark() {
         assert_eq!(
             after("I think we should.", Some(false), "ship it tomorrow."),
-            typed("ship it tomorrow", true)
+            typed("ship it tomorrow", Ending::MarkDeferred)
         );
         assert_eq!(
             after("Ready?", Some(false), "or not"),
-            typed("or not", false)
+            typed("or not", Ending::Closed)
         );
     }
 
@@ -155,9 +171,12 @@ mod tests {
     fn a_sentence_the_recognizer_heard_end_keeps_the_mark() {
         assert_eq!(
             after("I think we should.", Some(true), "Ship it."),
-            typed(". Ship it", true)
+            typed(". Ship it", Ending::MarkDeferred)
         );
-        assert_eq!(after("Really?", Some(true), "Yes!"), typed("? Yes", true));
+        assert_eq!(
+            after("Really?", Some(true), "Yes!"),
+            typed("? Yes", Ending::MarkDeferred)
+        );
     }
 
     #[test]
@@ -169,7 +188,7 @@ mod tests {
             ("anymore.", Some(false)),
         ]
         .into_iter()
-        .map(|(text, ended)| sentences.punctuate(text, ended).text)
+        .map(|(text, ended)| sentences.punctuate(text, Attachment::AsWritten, ended).text)
         .collect();
         typed_text.extend(sentences.finish());
 
@@ -183,15 +202,19 @@ mod tests {
     fn an_unknown_boundary_types_the_mark() {
         assert_eq!(
             after("We should.", None, "while it"),
-            typed(". while it", false)
+            typed(". while it", Ending::Closed)
         );
     }
 
     #[test]
     fn only_a_lone_closing_mark_is_deferred() {
         for text in ["Ship it.", "Ready?", "Stop!"] {
-            assert!(
-                SentenceEnds::default().punctuate(text, None).defers_ending,
+            assert_eq!(
+                SentenceEnds::default()
+                    .punctuate(text, Attachment::AsWritten, None)
+                    .spacing
+                    .ending,
+                Ending::MarkDeferred,
                 "{text:?}"
             );
         }
@@ -204,8 +227,12 @@ mod tests {
             ".",
             "?!",
         ] {
-            assert!(
-                !SentenceEnds::default().punctuate(text, None).defers_ending,
+            assert_eq!(
+                SentenceEnds::default()
+                    .punctuate(text, Attachment::AsWritten, None)
+                    .spacing
+                    .ending,
+                Ending::Closed,
                 "{text:?}"
             );
         }
@@ -214,18 +241,31 @@ mod tests {
     #[test]
     fn a_reading_says_whether_the_next_text_reads_on() {
         let mut sentences = SentenceEnds::default();
-        let _ = sentences.punctuate("We should go.", None);
+        let _ = sentences.punctuate("We should go.", Attachment::AsWritten, None);
         assert!(sentences.reads_on(Some(false)));
         assert!(!sentences.reads_on(Some(true)));
         assert!(!sentences.reads_on(None));
-        let _ = sentences.punctuate("now", Some(false));
+        let _ = sentences.punctuate("now", Attachment::AsWritten, Some(false));
         assert!(sentences.reads_on(None));
+    }
+
+    #[test]
+    fn an_owed_mark_meets_the_text_before_it() {
+        let mut sentences = SentenceEnds::default();
+        let _ = sentences.punctuate("okay.", Attachment::AsWritten, None);
+        let next = sentences.punctuate("/help", Attachment::Apart, Some(true));
+        let typed = Caret::between("okay", "").insert_with(&next.text, next.spacing);
+        assert_eq!(format!("okay{typed}"), "okay. /help");
+
+        let _ = sentences.punctuate("src.", Attachment::AsWritten, None);
+        let goes_on = sentences.punctuate("/main", Attachment::Joined, Some(false));
+        assert_eq!(goes_on.spacing.attachment, Attachment::Joined);
     }
 
     #[test]
     fn finish_types_the_deferred_mark_once() {
         let mut sentences = SentenceEnds::default();
-        let _ = sentences.punctuate("Ready?", None);
+        let _ = sentences.punctuate("Ready?", Attachment::AsWritten, None);
         assert_eq!(sentences.finish().as_deref(), Some("?"));
         assert_eq!(sentences.finish(), None);
     }

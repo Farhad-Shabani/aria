@@ -15,7 +15,7 @@ pub use disfluencies::{RemoveHesitations, RemoveRepeats};
 mod correction;
 mod number_words;
 mod numbers;
-pub use correction::{Corrected, JoinSymbols};
+pub use correction::{Corrected, JoinSymbols, TypedBefore, Writing};
 mod symbol_words;
 mod symbols;
 pub mod vocabulary;

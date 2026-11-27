@@ -1,5 +1,6 @@
 mod context;
 pub use context::{Activity, Context, Failure, List, Status};
+pub mod branches;
 pub mod catalog;
 pub mod collection;
 pub mod dictionary;

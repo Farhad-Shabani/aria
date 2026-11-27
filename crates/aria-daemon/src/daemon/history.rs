@@ -560,7 +560,7 @@ mod tests {
         }
         sink.segment(Utterance::anonymous("open src")).unwrap();
         let mut joined = Utterance::anonymous("/main");
-        joined.spacing.joins_before = true;
+        joined.spacing.attachment = aria_kit::transcription::Attachment::Joined;
         sink.segment(joined).unwrap();
         sink.segment(Utterance::anonymous("/compact")).unwrap();
         sink.recording_finished(&mut recording, Err(&DictationError::DeliveryTargetChanged));

@@ -1,15 +1,16 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 
 use crate::cancel::CancelToken;
 
 mod fuzzy;
 mod personal;
+pub(super) use fuzzy::is_english;
 pub use personal::PersonalRules;
 use personal::Respellings;
 
-use super::claim::{Claimed, Word};
+use super::claim::{Claimed, Place, Word};
 use super::symbol_words;
 
 const MAX_TERMS: usize = 100_000;
@@ -153,6 +154,9 @@ impl Bucket {
 #[derive(Default)]
 pub struct Vocabulary {
     index: HashMap<String, Bucket>,
+    /// Names a project path runs through, lowercased: its folders, and the
+    /// parts of its git branches before a slash.
+    path_names: HashSet<String>,
     personal: PersonalRules,
     term_count: usize,
     estimated_bytes: usize,
@@ -241,6 +245,7 @@ impl Vocabulary {
     ) -> Result<Self, MatchError> {
         let mut matcher = Self {
             index: HashMap::new(),
+            path_names: HashSet::new(),
             personal: PersonalRules::default(),
             term_count: terms.len(),
             estimated_bytes: 0,
@@ -338,6 +343,30 @@ impl Vocabulary {
         Ok(())
     }
 
+    /// Gives the vocabulary the names the project's paths run through, so
+    /// a slash said after one glues to it, as in `crates/aria`. They count
+    /// toward the same `limit` and snapshot size as the terms.
+    pub fn with_path_names(
+        mut self,
+        names: impl IntoIterator<Item = impl AsRef<str>>,
+        limit: usize,
+    ) -> Result<Self, MatchError> {
+        let limit = limit.min(MAX_SNAPSHOT_BYTES);
+        for name in names {
+            let name = name.as_ref().to_lowercase();
+            let bytes = size_of::<String>() + name.len();
+            if !self.path_names.contains(&name) {
+                self.grow(bytes, limit)?;
+                self.path_names.insert(name);
+            }
+        }
+        Ok(self)
+    }
+
+    pub(super) fn names_a_path(&self, word: &str) -> bool {
+        self.path_names.contains(&word.to_lowercase())
+    }
+
     pub fn term_count(&self) -> usize {
         self.term_count
     }
@@ -431,8 +460,8 @@ impl Vocabulary {
         claimed
     }
 
-    pub(super) fn claim_forms<'a>(&'a self, text: &str, claimed: &mut Claimed<'a>) {
-        self.personal.claim(text, claimed);
+    pub(super) fn claim_forms<'a>(&'a self, text: &str, place: Place, claimed: &mut Claimed<'a>) {
+        self.personal.claim(text, place, claimed);
     }
 
     pub(super) fn defer_waiting_forms(&self, text: &str, claimed: &mut Claimed<'_>) {
@@ -722,10 +751,23 @@ fn normalize(text: &str) -> String {
 
 // A recognizer writes "dash" for `-`, but dictation's symbol words call it
 // "hyphen".
-fn spoken_symbol(character: char, hyphen: &'static str) -> Option<&'static str> {
+fn spoken_symbol(character: char, hyphen: &'static str, name: usize) -> Option<&'static str> {
     match character {
         '-' => Some(hyphen),
-        _ => symbol_words::word(character),
+        _ => {
+            let names = symbol_names(character);
+            names.get(name).or(names.first()).copied()
+        }
+    }
+}
+
+// Dictation's symbol words call `/` "forward slash", since "slash" alone is
+// a plain word. A listed name is said on purpose, so "slash" says it too.
+fn symbol_names(character: char) -> Vec<&'static str> {
+    let names = symbol_words::names(character).iter().copied();
+    match character {
+        '/' => names.chain(["slash"]).collect(),
+        _ => names.collect(),
     }
 }
 
@@ -747,27 +789,35 @@ fn aliases(canonical: &str) -> Vec<String> {
     }
     let mut aliases = Vec::new();
     let hyphens = if canonical.contains('-') { 2 } else { 1 };
+    // A symbol with several names is said by one of them throughout.
+    let names = canonical
+        .chars()
+        .map(|character| symbol_names(character).len())
+        .max()
+        .unwrap_or(1);
     for hyphen in ["dash"]
         .into_iter()
         .chain(symbol_words::word('-'))
         .take(hyphens)
     {
-        for said in [Said::Whole, Said::Words, Said::Letters] {
-            let mut words: Vec<String> = Vec::new();
-            let mut part = String::new();
-            for character in canonical.chars() {
-                let Some(symbol) = spoken_symbol(character, hyphen) else {
-                    part.push(character);
-                    continue;
-                };
+        for name in 0..names {
+            for said in [Said::Whole, Said::Words, Said::Letters] {
+                let mut words: Vec<String> = Vec::new();
+                let mut part = String::new();
+                for character in canonical.chars() {
+                    let Some(symbol) = spoken_symbol(character, hyphen, name) else {
+                        part.push(character);
+                        continue;
+                    };
+                    push_part(&part, said, &mut words);
+                    part.clear();
+                    words.push(symbol.to_owned());
+                }
                 push_part(&part, said, &mut words);
-                part.clear();
-                words.push(symbol.to_owned());
-            }
-            push_part(&part, said, &mut words);
-            let alias = normalize(&words.join(" "));
-            if alias != canonical.to_lowercase() && !aliases.contains(&alias) {
-                aliases.push(alias);
+                let alias = normalize(&words.join(" "));
+                if alias != canonical.to_lowercase() && !aliases.contains(&alias) {
+                    aliases.push(alias);
+                }
             }
         }
     }
@@ -817,6 +867,7 @@ fn spoken_words(part: &str) -> Vec<&str> {
 mod tests {
     use rstest::rstest;
 
+    use super::super::{TypedBefore, Writing};
     use super::*;
 
     #[test]
@@ -889,7 +940,9 @@ mod tests {
     #[case::extension_in_capitals("main dot RS", "main.rs")]
     fn dictated_names_keep_the_stored_casing(#[case] heard: &str, #[case] typed: &str) {
         let vocabulary = Vocabulary::new(["aria-kit", "main.rs"]).unwrap();
-        let corrected = vocabulary.correct_spoken(heard, "").map(|c| c.text);
+        let corrected = vocabulary
+            .correct_spoken(heard, TypedBefore::Nothing, Writing::Commands)
+            .map(|c| c.text);
         assert_eq!(corrected.as_deref(), Some(typed));
     }
 
@@ -944,6 +997,17 @@ mod tests {
 
         assert!(matches!(Vocabulary::new(terms), Err(MatchError::TooLarge)));
         assert_eq!(consumed.get(), MAX_TERMS + 1);
+    }
+
+    #[test]
+    fn path_names_count_toward_the_limit() {
+        let room = Vocabulary::default().estimated_bytes() + size_of::<String>() + "crates".len();
+        let fits = Vocabulary::default().with_path_names(["crates", "Crates"], room);
+        assert!(fits.is_ok());
+        assert!(matches!(
+            Vocabulary::default().with_path_names(["crates", "src"], room),
+            Err(MatchError::TooLarge)
+        ));
     }
 
     #[test]
@@ -1004,7 +1068,9 @@ mod tests {
     #[case::the_pair_alone("Arya said", "aria said")]
     fn a_name_matches_what_a_pair_corrects(#[case] heard: &str, #[case] typed: &str) {
         let matcher = compile(&["aria-kit"], pairs(&[("arya", "aria"), ("a ria", "aria")]));
-        let corrected = matcher.correct_spoken(heard, "").map(|c| c.text);
+        let corrected = matcher
+            .correct_spoken(heard, TypedBefore::Nothing, Writing::Commands)
+            .map(|c| c.text);
         assert_eq!(corrected.as_deref(), Some(typed));
         assert_eq!(matcher.correct(heard).as_deref(), Some(typed));
     }
