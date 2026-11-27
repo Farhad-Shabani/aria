@@ -62,6 +62,9 @@ struct PaletteCommandsPage: View {
         .onChange(of: controller.model.dictionaryNotice) { _, notice in
             if let notice { NSAccessibility.announce(notice.message) }
         }
+        .onChange(of: unsaved.listFailure) { _, failure in
+            if let failure { NSAccessibility.announce(failure) }
+        }
         .onChange(of: chats.lastOutcome) { _, outcome in
             if let outcome { NSAccessibility.announce(outcome.announcement) }
         }
@@ -247,12 +250,13 @@ struct PaletteCommandsPage: View {
             DictionaryNoticeText(notice: notice)
         } else if let failure = chats.lastStop?.failure {
             NoticeText(notice: failure)
+        } else if let failure = unsaved.listFailure {
+            // Unsaved transcripts appear when history is off, so this outranks it.
+            NoticeText(notice: failure)
         } else if !controller.model.keepsHistory {
             Text("Nothing is saved.")
         } else if let error = history.error {
             NoticeText(notice: error.message)
-        } else if let failure = unsaved.listFailure {
-            NoticeText(notice: failure)
         } else if history.isClearing {
             PaletteFooterProgress("Clearing…")
         } else if let notice = history.notice {

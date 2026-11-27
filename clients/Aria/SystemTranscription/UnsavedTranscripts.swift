@@ -28,6 +28,8 @@ enum UnsavedTranscriptText: Equatable, Sendable {
     case truncated(String)
     /// Gone, or not readable.
     case unreadable
+    /// Aria isn’t running, so nothing read it.
+    case unavailable
 }
 
 /// The unsaved transcripts the daemon lists, and saving or discarding one.
@@ -90,7 +92,8 @@ final class UnsavedTranscripts: ObservableObject {
             ariaDirs = [list.transcriptsDir, list.unsavedDir]
             listFailure = nil
         } catch {
-            guard change == listChanges else { return }
+            // A page that left mid-list cancelled it, which is no failure.
+            guard change == listChanges, !Task.isCancelled else { return }
             log.error("Listing unsaved transcripts failed: \(String(describing: error), privacy: .private)")
             listFailure = Self.message(for: error, otherwise: "Aria couldn’t list your unsaved transcripts. Try again.")
         }
@@ -144,6 +147,7 @@ final class UnsavedTranscripts: ObservableObject {
             return try await effects.read(transcript)
         } catch {
             log.error("Reading an unsaved transcript failed: \(String(describing: error), privacy: .private)")
+            if (error as? DaemonFailure)?.isOffline == true { return .unavailable }
             if Self.isGone(error) { showGone() }
             return .unreadable
         }

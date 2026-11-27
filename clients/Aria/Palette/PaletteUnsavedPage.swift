@@ -60,7 +60,11 @@ struct PaletteUnsavedPage: View {
         case .unreadable:
             ContentUnavailableView(
                 "Can’t Read Transcript", systemImage: "doc.questionmark",
-                description: Text("The transcript file is gone or can’t be read."))
+                description: Text("Aria can’t read this transcript file. You can still save or discard it."))
+        case .unavailable:
+            ContentUnavailableView(
+                "Aria Isn’t Running", systemImage: "power",
+                description: Text(DaemonFailure.offlineMessage))
         case .whole(let words), .truncated(let words):
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {

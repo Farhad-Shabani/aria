@@ -14,7 +14,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
         var discardFailure: DaemonFailure?
         var copyFails = false
         var text: UnsavedTranscriptText = .whole("[00:00:01] heard")
-        var readFails = false
+        var readFailure: DaemonFailure?
         var holdsCopy = false
         var heldCopy: CheckedContinuation<Void, Never>?
         var lists = 0
@@ -37,7 +37,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
                     self.listed.removeAll { $0.name == transcript.name }
                 },
                 read: { _ in
-                    if self.readFails { throw DaemonFailure.refused(.historyMissing) }
+                    if let failure = self.readFailure { throw failure }
                     return self.text
                 },
                 copy: { transcript, destination in
@@ -220,7 +220,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
         let unsaved = await refreshed(fake)
 
         let cut = await unsaved.text(of: Self.transcript("a.txt"))
-        fake.readFails = true
+        fake.readFailure = .refused(.unsavedTranscriptMissing)
         let gone = await unsaved.text(of: Self.transcript("a.txt"))
 
         XCTAssertEqual(cut, .truncated("[00:00:01] the start"))
@@ -312,9 +312,34 @@ final class UnsavedTranscriptsTests: XCTestCase {
         XCTAssertEqual(unsaved.transcripts, [transcript])
     }
 
+    func testAReadWhileAriaIsOffSaysSoAndKeepsTheList() async {
+        let fake = Fake([Self.transcript("a.txt")])
+        fake.readFailure = .unavailable
+        let unsaved = await refreshed(fake)
+
+        let text = await unsaved.text(of: Self.transcript("a.txt"))
+
+        XCTAssertEqual(text, .unavailable)
+        XCTAssertNil(unsaved.error)
+        XCTAssertEqual(fake.lists, 1)
+    }
+
+    func testAListThePageCancelledLeavesNoFailure() async {
+        let fake = Fake([Self.transcript("a.txt")])
+        let unsaved = await refreshed(fake)
+        fake.listFails = true
+
+        let refresh = Task { await unsaved.refresh() }
+        refresh.cancel()
+        await refresh.value
+
+        XCTAssertNil(unsaved.listFailure)
+        XCTAssertEqual(unsaved.transcripts.map(\.name), ["a.txt"])
+    }
+
     func testAReadOfAReplacedTranscriptRefreshesTheList() async {
         let fake = Fake([Self.transcript("a.txt")])
-        fake.readFails = true
+        fake.readFailure = .refused(.unsavedTranscriptMissing)
         let unsaved = await refreshed(fake)
 
         let text = await unsaved.text(of: Self.transcript("a.txt"))
@@ -326,7 +351,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
 
     func testAnExportWhoseTranscriptChangedBeforeCleanupSaysSoAndRefreshes() async {
         let fake = Fake([Self.transcript("a.txt")])
-        fake.discardFailure = .refused(.historyMissing)
+        fake.discardFailure = .refused(.unsavedTranscriptMissing)
         let unsaved = await refreshed(fake)
 
         let discarded = await unsaved.save(Self.transcript("a.txt"), to: URL(filePath: "/Notes/a.txt"))
@@ -339,7 +364,7 @@ final class UnsavedTranscriptsTests: XCTestCase {
 
     func testADiscardOfATranscriptAnotherFileReplacedRefreshesTheList() async {
         let fake = Fake([Self.transcript("a.txt")])
-        fake.discardFailure = .refused(.historyMissing)
+        fake.discardFailure = .refused(.unsavedTranscriptMissing)
         let unsaved = await refreshed(fake)
 
         let discarded = await unsaved.discard(Self.transcript("a.txt"))
