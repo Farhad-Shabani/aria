@@ -439,8 +439,9 @@ mod tests {
     use rstest::rstest;
 
     use super::super::super::Attachment;
+    use super::super::correction::TypedBefore;
     use super::super::vocabulary::PersonalRules;
-    use super::super::{JoinSymbols, Layer, TypedBefore, Vocabulary, Writing};
+    use super::super::{JoinSymbols, Layer, Vocabulary, Writing};
     use crate::cancel::CancelToken;
 
     fn applied(heard: &str) -> String {

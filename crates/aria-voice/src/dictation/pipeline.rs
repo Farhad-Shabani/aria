@@ -8,7 +8,7 @@ use aria_kit::speaker::{Admission, Gate, Released, Speaker, Timeline, TurnFeed};
 use aria_kit::transcription::Heard;
 use aria_kit::transcription::layer::Layer;
 use aria_kit::transcription::{
-    Attachment, Endings, Punctuated, SegmentCorrector, Spacing, Writing, check_cancelled,
+    Attachment, ClosingMark, Punctuated, SegmentCorrector, Spacing, Writing, check_cancelled,
 };
 use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector};
 
@@ -950,8 +950,6 @@ impl<'a> SegmentEnds<'a> {
         }
     }
 
-    /// What of `text` types now: the words held before, then `text` up to
-    /// the ones more speech may still change.
     fn push(&mut self, text: &str, sentence_ended_before: Option<bool>) -> Option<Punctuated> {
         let typed = self.corrector.push(text, sentence_ended_before);
         self.held_since = self.corrector.is_holding().then(Instant::now);
@@ -1021,14 +1019,14 @@ impl<'a> Published<'a> {
         let streaming = settings.delivery_mode == DeliveryMode::Streaming;
         // Complete delivery types the decoder's whole transcript, which
         // keeps every mark.
-        let endings = if streaming {
-            Endings::Deferred
+        let closing_mark = if streaming {
+            ClosingMark::Deferred
         } else {
-            Endings::AsDecoded
+            ClosingMark::AsDecoded
         };
         let corrector = SegmentCorrector::new(vocabulary)
             .with_writing(settings.writing())
-            .with_endings(endings);
+            .with_closing_mark(closing_mark);
         Self {
             ends: SegmentEnds::new(corrector),
             delivery: Delivery {
@@ -1117,8 +1115,6 @@ impl<'a> Published<'a> {
         self.delivery.publish_held(held, sinks)
     }
 
-    /// Publishes what the last segment still owes once nothing follows,
-    /// and returns everything the press typed.
     fn publish_ends<S>(self, sinks: &mut S) -> Result<String, DictationError>
     where
         S: TranscriptSink,
@@ -1829,7 +1825,6 @@ mod tests {
     use aria_kit::speaker::Embedder;
     use aria_kit::speaker::LevelSegmenter;
     use aria_kit::speaker::{Diarizer, SpeakerError};
-    use aria_kit::transcription::Corrected;
     use aria_platform::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
     use aria_settings::rpc::RpcErrorCode;
     use std::sync::{Arc, Mutex};
@@ -2375,7 +2370,7 @@ mod tests {
         let heard = heard("turn left");
 
         published.delivery.provisional("uncommitted guess", &sinks);
-        publish_whole(&mut published, heard, "turn left", &mut sinks).unwrap();
+        publish_corrected(&mut published, heard, "turn left", &mut sinks).unwrap();
 
         assert_eq!(log.entries(), ["prepare:Insert", "segment:turn left"]);
         drop(published);
@@ -3276,28 +3271,6 @@ mod tests {
         })).unwrap();
     }
 
-    /// Publishes `text` as all of `heard`, read as its decode read it.
-    fn publish_whole<S>(
-        published: &mut Published<'_>,
-        heard: Heard,
-        text: &str,
-        sinks: &mut S,
-    ) -> Result<(), DictationError>
-    where
-        S: TranscriptSink,
-        S::Error: Into<DictationError>,
-    {
-        let corrected = Corrected {
-            text: text.to_owned(),
-            attachment: Attachment::default(),
-        };
-        let typed = published
-            .ends
-            .corrector
-            .push_corrected(corrected, heard.segment.sentence_ended_before());
-        published.publish(heard, typed, None, sinks)
-    }
-
     /// Publishes `text` as streaming does: deferred words held, then
     /// corrected.
     fn publish_corrected<S>(
@@ -3896,7 +3869,7 @@ mod tests {
                 ("run d b two", Some("run db2")),
             ] {
                 let heard = heard(text);
-                publish_whole(&mut published, heard, corrected.unwrap_or(text), &mut sinks)
+                publish_corrected(&mut published, heard, corrected.unwrap_or(text), &mut sinks)
                     .unwrap();
             }
             assert_eq!(capture.should_stop(), fail);
@@ -3954,7 +3927,7 @@ mod tests {
         published.delivery.provisional("turn lift", &sinks);
 
         let heard = heard("turn left");
-        publish_whole(&mut published, heard, "turn left", &mut sinks).unwrap();
+        publish_corrected(&mut published, heard, "turn left", &mut sinks).unwrap();
         published.delivery.provisional("", &sinks);
         drop(published);
         drop(events);
@@ -3986,17 +3959,17 @@ mod tests {
             }),
         );
         sinks.dictation_started(&settings, &control).unwrap();
-        published.delivery.provisional("one", &sinks);
+        published.delivery.provisional("red", &sinks);
 
-        let heard = heard("one");
-        publish_whole(&mut published, heard, "one", &mut sinks).unwrap();
+        let heard = heard("red");
+        publish_corrected(&mut published, heard, "red", &mut sinks).unwrap();
         // The recording drains after the failure, so previews keep arriving.
-        published.delivery.provisional("one two", &sinks);
+        published.delivery.provisional("red green", &sinks);
         drop(published);
         drop(events);
 
         let texts: Vec<_> = ghosts.iter().map(|ghost| ghost.text.to_string()).collect();
-        assert_eq!(texts, ["one", ""]);
+        assert_eq!(texts, ["red", ""]);
     }
 
     #[test]
@@ -4975,13 +4948,13 @@ mod tests {
             }),
         );
         sinks.dictation_started(&settings, &control).unwrap();
-        for text in ["one", "two"] {
+        for text in ["red", "green"] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
         assert!(published.delivery.failure.is_none());
-        assert_eq!(log.entries(), ["segment:one", "segment:two"]);
+        assert_eq!(log.entries(), ["segment:red", "segment:green"]);
         drop(published);
         drop(events);
         let typed: Vec<_> = stages
@@ -5083,9 +5056,9 @@ mod tests {
             }),
         );
         sinks.dictation_started(&settings, &control).unwrap();
-        for text in ["one", "two"] {
+        for text in ["red", "green"] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
         // The first retry is still refused. A second one within the interval
@@ -5136,13 +5109,13 @@ mod tests {
                 }),
             );
             sinks.dictation_started(&settings, &control).unwrap();
-            for text in ["one", "two"] {
+            for text in ["red", "green"] {
                 let heard = heard(text);
-                publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+                publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
             }
 
             let result = published.finish(
-                finished(Transcript::new("one two").unwrap()),
+                finished(Transcript::new("red green").unwrap()),
                 false,
                 &mut sinks,
             );
@@ -5242,7 +5215,7 @@ mod tests {
         sinks.dictation_started(&settings, &control).unwrap();
         for text in ["one", "two."] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
         let result = published.finish(
@@ -5270,13 +5243,13 @@ mod tests {
             }),
         );
         sinks.dictation_started(&settings, &control).unwrap();
-        for text in ["one", "two"] {
+        for text in ["red", "green"] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
         let result = published.finish(
-            finished(Transcript::new("one two").unwrap()),
+            finished(Transcript::new("red green").unwrap()),
             false,
             &mut sinks,
         );
@@ -5296,7 +5269,8 @@ mod tests {
         sinks.dictation_started(&settings, &control).unwrap();
         for (text, corrected) in [("um", Some("")), ("run", None)] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, corrected.unwrap_or(text), &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, corrected.unwrap_or(text), &mut sinks)
+                .unwrap();
         }
         let whole = Transcript::new("um run").unwrap();
 
@@ -5360,7 +5334,7 @@ mod tests {
         for (text, end) in [("first part", 1_600), ("second part", 16_000)] {
             let mut heard = heard(text);
             heard.span = Some(0..end);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
         let log = captured.text();
@@ -5398,7 +5372,7 @@ mod tests {
         ] {
             let mut heard = heard(text);
             heard.segment = heard.segment.with_sentence_ended_before(ended_before);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
         let whole = Transcript::new("unused").unwrap();
 
@@ -5437,7 +5411,7 @@ mod tests {
         let mut published =
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let heard = heard("we should.");
-        publish_whole(&mut published, heard, "we should.", &mut history).unwrap();
+        publish_corrected(&mut published, heard, "we should.", &mut history).unwrap();
         assert!(control.cancel());
 
         published.publish_ends(&mut history).unwrap();
@@ -5472,7 +5446,7 @@ mod tests {
         let mut published =
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let heard = heard("we should.");
-        publish_whole(&mut published, heard, "we should.", &mut FailingPeriod).unwrap();
+        publish_corrected(&mut published, heard, "we should.", &mut FailingPeriod).unwrap();
         let whole = Transcript::new("unused").unwrap();
 
         let result = published
@@ -6048,7 +6022,7 @@ mod tests {
         let mut sinks = (log.history(), log.cursor());
         for text in ["we should.", "And ship it."] {
             let heard = heard(text);
-            publish_whole(&mut published, heard, text, &mut sinks).unwrap();
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
         }
 
         assert_eq!(

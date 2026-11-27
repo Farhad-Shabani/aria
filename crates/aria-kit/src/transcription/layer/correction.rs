@@ -125,7 +125,7 @@ fn claim_each<'a>(
 /// What sits right before new dictated text. A spoken symbol at the
 /// start of the new text joins only a word right before it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TypedBefore<'a> {
+pub(super) enum TypedBefore<'a> {
     /// The dictation starts here. "dot env" → `.env`.
     Nothing,
     /// Text typed earlier. After `src`, "forward slash main" → `src/main`.
@@ -140,7 +140,7 @@ impl<'a> TypedBefore<'a> {
     /// What sits before a streamed segment typed after `typed`. It is
     /// [`Self::Apart`] when `sentence_ended_before` says a sentence ended,
     /// or when it is `None` and `sentences` holds back a closing mark.
-    pub(crate) fn streamed(
+    pub(super) fn streamed(
         typed: &'a str,
         sentences: &SentenceEnds,
         sentence_ended_before: Option<bool>,
@@ -183,7 +183,7 @@ impl Vocabulary {
     }
 
     /// Like [`Self::correct_spoken`], for text typed after `before`.
-    pub(crate) fn correct_spoken_after(
+    pub(super) fn correct_spoken_after(
         &self,
         text: &str,
         before: TypedBefore<'_>,

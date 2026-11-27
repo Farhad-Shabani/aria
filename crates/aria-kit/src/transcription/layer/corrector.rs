@@ -1,8 +1,10 @@
 //! Correcting a dictation's segments as they stream in.
 
-use super::layer::{Corrected, DeferredWords, TypedBefore, Unheld, Vocabulary, Writing};
-use super::sentences::{Punctuated, SentenceEnds};
-use super::spacing::{Attachment, Caret, Ending, Spacing};
+use super::super::sentences::{Punctuated, SentenceEnds};
+use super::super::spacing::{Attachment, Caret, Ending, Spacing};
+use super::correction::TypedBefore;
+use super::deferred::{DeferredWords, Unheld};
+use super::{Corrected, Vocabulary, Writing};
 
 /// Corrects each segment of a dictation after the text typed before it,
 /// holding back what the next segment may still change.
@@ -23,7 +25,7 @@ use super::spacing::{Attachment, Caret, Ending, Spacing};
 pub struct SegmentCorrector<'a> {
     vocabulary: &'a Vocabulary,
     writing: Writing,
-    endings: Endings,
+    closing_mark: ClosingMark,
     words: DeferredWords,
     sentences: SentenceEnds,
     /// Everything typed so far, spaced as typed.
@@ -32,7 +34,7 @@ pub struct SegmentCorrector<'a> {
 
 /// How a segment's closing mark is typed.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum Endings {
+pub enum ClosingMark {
     /// Held until the next segment shows whether the sentence ended there,
     /// for segments decoded as they stream.
     #[default]
@@ -57,7 +59,7 @@ impl<'a> SegmentCorrector<'a> {
         Self {
             vocabulary,
             writing: Writing::default(),
-            endings: Endings::default(),
+            closing_mark: ClosingMark::default(),
             words: DeferredWords::default(),
             sentences: SentenceEnds::default(),
             text: String::new(),
@@ -69,8 +71,8 @@ impl<'a> SegmentCorrector<'a> {
         self
     }
 
-    pub fn with_endings(mut self, endings: Endings) -> Self {
-        self.endings = endings;
+    pub fn with_closing_mark(mut self, closing_mark: ClosingMark) -> Self {
+        self.closing_mark = closing_mark;
         self
     }
 
@@ -83,10 +85,10 @@ impl<'a> SegmentCorrector<'a> {
         segment: &str,
         sentence_ended_before: Option<bool>,
     ) -> Option<Punctuated> {
-        let sentence_ended_before = match self.endings {
-            Endings::Deferred => sentence_ended_before,
+        let sentence_ended_before = match self.closing_mark {
+            ClosingMark::Deferred => sentence_ended_before,
             // Every mark stays as decoded, so no reading drops a held one.
-            Endings::AsDecoded => None,
+            ClosingMark::AsDecoded => None,
         };
         let unheld = self.words.hold(
             segment,
@@ -132,18 +134,6 @@ impl<'a> SegmentCorrector<'a> {
         }
     }
 
-    /// Types `corrected` as [`Self::push`] types a segment once corrected,
-    /// for tests whose text is corrected already.
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use = "the corrector counts the text as typed"]
-    pub fn push_corrected(
-        &mut self,
-        corrected: Corrected,
-        sentence_ended_before: Option<bool>,
-    ) -> Option<Punctuated> {
-        self.punctuate(corrected, sentence_ended_before)
-    }
-
     fn correct(&mut self, unheld: Unheld) -> Option<Punctuated> {
         let before =
             TypedBefore::streamed(&self.text, &self.sentences, unheld.sentence_ended_before);
@@ -165,8 +155,8 @@ impl<'a> SegmentCorrector<'a> {
         if corrected.text.is_empty() {
             return None;
         }
-        let punctuated = match self.endings {
-            Endings::Deferred => {
+        let punctuated = match self.closing_mark {
+            ClosingMark::Deferred => {
                 let mut punctuated = self.sentences.punctuate(
                     &corrected.text,
                     corrected.attachment,
@@ -179,7 +169,7 @@ impl<'a> SegmentCorrector<'a> {
                 }
                 punctuated
             }
-            Endings::AsDecoded => Punctuated {
+            ClosingMark::AsDecoded => Punctuated {
                 text: corrected.text,
                 spacing: Spacing {
                     attachment: corrected.attachment,
@@ -237,7 +227,8 @@ mod tests {
     #[test]
     fn segments_as_decoded_keep_their_marks() {
         let vocabulary = Vocabulary::default();
-        let mut corrector = SegmentCorrector::new(&vocabulary).with_endings(Endings::AsDecoded);
+        let mut corrector =
+            SegmentCorrector::new(&vocabulary).with_closing_mark(ClosingMark::AsDecoded);
         let should = corrector.push("We should.", Some(false)).unwrap();
         assert_eq!(should.text, "We should.");
         assert_eq!(should.spacing.ending, Ending::Closed);

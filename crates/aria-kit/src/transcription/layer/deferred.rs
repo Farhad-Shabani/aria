@@ -30,7 +30,7 @@ const MAX_HELD_WORDS: usize = 8;
 /// - The caller decides when held words go out with nothing after them,
 ///   with [`finish`](Self::finish).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct DeferredWords {
+pub(super) struct DeferredWords {
     held: Option<Held>,
 }
 
@@ -56,11 +56,11 @@ fn waits_for_its_word(text: &str) -> bool {
 
 /// Text a stream can type now, once [`DeferredWords`] has taken its share.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Unheld {
-    pub(crate) text: String,
+pub(super) struct Unheld {
+    pub(super) text: String,
     /// Whether a sentence ended before `text`. Words held from an earlier
     /// segment keep that segment's reading.
-    pub(crate) sentence_ended_before: Option<bool>,
+    pub(super) sentence_ended_before: Option<bool>,
 }
 
 impl DeferredWords {
@@ -70,7 +70,7 @@ impl DeferredWords {
     /// own words. The held words keep their closing mark unless
     /// `sentence_ended_before` says the sentence goes on.
     #[must_use = "held words are owed to the transcript"]
-    pub(crate) fn hold(
+    pub(super) fn hold(
         &mut self,
         text: &str,
         sentence_ended_before: Option<bool>,
@@ -103,7 +103,7 @@ impl DeferredWords {
         unheld
     }
 
-    pub(crate) fn is_holding(&self) -> bool {
+    pub(super) fn is_holding(&self) -> bool {
         self.held.is_some()
     }
 
@@ -111,7 +111,7 @@ impl DeferredWords {
     /// slash or backslash. Those wait for the next word, as "dot dot forward
     /// slash" waits to type `../src`.
     #[must_use = "held words are owed to the transcript"]
-    pub(crate) fn release_paused(&mut self) -> Option<Unheld> {
+    pub(super) fn release_paused(&mut self) -> Option<Unheld> {
         let waits = self
             .held
             .as_ref()
@@ -124,7 +124,7 @@ impl DeferredWords {
 
     /// Releases the held words once nothing follows.
     #[must_use = "held words are owed to the transcript"]
-    pub(crate) fn finish(&mut self) -> Option<Unheld> {
+    pub(super) fn finish(&mut self) -> Option<Unheld> {
         self.held.take().map(|held| Unheld {
             text: held.words,
             sentence_ended_before: held.sentence_ended_before,
@@ -164,7 +164,7 @@ mod tests {
     use rstest::rstest;
 
     use super::super::super::{Attachment, Ending, Spacing};
-    use super::super::TypedBefore;
+    use super::super::correction::TypedBefore;
     use super::super::vocabulary::{PersonalRules, Term};
     use super::*;
 
