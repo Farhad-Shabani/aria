@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 use tonic::Status;
 
 use crate::ipc::wire;
-use aria_kit::audio::canonical_samples;
+use aria_kit::audio::{AutoStop, canonical_samples};
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::dictation::RecordingDevice;
 
@@ -45,9 +45,16 @@ const MAX_RECORDING: Duration = Duration::from_secs(601);
 /// The longest recording's PCM, so an oversized recording stops as it
 /// streams.
 const MAX_AUDIO_BYTES: usize = canonical_samples(MAX_RECORDING) as usize * 2;
-/// Maximum wait for the opening and the first audio, and the gap after which
-/// the press ends a phone's recording whose audio stopped arriving.
+/// Maximum wait for the opening and the first audio, and the quiet limit
+/// while auto-stop is off.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long a recording may go without speech, or without audio arriving,
+/// before the press ends it: the auto-stop time, so every device keeps one
+/// rule.
+pub(super) fn quiet_limit(auto_stop: Option<AutoStop>) -> Duration {
+    auto_stop.map_or(IDLE_TIMEOUT, AutoStop::get)
+}
 /// How long the phone may take to ask for Return once the text landed.
 const SUBMIT_WAIT: Duration = Duration::from_secs(10);
 
@@ -72,17 +79,6 @@ impl Opening {
 
     pub(super) fn device(&self) -> Option<RecordingDevice> {
         self.device
-    }
-
-    /// The gap after which the press ends a recording whose audio stopped
-    /// arriving. A watch sends nothing while its wearer's wrist is down, and
-    /// catches up once it is raised, so its recording may go quiet for as
-    /// long as it may record.
-    pub(super) fn stall(&self) -> Duration {
-        match self.device {
-            Some(RecordingDevice::Watch) => MAX_RECORDING,
-            Some(RecordingDevice::Phone) | None => IDLE_TIMEOUT,
-        }
     }
 }
 
@@ -204,6 +200,9 @@ where
                 Some(wire::relay_request::Body::Submit(_submit)) => {
                     return Err(RelayError::SubmittedMidRecording);
                 }
+                Some(wire::relay_request::Body::Cancel(_cancel)) => {
+                    return Err(RelayError::ClientCancelled);
+                }
                 None => {}
             },
             Some(Err(status)) => return Err(RelayError::ClientStream(status)),
@@ -248,6 +247,9 @@ where
                 }
                 Some(wire::relay_request::Body::Submit(_submit)) => {
                     return Err(RelayError::SubmittedMidRecording);
+                }
+                Some(wire::relay_request::Body::Cancel(_cancel)) => {
+                    return Err(RelayError::ClientCancelled);
                 }
                 None => {}
             },
@@ -301,6 +303,9 @@ where
         };
         match request.map_err(RelayError::ClientStream)?.body {
             Some(wire::relay_request::Body::Submit(_submit)) => return Ok(Reply::Submit),
+            Some(wire::relay_request::Body::Cancel(_cancel)) => {
+                return Err(RelayError::ClientCancelled);
+            }
             Some(
                 wire::relay_request::Body::Start(_)
                 | wire::relay_request::Body::Resume(_)
@@ -308,6 +313,42 @@ where
                 | wire::relay_request::Body::Stop(_),
             ) => return Err(RelayError::RecordingEnded),
             // A newer client's field, skipped as during the recording.
+            None => {}
+        }
+    }
+}
+
+/// What a client that stopped its recording says while the Mac transcribes
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AfterStop {
+    /// It asked for Return ahead of COMPLETED.
+    Submit,
+    /// It half-closed, so it sends nothing more.
+    Closed,
+}
+
+/// Reads a stopped recording's stream until the client says something, so
+/// a `RelayCancel` reaches the press while it transcribes.
+pub(super) async fn after_stop<S>(stream: &mut S) -> Result<AfterStop, RelayError>
+where
+    S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
+{
+    loop {
+        let Some(request) = stream.next().await else {
+            return Ok(AfterStop::Closed);
+        };
+        match request.map_err(RelayError::ClientStream)?.body {
+            Some(wire::relay_request::Body::Submit(_submit)) => return Ok(AfterStop::Submit),
+            Some(wire::relay_request::Body::Cancel(_cancel)) => {
+                return Err(RelayError::ClientCancelled);
+            }
+            Some(
+                wire::relay_request::Body::Start(_)
+                | wire::relay_request::Body::Resume(_)
+                | wire::relay_request::Body::Audio(_)
+                | wire::relay_request::Body::Stop(_),
+            ) => return Err(RelayError::RecordingEnded),
             None => {}
         }
     }
@@ -357,8 +398,30 @@ pub(super) enum RelayError {
     #[error(transparent)]
     Audio(ProtocolError),
 
+    #[error("the relay client cancelled the recording")]
+    ClientCancelled,
+
     #[error("the relay client's stream failed: {0}")]
     ClientStream(#[source] Status),
+}
+
+impl RelayError {
+    /// The client's stream broke, as a lost connection does, rather than
+    /// failing to decode.
+    pub(super) fn is_lost_stream(&self) -> bool {
+        matches!(self, Self::ClientStream(status) if is_lost(status))
+    }
+}
+
+/// Whether a stream failed as a lost connection fails it: its keepalive
+/// timed out (`Unavailable`), or its connection broke (`Unknown`). A
+/// cancelled RPC reads as the stream ending. Anything else, such as an
+/// oversized or undecodable message, is the client's fault.
+pub(super) fn is_lost(status: &Status) -> bool {
+    matches!(
+        status.code(),
+        tonic::Code::Unavailable | tonic::Code::Unknown
+    )
 }
 
 impl From<&RelayError> for RpcErrorCode {
@@ -374,7 +437,9 @@ impl From<&RelayError> for RpcErrorCode {
             | RelayError::Audio(_) => Self::InvalidRequest,
             RelayError::TooLarge => Self::PayloadTooLarge,
             RelayError::ShuttingDown => Self::ShuttingDown,
-            RelayError::RecordingOver | RelayError::ClientStream(_) => Self::Cancelled,
+            RelayError::RecordingOver
+            | RelayError::ClientCancelled
+            | RelayError::ClientStream(_) => Self::Cancelled,
         }
     }
 }
@@ -687,15 +752,11 @@ mod tests {
     }
 
     #[test]
-    fn a_watch_recording_may_go_quiet_while_the_wrist_is_down() {
-        let from = |device| Opening {
-            format: wire::AudioFormat::PcmS16le,
-            device,
-        };
+    fn a_recording_goes_quiet_for_as_long_as_its_auto_stop() {
+        let auto_stop = AutoStop::new(Duration::from_secs(4)).expect("in range");
 
-        assert_eq!(from(Some(RecordingDevice::Watch)).stall(), MAX_RECORDING);
-        assert_eq!(from(Some(RecordingDevice::Phone)).stall(), IDLE_TIMEOUT);
-        assert_eq!(from(None).stall(), IDLE_TIMEOUT);
+        assert_eq!(quiet_limit(Some(auto_stop)), Duration::from_secs(4));
+        assert_eq!(quiet_limit(None), IDLE_TIMEOUT);
     }
 
     #[tokio::test]

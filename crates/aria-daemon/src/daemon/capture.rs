@@ -149,7 +149,9 @@ impl PhoneInput {
         let id = recording.id;
         let capture = self.capture.start(
             mode,
-            PushedFeed::new(first, recording.feed, PHONE_STALL, move || phones.stop(id)),
+            PushedFeed::new(first, recording.feed, PHONE_STALL, move |_end| {
+                phones.stop(id);
+            }),
             stop,
         );
         // A capture that refuses the feed never runs `finished`, and the
@@ -588,7 +590,7 @@ mod tests {
                 speech(),
                 rest,
                 Duration::from_secs(1),
-                || {},
+                |_end| {},
             )),
             StopSignal::never(),
         );
@@ -603,7 +605,7 @@ mod tests {
         let (_feed, rest) = std::sync::mpsc::sync_channel(FEED_CHUNKS);
         let (told, ended) = std::sync::mpsc::channel();
         let stopper = Stopper::new();
-        let feed = PushedFeed::new(speech(), rest, Duration::from_secs(60), move || {
+        let feed = PushedFeed::new(speech(), rest, Duration::from_secs(60), move |_end| {
             told.send(()).expect("the test is listening");
         });
 

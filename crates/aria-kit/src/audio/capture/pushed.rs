@@ -13,7 +13,7 @@ use crate::audio::recording::{self, RecordingWriter};
 use crate::audio::{CaptureError, RecordingReader, RecordingSource, StopSignal, canonical_samples};
 use crate::voice_activity::VoiceActivityDetector;
 
-use super::{MicrophoneError, PushedFeed, RecordingMode};
+use super::{FeedEnd, MicrophoneError, PushedFeed, RecordingMode};
 
 /// How often the recording checks `stop` while no audio arrives.
 const STOP_POLL: Duration = Duration::from_millis(10);
@@ -88,7 +88,7 @@ impl Session {
         vad: &Mutex<V>,
         writer: RecordingWriter,
         stop: StopSignal,
-        finished: Finished<impl FnOnce()>,
+        finished: Finished<impl FnOnce(FeedEnd)>,
     ) {
         let result = catch_unwind(AssertUnwindSafe(|| {
             let mut vad = vad.lock().unwrap_or_else(|poisoned| {
@@ -98,8 +98,8 @@ impl Session {
                 poisoned.into_inner()
             });
             let mut recording = CaptureRecording::new(limited, self.mode, &mut *vad);
-            self.pump(&mut recording, first, &stop)?;
-            recording.finish()
+            let end = self.pump(&mut recording, first, &stop)?;
+            recording.finish().map(|()| end)
         }))
         .unwrap_or_else(|_panic| {
             tracing::error!("the pushed capture recovered from a panic");
@@ -108,8 +108,8 @@ impl Session {
         // As the microphone worker does: the stop closure can own state that
         // must be released before a reader sees capture end.
         drop(stop);
-        drop(finished);
-        writer.close(result);
+        finished.run(*result.as_ref().unwrap_or(&FeedEnd::Ended));
+        writer.close(result.map(|_end| ()));
     }
 
     fn pump<V: VoiceActivityDetector>(
@@ -117,10 +117,10 @@ impl Session {
         recording: &mut CaptureRecording<V>,
         first: &[i16],
         stop: &StopSignal,
-    ) -> Result<(), CaptureError> {
+    ) -> Result<FeedEnd, CaptureError> {
         let mut room = Room(canonical_samples(self.maximum_duration));
         if room.push(recording, first)? == CaptureProgress::Complete {
-            return Ok(());
+            return Ok(FeedEnd::Ended);
         }
         // Audio its device held while it couldn't send arrives late, by up
         // to the gap the feed may leave. `room` still limits how much counts.
@@ -135,7 +135,7 @@ impl Session {
                 Ok(samples) => {
                     heard = Instant::now();
                     if room.push(recording, &samples)? == CaptureProgress::Complete {
-                        return Ok(());
+                        return Ok(FeedEnd::Ended);
                     }
                 }
                 Err(RecvTimeoutError::Timeout) if heard.elapsed() >= self.stall => {
@@ -143,13 +143,15 @@ impl Session {
                         stage = "recording",
                         "the pushed audio stalled; keeping what arrived"
                     );
-                    return Ok(());
+                    return Ok(FeedEnd::Stalled);
                 }
                 Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                Err(RecvTimeoutError::Disconnected) => return Ok(FeedEnd::Ended),
             }
             if stop.should_stop() {
-                return self.drain_tail(recording, &mut room);
+                return self
+                    .drain_tail(recording, &mut room)
+                    .map(|()| FeedEnd::Ended);
             }
             // The sender's clock started first and its packets lag, so its
             // own limit can land just past this one.
@@ -158,7 +160,7 @@ impl Session {
                     stage = "recording",
                     "the pushed audio reached the recording limit; keeping what arrived"
                 );
-                return Ok(());
+                return Ok(FeedEnd::Ended);
             }
         }
     }
@@ -217,19 +219,26 @@ impl Room {
 
 /// Runs the caller's closure once, on every way out of a capture that
 /// started, panics included.
-struct Finished<F: FnOnce()>(Option<F>);
+struct Finished<F: FnOnce(FeedEnd)>(Option<F>);
 
-impl<F: FnOnce()> Drop for Finished<F> {
+impl<F: FnOnce(FeedEnd)> Finished<F> {
+    fn run(mut self, end: FeedEnd) {
+        if let Some(finished) = self.0.take() {
+            finished(end);
+        }
+    }
+}
+
+impl<F: FnOnce(FeedEnd)> Drop for Finished<F> {
     fn drop(&mut self) {
         if let Some(finished) = self.0.take() {
-            finished();
+            finished(FeedEnd::Ended);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{SyncSender, sync_channel};
 
     use super::*;
@@ -242,7 +251,7 @@ mod tests {
     struct Harness {
         capture: PushedCapture<Loudness>,
         stall: Duration,
-        finished: Arc<AtomicBool>,
+        finished: Arc<Mutex<Option<FeedEnd>>>,
     }
 
     impl Harness {
@@ -250,7 +259,7 @@ mod tests {
             Self {
                 capture: PushedCapture::new(Duration::from_secs(60), Loudness),
                 stall: STALL,
-                finished: Arc::new(AtomicBool::new(false)),
+                finished: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -274,8 +283,8 @@ mod tests {
             let finished = Arc::clone(&self.finished);
             let outcome = self.capture.start(
                 mode,
-                PushedFeed::new(first, samples, self.stall, move || {
-                    finished.store(true, Ordering::SeqCst);
+                PushedFeed::new(first, samples, self.stall, move |end| {
+                    *finished.lock().expect("unpoisoned") = Some(end);
                 }),
                 stop,
             );
@@ -319,7 +328,10 @@ mod tests {
 
         recorded_duration(recording.expect("audio arrived")).expect("speech was heard");
 
-        assert!(harness.finished.load(Ordering::SeqCst));
+        assert_eq!(
+            *harness.finished.lock().expect("unpoisoned"),
+            Some(FeedEnd::Ended)
+        );
     }
 
     #[test]
@@ -484,6 +496,10 @@ mod tests {
             recorded_duration(recording.expect("audio arrived")).expect("the recording finishes");
 
         assert_eq!(audio, Duration::from_millis(500));
+        assert_eq!(
+            *harness.finished.lock().expect("unpoisoned"),
+            Some(FeedEnd::Stalled)
+        );
     }
 
     #[test]

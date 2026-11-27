@@ -1881,7 +1881,7 @@ mod tests {
                         Vec::new(),
                         std::sync::mpsc::channel().1,
                         Duration::ZERO,
-                        || {},
+                        |_end| {},
                     ),
                     Some(RecordingDevice::Phone),
                     settings(StopMode::Manual),
@@ -1920,7 +1920,7 @@ mod tests {
                 Vec::new(),
                 std::sync::mpsc::channel().1,
                 Duration::ZERO,
-                || {},
+                |_end| {},
             ),
             Some(RecordingDevice::Watch),
             DictationSettings {

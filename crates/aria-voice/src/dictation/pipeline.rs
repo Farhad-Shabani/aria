@@ -2737,7 +2737,7 @@ mod tests {
             Vec::new(),
             std::sync::mpsc::channel().1,
             Duration::ZERO,
-            || {},
+            |_end| {},
         );
 
         let text = pipeline
@@ -2769,7 +2769,7 @@ mod tests {
             Vec::new(),
             std::sync::mpsc::channel().1,
             Duration::ZERO,
-            || {},
+            |_end| {},
         );
         let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
         let (events, stages) = stage_events();

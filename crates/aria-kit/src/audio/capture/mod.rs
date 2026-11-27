@@ -74,19 +74,28 @@ pub struct PushedFeed {
     pub(crate) first: Vec<i16>,
     pub(crate) rest: Receiver<Vec<i16>>,
     pub(crate) stall: Duration,
-    pub(crate) finished: Box<dyn FnOnce() + Send>,
+    pub(crate) finished: Box<dyn FnOnce(FeedEnd) + Send>,
+}
+
+/// What ended a capture that took a [`PushedFeed`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedEnd {
+    /// No samples arrived for the feed's stall.
+    Stalled,
+    /// Its mode, a stop, the feed closing, its duration limit, or a failure.
+    Ended,
 }
 
 impl PushedFeed {
     /// The recording opens with `first` and goes on with what `rest`
     /// brings, until it closes or no samples arrive for `stall`.
-    /// `finished` runs once, when a capture that took the feed ends. A
-    /// capture that refuses the feed never runs it.
+    /// `finished` runs once, when a capture that took the feed ends, and
+    /// hears what ended it. A capture that refuses the feed never runs it.
     pub fn new(
         first: Vec<i16>,
         rest: Receiver<Vec<i16>>,
         stall: Duration,
-        finished: impl FnOnce() + Send + 'static,
+        finished: impl FnOnce(FeedEnd) + Send + 'static,
     ) -> Self {
         Self {
             first,
