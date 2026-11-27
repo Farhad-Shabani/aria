@@ -1,6 +1,7 @@
 //! The speech-to-text contract engine crates implement.
 
 mod agreement;
+mod corrector;
 mod heard;
 pub mod layer;
 mod native;
@@ -8,6 +9,7 @@ mod sentences;
 mod session;
 mod spacing;
 
+pub use corrector::{Endings, SegmentCorrector, StreamEnd};
 pub use heard::{Heard, HeardUpdate, next_heard, next_heard_update};
 pub use layer::{
     Backtrack, Corrected, DeferredWords, JoinSymbols, Layer, Layered, RemoveHesitations,
