@@ -130,10 +130,11 @@ impl TranscriptFile {
             .collect()
     }
 
-    /// Rewrites every paragraph written so far under `labels`. Rename-atomic:
-    /// the streamed file stands until the replacement is whole. Safe to run
-    /// again — a session that keeps correcting itself calls this once per
-    /// correction. A caller's file keeps the labels given while listening.
+    /// Rewrites every paragraph written so far under the labels `label`
+    /// gives. Rename-atomic: the streamed file stands until the replacement
+    /// is whole. Safe to run again. A session that keeps correcting itself
+    /// calls this once per correction. A caller's file keeps the labels
+    /// given while listening.
     /// `label` is asked after the open paragraph closes, so the spans it
     /// answers about include it. It may answer for only the first
     /// paragraphs; the rest lose their labels rather than borrow a
@@ -189,7 +190,6 @@ impl TranscriptFile {
             contents
                 .extend_from_slice(render(block.at, block.label.as_ref(), &block.text).as_bytes());
         }
-        // The one returned appends every later paragraph.
         self.file = transcript_file::rewrite(&self.path, &self.file, &contents)?;
         Ok(())
     }
@@ -499,7 +499,6 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "the person's edits\n");
     }
 
-    /// A session no entry names.
     fn open_in_tempdir() -> (tempfile::TempDir, TranscriptFile, PathBuf) {
         let directory = tempfile::tempdir().expect("test directory is created");
         let (sink, path) = TranscriptFile::create(&directory.path().join("transcripts"))

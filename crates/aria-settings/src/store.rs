@@ -21,7 +21,7 @@ pub struct SettingsSnapshot {
     /// Derived from the engine the settings name; never written.
     pub streaming_unavailable: StreamingSupport,
     /// Where Mac Audio keeps its transcripts: [`crate::TRANSCRIPTS_DIRECTORY`]
-    /// under the home folder, whatever the file says.
+    /// under the home folder.
     pub transcripts_dir: std::path::PathBuf,
 }
 

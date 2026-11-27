@@ -17,7 +17,6 @@ pub(crate) const EXCERPT_BYTES: usize = 1024;
 
 pub(crate) const MAX_READ_BYTES: u64 = 1024 * 1024;
 
-/// How many names a new session tries before giving up.
 const MAX_NAME_ATTEMPTS: u32 = 100;
 
 /// When a session started, as its name holds it.
@@ -36,7 +35,6 @@ pub(crate) fn name_at(at: OffsetDateTime) -> io::Result<String> {
     Ok(format!("{stamp}-{tag:08x}.txt"))
 }
 
-/// Up to [`MAX_NAME_ATTEMPTS`] new names for a session started `at`.
 pub(crate) fn names_at(at: OffsetDateTime) -> impl Iterator<Item = io::Result<String>> {
     (0..MAX_NAME_ATTEMPTS).map(move |_| name_at(at))
 }
@@ -211,7 +209,6 @@ pub(crate) fn same_file(a: &Metadata, b: &Metadata) -> bool {
     (a.dev(), a.ino()) == (b.dev(), b.ino())
 }
 
-/// How many hidden names a copy tries before giving up.
 const MAX_STAGING_ATTEMPTS: u32 = 100;
 
 /// Makes a new private file at a hidden name beside `destination`, for a
@@ -390,7 +387,7 @@ pub(crate) fn rewrite(path: &Path, own: &File, contents: &[u8]) -> io::Result<Fi
     Ok(file)
 }
 
-/// Removes every staging file a rewrite left in `folder`, as a crash does.
+/// Removes every staging file a crash left in `folder`.
 /// Runs only while no session can be rewriting there.
 pub(crate) fn remove_staging(folder: &Path) {
     let Ok(entries) = std::fs::read_dir(folder) else {
@@ -422,8 +419,7 @@ pub(crate) enum Removal {
     Missing,
     /// Its folder isn't there, as on a drive that isn't connected.
     Unavailable,
-    /// A link, anything but a regular file the person owns, or another file
-    /// than the one expected. Left in place.
+    /// A link, or anything but a regular file the person owns. Left in place.
     Foreign,
 }
 

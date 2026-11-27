@@ -42,16 +42,16 @@ audio**. Click the stop button beside it to end it.
 
 ## Transcript files
 
-Aria saves each transcript in `~/.aria/transcripts`, a folder only Aria
-writes to. With history on, a transcript appears in [history](./history.md)
-as soon as it starts, and stays until you delete it. Deleting that entry, or
-clearing history, deletes its file.
+With history on, Aria saves each transcript in `~/.aria/transcripts`, a folder
+only Aria writes to. The transcript appears in [history](./history.md) as soon
+as it starts, and stays until you delete it. Deleting that entry, or clearing
+history, deletes its file.
 
-To find the folder, choose **Settings → Privacy**, then go to **Transcripts
-folder**, and click **Open**. Don't move or edit the files there. To keep a
-copy of a saved transcript elsewhere, choose **Show in Finder** on its history
-entry, then copy the file. A transcript an older Aria saved elsewhere stays
-where it is, and history keeps it.
+To open the folder, choose **Settings → Privacy → Transcripts folder**, then
+click **Open**. Don't move or edit the files there. To keep a copy of a saved
+transcript elsewhere, choose **Show in Finder** on its history entry, then
+copy the file. A transcript saved in another folder stays where it is, and
+history keeps it.
 
 With history off, or with history full, a transcript waits unsaved in
 `~/.aria/unsaved`. When it ends, Aria lists it as **Unsaved Transcript**, with
@@ -59,12 +59,11 @@ these choices:
 
 - **Save…** (**⌘S**) saves it where you choose, outside Aria's folders, as
   your own file. History doesn't list it.
-- **Discard…** deletes it, once you confirm. While history can't open,
-  Discard waits until it can.
+- **Discard…** deletes it, once you confirm. While history can't open, Aria
+  can't discard it. Try again later.
 
 If Aria quits before you choose, it lists the transcript again the next time it
-opens. While history can't open, an unsaved transcript keeps the speaker labels
-Aria gave while listening. A transcript that heard nothing leaves no file.
+opens. A transcript that heard nothing leaves no file.
 
 To save to a file of your own instead:
 
@@ -73,11 +72,10 @@ aria transcribe start \
   --output "$PWD/meeting.txt"
 ```
 
-If the file exists, Transcription appends to it. Transcription only ever
-appends to this file, so it keeps the speaker labels it gave while listening,
-and text another app adds stays. Don't run this while another transcription
-is running. A file you name with `--output` never appears in
-history, and Aria never moves or deletes it.
+Transcription only appends to this file, even if it exists. The file keeps
+the speaker labels Aria gave while listening, and text another app adds stays.
+Don't run this while another transcription is running. A file you name with
+`--output` never appears in history, and Aria never moves or deletes it.
 
 Transcript files are plain text. Aria doesn't encrypt them as it does history,
 so delete them when you no longer need them.

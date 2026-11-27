@@ -9,8 +9,8 @@ use super::runtime_paths;
 pub(super) enum TranscribeCommand {
     /// Start transcribing what this machine plays into a transcript file
     Start {
-        /// Write the transcript to this exact file instead of a timestamped
-        /// one in ~/.aria/transcripts
+        /// Append the transcript to this exact file instead of a timestamped
+        /// one in ~/.aria/transcripts or ~/.aria/unsaved
         #[arg(long, short)]
         output: Option<std::path::PathBuf>,
         /// Print the transcript here as it grows, until Ctrl-C or stop

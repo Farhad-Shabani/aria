@@ -146,7 +146,6 @@ pub enum TranscriptRead {
 }
 
 impl TranscriptRead {
-    /// The text a read took, and how much of the file it is.
     pub(crate) fn of(text: crate::transcript_file::Text) -> (String, Self) {
         match text {
             crate::transcript_file::Text::Whole(text) => (text, Self::Whole),

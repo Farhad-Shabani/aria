@@ -129,7 +129,6 @@ struct Budget {
     text_bytes: usize,
 }
 
-/// How long a section keeps its entries.
 enum Retention {
     /// Its entries expire, and past the budget it evicts its own oldest.
     Budget(Budget),
@@ -139,7 +138,8 @@ enum Retention {
     Kept { most: usize },
 }
 
-/// A transcript is the person's record, so only they end it.
+/// A Mac Audio transcript is the person's record, so only the person deletes
+/// it.
 fn retention(section: HistorySection) -> Retention {
     match section {
         HistorySection::Dictation => Retention::Budget(Budget {
@@ -167,8 +167,8 @@ const MAX_TRANSCRIPTS: usize = 10_000;
 enum Rows {
     All,
     Section(HistorySection),
-    /// The sections with a budget. Mac Audio rows can number in the
-    /// thousands, so only a full sweep reads them all.
+    /// The sections with a budget. It leaves out Mac Audio, whose rows can
+    /// number in the thousands.
     Budgeted,
 }
 
@@ -195,9 +195,8 @@ pub struct Store {
     // The one lock also bounds audio copies. Copies need their own admission
     // if reads stall.
     state: Mutex<State>,
-    /// Held across a session's start and end, Delete, Clear and the full
-    /// sweep, so none of them act on one transcript file together. Taken
-    /// before `state`, never after.
+    /// Held by each operation that makes, ends or removes a transcript file,
+    /// so no two act on one file together. Taken before `state`, never after.
     files: Mutex<()>,
 }
 
@@ -827,8 +826,8 @@ impl Store {
         let (entries, unreadable) = load_rows(&state, section.map_or(Rows::All, Rows::Section))?;
         let mut doomed = Vec::new();
         for entry in entries {
-            // A transcript that can't be removed or recorded keeps its row, as
-            // Delete does.
+            // A transcript whose removal can't be recorded keeps its row, as in
+            // Delete.
             if let Some(transcript) = transcript_path(&entry.content)
                 && self.remove_transcript(&mut state, transcript).is_err()
             {
@@ -973,7 +972,7 @@ impl Store {
     }
 
     /// `gone` holds the transcripts found missing before the lock was taken.
-    /// An entry goes only if it still names that file, and it is still gone.
+    /// An entry goes only if it still names that file and the file is still gone.
     fn sweep(
         &self,
         state: &mut State,
@@ -998,8 +997,8 @@ impl Store {
                 continue;
             }
             let expires = is_budgeted(entry.content.section());
-            // A row whose file someone removed goes, but not its folder: an
-            // unmounted volume keeps its rows.
+            // A row goes when its file is gone from a folder that is there. A
+            // folder that is away, as on an unmounted volume, keeps its rows.
             if entry.deletion_pending
                 || (expires && now.saturating_sub(entry.created_at_ms) >= TEXT_TTL_MS)
                 || (!state.recording.contains(&entry.id)
@@ -1113,7 +1112,7 @@ impl Store {
             Retention::Budget(budget) => {
                 self.make_room_for_text(state, section, budget.text_bytes, text_bytes, joining)?;
                 let (mut entries, _) = load_rows(state, Rows::Section(section))?;
-                // An insert reserves a slot even when its transcript is empty.
+                // An insert reserves a slot even when its text is empty.
                 let limit = if reserve_entry {
                     budget.entries - 1
                 } else {

@@ -199,9 +199,9 @@ extension Aria_Daemon_V1_HistoryService {
         /// >
         /// > Missing entries succeed. Active regeneration, or a Mac Audio session
         /// > still recording, refuses deletion with BUSY. Audio cleanup may remain
-        /// > pending, and so may a transcript file on a drive that isn't connected or
-        /// > a folder Aria can't write, which goes once it can. List reports cleanup
-        /// > warnings.
+        /// > pending. So may a transcript file on a drive that isn't connected, or in
+        /// > a folder Aria can't write. Aria removes it once it can. List reports
+        /// > cleanup warnings.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_DeleteHistoryRequest` message.
@@ -426,9 +426,9 @@ extension Aria_Daemon_V1_HistoryService {
         /// >
         /// > Missing entries succeed. Active regeneration, or a Mac Audio session
         /// > still recording, refuses deletion with BUSY. Audio cleanup may remain
-        /// > pending, and so may a transcript file on a drive that isn't connected or
-        /// > a folder Aria can't write, which goes once it can. List reports cleanup
-        /// > warnings.
+        /// > pending. So may a transcript file on a drive that isn't connected, or in
+        /// > a folder Aria can't write. Aria removes it once it can. List reports
+        /// > cleanup warnings.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_DeleteHistoryRequest` message.
@@ -697,9 +697,9 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
     /// >
     /// > Missing entries succeed. Active regeneration, or a Mac Audio session
     /// > still recording, refuses deletion with BUSY. Audio cleanup may remain
-    /// > pending, and so may a transcript file on a drive that isn't connected or
-    /// > a folder Aria can't write, which goes once it can. List reports cleanup
-    /// > warnings.
+    /// > pending. So may a transcript file on a drive that isn't connected, or in
+    /// > a folder Aria can't write. Aria removes it once it can. List reports
+    /// > cleanup warnings.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_DeleteHistoryRequest` message.
@@ -945,9 +945,9 @@ extension Aria_Daemon_V1_HistoryService.ClientProtocol {
     /// >
     /// > Missing entries succeed. Active regeneration, or a Mac Audio session
     /// > still recording, refuses deletion with BUSY. Audio cleanup may remain
-    /// > pending, and so may a transcript file on a drive that isn't connected or
-    /// > a folder Aria can't write, which goes once it can. List reports cleanup
-    /// > warnings.
+    /// > pending. So may a transcript file on a drive that isn't connected, or in
+    /// > a folder Aria can't write. Aria removes it once it can. List reports
+    /// > cleanup warnings.
     ///
     /// - Parameters:
     ///   - message: request message to send.

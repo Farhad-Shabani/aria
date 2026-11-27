@@ -190,7 +190,7 @@ public nonisolated struct Aria_Daemon_V1_ListUnsavedTranscriptsResponse: Sendabl
   public var transcripts: [Aria_Daemon_V1_UnsavedTranscript] = []
 
   /// Whether Mac Audio history is full, which is why a session with history
-  /// on runs unsaved. False while history can't be read.
+  /// on runs unsaved. False while history can't open.
   public var historyFull: Bool = false
 
   /// Aria's two folders. A copy saved in either, or below it, isn't the

@@ -211,7 +211,7 @@ final class HistoryState: ObservableObject {
                 isLoadingDetail = false
                 let failure = error as? HistoryFailure ?? .failed
                 self.error = failure
-                // History removed it since the list loaded, as the sweep does once its file is gone.
+                // History removed it since the list loaded, as it does once the transcript file is gone.
                 if failure == .missing {
                     items.removeAll { $0.id == id }
                     select(nil)

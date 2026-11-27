@@ -14,9 +14,9 @@ service HistoryService {
   rpc Get(GetHistoryRequest) returns (HistoryEntry);
   // Missing entries succeed. Active regeneration, or a Mac Audio session
   // still recording, refuses deletion with BUSY. Audio cleanup may remain
-  // pending, and so may a transcript file on a drive that isn't connected or
-  // a folder Aria can't write, which goes once it can. List reports cleanup
-  // warnings.
+  // pending. So may a transcript file on a drive that isn't connected, or in
+  // a folder Aria can't write. Aria removes it once it can. List reports
+  // cleanup warnings.
   rpc Delete(DeleteHistoryRequest) returns (DeleteHistoryResponse);
   // Delete the section's rows, or all rows, then remove their audio and
   // orphaned recordings. Any active regeneration refuses the whole operation

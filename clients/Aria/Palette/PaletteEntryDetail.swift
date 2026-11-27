@@ -77,7 +77,6 @@ struct PaletteEntryDetail: View {
         }
     }
 
-    /// Above a transcript shown only up to its first MiB.
     static func cutShortNote(file: URL) -> String {
         "This is the first 1 MB. The whole transcript is in \(file.lastPathComponent)."
     }

@@ -16,8 +16,8 @@ use crate::transcript_file::{self, OpenError, ReadError, Removal};
 /// Under the home folder, beside Aria's other data.
 pub(crate) const DIRECTORY: &str = ".aria/unsaved";
 
-/// The unsaved folder, with what history owns there. No file history owns
-/// is offered, read or removed.
+/// The unsaved folder, with what history owns there. While history is
+/// open, no file it owns is offered, read or removed.
 ///
 /// `open(home, Some(store))` → every method. `open(home, None)` → `list`
 /// and `get` only, and `list` removes nothing.
@@ -45,10 +45,10 @@ impl UnsavedFolder {
         })
     }
 
-    /// Every unsaved transcript but `running`'s, oldest first, once blank
-    /// ones are gone: a session a crash ended before it heard anything
-    /// leaves nothing to offer. A folder check that can't run, as while a
-    /// linked drive is away, keeps blank ones.
+    /// Every unsaved transcript but `running`'s, oldest first. It removes
+    /// blank ones first, since a session a crash ended before it heard
+    /// anything leaves nothing to offer. A folder check that can't run, as
+    /// while a linked drive is away, keeps blank ones.
     ///
     /// `list(Some(running))` → `[2026-11-25T10-00-00Z-1a2b3c4d.txt]`, without the
     /// running session's file or a blank one.
@@ -156,8 +156,8 @@ impl UnsavedFolder {
     }
 }
 
-/// One file in the unsaved folder: a regular file of ours, named as a session
-/// names its file. Only [`UnsavedFolder`] finds one.
+/// One file in the unsaved folder: a regular file the current user owns,
+/// named as a session names its file. Only [`UnsavedFolder`] finds one.
 #[derive(Debug, PartialEq, Eq)]
 pub struct UnsavedTranscript {
     name: String,
@@ -204,7 +204,8 @@ pub struct UnsavedTranscriptList {
     /// Whether Mac Audio history is full, which is why a session with
     /// history on runs unsaved. False while history can't open.
     pub history_full: bool,
-    /// Aria's folders, which a copy must stay out of.
+    /// Aria's folders. Aria removes files there, so a copy must stay out of
+    /// them.
     pub transcripts_dir: PathBuf,
     pub unsaved_dir: PathBuf,
 }
@@ -318,7 +319,6 @@ mod tests {
 
     use super::*;
 
-    /// The unsaved folder under `home`, without history.
     fn folder(home: &Path, owned: Option<OwnedFiles>) -> UnsavedFolder {
         UnsavedFolder {
             folders: TranscriptFolders::at(home),

@@ -17,14 +17,12 @@ service SystemTranscriptionService {
   rpc Start(StartSystemTranscriptionRequest) returns (StartSystemTranscriptionResponse);
   rpc Stop(StopSystemTranscriptionRequest) returns (StopSystemTranscriptionResponse);
   rpc GetStatus(GetSystemTranscriptionStatusRequest) returns (GetSystemTranscriptionStatusResponse);
-  // The unsaved transcripts, oldest first, but the running session's.
-  // A session run with history off or full leaves one, and so does one a
-  // crash cut short. They wait in `~/.aria/unsaved`, which never moves.
+  // The unsaved transcripts, oldest first, except the running session's.
+  // A session run with history off or full leaves one, also when a crash
+  // cut it short. They wait in `~/.aria/unsaved`, which never moves.
   rpc ListUnsaved(ListUnsavedTranscriptsRequest) returns (ListUnsavedTranscriptsResponse);
   // An unsaved transcript's text: all of it, or its first 1 MiB.
-  // ReadUnsaved and DiscardUnsaved name a transcript by the name
-  // ListUnsaved gave. ReadUnsaved of one that's gone fails with
-  // HISTORY_MISSING.
+  // Fails with HISTORY_MISSING once the transcript is gone.
   rpc ReadUnsaved(ReadUnsavedTranscriptRequest) returns (ReadUnsavedTranscriptResponse);
   // Delete an unsaved transcript. One already gone counts as deleted.
   // Refused with HISTORY_UNAVAILABLE while history can't open, since only
@@ -64,7 +62,7 @@ message ListUnsavedTranscriptsRequest {}
 message ListUnsavedTranscriptsResponse {
   repeated UnsavedTranscript transcripts = 1;
   // Whether Mac Audio history is full, which is why a session with history
-  // on runs unsaved. False while history can't be read.
+  // on runs unsaved. False while history can't open.
   bool history_full = 5;
   // Aria's two folders. A copy saved in either, or below it, isn't the
   // person's own, since Aria removes files there.

@@ -59,7 +59,7 @@ pub(crate) struct OwnedFiles {
 }
 
 impl OwnedFiles {
-    /// Reads the identity of each folder `paths` run through.
+    /// Reads the identity of the folder each of `paths` is in.
     pub(crate) fn locate(paths: HashSet<PathBuf>) -> Self {
         let mut identities: HashMap<&Path, Option<FolderIdentity>> = HashMap::new();
         let mut folders: HashMap<FolderIdentity, HashSet<String>> = HashMap::new();
@@ -154,12 +154,11 @@ impl Store {
         Ok(Some(entry))
     }
 
-    /// Whether anything on disk, an entry or a pending removal has
-    /// `transcript`'s name, in any folder. Names compare as a volume that
-    /// ignores case compares them, so a folder reached through a link, or
-    /// spelled in other case, can't hand out a name twice. Called under the
-    /// file lease, so a free name stays free until the caller's entry takes
-    /// it.
+    /// Whether anything is at `transcript`, or an entry or a pending removal
+    /// in any folder has its name. Names compare as a volume that ignores case
+    /// compares them, so a folder reached through a link, or spelled in other
+    /// case, can't hand out a name twice. Called under the file lease, so a
+    /// free name stays free until the caller's entry takes it.
     fn is_taken(&self, transcript: &Path) -> Result<bool, HistoryError> {
         let Some(name) = transcript.file_name() else {
             return Err(HistoryError::InvalidRequest);
@@ -294,9 +293,8 @@ impl Store {
         Ok(())
     }
 
-    /// Finishes each removal and each excerpt a stop or a folder left
-    /// waiting. Runs when the store opens and with every full sweep, under
-    /// the file lease.
+    /// Finishes each removal and each excerpt still waiting. Runs when the
+    /// store opens and with every full sweep, under the file lease.
     pub(super) fn finish_pending(&self) -> Result<(), HistoryError> {
         let waiting = {
             let state = self.lock();
@@ -341,11 +339,11 @@ impl Store {
         Ok(())
     }
 
-    /// Ends each entry still recording that no session of this store owns:
-    /// one daemon owns the store, through `history.lock`, so such an entry
-    /// lost its session, to a crash or to an end that couldn't be saved. Its
+    /// Ends each entry still recording that no session of this store owns.
+    /// One daemon owns the store, through `history.lock`, so such an entry
+    /// lost its session to a crash or to an end that couldn't be saved. Its
     /// file is read without the lock, so a slow volume stalls only this
-    /// sweep. The caller holds the file lease, so nothing else moves it.
+    /// sweep. The caller holds the file lease, so nothing else moves the file.
     pub(super) fn finish_interrupted(&self) -> Result<(), HistoryError> {
         let interrupted = {
             let state = self.lock();
@@ -538,7 +536,6 @@ fn drop_removal(state: &State, record: i64) -> Result<(), HistoryError> {
     Ok(())
 }
 
-/// Whether a deleted entry's file still waits to be removed.
 pub(super) fn is_removal_waiting(state: &State) -> Result<bool, HistoryError> {
     let waiting: bool =
         state
@@ -555,7 +552,6 @@ enum Ending {
     Text(String),
     /// Blank all the way through.
     Blank,
-    /// Not text.
     NotText(HistoryError),
     /// Nothing, in a folder that is there.
     Missing,
@@ -616,8 +612,8 @@ mod tests {
         store.finish_transcript(begun.id, duration_ms, failure)
     }
 
-    /// Begins an entry for `file`, already written, as a session would have
-    /// begun it before making the file, and records the file it names.
+    /// Begins an entry for `file`, already written, as a session begins it
+    /// before making the file.
     fn begin(store: &Store, file: &Path, created_at_ms: u64) -> Result<HistoryEntry, HistoryError> {
         let aside = file.with_extension("aside");
         let present = fs::rename(file, &aside).is_ok();
@@ -650,8 +646,8 @@ mod tests {
         Store::open(directory.path(), &AtRest::for_tests()).unwrap()
     }
 
-    /// A session history names, with one paragraph written, as its sink
-    /// leaves the file once it closes.
+    /// A session started through history, with one paragraph written to its
+    /// file.
     fn session(directory: &tempfile::TempDir, store: &Store) -> (PathBuf, u64) {
         let (mut file, path, id) = store
             .create_transcript(&directory.path().join("transcripts"))

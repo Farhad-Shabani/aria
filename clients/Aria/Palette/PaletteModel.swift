@@ -62,7 +62,7 @@ struct PaletteModel: Equatable {
     /// Pinned at the top of the commands page, under a running session's row, whether or not
     /// history is on. Oldest first.
     private(set) var unsaved: [UnsavedTranscript] = []
-    /// Leaving an unsaved transcript's page asks first.
+    /// Whether the discard confirmation shows, from Discard or from leaving an unsaved transcript's page.
     var isConfirmingTranscriptDiscard = false
     /// `nil` until read, when every word typed counts as unlisted.
     private var dictionary: ListedWords?
@@ -249,8 +249,8 @@ struct PaletteModel: Equatable {
     }
 
     /// Follows the daemon's list while the palette is open. The selection stays on its row. A page
-    /// whose transcript left the list goes back to the commands.
-    /// The live page of a session that ended unsaved moves to its transcript.
+    /// whose transcript left the list goes back to the commands page. The live page of a session
+    /// that ended unsaved opens that session's unsaved transcript.
     mutating func replace(unsaved: [UnsavedTranscript]) {
         keepingSelection { $0.unsaved = unsaved }
         switch page {

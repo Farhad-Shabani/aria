@@ -88,7 +88,7 @@ struct PaletteUnsavedRow: View {
             Text(UnsavedTranscripts.title)
                 .paletteRowText()
         } accessory: {
-            // Outside the row's button, as an entry row's place is, so a tap still opens it.
+            // The date sits outside the row's button, as an entry row's place does, so its tap gesture opens the row.
             Text(transcript.startedAt.formatted(date: .abbreviated, time: .shortened))
                 .paletteRowDetail()
                 .contentShape(Rectangle())

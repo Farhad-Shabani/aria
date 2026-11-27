@@ -3,7 +3,7 @@ import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "UnsavedTranscripts")
 
-/// A Mac Audio transcript no history entry names yet, waiting for the person to save or discard it.
+/// A Mac Audio transcript no history entry names, waiting for the person to save or discard it.
 struct UnsavedTranscript: Equatable, Sendable {
     /// The file's name, which the daemon's Read and Discard take.
     let name: String
@@ -17,7 +17,6 @@ struct UnsavedTranscriptList: Sendable {
     var transcripts: [UnsavedTranscript]
     /// Whether Mac Audio history is full, so new sessions run unsaved.
     var isHistoryFull: Bool
-    /// Aria’s two folders. A copy saved in either, or below it, isn’t the person’s own.
     var transcriptsDir: URL
     var unsavedDir: URL
 }
@@ -51,13 +50,13 @@ final class UnsavedTranscripts: ObservableObject {
     @Published private(set) var isHistoryFull = false
     /// Aria’s folders, as the last list named them.
     private var ariaDirs: [URL] = []
-    /// Why the last save or discard didn't happen.
+    /// Why the last save, discard, or read failed.
     @Published private(set) var error: String?
-    /// Why the last list didn't come back, so a transcript a session left isn't missing unseen.
+    /// Why the last list failed, so the person knows a transcript may be missing from it.
     @Published private(set) var listFailure: String?
     /// One change at a time.
     @Published private(set) var isChanging = false
-    /// Goes up with every change to the list, so a read that one overtook is dropped.
+    /// Goes up with every change to the list, so a list read that finishes after a newer change is dropped.
     private var listChanges = 0
     private let effects: Effects
 
@@ -131,7 +130,7 @@ final class UnsavedTranscripts: ObservableObject {
                 self.error = "Aria saved a copy. Click **Discard** to remove this one once history opens."
                 return false
             }
-            // The copy is made either way, so the person learns that first.
+            // The copy exists whatever the discard failure, so the message says that first.
             let offline = (error as? DaemonFailure)?.isOffline == true ? " \(DaemonFailure.offlineMessage)" : ""
             self.error = "Aria saved a copy but couldn’t remove this one. Click **Discard** to remove it.\(offline)"
             return false
@@ -140,7 +139,6 @@ final class UnsavedTranscripts: ObservableObject {
         return true
     }
 
-    /// The transcript's text as the daemon reads it, all of it or its first MiB.
     func text(of transcript: UnsavedTranscript) async -> UnsavedTranscriptText {
         do {
             return try await effects.read(transcript)
@@ -194,8 +192,9 @@ final class UnsavedTranscripts: ObservableObject {
         }
     }
 
-    /// One folder however each is spelled, by its file identity when both exist. Each resolves
-    /// first, since a link’s own resource values describe the link, not its folder.
+    /// Whether `a` and `b` are one folder however each is spelled, by file identity when both
+    /// exist. Each resolves its links first, since a link’s own resource values describe the
+    /// link, not its folder.
     static func isSameFolder(_ a: URL, _ b: URL) -> Bool {
         let (a, b) = (a.resolvingSymlinksInPath().standardizedFileURL, b.resolvingSymlinksInPath().standardizedFileURL)
         let identity = { (url: URL) in
@@ -276,8 +275,8 @@ extension UnsavedTranscripts.Effects {
         }.value
     }
 
-    /// Opens `path` to read as the background service does: never through a link, and only a
-    /// regular file of the person’s. The copy reads the same handle it checked.
+    /// Opens `path` to read as the daemon does: never through a link, and only a regular file of
+    /// the person’s. The copy reads the same handle it checked.
     private static func openSource(_ path: URL) throws -> FileHandle {
         let descriptor = open(path.path(percentEncoded: false), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }

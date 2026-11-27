@@ -195,9 +195,9 @@ extension Aria_Daemon_V1_SystemTranscriptionService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > The unsaved transcripts, oldest first, but the running session's.
-        /// > A session run with history off or full leaves one, and so does one a
-        /// > crash cut short. They wait in `~/.aria/unsaved`, which never moves.
+        /// > The unsaved transcripts, oldest first, except the running session's.
+        /// > A session run with history off or full leaves one, also when a crash
+        /// > cut it short. They wait in `~/.aria/unsaved`, which never moves.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_ListUnsavedTranscriptsRequest` message.
@@ -221,9 +221,7 @@ extension Aria_Daemon_V1_SystemTranscriptionService {
         /// > Source IDL Documentation:
         /// >
         /// > An unsaved transcript's text: all of it, or its first 1 MiB.
-        /// > ReadUnsaved and DiscardUnsaved name a transcript by the name
-        /// > ListUnsaved gave. ReadUnsaved of one that's gone fails with
-        /// > HISTORY_MISSING.
+        /// > Fails with HISTORY_MISSING once the transcript is gone.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_ReadUnsavedTranscriptRequest` message.
@@ -385,9 +383,9 @@ extension Aria_Daemon_V1_SystemTranscriptionService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > The unsaved transcripts, oldest first, but the running session's.
-        /// > A session run with history off or full leaves one, and so does one a
-        /// > crash cut short. They wait in `~/.aria/unsaved`, which never moves.
+        /// > The unsaved transcripts, oldest first, except the running session's.
+        /// > A session run with history off or full leaves one, also when a crash
+        /// > cut it short. They wait in `~/.aria/unsaved`, which never moves.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_ListUnsavedTranscriptsRequest` message.
@@ -422,9 +420,7 @@ extension Aria_Daemon_V1_SystemTranscriptionService {
         /// > Source IDL Documentation:
         /// >
         /// > An unsaved transcript's text: all of it, or its first 1 MiB.
-        /// > ReadUnsaved and DiscardUnsaved name a transcript by the name
-        /// > ListUnsaved gave. ReadUnsaved of one that's gone fails with
-        /// > HISTORY_MISSING.
+        /// > Fails with HISTORY_MISSING once the transcript is gone.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Aria_Daemon_V1_ReadUnsavedTranscriptRequest` message.
@@ -581,9 +577,9 @@ extension Aria_Daemon_V1_SystemTranscriptionService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > The unsaved transcripts, oldest first, but the running session's.
-    /// > A session run with history off or full leaves one, and so does one a
-    /// > crash cut short. They wait in `~/.aria/unsaved`, which never moves.
+    /// > The unsaved transcripts, oldest first, except the running session's.
+    /// > A session run with history off or full leaves one, also when a crash
+    /// > cut it short. They wait in `~/.aria/unsaved`, which never moves.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_ListUnsavedTranscriptsRequest` message.
@@ -613,9 +609,7 @@ extension Aria_Daemon_V1_SystemTranscriptionService.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > An unsaved transcript's text: all of it, or its first 1 MiB.
-    /// > ReadUnsaved and DiscardUnsaved name a transcript by the name
-    /// > ListUnsaved gave. ReadUnsaved of one that's gone fails with
-    /// > HISTORY_MISSING.
+    /// > Fails with HISTORY_MISSING once the transcript is gone.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Aria_Daemon_V1_ReadUnsavedTranscriptRequest` message.
@@ -773,9 +767,9 @@ extension Aria_Daemon_V1_SystemTranscriptionService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > The unsaved transcripts, oldest first, but the running session's.
-    /// > A session run with history off or full leaves one, and so does one a
-    /// > crash cut short. They wait in `~/.aria/unsaved`, which never moves.
+    /// > The unsaved transcripts, oldest first, except the running session's.
+    /// > A session run with history off or full leaves one, also when a crash
+    /// > cut it short. They wait in `~/.aria/unsaved`, which never moves.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -809,9 +803,7 @@ extension Aria_Daemon_V1_SystemTranscriptionService.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > An unsaved transcript's text: all of it, or its first 1 MiB.
-    /// > ReadUnsaved and DiscardUnsaved name a transcript by the name
-    /// > ListUnsaved gave. ReadUnsaved of one that's gone fails with
-    /// > HISTORY_MISSING.
+    /// > Fails with HISTORY_MISSING once the transcript is gone.
     ///
     /// - Parameters:
     ///   - message: request message to send.

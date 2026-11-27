@@ -89,8 +89,9 @@ message SettingsSnapshot {
   // The chosen assistant's name for display, such as "Claude Code". Empty
   // when no assistant is chosen.
   string assistant_name = 4;
-  // The absolute folder Mac Audio saves the transcripts history names in:
-  // `~/.aria/transcripts`, which never moves. Empty for a paired phone.
+  // The absolute folder where Mac Audio saves the transcripts that history
+  // names: `~/.aria/transcripts`, which never moves. Empty for a paired
+  // phone.
   string transcripts_dir = 5;
 }
 

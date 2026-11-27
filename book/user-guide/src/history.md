@@ -19,9 +19,10 @@ transcript waits unsaved until you save it with **Save…** or discard it, as
 
 Aria deletes old dictations and chats on its own, so personal text doesn't
 pile up on your Mac. It deletes them after 30 days. Transcripts stay until you
-delete them. A transcript's entry keeps the first KiB of its text, and the
-transcript file holds the rest. History holds up to 10,000 transcripts. When
-it's full, Aria deletes none, and a new transcript waits unsaved instead.
+delete them. A transcript's entry keeps the first 1 KiB of its text, and the
+transcript file holds all of it. History holds up to 10,000 transcripts. When
+it's full, Aria doesn't delete old ones to make room. A new transcript waits
+unsaved instead.
 
 By default, only recordings Aria couldn't transcribe keep their original
 audio. Retained recordings last up to 24 hours, with a 128 MiB total limit.

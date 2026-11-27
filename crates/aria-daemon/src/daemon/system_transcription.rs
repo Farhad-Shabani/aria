@@ -90,8 +90,8 @@ impl SystemTranscriptionState {
     }
 
     /// Accepts a session; capture and model initialization run on worker threads.
-    /// `output` overrides the configured transcripts directory with an exact
-    /// file for this session.
+    /// `output` is an exact file for this session, in place of one in Aria's
+    /// folders.
     pub(super) fn start(
         &self,
         output: Option<PathBuf>,

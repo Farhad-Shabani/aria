@@ -39,7 +39,7 @@ pub enum Kept {
     Output(PathBuf),
 }
 
-/// Why Aria's folders can't take work.
+/// Why Aria can't use its transcript folders.
 #[derive(Debug, thiserror::Error)]
 pub enum FolderError {
     /// One folder is the other or inside it, so the unsaved list would offer
@@ -65,7 +65,8 @@ pub enum StartError {
         "an output file can't go in ~/.aria/transcripts or ~/.aria/unsaved; choose another folder"
     )]
     OutputInAriaFolder,
-    /// Delete, or the removal it waits for, would take the appended text too.
+    /// Deleting its entry, or a removal still pending, would take the
+    /// appended text too.
     #[error("that file is a transcript history saved; choose another")]
     SavedOutput,
     #[error("history can't check whether that file is a saved transcript; choose a new file")]
@@ -166,8 +167,8 @@ impl TranscriptFolders {
     }
 
     /// Makes both folders, private to their owner, so each has an identity
-    /// to compare, then checks neither is the other or inside it, however a
-    /// link spells either.
+    /// to compare. Then checks that neither is the other or inside it,
+    /// however a link spells either.
     pub(crate) fn check(&self) -> Result<(), FolderError> {
         let joined = self
             .create()
@@ -192,9 +193,9 @@ impl TranscriptFolders {
         Ok(())
     }
 
-    /// Refuses an output file in either folder, however a link or other case
-    /// spells it, or one history owns. Without history nothing says which
-    /// files it owns, so only a new file is accepted.
+    /// Refuses an output file in either folder, however a link or letter
+    /// case spells it. Also refuses a file history owns. Without history
+    /// nothing says which files it owns, so it accepts only a new file.
     fn check_output(&self, output: &Path, history: Option<&Store>) -> Result<(), StartError> {
         if output
             .components()
@@ -267,7 +268,6 @@ mod tests {
             .entries
     }
 
-    /// A session history names, written in `folder`.
     fn saved_in(history: &Store, folder: &Path) -> PathBuf {
         let (mut file, path, id) = history.create_transcript(folder).unwrap();
         io::Write::write_all(&mut file, b"[00:00:01] heard").unwrap();

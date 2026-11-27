@@ -475,8 +475,6 @@ final class PaletteController: ObservableObject {
         }
     }
 
-    /// Asks where over the palette, then copies the file there. The panel already asked before
-    /// replacing a file.
     private func save(_ transcript: UnsavedTranscript) {
         Task {
             let savePanel = NSSavePanel()
@@ -488,7 +486,6 @@ final class PaletteController: ObservableObject {
         }
     }
 
-    /// The confirmation's Discard, for the transcript the page shows.
     func discardShownTranscript() {
         guard case .unsavedTranscript(let transcript) = model.page else { return }
         Task { await unsaved.discard(transcript) }
@@ -775,7 +772,7 @@ final class PaletteController: ObservableObject {
         let setup = setup
         Task { await setup.refresh() }
         if model.keepsHistory { history.open() }
-        // A session that ended while the palette was closed may have left one.
+        // A session that ended while the palette was closed may have left a transcript unsaved.
         unsaved.spawnRefresh()
         nameAssistants()
         readDictionary()

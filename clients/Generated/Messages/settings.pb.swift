@@ -373,8 +373,9 @@ public nonisolated struct Aria_Daemon_V1_SettingsSnapshot: Sendable {
   /// when no assistant is chosen.
   public var assistantName: String = String()
 
-  /// The absolute folder Mac Audio saves the transcripts history names in:
-  /// `~/.aria/transcripts`, which never moves. Empty for a paired phone.
+  /// The absolute folder where Mac Audio saves the transcripts that history
+  /// names: `~/.aria/transcripts`, which never moves. Empty for a paired
+  /// phone.
   public var transcriptsDir: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
