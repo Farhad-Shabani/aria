@@ -338,10 +338,12 @@ where
 /// it transcribes. `asked` hears a `RelaySubmit` sent ahead of COMPLETED.
 ///
 /// A client whose recording the Mac ended may not have heard so yet: its
-/// audio is dropped until its stop, and still counts toward the size cap
-/// with the bytes `sent`.
+/// audio is dropped until its stop. It is held to what a recording may
+/// send all the same: whole samples, and the size cap with the bytes
+/// `sent`.
 pub(super) async fn after_audio<S>(
     stream: &mut S,
+    opening: Opening,
     ended: PushEnd,
     mut sent: usize,
     asked: oneshot::Sender<()>,
@@ -361,6 +363,7 @@ where
             }
             Some(wire::relay_request::Body::Audio(audio)) if !is_stopped => {
                 count(&mut sent, &audio)?;
+                decode(opening, &audio.chunk)?;
             }
             Some(wire::relay_request::Body::Stop(_stop)) if !is_stopped => is_stopped = true,
             Some(wire::relay_request::Body::Submit(_submit)) if is_stopped => {
@@ -657,7 +660,8 @@ mod tests {
         sent: Vec<wire::RelayRequest>,
     ) -> (Result<(), RelayError>, bool) {
         let (asked, mut asking) = oneshot::channel();
-        let said = after_audio(&mut requests(sent), ended, 0, asked).await;
+        let opening = pcm_opening().await;
+        let said = after_audio(&mut requests(sent), opening, ended, 0, asked).await;
         (said, asking.try_recv().is_ok())
     }
 
@@ -693,11 +697,20 @@ mod tests {
     #[tokio::test]
     async fn audio_dropped_once_the_mac_ended_the_recording_counts_toward_the_cap() {
         let (asked, _asking) = oneshot::channel();
+        let opening = pcm_opening().await;
         let mut late = requests(vec![chunk(&[2, 0])]);
+        let ended = PushEnd::PressEnded;
 
-        let said = after_audio(&mut late, PushEnd::PressEnded, MAX_AUDIO_BYTES, asked).await;
+        let said = after_audio(&mut late, opening, ended, MAX_AUDIO_BYTES, asked).await;
 
         assert!(matches!(said, Err(RelayError::TooLarge)));
+    }
+
+    #[tokio::test]
+    async fn audio_dropped_once_the_mac_ended_the_recording_must_still_be_whole_samples() {
+        let (said, _asked) = said_after(PushEnd::PressEnded, vec![chunk(&[2])]).await;
+
+        assert!(matches!(said, Err(RelayError::Audio(_))));
     }
 
     #[tokio::test]

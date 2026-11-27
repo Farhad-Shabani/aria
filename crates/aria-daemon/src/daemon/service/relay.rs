@@ -631,7 +631,7 @@ where
     let _ = stopped.send(ended);
     match reads_on {
         Some(ended @ (PushEnd::ClientStopped | PushEnd::PressEnded)) => {
-            relay::after_audio(requests, ended, sent, asked).await
+            relay::after_audio(requests, opening, ended, sent, asked).await
         }
         Some(PushEnd::ClientClosed) | None => std::future::pending().await,
     }
@@ -834,7 +834,8 @@ impl ReturnPolicy {
 
 /// `early` is what the client said after its stop while the press ran. A
 /// cancel that landed as the press answered leaves its text typed, and
-/// presses no Return.
+/// presses no Return. One that landed after the Return went changes
+/// nothing: the client hears the Return, so it doesn't send the text again.
 async fn complete<S>(
     heard: Heard,
     channel: ReplyChannel,
@@ -845,15 +846,6 @@ async fn complete<S>(
 ) where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
 {
-    let submitted = match early {
-        Ok(early) => early == Some(AfterStop::Submit),
-        Err(error) => {
-            client
-                .emit(Err(relay::redacted(super::failed(METHOD, &error))))
-                .await;
-            return;
-        }
-    };
     let return_offer = match heard.after {
         AfterText::Submitted => {
             tracing::info!(method = METHOD, status = "submitted", "request served");
@@ -869,6 +861,15 @@ async fn complete<S>(
         // A half-close says the client won't ask, so nothing is offered.
         AfterText::Offered(return_offer) if channel == ReplyChannel::Open => Some(return_offer),
         AfterText::Offered(_) | AfterText::Nothing => None,
+    };
+    let submitted = match early {
+        Ok(early) => early == Some(AfterStop::Submit),
+        Err(error) => {
+            client
+                .emit(Err(relay::redacted(super::failed(METHOD, &error))))
+                .await;
+            return;
+        }
     };
     let offered = return_offer.as_ref().map(|return_offer| relay::Offer {
         application_name: return_offer.application().map(|app| app.name.clone()),
@@ -1417,6 +1418,23 @@ mod tests {
         assert_eq!(presses, 0);
         assert_eq!(events.len(), 1);
         assert!(events[0].is_err(), "the stream ends as cancelled");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_that_lands_after_the_return_went_still_reports_the_return() {
+        let (events, presses) = landed(
+            ReturnPolicy::Press,
+            "Messages",
+            ReplyChannel::Open,
+            Err(RelayError::ClientCancelled),
+            &Gate::new(),
+            tokio_stream::empty(),
+        )
+        .await;
+
+        assert_eq!(presses, 1);
+        assert_eq!(events.len(), 1);
+        assert_eq!(stage(&events[0]), (wire::RelayStage::Completed, true));
     }
 
     #[tokio::test(start_paused = true)]
