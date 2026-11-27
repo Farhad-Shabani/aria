@@ -384,7 +384,8 @@ public nonisolated struct Aria_Daemon_V1_RelayStart: Sendable {
   public var device: Aria_Daemon_V1_RecordingDevice = .unspecified
 
   /// Names the recording, so a later stream can continue it: 1 to 32 bytes
-  /// the client picks at random. Absent, no stream continues it.
+  /// the client picks at random. Absent, no stream continues it, and a
+  /// half-close ends it as a `RelayStop` does.
   public var recordingID: Data {
     get {_recordingID ?? Data()}
     set {_recordingID = newValue}
@@ -428,10 +429,10 @@ public nonisolated struct Aria_Daemon_V1_RelayAudio: Sendable {
   public init() {}
 }
 
-/// Ends the recording, and the Mac types what it heard. A stream that ends
-/// without a stop has failed, as a dropped connection ends it. After the stop
-/// the stream stays open for a `RelaySubmit` or a `RelayCancel`. A
-/// half-close after it says the client asks nothing more.
+/// Ends the recording, and the Mac types what it heard. A named recording's
+/// stream that ends without a stop has failed, as a dropped connection ends
+/// it. After the stop the stream stays open for a `RelaySubmit` or a
+/// `RelayCancel`. A half-close after it says the client asks nothing more.
 public nonisolated struct Aria_Daemon_V1_RelayStop: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for

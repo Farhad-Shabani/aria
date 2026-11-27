@@ -17,6 +17,7 @@ use crate::ipc::protocol::{ProtocolError, failure_status, phone_samples};
 use std::sync::mpsc::{SyncSender, TrySendError};
 use std::time::Duration;
 
+use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_util::sync::CancellationToken;
 use tonic::Status;
@@ -34,7 +35,7 @@ pub(crate) use pairing::PairedPhone;
 pub(crate) use pairing::RELATIVE_PATH as PAIRING_RELATIVE_PATH;
 pub(super) use pairing::{
     HardwareModel, Pairing, PairingError, Phones, fingerprint, fingerprint_from_hex,
-    load_or_create as load_pairing, mint, presented, require_paired, to_hex,
+    load_or_create as load_pairing, mint, presented, require_paired, to_hex, unpaired,
 };
 pub(super) use settings::LanSettings;
 pub(crate) use stage::{Offer, RelayStage};
@@ -122,6 +123,9 @@ pub(super) enum ReplyChannel {
 pub(super) enum PushEnd {
     /// The client ended it with a `RelayStop`.
     ClientStopped,
+    /// The client half-closed a recording it didn't name, which ends it. It
+    /// sends nothing more.
+    ClientClosed,
     /// The press stopped reading, as the Mac stopped the recording.
     PressEnded,
 }
@@ -257,7 +261,9 @@ where
                 None => {}
             },
             Some(Err(status)) => return Err(RelayError::ClientStream(status)),
-            None => return Err(RelayError::ClientStream(ended_before_stop())),
+            // A named recording's session reads its stream ending before the
+            // stop as a failure, so only an unnamed one ends here.
+            None => return Ok(PushEnd::ClientClosed),
         }
     }
 }
@@ -321,30 +327,39 @@ where
     }
 }
 
-/// What a client that stopped its recording says while the Mac transcribes
-/// it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum AfterStop {
-    /// It asked for Return ahead of COMPLETED.
-    Submit,
-    /// It half-closed, so it sends nothing more.
-    Closed,
-}
-
-/// Reads a stopped recording's stream until the client says something, so
-/// a `RelayCancel` reaches the press while it transcribes.
-pub(super) async fn after_stop<S>(stream: &mut S) -> Result<AfterStop, RelayError>
+/// Reads a recording's stream once the press takes no more of its audio,
+/// until the client half-closes, so a `RelayCancel` reaches the press while
+/// it transcribes. `asked` hears a `RelaySubmit` sent ahead of COMPLETED.
+///
+/// A client whose recording the Mac ended may not have heard so yet: its
+/// audio is dropped until its stop.
+pub(super) async fn after_audio<S>(
+    stream: &mut S,
+    ended: PushEnd,
+    asked: oneshot::Sender<()>,
+) -> Result<(), RelayError>
 where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
 {
+    let mut is_stopped = ended != PushEnd::PressEnded;
+    let mut asked = Some(asked);
     loop {
         let Some(request) = stream.next().await else {
-            return Ok(AfterStop::Closed);
+            return Ok(());
         };
         match request.map_err(RelayError::ClientStream)?.body {
-            Some(wire::relay_request::Body::Submit(_submit)) => return Ok(AfterStop::Submit),
             Some(wire::relay_request::Body::Cancel(_cancel)) => {
                 return Err(RelayError::ClientCancelled);
+            }
+            Some(wire::relay_request::Body::Audio(_)) if !is_stopped => {}
+            Some(wire::relay_request::Body::Stop(_stop)) if !is_stopped => is_stopped = true,
+            Some(wire::relay_request::Body::Submit(_submit)) if is_stopped => {
+                if let Some(asked) = asked.take() {
+                    let _ = asked.send(());
+                }
+            }
+            Some(wire::relay_request::Body::Submit(_submit)) => {
+                return Err(RelayError::SubmittedMidRecording);
             }
             Some(
                 wire::relay_request::Body::Start(_)
@@ -379,6 +394,9 @@ pub(super) enum RelayError {
 
     #[error("the recording_id names a recording still under way")]
     RecordingIdInUse,
+
+    #[error("the phone has too many recordings a stream can continue")]
+    TooManyRecordings,
 
     #[error("the recording to continue is over")]
     RecordingOver,
@@ -444,6 +462,7 @@ impl From<&RelayError> for RpcErrorCode {
             | RelayError::RecordingEnded
             | RelayError::UnsupportedFormat
             | RelayError::Audio(_) => Self::InvalidRequest,
+            RelayError::TooManyRecordings => Self::Busy,
             RelayError::TooLarge => Self::PayloadTooLarge,
             RelayError::ShuttingDown => Self::ShuttingDown,
             RelayError::RecordingOver
@@ -606,13 +625,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_stream_that_ends_before_its_stop_was_lost() {
+    async fn a_half_close_before_the_stop_ends_the_recording() {
         let opening = pcm_opening().await;
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
 
         let ended = forward(&mut requests(vec![chunk(&[2, 0])]), opening, feed, 0).await;
 
-        assert!(ended.is_err_and(|error| error.is_lost_stream()));
+        assert_eq!(ended.unwrap(), PushEnd::ClientClosed);
+    }
+
+    fn cancel() -> wire::RelayRequest {
+        wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Cancel(wire::RelayCancel {})),
+        }
+    }
+
+    /// What the client said once its audio was no longer taken, and whether
+    /// it asked for Return.
+    async fn said_after(
+        ended: PushEnd,
+        sent: Vec<wire::RelayRequest>,
+    ) -> (Result<(), RelayError>, bool) {
+        let (asked, mut asking) = oneshot::channel();
+        let said = after_audio(&mut requests(sent), ended, asked).await;
+        (said, asking.try_recv().is_ok())
+    }
+
+    #[tokio::test]
+    async fn a_cancel_is_read_after_a_submit_sent_ahead_of_completed() {
+        let (said, asked) = said_after(PushEnd::ClientStopped, vec![submit(), cancel()]).await;
+
+        assert!(matches!(said, Err(RelayError::ClientCancelled)));
+        assert!(asked);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_is_read_once_the_mac_ended_the_recording() {
+        let sent = vec![chunk(&[2, 0]), cancel()];
+
+        let (said, _asked) = said_after(PushEnd::PressEnded, sent).await;
+
+        assert!(matches!(said, Err(RelayError::ClientCancelled)));
+    }
+
+    /// The client hears late that the Mac ended its recording, so what it
+    /// sent meanwhile is no fault of its own.
+    #[tokio::test]
+    async fn audio_and_the_stop_are_dropped_once_the_mac_ended_the_recording() {
+        let sent = vec![chunk(&[2, 0]), stop(), submit()];
+
+        let (said, asked) = said_after(PushEnd::PressEnded, sent).await;
+
+        assert!(said.is_ok(), "the half-close ends the reading");
+        assert!(asked);
+    }
+
+    #[tokio::test]
+    async fn a_submit_ahead_of_the_stop_is_refused_once_the_mac_ended_the_recording() {
+        let (said, asked) = said_after(PushEnd::PressEnded, vec![submit()]).await;
+
+        assert!(matches!(said, Err(RelayError::SubmittedMidRecording)));
+        assert!(!asked);
+    }
+
+    #[tokio::test]
+    async fn audio_after_the_stop_is_refused_as_the_mac_transcribes() {
+        let (said, _asked) = said_after(PushEnd::ClientStopped, vec![chunk(&[2, 0])]).await;
+
+        assert!(matches!(said, Err(RelayError::RecordingEnded)));
     }
 
     #[tokio::test]

@@ -596,14 +596,19 @@ pub(in crate::daemon) fn require_paired(
 ) -> impl FnMut(Request<()>) -> Result<Request<()>, Status> + Clone + Send + Sync + 'static {
     move |request| match presented(&request) {
         Some(fingerprint) if phones.contains(&fingerprint) => Ok(request),
-        _ => Err(crate::daemon::service::failed(
-            "lan",
-            RpcFailure::new(
-                RpcErrorCode::Unauthenticated,
-                "pair this device with the Mac first",
-            ),
-        )),
+        _ => Err(unpaired()),
     }
+}
+
+/// The refusal a phone this Mac doesn't pin gets.
+pub(in crate::daemon) fn unpaired() -> Status {
+    crate::daemon::service::failed(
+        "lan",
+        RpcFailure::new(
+            RpcErrorCode::Unauthenticated,
+            "pair this device with the Mac first",
+        ),
+    )
 }
 
 #[derive(Debug, thiserror::Error)]

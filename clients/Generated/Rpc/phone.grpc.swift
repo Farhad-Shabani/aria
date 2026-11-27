@@ -68,8 +68,10 @@ extension Aria_Daemon_V1_RelayService {
         /// > streaming included, and Escape or a manual press on the Mac stops it. It
         /// > starts only while nothing records on the Mac.
         /// > A `RelayCancel` cancels the recording: nothing more of it types, though
-        /// > text already delivered stays. Cancelling the RPC alone is not a cancel:
-        /// > the Mac can't tell it from a lost connection.
+        /// > text already delivered stays. So does revoking its phone. Cancelling the
+        /// > RPC cancels only a recording with no `recording_id`, as losing its
+        /// > connection does: no stream could continue it. For a recording that
+        /// > named itself, the Mac can't tell a cancelled RPC from a lost connection.
         /// > Messages are capped at 4 MiB and four concurrent streams per connection.
         /// > Audio more than a second past 600 seconds (19,232,000 bytes of PCM) is
         /// > refused as it streams.
@@ -90,6 +92,7 @@ extension Aria_Daemon_V1_RelayService {
         /// > The press runs within the Mac's dictation timeouts.
         /// > Failures arrive as a status carrying an RpcError, not as an event:
         /// >   BUSY - a recording is running. This can arrive after the first audio.
+        /// >     Or the phone already has four named recordings open.
         /// >   PAYLOAD_TOO_LARGE - the audio is too long
         /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
         /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
@@ -148,8 +151,10 @@ extension Aria_Daemon_V1_RelayService {
         /// > streaming included, and Escape or a manual press on the Mac stops it. It
         /// > starts only while nothing records on the Mac.
         /// > A `RelayCancel` cancels the recording: nothing more of it types, though
-        /// > text already delivered stays. Cancelling the RPC alone is not a cancel:
-        /// > the Mac can't tell it from a lost connection.
+        /// > text already delivered stays. So does revoking its phone. Cancelling the
+        /// > RPC cancels only a recording with no `recording_id`, as losing its
+        /// > connection does: no stream could continue it. For a recording that
+        /// > named itself, the Mac can't tell a cancelled RPC from a lost connection.
         /// > Messages are capped at 4 MiB and four concurrent streams per connection.
         /// > Audio more than a second past 600 seconds (19,232,000 bytes of PCM) is
         /// > refused as it streams.
@@ -170,6 +175,7 @@ extension Aria_Daemon_V1_RelayService {
         /// > The press runs within the Mac's dictation timeouts.
         /// > Failures arrive as a status carrying an RpcError, not as an event:
         /// >   BUSY - a recording is running. This can arrive after the first audio.
+        /// >     Or the phone already has four named recordings open.
         /// >   PAYLOAD_TOO_LARGE - the audio is too long
         /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
         /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
@@ -225,8 +231,10 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > streaming included, and Escape or a manual press on the Mac stops it. It
     /// > starts only while nothing records on the Mac.
     /// > A `RelayCancel` cancels the recording: nothing more of it types, though
-    /// > text already delivered stays. Cancelling the RPC alone is not a cancel:
-    /// > the Mac can't tell it from a lost connection.
+    /// > text already delivered stays. So does revoking its phone. Cancelling the
+    /// > RPC cancels only a recording with no `recording_id`, as losing its
+    /// > connection does: no stream could continue it. For a recording that
+    /// > named itself, the Mac can't tell a cancelled RPC from a lost connection.
     /// > Messages are capped at 4 MiB and four concurrent streams per connection.
     /// > Audio more than a second past 600 seconds (19,232,000 bytes of PCM) is
     /// > refused as it streams.
@@ -247,6 +255,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > The press runs within the Mac's dictation timeouts.
     /// > Failures arrive as a status carrying an RpcError, not as an event:
     /// >   BUSY - a recording is running. This can arrive after the first audio.
+    /// >     Or the phone already has four named recordings open.
     /// >   PAYLOAD_TOO_LARGE - the audio is too long
     /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
     /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
@@ -296,8 +305,10 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > streaming included, and Escape or a manual press on the Mac stops it. It
     /// > starts only while nothing records on the Mac.
     /// > A `RelayCancel` cancels the recording: nothing more of it types, though
-    /// > text already delivered stays. Cancelling the RPC alone is not a cancel:
-    /// > the Mac can't tell it from a lost connection.
+    /// > text already delivered stays. So does revoking its phone. Cancelling the
+    /// > RPC cancels only a recording with no `recording_id`, as losing its
+    /// > connection does: no stream could continue it. For a recording that
+    /// > named itself, the Mac can't tell a cancelled RPC from a lost connection.
     /// > Messages are capped at 4 MiB and four concurrent streams per connection.
     /// > Audio more than a second past 600 seconds (19,232,000 bytes of PCM) is
     /// > refused as it streams.
@@ -318,6 +329,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// > The press runs within the Mac's dictation timeouts.
     /// > Failures arrive as a status carrying an RpcError, not as an event:
     /// >   BUSY - a recording is running. This can arrive after the first audio.
+    /// >     Or the phone already has four named recordings open.
     /// >   PAYLOAD_TOO_LARGE - the audio is too long
     /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
     /// >   INVALID_REQUEST - an unsupported format, a missing, late or second

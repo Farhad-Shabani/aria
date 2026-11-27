@@ -23,9 +23,10 @@ use aria_voice::microphone::Gate;
 use super::super::capture::FEED_CHUNKS;
 use super::super::dictation::{DictationRuntime, DictationRuntimeError, RelaySettings};
 use super::super::relay::{
-    self, AfterStop, Opened, Opening, PushEnd, RecordingId, RelayError, RelayStage, Reply,
+    self, Opened, Opening, Phones, PushEnd, RecordingId, RelayError, RelayStage, Reply,
     ReplyChannel,
 };
+use super::super::server::lan::MAX_LAN_STREAMS;
 
 const METHOD: &str = "RelayService/Relay";
 
@@ -40,6 +41,7 @@ pub(in crate::daemon) struct RelayRpc {
     /// The daemon's stop, so a session in flight ends with it rather than
     /// holding the drain open until one of its own clocks runs out.
     shutdown: CancellationToken,
+    phones: Arc<Phones>,
     resumable: Arc<Resumable<Streaming<wire::RelayRequest>>>,
 }
 
@@ -47,12 +49,14 @@ impl RelayRpc {
     pub(in crate::daemon) fn new(
         dictation: Arc<DictationRuntime>,
         microphone: Arc<Gate>,
+        phones: Arc<Phones>,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
             dictation,
             microphone,
             shutdown,
+            phones,
             resumable: Arc::default(),
         }
     }
@@ -107,16 +111,22 @@ impl wire::relay_service_server::RelayService for RelayRpc {
             }
             Opened::Started(opening, recording) => {
                 let (settings, return_policy) = self.session_settings()?;
+                // A phone revoked since the call was admitted records nothing.
+                let revoked = match &phone {
+                    Some(phone) => self.phones.connection(phone).ok_or_else(relay::unpaired)?,
+                    None => CancellationToken::new(),
+                };
                 let (client, continuations) = match recording {
                     Some(recording) => {
-                        let client = Client::continuable(events, self.shutdown.clone());
+                        let client =
+                            Client::continuable(events, revoked, self.shutdown.clone());
                         let continuations = self
                             .resumable
                             .open((phone, recording), client.settled.clone())
                             .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
                         (client, Some(continuations))
                     }
-                    None => (Client::new(events, self.shutdown.clone()), None),
+                    None => (Client::new(events, revoked, self.shutdown.clone()), None),
                 };
                 let session = Session {
                     client,
@@ -137,17 +147,23 @@ impl wire::relay_service_server::RelayService for RelayRpc {
 }
 
 /// What the session tells the relay client, and whether a client still
-/// hears it. The daemon stopping cancels the session.
+/// hears it. The daemon stopping cancels the session, and so does revoking
+/// its phone.
 struct Client {
     listener: Arc<Mutex<Listener>>,
     /// Fires once no stream can take over the recording.
     settled: CancellationToken,
+    revoked: CancellationToken,
     shutdown: CancellationToken,
 }
 
 enum Listener {
-    /// A stream no other takes over from. Once its client stops reading, no
-    /// Return follows the text.
+    /// The stream of a recording its client didn't name. No stream continues
+    /// it, so no `RelayCancel` could reach it once this one is gone: its
+    /// client not reading cancels it.
+    Only(Events),
+    /// A named recording's stream no other takes over from. Once its client
+    /// stops reading, no Return follows the text.
     Last(Events),
     /// The stream of a named recording the Mac still takes audio for, which
     /// another can take over from. Its client not reading ends nothing: it
@@ -206,6 +222,13 @@ impl<S> Resumable<S> {
         let mut recordings = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         if recordings.contains_key(&named) {
             return Err(RelayError::RecordingIdInUse);
+        }
+        // A stream that failed frees its place on the connection while its
+        // recording still waits here, so the connection's cap doesn't bound
+        // them.
+        let held = recordings.keys().filter(|(phone, _)| *phone == named.0);
+        if held.count() >= MAX_LAN_STREAMS {
+            return Err(RelayError::TooManyRecordings);
         }
         let offered = Offered {
             streams: sender,
@@ -364,17 +387,19 @@ impl Session {
             }
         });
         let (stopped, pushed) = oneshot::channel();
-        let pushing = push(&mut requests, opening, feed, sent, stopped);
+        let (asked, asking) = oneshot::channel();
+        let pushing = push(&mut requests, opening, feed, sent, stopped, asked);
         let Followed {
             ended,
             joined,
             early,
-        } = follow_press(&client, capturing, job, pushed, pushing, &abort).await;
+        } = follow_press(&client, capturing, job, pushed, pushing, asking, &abort).await;
         let channel = match ended {
             Ok(PushEnd::ClientStopped) if early == Some(AfterStop::Closed) => ReplyChannel::Closed,
             Ok(PushEnd::ClientStopped) => ReplyChannel::Open,
-            // The client is still recording, or gone, so it won't ask.
-            Ok(PushEnd::PressEnded) => ReplyChannel::Closed,
+            // The client is still recording, or sends nothing more, so it
+            // won't ask.
+            Ok(PushEnd::PressEnded | PushEnd::ClientClosed) => ReplyChannel::Closed,
             Err(error) => {
                 client
                     .emit(Err(relay::redacted(super::failed(METHOD, &error))))
@@ -455,6 +480,7 @@ where
 {
     let streams = Streams {
         current: stream,
+        awaits_stop: continuations.is_some(),
         continuations,
         client,
         taken: 0,
@@ -471,8 +497,12 @@ where
 /// The streams of one recording, one at a time.
 struct Streams<'a, S> {
     current: S,
-    /// The streams asking to take over, until the recording settles.
+    /// The streams asking to take over, until the recording settles or its
+    /// client stops it.
     continuations: Option<Continuations<S>>,
+    /// A named recording ends with a stop, so its stream ending before one
+    /// has failed.
+    awaits_stop: bool,
     client: &'a Client,
     /// The audio bytes handed on, from every stream.
     taken: u64,
@@ -487,7 +517,13 @@ where
     async fn next(&mut self) -> Option<Result<wire::RelayRequest, Status>> {
         loop {
             let Some(continuations) = self.continuations.as_mut() else {
-                return self.current.next().await;
+                return match self.current.next().await {
+                    None if self.awaits_stop => Some(Err(relay::ended_before_stop())),
+                    request => {
+                        self.awaits_stop &= !is_stop(request.as_ref());
+                        request
+                    }
+                };
             };
             let settled = &self.client.settled;
             let continuation = tokio::select! {
@@ -510,6 +546,12 @@ where
                             })) = &request
                             {
                                 self.taken += audio.chunk.len() as u64;
+                            }
+                            // Its client ended the recording, so no stream
+                            // takes over, and a half-close now is no failure.
+                            if is_stop(request.as_ref()) {
+                                self.awaits_stop = false;
+                                self.continuations = None;
                             }
                             return request;
                         }
@@ -566,26 +608,49 @@ where
     }
 }
 
+fn is_stop(request: Option<&Result<wire::RelayRequest, Status>>) -> bool {
+    matches!(
+        request,
+        Some(Ok(wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Stop(_)),
+        }))
+    )
+}
+
 /// Forwards a recording's audio to its press, and tells `stopped` how that
-/// ended. After a stop it reads on until the client says something; after
-/// any other end it never returns.
+/// ended. It then reads on until the client half-closes, and tells `asked`
+/// of a submit. A client that already half-closed, or whose stream failed,
+/// says nothing more, so it never returns.
 async fn push<S>(
     requests: &mut S,
     opening: Opening,
     feed: std::sync::mpsc::SyncSender<Vec<i16>>,
     sent: usize,
     stopped: oneshot::Sender<Result<PushEnd, RelayError>>,
-) -> Result<AfterStop, RelayError>
+    asked: oneshot::Sender<()>,
+) -> Result<(), RelayError>
 where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
 {
     let ended = relay::forward(requests, opening, feed, sent).await;
-    let reads_on = matches!(ended, Ok(PushEnd::ClientStopped));
+    let reads_on = ended.as_ref().ok().copied();
     let _ = stopped.send(ended);
-    if !reads_on {
-        return std::future::pending().await;
+    match reads_on {
+        Some(ended @ (PushEnd::ClientStopped | PushEnd::PressEnded)) => {
+            relay::after_audio(requests, ended, asked).await
+        }
+        Some(PushEnd::ClientClosed) | None => std::future::pending().await,
     }
-    relay::after_stop(requests).await
+}
+
+/// What a client that ended its recording said while the Mac transcribed
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterStop {
+    /// It asked for Return ahead of COMPLETED.
+    Submit,
+    /// It half-closed without asking, so it sends nothing more.
+    Closed,
 }
 
 /// What [`follow_press`] saw: what ended the pushing, the press's answer,
@@ -601,8 +666,9 @@ struct Followed<T> {
 /// it. A press refused before capture never says it, so the client hears
 /// only the refusal.
 ///
-/// `pushing` forwards the audio, tells `pushed` how that ended, and after a
-/// stop reads on, so a cancel sent while the press transcribes reaches it.
+/// `pushing` forwards the audio, tells `pushed` how that ended, and reads
+/// on, so a cancel sent while the press transcribes reaches it. `asking`
+/// hears a submit sent meanwhile.
 ///
 /// The Mac takes audio only until the capture ends, the pushing ends, or the
 /// press does. Each settles the client, so no stream continues the recording
@@ -615,17 +681,18 @@ async fn follow_press<J, P>(
     job: J,
     mut pushed: oneshot::Receiver<Result<PushEnd, RelayError>>,
     pushing: P,
+    mut asking: oneshot::Receiver<()>,
     abort: &CancellationToken,
 ) -> Followed<J::Output>
 where
     J: Future,
-    P: Future<Output = Result<AfterStop, RelayError>>,
+    P: Future<Output = Result<(), RelayError>>,
 {
     tokio::pin!(job);
     tokio::pin!(pushing);
     let mut is_listening = true;
     let mut ended = None;
-    let mut early = None;
+    let mut is_closed = false;
     let mut is_reading = true;
     loop {
         tokio::select! {
@@ -646,10 +713,10 @@ where
             said = &mut pushing, if is_reading => {
                 is_reading = false;
                 match said {
-                    Ok(said) => early = Some(said),
-                    Err(error) if error.is_lost_stream() => client.lose(),
+                    Ok(()) => is_closed = true,
+                    Err(error) if error.is_lost_stream() => client.lose(abort),
                     Err(error) => {
-                        tracing::info!(method = METHOD, %error, "the relay client ended its recording after its stop");
+                        tracing::info!(method = METHOD, %error, "the relay client ended its recording as the Mac transcribed it");
                         abort.cancel();
                     }
                 }
@@ -664,6 +731,11 @@ where
                 if ended.is_none() && let Ok(end) = pushed.try_recv() {
                     ended = Some(pushing_ended(client, abort, Ok(end)));
                 }
+                let early = if asking.try_recv().is_ok() {
+                    Some(AfterStop::Submit)
+                } else {
+                    is_closed.then_some(AfterStop::Closed)
+                };
                 // Still pushing: the client is recording, or gone.
                 break Followed {
                     ended: ended.unwrap_or(Ok(PushEnd::PressEnded)),
@@ -675,8 +747,9 @@ where
     }
 }
 
-/// Settles the client once its pushing ended. A lost stream leaves the press
-/// typing what arrived. Any other failure cancels it.
+/// Settles the client once its pushing ended. A named recording's lost
+/// stream leaves the press typing what arrived. Any other failure cancels
+/// it.
 fn pushing_ended(
     client: &Client,
     abort: &CancellationToken,
@@ -689,7 +762,7 @@ fn pushing_ended(
     }
     client.settle();
     match &ended {
-        Err(error) if error.is_lost_stream() => client.lose(),
+        Err(error) if error.is_lost_stream() => client.lose(abort),
         Err(_) => abort.cancel(),
         Ok(_) => {}
     }
@@ -813,23 +886,30 @@ async fn complete<S>(
 }
 
 impl Client {
-    /// For a recording no stream continues.
-    fn new(events: Events, shutdown: CancellationToken) -> Self {
+    /// For a recording no stream continues. `revoked` fires once its phone
+    /// is.
+    fn new(events: Events, revoked: CancellationToken, shutdown: CancellationToken) -> Self {
         let settled = CancellationToken::new();
         settled.cancel();
         Self {
-            listener: Arc::new(Mutex::new(Listener::Last(events))),
+            listener: Arc::new(Mutex::new(Listener::Only(events))),
             settled,
+            revoked,
             shutdown,
         }
     }
 
     /// For a named recording, which another stream can continue until
     /// [`Client::settle`].
-    fn continuable(events: Events, shutdown: CancellationToken) -> Self {
+    fn continuable(
+        events: Events,
+        revoked: CancellationToken,
+        shutdown: CancellationToken,
+    ) -> Self {
         Self {
             listener: Arc::new(Mutex::new(Listener::Replaceable(events))),
             settled: CancellationToken::new(),
+            revoked,
             shutdown,
         }
     }
@@ -842,7 +922,9 @@ impl Client {
     /// recording is already delivered, or already lost.
     async fn emit(&self, event: Result<wire::RelayEvent, Status>) {
         let events = match &*self.listener() {
-            Listener::Last(events) | Listener::Replaceable(events) => events.clone(),
+            Listener::Only(events) | Listener::Last(events) | Listener::Replaceable(events) => {
+                events.clone()
+            }
             Listener::Away | Listener::Gone => return,
         };
         drop(events.send(event).await);
@@ -876,6 +958,7 @@ impl Client {
         {
             let mut listener = self.listener();
             *listener = match std::mem::replace(&mut *listener, Listener::Gone) {
+                Listener::Only(events) => Listener::Only(events),
                 Listener::Last(events) | Listener::Replaceable(events) => Listener::Last(events),
                 Listener::Away | Listener::Gone => Listener::Gone,
             };
@@ -883,25 +966,49 @@ impl Client {
         self.settled.cancel();
     }
 
-    /// The client's stream broke and no stream continues it.
-    fn lose(&self) {
-        *self.listener() = Listener::Gone;
+    /// The client's stream broke and no stream continues it. A recording
+    /// its client named types what the Mac heard. One it didn't name is
+    /// cancelled through `abort`.
+    fn lose(&self, abort: &CancellationToken) {
+        let mut listener = self.listener();
+        if matches!(*listener, Listener::Only(_)) {
+            abort.cancel();
+        }
+        *listener = Listener::Gone;
     }
 
     /// Whether a client still hears the recording, read when asked.
     fn listens(&self) -> impl Fn() -> bool + Send + Sync + 'static {
         let listener = Arc::clone(&self.listener);
         move || match &*listener.lock().unwrap_or_else(PoisonError::into_inner) {
-            Listener::Last(events) => !events.is_closed(),
+            Listener::Only(events) | Listener::Last(events) => !events.is_closed(),
             Listener::Replaceable(_) => true,
             Listener::Away | Listener::Gone => false,
         }
     }
 
-    /// A lost client doesn't cancel the press: it types what it heard.
+    /// A named recording's lost client doesn't cancel the press: it types
+    /// what it heard. Cancelling the RPC cancels an unnamed one.
     fn cancel(&self) -> CancelToken {
         let shutdown = self.shutdown.clone();
-        CancelToken::from_fn(move || shutdown.is_cancelled())
+        let revoked = self.revoked.clone();
+        let listener = Arc::clone(&self.listener);
+        CancelToken::from_fn(move || {
+            shutdown.is_cancelled()
+                || revoked.is_cancelled()
+                || matches!(
+                    &*listener.lock().unwrap_or_else(PoisonError::into_inner),
+                    Listener::Only(events) if events.is_closed()
+                )
+        })
+    }
+
+    /// As [`Client::cancel`], and also once no client hears the recording:
+    /// nobody would be watching the Return.
+    fn withheld(&self) -> CancelToken {
+        let cancel = self.cancel();
+        let listens = self.listens();
+        CancelToken::from_fn(move || cancel.is_cancelled() || !listens())
     }
 
     /// As [`Client::cancel`], and also once `abort` fires, as when the
@@ -939,7 +1046,7 @@ where
         Err(error) => return Some(Err(relay::redacted(super::failed(METHOD, &error)))),
     }
     let microphone = Arc::clone(microphone);
-    let cancel = client.cancel();
+    let cancel = client.withheld();
     let pressed = super::blocking(METHOD, move || {
         let _claim = microphone
             .admit_return_press()
@@ -990,7 +1097,7 @@ mod tests {
 
     fn client() -> (Client, mpsc::Receiver<Result<wire::RelayEvent, Status>>) {
         let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
-        let client = Client::new(events, CancellationToken::new());
+        let client = Client::new(events, CancellationToken::new(), CancellationToken::new());
         (client, receiver)
     }
 
@@ -1098,7 +1205,7 @@ mod tests {
         forwarding: impl Future<Output = Result<PushEnd, RelayError>>,
     ) -> (
         oneshot::Receiver<Result<PushEnd, RelayError>>,
-        impl Future<Output = Result<AfterStop, RelayError>>,
+        impl Future<Output = Result<(), RelayError>>,
     ) {
         let (stopped, pushed) = oneshot::channel();
         let pushing = async move {
@@ -1119,12 +1226,14 @@ mod tests {
     ) {
         let (client, mut receiver) = client();
         let (pushed, pushing) = forwarding_only(forwarding);
+        let (_asked, asking) = oneshot::channel();
         let Followed { ended, .. } = follow_press(
             &client,
             capturing,
             job,
             pushed,
             pushing,
+            asking,
             &CancellationToken::new(),
         )
         .await;
@@ -1362,13 +1471,14 @@ mod tests {
         events: mpsc::Receiver<Result<wire::RelayEvent, Status>>,
     }
 
-    async fn walk() -> Walk {
+    /// The opening of a recording its phone named `name`.
+    async fn opened(name: &[u8]) -> (Opening, RecordingId) {
         let (start, mut requests) = stream();
         start
             .send(Ok(wire::RelayRequest {
                 body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                     format: wire::AudioFormat::PcmS16le as i32,
-                    recording_id: Some(b"walk".to_vec()),
+                    recording_id: Some(name.to_vec()),
                     ..Default::default()
                 })),
             }))
@@ -1377,10 +1487,16 @@ mod tests {
         let Ok(Opened::Started(opening, Some(recording))) = relay::open(&mut requests).await else {
             panic!("a named start opens a recording");
         };
+        (opening, recording)
+    }
+
+    async fn walk() -> Walk {
+        let (opening, recording) = opened(b"walk").await;
         let named = (PHONE, recording);
         let resumable = Arc::<Resumable<Requests>>::default();
         let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
-        let client = Client::continuable(events, CancellationToken::new());
+        let client =
+            Client::continuable(events, CancellationToken::new(), CancellationToken::new());
         let continuations = resumable
             .open(named.clone(), client.settled.clone())
             .expect("the name is free");
@@ -1621,17 +1737,34 @@ mod tests {
         })
     }
 
+    /// Whether the press still takes the recording's audio.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Press {
+        Taking,
+        /// The Mac ended the recording.
+        Ended,
+    }
+
     /// Runs a named recording's press from `sent` until the press sees its
     /// abort. What ended the pushing, and whether the press was aborted.
     async fn press_after(
         walk: &mut Walk,
         sent: Vec<Result<wire::RelayRequest, Status>>,
     ) -> (Result<PushEnd, RelayError>, bool) {
+        aborted_press(walk, sent, Press::Taking).await
+    }
+
+    async fn aborted_press(
+        walk: &mut Walk,
+        sent: Vec<Result<wire::RelayRequest, Status>>,
+        press: Press,
+    ) -> (Result<PushEnd, RelayError>, bool) {
         let (first, requests) = stream();
         for request in sent {
             first.send(request).await.unwrap();
         }
-        let (feed, _press) = std::sync::mpsc::sync_channel(8);
+        let (feed, taking) = std::sync::mpsc::sync_channel(8);
+        let _taking = (press == Press::Taking).then_some(taking);
         let abort = CancellationToken::new();
         let aborted = abort.clone();
         let (_capture_ended, capturing) = oneshot::channel();
@@ -1642,6 +1775,7 @@ mod tests {
             QUIET
         ));
         let (stopped, pushed) = oneshot::channel();
+        let (asked, asking) = oneshot::channel();
         let Followed { ended, .. } = tokio::time::timeout(
             WAIT,
             follow_press(
@@ -1649,7 +1783,8 @@ mod tests {
                 capturing,
                 async move { aborted.cancelled().await },
                 pushed,
-                push(&mut requests, walk.opening, feed, 0, stopped),
+                push(&mut requests, walk.opening, feed, 0, stopped, asked),
+                asking,
                 &abort,
             ),
         )
@@ -1657,6 +1792,119 @@ mod tests {
         .expect("the press ends");
         drop(first);
         (ended, abort.is_cancelled())
+    }
+
+    /// A named recording whose stream sent `sent` and half-closed, as its
+    /// press answers.
+    async fn answered_after(
+        walk: &mut Walk,
+        sent: Vec<Result<wire::RelayRequest, Status>>,
+    ) -> Followed<()> {
+        let (first, requests) = stream();
+        for request in sent {
+            first.send(request).await.unwrap();
+        }
+        drop(first);
+        let (feed, _taking) = std::sync::mpsc::sync_channel(8);
+        let (_capture_ended, capturing) = oneshot::channel();
+        let mut requests = std::pin::pin!(continued(
+            requests,
+            walk.continuations.take(),
+            &walk.client,
+            QUIET
+        ));
+        let (stopped, pushed) = oneshot::channel();
+        let (asked, asking) = oneshot::channel();
+        follow_press(
+            &walk.client,
+            capturing,
+            std::future::ready(()),
+            pushed,
+            push(&mut requests, walk.opening, feed, 0, stopped, asked),
+            asking,
+            &CancellationToken::new(),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_cancel_reaches_a_press_the_mac_ended() {
+        let mut walk = walk().await;
+        let sent = vec![audio(&[1, 0]), cancel()];
+
+        let (ended, aborted) = aborted_press(&mut walk, sent, Press::Ended).await;
+
+        assert!(matches!(ended, Ok(PushEnd::PressEnded)));
+        assert!(aborted, "nothing more types");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_after_a_submit_ahead_of_completed_cancels_the_press() {
+        let mut walk = walk().await;
+        let sent = vec![audio(&[1, 0]), stop(), Ok(submit()), cancel()];
+
+        let (ended, aborted) = press_after(&mut walk, sent).await;
+
+        assert!(matches!(ended, Ok(PushEnd::ClientStopped)));
+        assert!(aborted, "no Return follows");
+    }
+
+    #[tokio::test]
+    async fn a_submit_ahead_of_completed_outlasts_the_half_close_after_it() {
+        let mut walk = walk().await;
+        let sent = vec![audio(&[1, 0]), stop(), Ok(submit())];
+
+        let Followed { ended, early, .. } = answered_after(&mut walk, sent).await;
+
+        assert!(matches!(ended, Ok(PushEnd::ClientStopped)));
+        assert_eq!(early, Some(AfterStop::Submit));
+    }
+
+    #[tokio::test]
+    async fn a_half_close_right_after_the_stop_is_no_lost_stream() {
+        let mut walk = walk().await;
+
+        let Followed { early, .. } = answered_after(&mut walk, vec![audio(&[1, 0]), stop()]).await;
+
+        assert_eq!(early, Some(AfterStop::Closed));
+        assert!(walk.client.listens()(), "its client hears COMPLETED");
+    }
+
+    #[tokio::test]
+    async fn a_named_stream_that_ends_before_its_stop_failed_even_once_settled() {
+        let mut walk = walk().await;
+        walk.client.settle();
+        let (first, requests) = stream();
+        drop(first);
+        let mut requests = std::pin::pin!(continued(
+            requests,
+            walk.continuations.take(),
+            &walk.client,
+            QUIET
+        ));
+
+        let ended = requests.next().await;
+
+        assert!(matches!(ended, Some(Err(status)) if relay::is_lost(&status)));
+    }
+
+    #[tokio::test]
+    async fn a_phone_holds_only_so_many_recordings_open() {
+        let resumable = Arc::<Resumable<Requests>>::default();
+        let open = |phone: u8, recording: RecordingId| {
+            resumable.open((Some([phone; 32]), recording), CancellationToken::new())
+        };
+        let mut held = Vec::new();
+        for name in 0..MAX_LAN_STREAMS as u8 {
+            held.push(open(7, opened(&[name]).await.1));
+        }
+
+        let one_more = open(7, opened(b"one more").await.1);
+        let another_phone = open(8, opened(b"one more").await.1);
+
+        assert!(held.iter().all(Result::is_ok));
+        assert!(matches!(one_more, Err(RelayError::TooManyRecordings)));
+        assert!(another_phone.is_ok());
     }
 
     #[tokio::test]
@@ -1734,17 +1982,59 @@ mod tests {
     #[test]
     fn a_client_listens_until_its_stream_is_gone_for_good() {
         let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
-        let named = Client::continuable(events, CancellationToken::new());
+        let named = Client::continuable(events, CancellationToken::new(), CancellationToken::new());
         let (events, unnamed_receiver) = mpsc::channel(EVENT_CAPACITY);
-        let unnamed = Client::new(events, CancellationToken::new());
+        let unnamed = Client::new(events, CancellationToken::new(), CancellationToken::new());
         drop(unnamed_receiver);
+        let abort = CancellationToken::new();
 
         assert!(!unnamed.listens()());
         assert!(named.listens()());
-        named.lose();
+        named.lose(&abort);
         assert!(!named.listens()());
         assert!(!named.cancel().is_cancelled(), "the press goes on");
+        assert!(!abort.is_cancelled());
         drop(receiver);
+    }
+
+    /// No stream continues an unnamed recording, so no cancel could reach it
+    /// once its stream is gone.
+    #[test]
+    fn an_unnamed_recording_is_cancelled_with_its_rpc_or_its_stream() {
+        let (cancelled, receiver) = client();
+        let (lost, _receiver) = client();
+        let abort = CancellationToken::new();
+
+        drop(receiver);
+        lost.lose(&abort);
+
+        assert!(cancelled.cancel().is_cancelled());
+        assert!(abort.is_cancelled());
+    }
+
+    #[test]
+    fn revoking_a_phone_cancels_its_recording() {
+        let (events, _receiver) = mpsc::channel(EVENT_CAPACITY);
+        let revoked = CancellationToken::new();
+        let client = Client::continuable(events, revoked.clone(), CancellationToken::new());
+
+        revoked.cancel();
+
+        assert!(client.cancel().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn a_return_asked_for_early_is_withheld_once_the_client_is_gone() {
+        let (return_offer, pressed) = counted_return(|| {});
+        let (client, _receiver) = client();
+        client.lose(&CancellationToken::new());
+        let mut requests = tokio_stream::empty();
+
+        let answered =
+            submit_on_reply(return_offer, true, &Gate::new(), &client, &mut requests).await;
+
+        assert!(matches!(answered, Some(Err(_))));
+        assert_eq!(pressed.load(Ordering::SeqCst), 0);
     }
 
     /// A Return offer that counts its presses, as the Mac's delivery runs
@@ -1854,6 +2144,7 @@ mod tests {
         };
 
         let (stopped, pushed) = oneshot::channel();
+        let (asked, asking) = oneshot::channel();
         let (Followed { ended, .. }, ()) = tokio::time::timeout(WAIT, async {
             tokio::join!(
                 follow_press(
@@ -1863,7 +2154,8 @@ mod tests {
                         let _ = has_left.await;
                     },
                     pushed,
-                    push(&mut requests, walk.opening, feed, 0, stopped),
+                    push(&mut requests, walk.opening, feed, 0, stopped, asked),
+                    asking,
                     &abort,
                 ),
                 leaving,
@@ -1908,6 +2200,7 @@ mod tests {
         };
 
         let (stopped, pushed) = oneshot::channel();
+        let (asked, asking) = oneshot::channel();
         let (Followed { ended, .. }, ()) = tokio::time::timeout(WAIT, async {
             tokio::join!(
                 follow_press(
@@ -1917,7 +2210,8 @@ mod tests {
                         let _ = has_typed.await;
                     },
                     pushed,
-                    push(&mut requests, walk.opening, feed, 0, stopped),
+                    push(&mut requests, walk.opening, feed, 0, stopped, asked),
+                    asking,
                     &abort,
                 ),
                 ending,
