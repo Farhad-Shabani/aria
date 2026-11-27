@@ -58,9 +58,8 @@ struct Held {
     sentence_ended_before: Option<bool>,
 }
 
-/// Whether `text` ends on a name that types a slash and joins the word
-/// after it, as "forward slash" in "src forward slash" or the run "dot dot
-/// forward slash" does.
+/// Whether `text` ends on the name of a slash or backslash with no mark
+/// after it, as "src forward slash" and "dot dot forward slash" do.
 fn waits_for_its_word(text: &str) -> bool {
     let words: Vec<&str> = text.split_whitespace().collect();
     (0..words.len()).any(|index| {
@@ -125,10 +124,9 @@ impl DeferredWords {
         self.held.is_some()
     }
 
-    /// Releases the held words a pause lets go: all of them, unless they end
-    /// on a name that types a slash and joins the word after it. Then they
-    /// all wait for that word, which may still change them, as `../` needs
-    /// its dots and "two" in "two forward slash" may type `2`.
+    /// Releases the held words after a pause, unless they end on a named
+    /// slash or backslash. Those wait for the next word, as "dot dot forward
+    /// slash" waits to type `../src`.
     #[must_use = "held words are owed to the transcript"]
     pub fn release_paused(&mut self) -> Option<Unheld> {
         let waits = self

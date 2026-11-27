@@ -220,7 +220,8 @@ impl TextDelivery for LinuxTextDelivery {
         Err(DeliveryError::SubmissionUnsupported)
     }
 
-    // The caret is never read here, so no space is ever owed.
+    // Linux never reads the caret, so no dictation here asks for a closing
+    // space.
     fn deliver_space(
         &self,
         _prepared: &Self::Prepared,

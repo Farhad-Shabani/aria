@@ -1,10 +1,9 @@
-//! Which apps take prose, which decides how dictation into them is written.
+//! Which apps get prose. "and forward slash or" → `and/or` in Notes, and
+//! `and /or` in a terminal.
 
 use aria_kit::transcription::Writing;
 use aria_platform::delivery::Application;
 
-/// The chat, document and browser apps, by bundle id. Any other app takes
-/// commands, as a terminal or an editor does.
 const PROSE_APPS: &[&str] = &[
     "com.tinyspeck.slackmacgap",
     "com.apple.MobileSMS",
@@ -24,9 +23,8 @@ const PROSE_APPS: &[&str] = &[
     "org.mozilla.firefox",
 ];
 
-/// How dictation into `application` is written: prose in a listed app,
-/// case aside, and commands anywhere else, so a slash after a word still
-/// opens what follows.
+/// Prose in a listed app, its bundle id matched in any case. Commands
+/// anywhere else.
 pub(super) fn writing(application: Option<&Application>) -> Writing {
     let bundle_id = application.and_then(|application| application.bundle_id.as_deref());
     match bundle_id {

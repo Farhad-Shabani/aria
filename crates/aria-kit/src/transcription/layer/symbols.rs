@@ -1,3 +1,5 @@
+//! The spoken-symbols correction step: "user underscore id" → `user_id`.
+
 use std::borrow::Cow;
 
 use super::Vocabulary;
@@ -8,9 +10,8 @@ use super::symbol_words::{
 };
 use super::vocabulary::is_english;
 
-/// What decides how a dictation's symbols join besides its words: the
-/// vocabulary, with the project's path names, how the text is written, and
-/// where it sits in the dictation.
+/// What a join depends on besides the words. "and forward slash or" →
+/// `and/or` in prose, `and /or` in commands.
 #[derive(Clone, Copy)]
 pub(super) struct Reading<'a> {
     pub(super) vocabulary: &'a Vocabulary,
@@ -18,14 +19,11 @@ pub(super) struct Reading<'a> {
     pub(super) place: Place,
 }
 
-/// Claims each run of words that spoken symbols join as one word, as in
-/// "user underscore id" → `user_id`. Two words that both have a joined
-/// form, as numbers do, join in that form. A symbol that
-/// [joins always](Joins::Always) is claimed even with no word to join, as
-/// `src/` or `/`.
+/// Claims each run of words that symbols join: "user underscore id" →
+/// `user_id`.
 ///
-/// Returns where each claim starts that opens on its symbol, which stands
-/// apart from the word before it, as `--verbose` does.
+/// Returns the start of each claim that opens with a symbol glued to no
+/// word before it, as `--amend` in `git commit --amend`.
 pub(super) fn claim<'a>(text: &str, reading: Reading<'_>, claimed: &mut Claimed<'a>) -> Vec<usize> {
     let (words, names) = merge_names(text, claimed.take_words());
     let joining = joining(text, &words, &names, reading);
@@ -89,14 +87,13 @@ pub(super) fn claim<'a>(text: &str, reading: Reading<'_>, claimed: &mut Claimed<
 /// Which words beside it a symbol word glues to.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Glue {
-    /// Links the words on both sides, typing this.
+    /// "user underscore id" → `user_id`.
     Both(&'static str),
-    /// Opens the word after it, typing this, as "dot" opens `.env`.
+    /// "dot env" → `.env`.
     After(&'static str),
-    /// A symbol that [joins always](Joins::Always), glued only to the word
-    /// before it, as in `src/`.
+    /// "src forward slash" → `src/`.
     Before,
-    /// A symbol that joins always, glued to neither word beside it.
+    /// "go back slash" → `go \`.
     Neither,
 }
 
@@ -109,12 +106,9 @@ impl Glue {
     }
 }
 
-/// Decides each join from the first word on, so a slash judges the word
-/// before it as the text before it types. A slash glues to the plain
-/// word before it only when the text is prose, the word has a joined form,
-/// as a number does, or the word, as typed with the symbols already joining
-/// it, [reads as part of a path](reads_as_a_path). Nothing else depends on
-/// the words before.
+/// How each word glues: `None` for a plain word or a symbol left a word.
+/// A slash reads the word before it as typed so far: "user underscore id
+/// forward slash x" → `user_id/x`, but "run forward slash x" → `run /x`.
 fn joining(
     text: &str,
     words: &[Word<'_>],
@@ -123,8 +117,8 @@ fn joining(
 ) -> Vec<Option<Glue>> {
     let count = words.len();
     let mut joining = vec![None; count];
-    // What the last plain word types with the symbols joining it, and what
-    // the next plain word goes on from.
+    // `goes_on` is what a symbol glued onto the next plain word: `user_`
+    // before `id`.
     let mut typed_so_far = String::new();
     let mut goes_on: Option<String> = None;
     for index in 0..count {
@@ -164,8 +158,8 @@ fn joining(
     joining
 }
 
-/// Whether the name at `index` glues to the word after it, when it joins
-/// always: a plain word follows, with no line break or mark between.
+/// Whether the symbol at `index` glues to the next plain word, with no
+/// line break or mark between.
 fn glues_after(text: &str, words: &[Word<'_>], names: &[Option<Name>], index: usize) -> bool {
     index + 1 < words.len()
         && names[index + 1].is_none()
@@ -176,8 +170,8 @@ fn glues_after(text: &str, words: &[Word<'_>], names: &[Option<Name>], index: us
             .starts_with(|c: char| c.is_ascii_punctuation())
 }
 
-/// Whether a plain word sits right before the word at `index`, with no line
-/// break or mark between them.
+/// Whether a plain word ends right before `index`, with no line break or
+/// mark between.
 fn sits_before(text: &str, words: &[Word<'_>], names: &[Option<Name>], index: usize) -> bool {
     index > 0
         && names[index - 1].is_none()
@@ -187,20 +181,17 @@ fn sits_before(text: &str, words: &[Word<'_>], names: &[Option<Name>], index: us
             .ends_with(|c: char| c.is_ascii_punctuation())
 }
 
-/// The last word of `typed`, which is all the next segment reads of it
-/// once typed: "Bucket" of `S3 Bucket`.
+/// The last word of `typed`, all a later segment sees of it: "Bucket" of
+/// `S3 Bucket`.
 fn last_word(typed: &str) -> &str {
     typed.split_whitespace().next_back().unwrap_or_default()
 }
 
-/// Whether `typed`, a word as it types with the symbols joining it to the
-/// words before, reads as part of a path, so a slash after it glues to it:
-/// `src`, `/users` and `.local` do, and `aria-kit` when it names a project
-/// path. An English word reads as a word, so "run forward slash review"
-/// types `run /review`.
+/// Whether a slash after `typed` glues to it: `src/`, `.local/`, but
+/// `run /`. An English word glues only as a project path: `build-tools/`.
 fn reads_as_a_path(typed: &str, reading: Reading<'_>) -> bool {
-    // Only the typed text decides, so a word typed before the slash reads
-    // the same when the next segment reads it again.
+    // Only the typed text counts, so a later segment that sees only it
+    // decides the same.
     let word = typed
         .trim_start_matches(['(', '[', '{', '"', '\'', '’'])
         .replace('’', "'");
@@ -210,7 +201,7 @@ fn reads_as_a_path(typed: &str, reading: Reading<'_>) -> bool {
         || !is_english(&word.to_lowercase())
 }
 
-/// What a name types: its symbol, then the mark that ends a sentence on it.
+/// What a name types: "forward slash." → `/.`.
 fn typed(name: Option<Name>) -> String {
     let Some(name) = name else {
         return String::new();
@@ -220,9 +211,8 @@ fn typed(name: Option<Name>) -> String {
     typed
 }
 
-/// What the name at `index` types when it opens the word after it: its name
-/// says so, as `--` does, or it opens the dictation. A mark that ends a
-/// sentence on it opens nothing.
+/// What the symbol at `index` types when it joins only the next word:
+/// "hyphen hyphen amend" → `--amend`, or "dot env" → `.env` at the start.
 fn opening(
     text: &str,
     words: &[Word<'_>],
@@ -237,10 +227,8 @@ fn opening(
     (opens && joins && name.mark.is_none()).then_some(name.typed)
 }
 
-/// Whether the word at `index` names a run that opens what follows and ends
-/// on a symbol that joins always, as "dot dot forward slash" names `../`,
-/// with no word after it to open: none follows, or a mark ends the sentence
-/// on it. Like a named `/` said alone, it types.
+/// Whether `index` names a run like `../` with no word after it to join:
+/// "cd dot dot forward slash" → `cd ../`.
 fn run_said_last(text: &str, words: &[Word<'_>], names: &[Option<Name>], index: usize) -> bool {
     let Some(name) = names[index].filter(|name| name.joins == Joins::After) else {
         return false;
@@ -250,8 +238,8 @@ fn run_said_last(text: &str, words: &[Word<'_>], names: &[Option<Name>], index: 
     nothing_after && name.typed.ends_with(joins_always)
 }
 
-/// `words` with each name of several words, as "back slash" or "dot dot",
-/// merged into one word. Beside them, the name each word says, if any.
+/// Merges each name said in several words, as "back slash", into one
+/// word, and returns each word's name.
 fn merge_names<'a>(text: &str, words: Vec<Word<'a>>) -> (Vec<Word<'a>>, Vec<Option<Name>>) {
     let mut whole = Vec::with_capacity(words.len());
     let mut names = Vec::with_capacity(words.len());
@@ -271,8 +259,8 @@ fn merge_names<'a>(text: &str, words: Vec<Word<'a>>) -> (Vec<Word<'a>>, Vec<Opti
     (whole, names)
 }
 
-/// The words from `index` that may say one name together, as heard: no
-/// step claimed them and no line break parts them.
+/// The words from `index` that may say a name together: unclaimed, with no
+/// joined form, and on one line.
 fn nameable<'s>(
     text: &'s str,
     words: &'s [Word<'_>],
@@ -289,21 +277,11 @@ fn nameable<'s>(
         .map(move |(_, word)| word.typed(text))
 }
 
-/// Defers the symbol words at the edge of the deferred words that may
-/// still link, as "underscore" in "user underscore". Each one defers the
-/// word before it too when that word has a joined form, as "two" in "two
-/// dot": it can't be typed alone yet. When the word before can join, it
-/// defers the same words whether the cut falls before the symbol word or
-/// after it.
+/// Defers a symbol at the end that the next text may join: "user
+/// underscore" types `user` and defers "underscore".
 ///
-/// A deferred symbol word whose left word can't join defers that word as
-/// well: once typed, its words would read as if they could.
-///
-/// The name a text ends on defers from its start while more words decide
-/// what it is: the first words of a longer name, as "back" opens "back
-/// slash", or a run that joins the word after it, said whole or in part,
-/// as "hyphen" opens "hyphen hyphen". A cut inside a name moves to its
-/// start too: a name's first words typed alone would read as plain words.
+/// The word before defers too when it has a joined form, as "two" in "two
+/// dot". A name the text ends partway through defers whole: "back".
 pub(super) fn defer(text: &str, reading: Reading<'_>, claimed: &mut Claimed<'_>) {
     let heard = claimed.words();
     let open = name_open_at_end(text, heard);
@@ -339,9 +317,8 @@ pub(super) fn defer(text: &str, reading: Reading<'_>, claimed: &mut Claimed<'_>)
     }
 }
 
-/// The first of the words the text ends on that say a name more words
-/// decide. Read name by name, so the words of a whole name never open
-/// another.
+/// Where a name the text ends on starts, while more words may change it:
+/// at "back" in "cd back".
 fn name_open_at_end(text: &str, words: &[Word<'_>]) -> Option<usize> {
     let mut first = 0;
     while first < words.len() {
@@ -357,10 +334,9 @@ fn name_open_at_end(text: &str, words: &[Word<'_>]) -> Option<usize> {
     None
 }
 
-/// Where the symbol word at the edge of the words from `deferred_from` on
-/// defers the text from, when it must: the first deferred word, else the
-/// last word before them. A symbol that joins always defers whatever is
-/// before it, since the next text's first word glues to it.
+/// Where the cut moves for the symbol word beside it, `None` if it stays:
+/// at "underscore" in "user underscore". A symbol that joins always moves
+/// it even after a word it won't glue to: "go forward slash".
 fn symbol_to_defer(
     text: &str,
     words: &[Word<'_>],
@@ -383,8 +359,8 @@ fn symbol_to_defer(
         true => matches!(joining[index], Some(Glue::Both(_) | Glue::Before)),
         false => joins_after(text, words, left),
     };
-    // A word the symbol stands apart from only because it reads as a word
-    // types alone: the next text reads it again and parts them the same way.
+    // An English word before a slash, as `run` in `run /`, types now. The
+    // next text reads it the same way.
     let reads_apart = always && sits_before(text, words, names, index);
     let defers_left = match joins {
         false => at_cut && !reads_apart,
@@ -396,9 +372,8 @@ fn symbol_to_defer(
     ((joins || always) && !at_cut).then(|| words[index].span.start)
 }
 
-/// What the name at `index` types when it links the words beside it, as a
-/// symbol that joins both does: a word on each side that can sit in a
-/// join, with no line break between.
+/// What the symbol at `index` types between two joinable words on one
+/// line: `_` in "user underscore id".
 fn link(
     text: &str,
     words: &[Word<'_>],
@@ -409,7 +384,6 @@ fn link(
         .filter(|name| name.joins == Joins::Both)
         .map(|name| name.typed)?;
     let (left, right) = (words.get(index.checked_sub(1)?)?, words.get(index + 1)?);
-    // Each side types its joined form only when both sides have one.
     let joined = left.joined.is_some() && right.joined.is_some();
     let form = |word| {
         if joined {

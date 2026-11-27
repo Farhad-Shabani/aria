@@ -239,7 +239,7 @@ where
         engine: &'static str,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
-        // No app takes this text, so it keeps commands.
+        // No app receives this text, so it is written as commands.
         let (finished, served_by) = self.transcribe_served(
             recording,
             language,
@@ -964,8 +964,8 @@ impl SegmentEnds {
         self.words.finish()
     }
 
-    /// The held words a pause lets go. A slash still waiting for its word
-    /// stays held, and waits again.
+    /// Releases deferred words after a pause. "cd forward slash" keeps
+    /// waiting for its next word, and its wait starts over.
     fn release_paused(&mut self) -> Option<Unheld> {
         let released = self.words.release_paused();
         self.held_since = self.words.is_holding().then(Instant::now);
@@ -1011,7 +1011,7 @@ struct Published<'a> {
     completion: Completion,
     /// What corrects each segment, and decides which words may be held.
     vocabulary: &'a Vocabulary,
-    /// What the app in front takes, as the press was admitted.
+    /// Prose or commands, by the app in front at admission.
     writing: Writing,
     control: &'a ExecutionControl,
     events: &'a DictationEventEmitter,
@@ -1131,8 +1131,8 @@ impl<'a> Published<'a> {
         Ok(())
     }
 
-    /// Publishes `held` words, corrected as a last segment. A failure fails
-    /// the press, as it does for any segment.
+    /// Publishes the deferred words `held`, corrected as a last segment. A
+    /// failure fails the press, as it does for any segment.
     fn publish_held<S>(&mut self, held: Option<Unheld>, sinks: &mut S) -> Result<(), DictationError>
     where
         S: TranscriptSink,
@@ -1210,8 +1210,8 @@ impl<'a> Published<'a> {
                 segment.corrected.attachment,
                 segment.sentence_ended_before,
             );
-            // A segment can't tell yet whether the next one joins it, so the
-            // space before the text after the caret waits for the press to end.
+            // The next segment may still join this one, so the space before
+            // a word after the caret waits until the press ends.
             if punctuated.spacing.ending == Ending::Closed {
                 punctuated.spacing.ending = Ending::Open;
             }
@@ -1394,7 +1394,7 @@ impl<'a> Published<'a> {
         }
         let transcript = Transcript::new(std::mem::take(&mut self.written))
             .map_err(|error| log_transcription_error(error, self.control, self.started_at))?;
-        // Streaming typed every segment already, each spaced on its own.
+        // Streaming already typed each segment with its own spacing.
         let completed = self
             .completion
             .publish(Some(&transcript), Attachment::default(), sinks);
@@ -3317,7 +3317,8 @@ mod tests {
         published.publish(heard, &segment, None, sinks)
     }
 
-    /// Publishes `text`, heard as `heard`, through the hold and correction.
+    /// Publishes `text` as streaming does: deferred words held, then
+    /// corrected.
     fn publish_corrected<S>(
         published: &mut Published<'_>,
         heard: Heard,

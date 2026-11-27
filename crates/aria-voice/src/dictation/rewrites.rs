@@ -147,9 +147,7 @@ impl<L: Layer> Rewrites<L> {
             elapsed_ms = started.elapsed().as_millis(),
             "dictation cleanup model applied"
         );
-        // An apart attachment says the corrected text opens on a symbol. A
-        // model that dropped the symbol leaves it describing an opening
-        // that's gone. Punctuation after it, as in `.env,`, keeps it.
+        // `.env` stays apart only while the model's text still opens on `.`.
         let symbol: String = transcript
             .as_str()
             .trim_start()
@@ -166,15 +164,14 @@ impl<L: Layer> Rewrites<L> {
     }
 }
 
-/// A whole transcript as corrected, with how it meets the text before the
-/// caret: apart, when it opens on a symbol that joins the word after it.
+/// A corrected whole transcript and its attachment. After `open`, "dot env
+/// file" → `open .env file`.
 pub(crate) struct Finished {
     pub(crate) transcript: Transcript,
     pub(crate) attachment: Attachment,
 }
 
-/// How a press corrects its whole transcript: the cleanups it allows, the
-/// vocabulary, and how the app in front is written.
+/// What a press corrects its whole transcript with.
 #[derive(Clone, Copy)]
 pub(crate) struct Correction<'a> {
     pub(crate) cleanup: Cleanup,

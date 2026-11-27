@@ -21,8 +21,8 @@ impl Layer for RemoveHesitations {
 
 /// Drops the second of two identical spoken words in a row, even valid
 /// English such as "had had". Punctuation between them keeps both, as in
-/// "very, very good". A spoken symbol repeats on purpose, as "backslash
-/// backslash" for `\\`, so it stays.
+/// "very, very good". A symbol's name said twice stays, as "backslash
+/// backslash" for `\\`.
 ///
 /// Apply it after [`RemoveHesitations`]. A filler between two copies, as in
 /// "the um the", hides the repeat.
@@ -43,7 +43,7 @@ impl Layer for RemoveRepeats {
     }
 }
 
-/// Whether `word` said twice names a symbol, as "backslash backslash" names `\\`.
+/// Whether `word` said twice names a listed run, as "dot dot" names `..`.
 fn repeats_on_purpose(word: &str) -> bool {
     name_at([word, word].into_iter()).is_some_and(|name| name.words == 2)
 }

@@ -114,7 +114,8 @@ impl<D: TextDelivery> Cursor<D> {
         self.type_queue()
     }
 
-    /// Types the space typed text still owes the text after the caret.
+    /// Types the closing space: "open src" streamed before `notes` →
+    /// `open src notes`.
     fn close_field(&mut self) -> Result<(), DeliveryError> {
         let Some(target) = self.target.as_mut() else {
             return Ok(());
@@ -126,11 +127,9 @@ impl<D: TextDelivery> Cursor<D> {
         if space.is_empty() {
             return Ok(());
         }
-        // Closed once: a field that refused the space now would refuse it
-        // again at the end.
+        // Saved first, so a field that refuses the space isn't asked again.
         target.caret = Some(caret);
-        // Never cancelled: the space finishes text already typed, and a
-        // cancel must not leave its last word joined to the next.
+        // Typed even when cancelled, or the last word runs into the next.
         target
             .policy
             .confirm_front(&*self.delivery)
@@ -391,8 +390,8 @@ where
         if target.delivered.map(|delivered| delivered.outcome) != Some(DeliveryOutcome::Inserted) {
             return Ok(());
         }
-        // Without its space, the typed text runs into the text after it,
-        // so no Return may send it.
+        // Without the closing space the text runs into the next word, so no
+        // Return may send it.
         if closed.is_err() {
             if target.output == OutputMode::InsertAndSubmit {
                 target.control.drop_submitted_return();
@@ -463,7 +462,7 @@ where
         // A press that heard no speech still owes the person their Return.
         // A failure keeps it: the text was cut short. Only a field bound as
         // the press started shows the Return lands where it was pressed.
-        // Logged inside: the dictation has ended, and nothing waits on it.
+        // `close_field` logs its own failure, and nothing waits on it now.
         let _ = self.close_field();
         let Some(mut target) = self.target.take() else {
             return;
@@ -653,7 +652,7 @@ mod tests {
         }
     }
 
-    /// A segment as streaming sends it: the next one may go on from it.
+    /// A streamed segment, whose end the next segment may still join.
     fn streamed(text: &str) -> Utterance<'_> {
         Utterance {
             spacing: Spacing {
@@ -1661,8 +1660,8 @@ mod tests {
         cursor.dictation_finished(Ok(()));
     }
 
-    /// What typing `utterances` streamed into a field between `before` and
-    /// `after` delivers, then `end` ends the dictation.
+    /// What streaming `utterances` between `before` and `after` types,
+    /// once `end` ends the dictation.
     fn streamed_then<'a>(
         before: &str,
         after: &str,

@@ -164,7 +164,7 @@ impl DictationSettings {
         self.target.excludes(self.application.as_ref())
     }
 
-    /// How dictation into the app in front at admission is written.
+    /// Prose or commands, by the app in front at admission.
     pub(crate) fn writing(&self) -> aria_kit::transcription::Writing {
         application::writing(self.application.as_ref())
     }

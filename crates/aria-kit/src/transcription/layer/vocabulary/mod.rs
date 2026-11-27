@@ -154,8 +154,8 @@ impl Bucket {
 #[derive(Default)]
 pub struct Vocabulary {
     index: HashMap<String, Bucket>,
-    /// Names a project path runs through, lowercased: its folders, and the
-    /// parts of its git branches before a slash.
+    /// Lowercased folder names and branch prefixes, as `origin` in
+    /// `origin/main`.
     path_names: HashSet<String>,
     personal: PersonalRules,
     term_count: usize,
@@ -343,9 +343,9 @@ impl Vocabulary {
         Ok(())
     }
 
-    /// Gives the vocabulary the names the project's paths run through, so
-    /// a slash said after one glues to it, as in `crates/aria`. They count
-    /// toward the same `limit` and snapshot size as the terms.
+    /// Adds the project's path names: "crates forward slash aria" →
+    /// `crates/aria`. They count toward `limit` and the snapshot size, as
+    /// terms do.
     pub fn with_path_names(
         mut self,
         names: impl IntoIterator<Item = impl AsRef<str>>,
@@ -761,8 +761,8 @@ fn spoken_symbol(character: char, hyphen: &'static str, name: usize) -> Option<&
     }
 }
 
-// Dictation's symbol words call `/` "forward slash", since "slash" alone is
-// a plain word. A listed name is said on purpose, so "slash" says it too.
+// Plain talk needs "forward slash" for `/`, but a listed name is said on
+// purpose, so "slash" names its `/` too: "src slash main" → `src/main`.
 fn symbol_names(character: char) -> Vec<&'static str> {
     let names = symbol_words::names(character).iter().copied();
     match character {
@@ -789,7 +789,7 @@ fn aliases(canonical: &str) -> Vec<String> {
     }
     let mut aliases = Vec::new();
     let hyphens = if canonical.contains('-') { 2 } else { 1 };
-    // A symbol with several names is said by one of them throughout.
+    // Each alias says a symbol by one of its names throughout, never a mix.
     let names = canonical
         .chars()
         .map(|character| symbol_names(character).len())

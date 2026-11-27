@@ -130,8 +130,7 @@ impl From<MatchError> for Error {
     }
 }
 
-/// The names the project's paths run through: its `folders`, then those its
-/// git branches give.
+/// `folders`, then the path names from the git branches at `root`.
 fn path_names(
     mut folders: Vec<String>,
     root: &Path,

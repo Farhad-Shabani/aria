@@ -10,9 +10,8 @@ use super::{Layer, TranscriptionError, Vocabulary, check_cancelled, check_size, 
 /// Joins the words around a spoken symbol, as in "user underscore id" →
 /// `user_id`.
 ///
-/// A layer can't tell a dictation's first text from a later one, so it
-/// reads every text as a later one: a symbol that joins the words on both
-/// sides stays a word when the text opens with it. [`Vocabulary::correct_spoken`] is told what came before.
+/// It never sees what came before, so "dot env" stays `dot env`.
+/// [`Vocabulary::correct_spoken`] types `.env` at a dictation's start.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct JoinSymbols;
 
@@ -123,25 +122,24 @@ fn claim_each<'a>(
         .collect()
 }
 
-/// What dictated text comes after.
+/// What sits right before new dictated text. A spoken symbol at the
+/// start of the new text joins only a word right before it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypedBefore<'a> {
-    /// Nothing: the text opens its dictation, so a symbol it opens with
-    /// joins the word after it, as "dot env" types `.env`.
+    /// The dictation starts here. "dot env" → `.env`.
     Nothing,
-    /// Text already typed, which the dictated text reads on from its last
-    /// word, unless whitespace ends it.
-    /// Empty text is [`Self::Nothing`].
+    /// Text typed earlier. After `src`, "forward slash main" → `src/main`.
+    /// A trailing space in the text stops the join. Empty text is
+    /// [`Self::Nothing`].
     Text(&'a str),
-    /// Typed text the dictated text reads apart from, as after a sentence
-    /// that ended.
+    /// A finished sentence. "forward slash main" → ` /main`.
     Apart,
 }
 
 impl<'a> TypedBefore<'a> {
-    /// What a streamed segment read as `sentence_ended_before` comes after,
-    /// given the text already `typed`. A sentence end between them leaves
-    /// the typed text apart.
+    /// What sits before a streamed segment typed after `typed`. It is
+    /// [`Self::Apart`] when `sentence_ended_before` says a sentence ended,
+    /// or when it is `None` and `sentences` holds back a closing mark.
     pub fn streamed(
         typed: &'a str,
         sentences: &SentenceEnds,
@@ -157,16 +155,14 @@ impl<'a> TypedBefore<'a> {
     }
 }
 
-/// What dictated text is written for, which decides how a named slash
-/// after a plain word spaces.
+/// What dictated text is for. Only a named slash after a plain English
+/// word types differently.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Writing {
-    /// Commands and paths, as in a terminal: a slash after an English word
-    /// opens what follows, as in `run /review`.
+    /// A terminal or editor. "run forward slash review" → `run /review`.
     #[default]
     Commands,
-    /// Prose, as in a document or a chat: a slash joins the words beside
-    /// it, as in `and/or`.
+    /// A document or chat. "and forward slash or" → `and/or`.
     Prose,
 }
 
@@ -174,7 +170,7 @@ pub enum Writing {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Corrected {
     pub text: String,
-    /// How `text` meets the text typed before it. This is
+    /// Type `text` with this as
     /// [`Spacing::attachment`](crate::transcription::Spacing::attachment).
     pub attachment: Attachment,
 }
@@ -230,8 +226,8 @@ impl Vocabulary {
     /// `text` corrected by every step, after its first `typed_len` bytes,
     /// a word already typed.
     ///
-    /// It also returns the start of each claim that opens on a symbol
-    /// standing apart from the word before it.
+    /// Also returns the start of each claim that begins with a symbol
+    /// joined only to the next word, as `--verbose`.
     fn spoken(
         &self,
         text: &str,
@@ -267,9 +263,9 @@ impl Vocabulary {
         writing: Writing,
     ) -> usize {
         let unjoined = &SPOKEN[..SPOKEN.iter().take_while(|step| !step.joins()).count()];
-        // The hold doesn't see what was typed before. Correction reads that
-        // once the held text types. Read as later text, a form opening on a
-        // symbol stays unclaimed. That only makes the hold keep more.
+        // The hold can't see the typed text, so it reads `text` as
+        // mid-dictation. A form that starts with a symbol then stays
+        // unclaimed, which only holds more words.
         let reading = Reading {
             vocabulary: self,
             writing,
@@ -283,10 +279,8 @@ impl Vocabulary {
         self.defer_waiting_names(text, max_words, &mut claimed);
         loop {
             let from = claimed.deferred_from();
-            // The words before the cut type alone, so they must read as a
-            // text that ends there: "two five oh" types `250` before a cut,
-            // but stays words before "forward". A step that defers the end of
-            // what it claims defers it again at the cut.
+            // The words before the cut type as their own text, so a step may
+            // defer their end, as "two five oh" waits for more digits.
             let before = text[..from].trim_end();
             if before.len() < text.len() {
                 let ended = self.claimed_spoken(before, 0, |claimed| {

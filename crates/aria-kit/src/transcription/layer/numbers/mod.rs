@@ -266,8 +266,8 @@ impl<'t, 'w, 'a> Scan<'t, 'w, 'a> {
         self.following(before).is_some() && self.ends_a_name(before)
     }
 
-    /// Whether the words ending at `last` say a spoken symbol's name, as
-    /// "back slash" does.
+    /// Whether the words ending at `last` name a symbol, as "back slash"
+    /// does in "thirty back slash o one" → `30\01`.
     fn ends_a_name(&self, last: usize) -> bool {
         let earliest = (last + 1).saturating_sub(LONGEST_NAME);
         (earliest..=last).rev().any(|first| {

@@ -1,9 +1,7 @@
-//! The words that name a symbol.
+//! The spoken names of symbols: "underscore" → `_`, "dot dot dot" → `...`.
 
-// Each symbol with its names, its own name first, and what it joins. A
-// recognizer writes "backslash" apart as often as whole. Bare "slash" is
-// no name, since it is a word in plain talk, so "we slash prices" stays
-// prose.
+// A recognizer splits "backslash" as often as not, so "back slash" is listed
+// too. Bare "slash" is plain talk and names nothing: "they slash prices".
 const SYMBOLS: [(&str, &[&str], Joins); 5] = [
     ("_", &["underscore"], Joins::Both),
     ("-", &["hyphen"], Joins::Both),
@@ -12,10 +10,8 @@ const SYMBOLS: [(&str, &[&str], Joins); 5] = [
     ("\\", &["backslash", "back slash"], Joins::Always),
 ];
 
-// Symbols said in a row are listed, as dictation tools list "dot dot dot":
-// an open rule would join any two symbol words that meet in prose.
-// A run that opens what follows it, as `--` opens a flag and `./` a path,
-// joins only the word after it.
+// Only listed runs type as one: "dot dot dot" → `...`. Other symbols in a
+// row stay words, since symbol words meet in prose too.
 const RUNS: [(&str, Joins); 8] = [
     ("__", Joins::Both),
     ("--", Joins::After),
@@ -27,43 +23,35 @@ const RUNS: [(&str, Joins); 8] = [
     ("../", Joins::After),
 ];
 
-/// The most words any name takes, as "dot dot forward slash" names `../`.
+/// The most words any name takes: "dot dot forward slash" → `../`.
 pub(super) const LONGEST_NAME: usize = 4;
 
-/// Which of the words beside it a symbol joins.
+/// Which words beside it a symbol joins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Joins {
-    /// The word before it and the word after, as `_` in `user_id`, when
-    /// both can sit in a join.
+    /// "user underscore id" → `user_id`, only when both words can join.
     Both,
-    /// Whatever words are beside it, so saying its name always types it:
-    /// alone, at either end, or beside any word, as `/` in `src/main`.
+    /// Types even with no word to join: "src forward slash" → `src/`.
     Always,
-    /// Only the word after it, as `--` in `--verbose`.
+    /// "hyphen hyphen verbose" → `--verbose`.
     After,
 }
 
-/// A name some words open with.
+/// A symbol's or a run's name at the start of some words: "back slash" → `\`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Name {
-    /// How many words say it.
     pub words: usize,
     pub typed: &'static str,
     pub joins: Joins,
-    /// The mark that ends a sentence on it, as "." in "forward slash.":
-    /// typed after it, and nothing joins it from after.
+    /// "forward slash." → `/.`, and no word after it joins.
     pub mark: Option<char>,
 }
 
-/// The longest name `words` open with: one symbol's, as "back slash" names
-/// `\`, or a listed run's, as "dot dot forward slash" names `../`.
+/// The longest name `words` start with: "dot dot forward slash" → `../`.
 ///
-/// A recognizer lists repeated words with commas, as "dot, dot,", so a
-/// comma after a symbol inside a run drops, and one after the run drops
-/// with them. A comma inside one symbol's name, as in "back, slash", keeps
-/// its words apart. A name with only a comma after it names nothing, unless
-/// it [joins always](Joins::Always): then the comma drops. A mark ending a
-/// sentence on such a name stays.
+/// Commas inside a run drop: "dot, dot, dot" → `...`. A comma inside a
+/// name, as "back, slash", or after a lone symbol leaves plain words,
+/// unless the symbol [joins always](Joins::Always): "back slash," → `\`.
 pub(super) fn name_at<'a>(mut words: impl Iterator<Item = &'a str> + Clone) -> Option<Name> {
     let mut longest = None;
     let mut runs = RUNS.map(|(run, _)| Some(run));
@@ -95,14 +83,13 @@ pub(super) fn name_at<'a>(mut words: impl Iterator<Item = &'a str> + Clone) -> O
     longest
 }
 
-/// Whether `words`, all of them, open a name that more words would finish,
-/// as "back" opens "back slash" and "dot," opens "dot, dot".
+/// Whether `words` start a longer name: "back" of "back slash".
 pub(super) fn opens_a_name<'a>(words: impl Iterator<Item = &'a str> + Clone) -> bool {
     opens(words, RUNS.map(|(run, _)| Some(run)), Opens::ALongerName)
 }
 
-/// Whether `words`, all of them, say a run that joins only the word after
-/// it, or open one, as "hyphen" opens "hyphen hyphen".
+/// Whether `words` say or start a run that joins only the next word:
+/// "hyphen" of "hyphen hyphen".
 pub(super) fn opens_a_join_after<'a>(words: impl Iterator<Item = &'a str> + Clone) -> bool {
     let runs = RUNS.map(|(run, joins)| (joins == Joins::After).then_some(run));
     opens(words, runs, Opens::ARun)
@@ -110,14 +97,14 @@ pub(super) fn opens_a_join_after<'a>(words: impl Iterator<Item = &'a str> + Clon
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Opens {
-    /// Any name the words don't finish: one symbol's or a run's.
+    /// A name the words don't finish yet: "back" of "back slash".
     ALongerName,
-    /// A run, finished or not.
+    /// A run, said whole or in part: "hyphen" or "hyphen hyphen".
     ARun,
 }
 
-/// Whether `words`, all of them, say the first symbols of one of `runs`,
-/// the last of them maybe partway.
+/// Whether `words` say the start of one of `runs`, maybe partway through
+/// a name: "dot dot forward" of `../`.
 fn opens<'a>(
     mut words: impl Iterator<Item = &'a str> + Clone,
     mut runs: [Option<&'static str>; RUNS.len()],
@@ -147,13 +134,12 @@ fn opens<'a>(
     }
 }
 
-/// Whether `word` alone names a symbol.
 pub(super) fn is_name(word: &str) -> bool {
     name_at(std::iter::once(word)).is_some()
 }
 
-/// The names of `character`, its own name first, as "backslash" and "back
-/// slash" name `\`. None when no spoken symbol types it.
+/// The names of `character`: `\` → "backslash", "back slash". Empty when
+/// no spoken symbol types it.
 pub(super) fn names(character: char) -> &'static [&'static str] {
     SYMBOLS
         .iter()
@@ -161,14 +147,11 @@ pub(super) fn names(character: char) -> &'static [&'static str] {
         .map_or(&[], |(_, names, _)| names)
 }
 
-/// The word that names `character`, as "underscore" names `_`: its own
-/// name.
+/// The first name of `character`: `_` → "underscore".
 pub(super) fn word(character: char) -> Option<&'static str> {
     names(character).first().copied()
 }
 
-/// Whether `character` is a symbol that [joins always](Joins::Always), as
-/// `/` is.
 pub(super) fn joins_always(character: char) -> bool {
     SYMBOLS
         .iter()
@@ -180,19 +163,18 @@ pub(super) fn is_symbol(character: char) -> bool {
     word(character).is_some()
 }
 
-/// One symbol as some words say it.
+/// A symbol's name at the start of some words: "dot," → `.`.
 struct Said {
     symbol: &'static str,
     joins: Joins,
     words: usize,
-    /// A comma follows its last word.
+    /// "dot," ends in a comma.
     comma: bool,
-    /// A mark ending a sentence follows its last word, which only a symbol
-    /// that joins always takes.
+    /// "forward slash." ends a sentence. Only a symbol that joins always
+    /// takes a mark.
     mark: Option<char>,
 }
 
-/// The symbol `words` open with.
 fn symbol_at<'a>(words: impl Iterator<Item = &'a str> + Clone) -> Option<Said> {
     each_name().find_map(|(symbol, name, joins)| {
         let mut words = words.clone();
@@ -225,7 +207,7 @@ fn symbol_at<'a>(words: impl Iterator<Item = &'a str> + Clone) -> Option<Said> {
     })
 }
 
-/// The symbol whose name `words`, all of them, open and don't finish.
+/// The symbol whose name `words` start but don't finish: "back" → `\`.
 fn begun_symbol<'a>(words: impl Iterator<Item = &'a str> + Clone) -> Option<&'static str> {
     each_name().find_map(|(symbol, name, _)| {
         let mut parts = name.split(' ');
@@ -238,20 +220,20 @@ fn begun_symbol<'a>(words: impl Iterator<Item = &'a str> + Clone) -> Option<&'st
     })
 }
 
-/// Each name beside its symbol and what the symbol joins.
+/// Each name as `(symbol, name, joins)`: `("/", "forward slash", Always)`.
 fn each_name() -> impl Iterator<Item = (&'static str, &'static str, Joins)> {
     SYMBOLS
         .iter()
         .flat_map(|(symbol, names, joins)| names.iter().map(move |name| (*symbol, *name, *joins)))
 }
 
-/// The run the symbols said so far make, given what is left of each run.
+/// The run the symbols said so far complete, given what is left of each.
 fn completed_run(runs: &[Option<&'static str>; RUNS.len()]) -> Option<(&'static str, Joins)> {
     let run = runs.iter().position(|rest| *rest == Some(""))?;
     Some(RUNS[run])
 }
 
-/// Whether another symbol may make a longer run.
+/// Whether one more symbol could make a longer run: "dot dot" → `...`.
 fn goes_on(runs: &[Option<&'static str>; RUNS.len()]) -> bool {
     runs.iter().flatten().any(|rest| !rest.is_empty())
 }

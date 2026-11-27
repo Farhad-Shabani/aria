@@ -38,8 +38,8 @@ pub struct SentenceEnds {
 pub struct Punctuated {
     /// Opens with the mark the segment before held back.
     pub text: String,
-    /// How to type `text`. When its own closing mark is held back, type it
-    /// with nothing after, so the mark can still attach.
+    /// Type `text` with this. With [`Ending::MarkDeferred`], type nothing
+    /// after `text`, so the held mark can still attach.
     pub spacing: Spacing,
 }
 
@@ -49,8 +49,9 @@ const ABBREVIATIONS: [&str; 2] = ["etc", "vs"];
 impl SentenceEnds {
     /// Returns `text` to type after the segment before, its own closing
     /// mark held back. `Some(false)` drops the mark that segment owes;
-    /// anything else opens `text` with it. `attachment` says how `text`
-    /// meets the text before it.
+    /// anything else opens `text` with it. `attachment` is `text`'s own, as
+    /// [`Corrected`](super::Corrected) gives it. It drops when the held mark
+    /// opens `text`.
     #[must_use = "the deferred ending is owed to the previous segment"]
     pub fn punctuate(
         &mut self,
@@ -59,7 +60,8 @@ impl SentenceEnds {
         sentence_ended_before: Option<bool>,
     ) -> Punctuated {
         let (mut text, attachment) = match self.deferred.take() {
-            // The owed mark meets the text before it now, not `text`.
+            // The mark comes first now, so `text`'s attachment no longer
+            // applies: "okay." then `/help` types `okay. /help`.
             Some(mark) if !goes_on(sentence_ended_before) => {
                 (format!("{mark} {text}"), Attachment::AsWritten)
             }

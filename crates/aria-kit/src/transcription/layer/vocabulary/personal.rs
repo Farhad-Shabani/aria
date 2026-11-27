@@ -524,13 +524,10 @@ fn unclaimed_around(words: &[Word<'_>], len: usize, at: usize) -> Option<Range<u
     Some(start..end)
 }
 
-/// Whether a form said as `spoken` waits for the symbol step: it opens or
-/// ends on a symbol's name, which may join the word beside the form, as
-/// "dot com" joins "example".
-///
-/// A form of symbol names alone is the speaker's own name for them, so it
-/// never waits. Nor does a symbol the form opens with when the form opens
-/// the dictation, since no word comes before it.
+/// Whether a form opens or ends on a symbol's name, so it waits for the
+/// symbol step to join it: "example dot com" → `example.com`.
+/// A form of names alone never waits, as "hyphen hyphen" for `—`. Nor does
+/// a name it opens with at the dictation's start.
 fn waits_on_a_symbol(spoken: &[char], opens_the_dictation: bool) -> bool {
     let spoken: String = spoken.iter().collect();
     let words: Vec<&str> = spoken.split_whitespace().collect();

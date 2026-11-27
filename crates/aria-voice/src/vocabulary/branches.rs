@@ -1,8 +1,6 @@
-//! The path names a project's git branches give: the parts of each branch
-//! name before its last slash, as `origin` in `origin/main`. They are read
-//! from the files git keeps them in, never from an object, a commit or a
-//! `git` process, and no file or folder under the git folder is followed
-//! through a symlink.
+//! Path names from a project's git branches: `origin/main` → `origin`.
+//! Only git's ref files are read, never a `git` process, and no symlink
+//! under the git folder is followed.
 
 use std::collections::{BTreeSet, BinaryHeap};
 use std::ffi::OsStr;
@@ -15,16 +13,17 @@ use std::path::Path;
 use aria_kit::cancel::CancelToken;
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
 
-/// Past this many path names, the rest are dropped, in name order.
+/// The most path names kept, the first in name order.
 const MAX_PATH_NAMES: usize = 2048;
-/// The most refs read from each of local branches, remote branches and
-/// `packed-refs`, so a crowded one can't crowd out another.
+/// The most refs read from each of `heads`, `remotes` and `packed-refs`,
+/// so one can't crowd out the others.
 const MAX_REFS: usize = 20_000;
 /// How many folders deep a branch name may go.
 const MAX_DEPTH: usize = 8;
-/// A larger `packed-refs` is skipped whole, so no name is read cut short.
+/// The largest `packed-refs` read. A larger one is skipped whole, so no
+/// name is cut short.
 const MAX_PACKED_BYTES: u64 = 1024 * 1024;
-/// A linked worktree's `.git` file, or its `commondir`, holds one path.
+/// The largest `.git` file or `commondir` read. Each holds one path.
 const MAX_POINTER_BYTES: u64 = 4096;
 
 #[derive(Debug, thiserror::Error)]
@@ -33,8 +32,8 @@ pub enum Error {
     Cancelled,
 }
 
-/// The path names the branches of the repository at `root` give, sorted. A
-/// folder that isn't a repository, or that can't be read, gives none.
+/// `origin/main` and `team/fix/typo` → `fix`, `origin`, `team`, sorted.
+/// Empty when `root` isn't a readable repository.
 pub fn path_names(root: &Path, cancel: &CancelToken) -> Result<Vec<String>, Error> {
     let Some(git) = git_dir(root) else {
         return Ok(Vec::new());
@@ -52,10 +51,8 @@ pub fn path_names(root: &Path, cancel: &CancelToken) -> Result<Vec<String>, Erro
     Ok(names.into_iter().take(MAX_PATH_NAMES).collect())
 }
 
-/// The folder the repository at `root` keeps its refs in. A linked
-/// worktree's `.git` is a file naming its own git folder, whose `commondir`
-/// names the one the refs are in. Those named paths are followed as git
-/// follows them.
+/// The git folder holding `root`'s refs. A linked worktree's `.git` file
+/// and `commondir` lead there, followed as git follows them.
 fn git_dir(root: &Path) -> Option<File> {
     let dot_git = root.join(".git");
     if let Some(folder) = open_dir(&dot_git, OFlags::NOFOLLOW) {
@@ -113,9 +110,8 @@ fn read_bounded(file: File, limit: u64) -> Option<Vec<u8>> {
     (bytes.len() as u64 <= limit).then_some(bytes)
 }
 
-/// Adds the path names of the ref files under `folder`, reading at most
-/// `left` refs. It takes names in order, so which are read doesn't depend on
-/// the order the file system lists them in.
+/// Adds path names from the ref files under `folder`, reading at most
+/// `left` refs. The first in sorted order win, however the folder lists.
 fn walk(
     folder: &File,
     prefix: &str,
@@ -178,8 +174,7 @@ fn walk(
     Ok(())
 }
 
-/// Adds the path names of the branches `packed-refs` lists, which git keeps
-/// once it packs refs.
+/// Adds path names from the branches `packed-refs` lists.
 fn push_packed_names(
     git: &File,
     names: &mut BTreeSet<String>,
@@ -209,7 +204,7 @@ fn push_packed_names(
     Ok(())
 }
 
-/// Adds the parts of `branch` before its last slash, unless it isn't plain
+/// `team/fix/typo` adds `team` and `fix`. Skips a branch that isn't plain
 /// ASCII.
 fn add(branch: &str, names: &mut BTreeSet<String>) {
     if !branch.chars().all(|c| c.is_ascii_graphic()) {

@@ -93,8 +93,7 @@ pub struct FieldWithText {
 }
 
 impl FieldWithText {
-    /// A field in no app in particular that reports `caret` and types into
-    /// `log`.
+    /// A field with no app in front, logging what it types to `log`.
     pub fn new(log: CallLog, caret: Caret) -> Self {
         Self {
             delivery: RecordingDelivery { log, fail: false },

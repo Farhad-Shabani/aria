@@ -1,13 +1,12 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-/// Where dictated text stands in its dictation.
+/// Whether dictated text starts its dictation.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Place {
-    /// It opens the dictation, so no word comes before its first: a symbol
-    /// it opens with joins the word after it, as "dot env" types `.env`.
+    /// The dictation starts here. "dot env" → `.env`.
     First,
-    /// Words came before it, typed or not.
+    /// Words came before, typed or not. "dot env" stays `dot env`.
     Later,
 }
 

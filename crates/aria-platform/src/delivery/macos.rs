@@ -368,7 +368,6 @@ impl TextDelivery for MacOsTextDelivery {
                 anchoring.after_space(space);
                 Ok(())
             }
-            // A space alone never goes to the clipboard.
             MacOsDeliveryTarget::ApplicationOrClipboard(_) | MacOsDeliveryTarget::Clipboard => {
                 Err(DeliveryError::TargetUnavailable)
             }

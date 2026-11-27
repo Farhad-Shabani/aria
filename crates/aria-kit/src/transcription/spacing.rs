@@ -22,8 +22,8 @@ pub struct Caret {
     /// from a closing one.
     before_that: Option<char>,
     after: Option<char>,
-    /// The text typed last left out its space before `after`, for
-    /// [`Caret::close`] to type.
+    /// The last insert left out its space before `after`, which
+    /// [`Caret::close`] types.
     open: bool,
 }
 
@@ -34,34 +34,30 @@ pub struct Spacing {
     pub ending: Ending,
 }
 
-/// How inserted text meets the text after the caret.
+/// Whether a space follows inserted text before a word after the caret.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Ending {
-    /// The text ends here: a space comes after it before a word that
-    /// follows the caret.
+    /// Before `notes`, `open src` → `open src `.
     #[default]
     Closed,
-    /// The next text may go on from this one, as words held back for it
-    /// do. The next insertion, or [`Caret::close`], supplies any space, as
-    /// [`Caret::insert_open`] leaves it.
+    /// Before `notes`, `open src` → `open src`, so the next text can join
+    /// it. The next insert or [`Caret::close`] types the space.
     Open,
-    /// Like [`Self::Open`], and the next text opens with the closing mark
-    /// held back from this one, its deferred ending.
+    /// Like [`Self::Open`]. The next text starts with this one's held-back
+    /// mark, as `. Then rest`.
     MarkDeferred,
 }
 
-/// How inserted text meets the text before the caret.
+/// Whether a space comes before inserted text.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Attachment {
-    /// A space comes before the text, unless it opens with a mark that
-    /// attaches to the text before it, as `.` and `,` do.
+    /// After `Hello`, `world` → ` world` but `,` → `,`.
     #[default]
     AsWritten,
-    /// The text opens with a spoken symbol that joins the last word typed,
-    /// as "src" then "forward slash main" types `src/main`. No space comes before it.
+    /// No space. After `src`, `/main` → `/main`.
     Joined,
-    /// The text opens with a spoken symbol that joins the word after it, as
-    /// "dot env" types `.env`. A space comes before it, as before a word.
+    /// Spaced like a word, even with a symbol first. After `cd`, `../src`
+    /// → ` ../src`.
     Apart,
 }
 
@@ -124,8 +120,8 @@ impl Caret {
         spaced
     }
 
-    /// The space an open ending left out before the text after the caret,
-    /// then moves the caret past it. Empty when none is owed.
+    /// The space an open insert left out before the word after the caret,
+    /// once: `open src` before `notes` gets ` `. Empty when none is due.
     #[must_use = "the caret has moved past a space that must be typed"]
     pub fn close(&mut self) -> String {
         let owed = self.open && self.before.is_some_and(|last| self.needs_space_after(last));

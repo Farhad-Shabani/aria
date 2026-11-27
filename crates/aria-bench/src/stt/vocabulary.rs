@@ -45,10 +45,12 @@ pub struct Case {
     pub personal_pairs: Vec<(String, String)>,
     #[serde(default)]
     pub project_terms: Vec<String>,
+    /// Folder names a named slash glues to: "crates forward slash aria" →
+    /// `crates/aria`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub project_folders: Vec<String>,
-    /// How the app the case is dictated into writes: commands, as in a
-    /// terminal, unless the case says prose.
+    /// Commands unless the case says prose, where "and forward slash or" →
+    /// `and/or`.
     #[serde(default, skip_serializing_if = "CaseWriting::is_commands")]
     pub writing: CaseWriting,
     #[serde(default)]

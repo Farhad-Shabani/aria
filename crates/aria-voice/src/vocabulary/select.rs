@@ -20,8 +20,8 @@ pub enum Error {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Selection {
     pub terms: Vec<Term>,
-    /// The plain folder names the sources' paths run through, shallow
-    /// first, up to the cap. Dictation glues a slash to them.
+    /// Folder names a named slash glues to, shallowest first, up to the cap.
+    /// "crates forward slash aria" → `crates/aria`.
     pub folders: Vec<String>,
     /// Names that pass the keep rules, before the cap.
     pub found: usize,
@@ -183,9 +183,9 @@ pub fn terms(sources: &[Source], cancel: &CancelToken) -> Result<Selection, Erro
     })
 }
 
-/// The plain names of the folders a source's path runs through, each with
-/// its depth: a folder's own name too, but not a file's. A name with a
-/// symbol other than a hyphen inside is a term already.
+/// `crates/aria-kit/src/lib.rs` → `crates`, `aria-kit`, `src`, with depths
+/// from 1. A folder source keeps its own name. Names with no letter, or
+/// with a symbol other than `-`, are skipped: the latter are terms already.
 fn folders_of(source: &Source) -> impl Iterator<Item = (usize, &str)> {
     let mut names: Vec<&str> = source
         .relative_path
@@ -202,8 +202,7 @@ fn folders_of(source: &Source) -> impl Iterator<Item = (usize, &str)> {
         .into_iter()
         .enumerate()
         .map(|(index, name)| (index + 1, name))
-        // A hyphen reads as a letter before a slash, so `aria-kit` must be
-        // listed to glue as `aria-kit/src`.
+        // A hyphenated name stays, so `aria-kit` glues in `aria-kit/src`.
         .filter(|(_, name)| {
             name.chars().all(|c| c.is_alphanumeric() || c == '-')
                 && name.chars().any(char::is_alphabetic)

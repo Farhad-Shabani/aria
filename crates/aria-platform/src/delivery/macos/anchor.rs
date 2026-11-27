@@ -11,10 +11,9 @@
 //! app to move the caret, unless Accessibility cannot set the field's
 //! selection. Terminals answer so, and one look then decides.
 //!
-//! The space owed after the last segment types only with the caret at its
-//! exact offset and nothing selected. A short ending can repeat elsewhere
-//! in the field, so the space never goes by it. Only a field that can't
-//! set its selection lets the space go where text would.
+//! The closing space types last, before a word already after the caret:
+//! "open src" streamed before `notes` → `open src notes`. Outside a
+//! terminal, it needs the caret at its expected offset with nothing selected.
 
 use std::time::{Duration, Instant};
 
@@ -81,9 +80,8 @@ impl Anchoring {
         }
     }
 
-    /// Before the space owed after the text typed last, in a field that was
-    /// read. The caret must sit right after that text, with nothing
-    /// selected, unless the field can't set its selection.
+    /// Refuses unless a read field shows the caret right after the typed
+    /// text with nothing selected. A terminal gets a segment's check.
     pub(super) fn before_space(&mut self) -> Result<(), DeliveryError> {
         match self {
             Self::Anchored(anchor) => anchor.check_space(),
@@ -135,14 +133,12 @@ pub struct Anchor {
     tracking: Tracking,
 }
 
-/// What a check clears the way for.
+/// What types once a check passes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Insertion {
-    /// A segment or Return. It may go over an inline completion from the
-    /// caret to the field's end.
+    /// A segment or a Return. May type over an inline completion.
     Text,
-    /// The space owed after typed text. It only separates that text from
-    /// the text after it, so it never types over a selection.
+    /// The closing space. Never types over a selection.
     Space,
 }
 
@@ -212,9 +208,6 @@ impl Anchor {
         self.settle(settled, Insertion::Text)
     }
 
-    /// Only a field that can't set its selection, as a terminal, never types
-    /// over one, so only there may the space go where text would. Elsewhere
-    /// the field must show the caret right after the typed text.
     fn check_space(&mut self) -> Result<(), DeliveryError> {
         let deadline = Instant::now() + CATCH_UP_BUDGET;
         if element::is_selection_settable(&self.field, deadline) == Ok(false) {
@@ -230,13 +223,12 @@ impl Anchor {
     }
 
     /// The first check comes a whole segment after the first one landed. A
-    /// caret still at its start by then means the field never moves it. The
-    /// space never settles on that: it needs the caret right after the text.
+    /// caret still at its start by then means the field never moves it. For
+    /// the closing space, a caret short of the text always refuses.
     fn settle(&mut self, settled: Settled, insertion: Insertion) -> Result<(), DeliveryError> {
         match settled {
-            // A caret seen after the space's text counts as one that moves
-            // with typing too, so a Return after the space catches the caret
-            // moving back to the start.
+            // The closing space proves the caret moves too, so a later
+            // Return refuses a caret back at the start.
             Settled::After(caret) => {
                 self.expected_caret = caret;
                 if matches!(self.tracking, Tracking::Untested(_)) {
@@ -263,14 +255,14 @@ impl Anchor {
         Ok(())
     }
 
-    /// Only this segment's own text marks where typing goes on. An app
-    /// may correct what came before it, as `dont` to `don't`.
+    /// Ends on this segment's text alone, since an app may fix earlier
+    /// text, as `dont` → `don't`.
     fn after_typing(&mut self, text: &str) {
         self.expected_caret = advanced(self.expected_caret, text);
         self.ending = Some(ending_of(text));
     }
 
-    /// A space alone would match any caret after a space, so it extends the
+    /// A lone space would match any caret after a space, so it extends the
     /// segment's ending.
     fn after_space(&mut self, space: &str) {
         self.expected_caret = advanced(self.expected_caret, space);
@@ -382,8 +374,8 @@ fn judge(
     if at_expected && reaches_field_end {
         return Verdict::Continues(expected_caret);
     }
-    // Only text resyncs on its ending: a short ending can repeat elsewhere,
-    // and a misplaced space would split a word.
+    // A short ending can repeat elsewhere, so the closing space never
+    // follows the ending to a new offset.
     if insertion == Insertion::Text && selection.len == 0 && before == Some(ending) {
         return Verdict::Continues(selection.loc);
     }
@@ -399,7 +391,6 @@ fn advanced(caret: cf::Index, text: &str) -> cf::Index {
     caret.saturating_add(units)
 }
 
-/// The ending of `text` typed after `previous`.
 fn ending_after(previous: Option<&str>, text: &str) -> String {
     ending_of(&format!("{}{text}", previous.unwrap_or_default()))
 }
