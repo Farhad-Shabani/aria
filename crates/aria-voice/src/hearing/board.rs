@@ -180,9 +180,9 @@ impl Board {
         self.notify(state);
     }
 
-    /// The walk's next fresh snapshot, waiting for it, and how the walk
-    /// ended if it has. Its end counts as fresh. Read together, so the
-    /// snapshot that comes with the end is the walk's last.
+    /// Waits for a fresh snapshot or the walk's end, and returns the
+    /// snapshot with the ending. Both are read under one lock, so a
+    /// snapshot that comes with an ending is the walk's last.
     pub(super) fn next_snapshot(&self) -> (Snapshot, Option<Ending>) {
         let mut state = self.wait_while(self.lock(), |state| !walk(state).unread);
         let walk = walk_mut(&mut state);

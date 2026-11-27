@@ -96,8 +96,8 @@ pub(crate) struct Decoding<'scope, T> {
 /// Hears the whole of the recording `feed` reads on the turn thread while
 /// capture runs, with no decoder, for a press decoded only once it ends.
 /// Only the owner's words pass, so it returns the timeline to judge them by.
-/// `heard` sees the walk's latest timeline each time it publishes, through
-/// its last.
+/// `heard` may skip a timeline or see one twice. It sees the walk's last
+/// unless tracking fails first.
 pub(crate) fn hear_to_end<V, K>(
     feed: TurnFeed<V, K>,
     cancel: &CancelToken,
