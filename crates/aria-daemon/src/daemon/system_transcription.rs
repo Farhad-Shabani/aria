@@ -74,12 +74,6 @@ impl SystemTranscriptionState {
         vocabulary: Arc<super::vocabulary::Runtime>,
         history: Arc<HistoryStore>,
     ) -> Self {
-        if let Some(ignored) = cache.effective().ignored_transcripts_dir(&home) {
-            tracing::warn!(
-                ignored = %ignored.display(),
-                "transcription.transcripts_dir is ignored; Mac Audio saves transcripts in ~/.aria/transcripts"
-            );
-        }
         // No session runs yet, so any staging file is a crash's.
         TranscriptFolders::at(&home).remove_staging();
         Self {

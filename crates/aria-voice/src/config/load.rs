@@ -51,9 +51,6 @@ impl SystemTranscriptionConfig {
         Ok(Self {
             engine: SystemTranscriptionEngine::new(transcription)?,
             transcripts_dir: home.join(aria_settings::TRANSCRIPTS_DIRECTORY),
-            ignored_transcripts_dir: settings
-                .ignored_transcripts_dir(home)
-                .map(Path::to_path_buf),
         })
     }
 }
@@ -690,7 +687,6 @@ mod tests {
                 })
                 .unwrap(),
                 transcripts_dir: PathBuf::from("/home/user/.aria/transcripts"),
-                ignored_transcripts_dir: None,
             }
         );
     }

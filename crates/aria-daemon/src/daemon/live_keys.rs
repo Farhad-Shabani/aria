@@ -172,8 +172,7 @@ impl LiveHarness {
             Key::TtsQwenVoice => self.next_utterance(TtsEngine::Qwen),
             Key::SystemTranscriptionBackend
             | Key::SystemTranscriptionModel
-            | Key::SystemTranscriptionDevice
-            | Key::SystemTranscriptionTranscriptsDir => self.next_system_transcription(),
+            | Key::SystemTranscriptionDevice => self.next_system_transcription(),
             Key::SttBackend
             | Key::SttModel
             | Key::SttDevice
@@ -269,7 +268,6 @@ fn change(key: Key) -> Patch {
             SttDevice::Gpu => set(key, "cpu"),
             SttDevice::Cpu => set(key, "gpu"),
         },
-        Key::SystemTranscriptionTranscriptsDir => set(key, "/transcripts"),
         // Each key needs the one engine that takes it, so the patch sets it too.
         Key::SttInterpreter => {
             let mut patch = set(Key::SttBackend, "parakeet-mlx");

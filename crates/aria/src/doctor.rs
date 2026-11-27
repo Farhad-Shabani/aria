@@ -296,35 +296,24 @@ fn segmentation_model() -> Check {
 fn system_transcription() -> Check {
     let resolved = loaded(SystemTranscriptionConfig::load);
     match resolved {
-        Ok(config) => {
-            let ignored = config
-                .ignored_transcripts_dir
-                .as_ref()
-                .map(|ignored| {
-                    format!(
-                        "; transcription.transcripts_dir names {}, which Aria ignores",
-                        ignored.display()
-                    )
-                })
-                .unwrap_or_default();
-            let writing = format!(
-                "{} writing to {}",
-                config.engine.backend_name(),
-                config.transcripts_dir.display()
-            );
-            match config.engine.check_model() {
-                Ok(_) if ignored.is_empty() => Check::ok(SYSTEM_TRANSCRIPTION, writing),
-                Ok(_) => Check::warning(SYSTEM_TRANSCRIPTION, format!("{writing}{ignored}")),
-                Err(error) => Check::warning(
-                    SYSTEM_TRANSCRIPTION,
-                    format!(
-                        "{}; Transcription can't start until {} is downloaded{ignored}",
-                        error_chain(&error),
-                        config.engine.backend_name()
-                    ),
+        Ok(config) => match config.engine.check_model() {
+            Ok(_) => Check::ok(
+                SYSTEM_TRANSCRIPTION,
+                format!(
+                    "{} writing to {}",
+                    config.engine.backend_name(),
+                    config.transcripts_dir.display()
                 ),
-            }
-        }
+            ),
+            Err(error) => Check::warning(
+                SYSTEM_TRANSCRIPTION,
+                format!(
+                    "{}; Transcription can't start until {} is downloaded",
+                    error_chain(&error),
+                    config.engine.backend_name()
+                ),
+            ),
+        },
         Err(error) => Check::warning(
             SYSTEM_TRANSCRIPTION,
             format!(

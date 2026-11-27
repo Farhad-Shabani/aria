@@ -431,8 +431,8 @@ mod tests {
     }
 
     #[test]
-    fn a_snapshot_names_arias_transcripts_folder_whatever_the_file_says() {
-        let (home, _path, store) = store_with("[transcription]\ntranscripts_dir = \"/Meetings\"\n");
+    fn a_snapshot_names_arias_transcripts_folder() {
+        let (home, _path, store) = store_with("");
         assert_eq!(
             store.snapshot().unwrap().transcripts_dir,
             home.path().join(".aria/transcripts")

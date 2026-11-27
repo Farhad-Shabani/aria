@@ -50,10 +50,8 @@ clearing history, deletes its file.
 To find the folder, choose **Settings → Privacy**, then go to **Transcripts
 folder**, and click **Open**. Don't move or edit the files there. To keep a
 copy of a saved transcript elsewhere, choose **Show in Finder** on its history
-entry, then copy the file. Aria ignores
-`transcription.transcripts_dir` in `settings.toml`, and `aria doctor` warns
-when the file sets it. A transcript an older Aria saved elsewhere stays where
-it is, and history keeps it.
+entry, then copy the file. A transcript an older Aria saved elsewhere stays
+where it is, and history keeps it.
 
 With history off, or with history full, a transcript waits unsaved in
 `~/.aria/unsaved`. When it ends, Aria lists it as **Unsaved Transcript**, with

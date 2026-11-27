@@ -77,8 +77,6 @@ keep_audio = false
 # model = "~/.aria/models/moonshine/base"
 # cpu or gpu. parakeet only.
 # device = "cpu"
-# Ignored: Mac Audio saves transcripts in ~/.aria/transcripts.
-# transcripts_dir = "~/.aria/transcripts"
 
 [assistant]
 # Who answers `aria ask`: claude-code, codex, or local-model. `--assistant` overrides it for one request.
