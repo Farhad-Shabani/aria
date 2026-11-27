@@ -104,8 +104,11 @@ final class UnsavedTranscripts: ObservableObject {
     func save(_ transcript: UnsavedTranscript, to destination: URL) async -> Bool {
         guard begin() else { return false }
         defer { isChanging = false }
-        // Saving it beside itself would put the copy where Discard then removes it.
-        guard !Self.isInAriaFolders(destination.deletingLastPathComponent(), aria: ariaDirs) else {
+        // Saving it beside itself would put the copy where Discard then removes it. The check
+        // resolves links on disk, which may be a slow volume, so it runs off the main actor.
+        let (folder, aria) = (destination.deletingLastPathComponent(), ariaDirs)
+        let isInAria = await Task.detached { Self.isInAriaFolders(folder, aria: aria) }.value
+        guard !isInAria else {
             error = "Choose a place outside Aria’s transcript folders."
             return false
         }
@@ -185,7 +188,7 @@ final class UnsavedTranscripts: ObservableObject {
 
     /// Whether `folder` is one of Aria’s transcript folders, `aria`, or inside one, however a link
     /// spells it. Aria removes files there, so a copy saved there isn’t the person’s own.
-    static func isInAriaFolders(_ folder: URL, aria: [URL]) -> Bool {
+    nonisolated static func isInAriaFolders(_ folder: URL, aria: [URL]) -> Bool {
         [folder.standardizedFileURL, folder.resolvingSymlinksInPath()].contains { start in
             var current = start.standardizedFileURL
             while current.pathComponents.count > 1 {
@@ -199,7 +202,7 @@ final class UnsavedTranscripts: ObservableObject {
     /// Whether `a` and `b` are one folder however each is spelled, by file identity when both
     /// exist. Each resolves its links first, since a link’s own resource values describe the
     /// link, not its folder.
-    static func isSameFolder(_ a: URL, _ b: URL) -> Bool {
+    nonisolated static func isSameFolder(_ a: URL, _ b: URL) -> Bool {
         let (a, b) = (a.resolvingSymlinksInPath().standardizedFileURL, b.resolvingSymlinksInPath().standardizedFileURL)
         let identity = { (url: URL) in
             try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier
