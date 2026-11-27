@@ -259,7 +259,12 @@ fn compose(
             })
             .ok()?;
         Some(Relay {
-            rpc: RelayRpc::new(relay_runtime, relay_microphone, tasks.cancellation()),
+            rpc: RelayRpc::new(
+                relay_runtime,
+                relay_microphone,
+                Arc::clone(&pairing.phones),
+                tasks.cancellation(),
+            ),
             port,
             settings: settings_rpc.clone(),
             microphone: PhoneMicrophoneRpc::new(

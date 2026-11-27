@@ -896,10 +896,11 @@ where
     /// Runs a press on the `feed` that `device` pushes in as it records,
     /// and on nothing else. A watch tap's samples go in, and `after_text`
     /// gets how the press ended. It starts only while nothing records, and
-    /// Escape or a manual press stops it. The device ends the recording and
-    /// plays its own cue, so the Mac neither stops it on silence nor mutes
-    /// other apps. `after_text` runs while the press still holds the
-    /// microphone, so nothing records under a Return it presses.
+    /// Escape, a manual press, or the auto-stop setting ends it. The device
+    /// has no voice detector, so the quiet is judged here. The device plays
+    /// its own cue, so the Mac doesn't mute other apps.
+    /// `after_text` runs while the press still holds the microphone, so
+    /// nothing records under a Return it presses.
     pub fn execute_pushed<T>(
         &self,
         feed: PushedFeed,
@@ -910,7 +911,6 @@ where
         after_text: impl FnOnce(Executed) -> Result<T, DictationError>,
     ) -> Result<T, DictationError> {
         settings.stop_mode = StopMode::Manual;
-        settings.auto_stop = None;
         let control = Arc::new(ExecutionControl::new(
             take_recording_id(&mut self.counter()),
             RecordingOrigin::Remote(device),
@@ -1881,7 +1881,7 @@ mod tests {
                         Vec::new(),
                         std::sync::mpsc::channel().1,
                         Duration::ZERO,
-                        || {},
+                        |_end| {},
                     ),
                     Some(RecordingDevice::Phone),
                     settings(StopMode::Manual),
@@ -1903,5 +1903,36 @@ mod tests {
 
         assert!(held, "nothing takes the microphone before the text is done");
         assert!(coordinator.microphone.admit_return_press().is_some());
+    }
+
+    #[test]
+    fn a_pushed_press_runs_with_the_stored_auto_stop() {
+        use crate::dictation::RecordingDevice;
+        use crate::dictation::testing::PressSpy;
+        let spy = PressSpy::default();
+        let policy = DictationPolicy::new(Duration::from_secs(5)).expect("a valid policy");
+        let coordinator =
+            DictationCoordinator::new(policy, spy.clone(), crate::microphone::Gate::new());
+        let auto_stop = aria_kit::audio::AutoStop::default();
+
+        let no_speech = coordinator.execute_pushed(
+            PushedFeed::new(
+                Vec::new(),
+                std::sync::mpsc::channel().1,
+                Duration::ZERO,
+                |_end| {},
+            ),
+            Some(RecordingDevice::Watch),
+            DictationSettings {
+                auto_stop: Some(auto_stop),
+                ..settings(StopMode::Manual)
+            },
+            CancelToken::never(),
+            &DictationEventEmitter::unsubscribed(),
+            |_executed| Ok(()),
+        );
+
+        assert!(matches!(no_speech, Err(DictationError::NoSpeech)));
+        assert_eq!(spy.runs(), [(Some(auto_stop), EscapeRule::Cancels)]);
     }
 }

@@ -964,7 +964,7 @@ mod event_tests {
         let (_samples, rest) = std::sync::mpsc::channel();
 
         let refused = runtime.dictate_pushed(
-            PushedFeed::new(vec![0; 160], rest, Duration::from_secs(1), || {}),
+            PushedFeed::new(vec![0; 160], rest, Duration::from_secs(1), |_end| {}),
             Some(RecordingDevice::Phone),
             runtime.relay_settings().unwrap().dictation,
             CancelToken::never(),

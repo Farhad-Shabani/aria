@@ -11,29 +11,46 @@ import "google/protobuf/timestamp.proto";
 
 service RelayService {
   // Take one recording from a phone or watch on the LAN as it is recorded,
-  // and run it as a press on the Mac from its first audio. The client sends a
-  // `RelayStart`, then `RelayAudio` chunks, then a `RelayStop` or a
-  // half-close. The press types as the Mac's delivery setting says,
+  // and run it as a press on the Mac from its first audio. The client opens
+  // a stream with a `RelayStart`, sends `RelayAudio` chunks, and ends the
+  // recording with a `RelayStop` or a `RelayCancel`. The press types as the Mac's delivery setting says,
   // streaming included, and Escape or a manual press on the Mac stops it. It
   // starts only while nothing records on the Mac.
-  // Cancelling the RPC requests cancellation of transcription and delivery;
-  // it cannot undo text already delivered.
+  // A `RelayCancel` cancels the recording: nothing more of it types, though
+  // text already delivered stays. So does revoking its phone. Cancelling the
+  // RPC cancels only a recording with no `recording_id`, as losing its
+  // connection does: no stream could continue it. For a recording that
+  // named itself, the Mac can't tell a cancelled RPC from a lost connection.
   // Messages are capped at 4 MiB and four concurrent streams per connection.
   // Audio more than a second past 600 seconds (19,232,000 bytes of PCM) is
   // refused as it streams.
   // RelayStart must arrive within 10 seconds. After Start, a 10-second idle
-  // gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, it
-  // ends the recording with what it has. So does the Mac's recording limit.
+  // gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, the
+  // Mac says RECORDING, and a gap in the audio as long as its
+  // `quiet_limit_ms` ends the recording with what it has. So does the Mac's recording limit.
+  // A stream that fails while the Mac still takes the recording's audio
+  // leaves a recording that named itself in `RelayStart.recording_id`
+  // waiting. A stream fails when it ends before its stop or breaks as a lost
+  // connection does. A malformed message ends the recording instead. A
+  // stream from the same phone that opens with a `RelayContinuation`
+  // continues it, from the audio CONTINUED says the Mac took. The Mac takes audio until the client's stop, or until it
+  // ends the recording itself and says TRANSCRIBING. After that no stream
+  // continues the recording. A recording whose client is gone, or that ends
+  // while it waits, still types what the Mac heard. It presses no Return,
+  // nor does one the Mac ended because its audio stopped arriving.
   // The press runs within the Mac's dictation timeouts.
   // Failures arrive as a status carrying an RpcError, not as an event:
   //   BUSY - a recording is running. This can arrive after the first audio.
+  //     Or the phone already has four named recordings open.
   //   PAYLOAD_TOO_LARGE - the audio is too long
   //   UNSUPPORTED - the Mac's capture can't take audio from a device
   //   INVALID_REQUEST - an unsupported format, a missing, late or second
-  //     RelayStart, PCM ending mid-sample, or a chunk that isn't whole samples
+  //     RelayStart, PCM ending mid-sample, a chunk that isn't whole samples,
+  //     or a `recording_id` that is empty, over 32 bytes, or in use
   //   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
   //   SHUTTING_DOWN - the daemon is stopping
-  //   CANCELLED - the client's own stream failed
+  //   CANCELLED - the client sent a `RelayCancel`, its own stream failed, or
+  //     a `RelayContinuation` named a recording that is over
   //   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
   //     DELIVERY_TARGET_CHANGED - as for a press on the Mac
   // Delivery failures do not return the text and can include partial delivery.
@@ -123,28 +140,46 @@ message RevokePhoneRequest {
 
 message RevokePhoneResponse {}
 
+// A stream opens with `start` or `continuation`, and only there. Audio
+// follows until `stop` or `cancel` ends the recording. After a `stop`, only
+// `submit` and `cancel` are taken.
 message RelayRequest {
   oneof body {
     RelayStart start = 1;
+    RelayContinuation continuation = 5;
     RelayAudio audio = 2;
     RelayStop stop = 3;
     RelaySubmit submit = 4;
+    RelayCancel cancel = 6;
   }
 }
 
-// The opening message of a stream. Any other opening message is refused.
+// The opening message of a recording's first stream.
 message RelayStart {
   AudioFormat format = 1;
   // The phone or watch that records. Unspecified for an older client.
   RecordingDevice device = 4;
+  // Names the recording, so a later stream can continue it: 1 to 32 bytes
+  // the client picks at random. Absent, no stream continues it, and a
+  // half-close ends it as a `RelayStop` does.
+  optional bytes recording_id = 5;
+}
+
+// The opening message of a stream that continues a recording whose stream
+// failed. Audio and the stop follow as after a `RelayStart`.
+message RelayContinuation {
+  // As the recording's `RelayStart.recording_id` gave it.
+  bytes recording_id = 1;
 }
 
 message RelayAudio {
   bytes chunk = 1;
 }
 
-// Ends the recording. A half-closed stream ends it too, but only a stop
-// leaves the stream open for a `RelaySubmit`.
+// Ends the recording, and the Mac types what it heard. A named recording's
+// stream that ends without a stop has failed, as a dropped connection ends
+// it. After the stop the stream stays open for a `RelaySubmit` or a
+// `RelayCancel`. A half-close after it says the client asks nothing more.
 message RelayStop {}
 
 // Press Return where the text went. Taken once, within 10 seconds of
@@ -157,6 +192,12 @@ message RelayStop {}
 // INVALID_REQUEST before the stop, DELIVERY_TARGET_CHANGED once focus
 // moved, and BUSY while a recording runs.
 message RelaySubmit {}
+
+// Cancels the recording: nothing more of it types, and the stream ends with
+// CANCELLED. Taken from the opening until COMPLETED, after a stop included.
+// During a Return offer it declines the offer. A stream that continues the
+// recording can send it right after its `RelayContinuation`.
+message RelayCancel {}
 
 message RelayEvent {
   RelayStage stage = 1;
@@ -177,6 +218,15 @@ message RelayEvent {
   // On COMPLETED: how many of the text's words went where `delivery` says,
   // its last ones when some typed before.
   uint32 word_count = 6;
+  // On CONTINUED: how many bytes of audio the Mac took on the recording's
+  // earlier streams. Audio written after them was lost on the way, so the
+  // client sends on from there.
+  uint64 taken_bytes = 7;
+  // On RECORDING and CONTINUED: how long the recording may go without audio
+  // arriving, as when its link is lost, before the Mac ends it and types
+  // what it heard. With auto-stop on, the same time without speech ends it
+  // too.
+  uint32 quiet_limit_ms = 8;
 }
 
 // The Return the Mac offers after a relayed recording's text.
@@ -199,6 +249,13 @@ enum RelayStage {
   RELAY_STAGE_NO_SPEECH = 3;
   // The phone took the Return offer, and Return was pressed. Terminal.
   RELAY_STAGE_OFFER_TAKEN = 4;
+  // The stream continues its recording. The first event of a stream that
+  // opened with a `RelayContinuation`, carrying `taken_bytes` and
+  // `quiet_limit_ms`.
+  RELAY_STAGE_CONTINUED = 5;
+  // The Mac took the recording's first audio. The first event of a stream
+  // that opened with a `RelayStart`, carrying `quiet_limit_ms`.
+  RELAY_STAGE_RECORDING = 6;
 }
 
 enum AudioFormat {

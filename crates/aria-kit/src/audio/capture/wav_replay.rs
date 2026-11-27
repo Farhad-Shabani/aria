@@ -198,7 +198,7 @@ mod tests {
             Vec::new(),
             std::sync::mpsc::channel().1,
             Duration::ZERO,
-            move || {
+            move |_end| {
                 told.send(()).unwrap();
             },
         );

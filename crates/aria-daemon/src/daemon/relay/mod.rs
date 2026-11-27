@@ -17,12 +17,13 @@ use crate::ipc::protocol::{ProtocolError, failure_status, phone_samples};
 use std::sync::mpsc::{SyncSender, TrySendError};
 use std::time::Duration;
 
+use tokio::sync::oneshot;
 use tokio_stream::{Stream, StreamExt};
 use tokio_util::sync::CancellationToken;
 use tonic::Status;
 
 use crate::ipc::wire;
-use aria_kit::audio::canonical_samples;
+use aria_kit::audio::{AutoStop, canonical_samples};
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::dictation::RecordingDevice;
 
@@ -34,7 +35,7 @@ pub(crate) use pairing::PairedPhone;
 pub(crate) use pairing::RELATIVE_PATH as PAIRING_RELATIVE_PATH;
 pub(super) use pairing::{
     HardwareModel, Pairing, PairingError, Phones, fingerprint, fingerprint_from_hex,
-    load_or_create as load_pairing, mint, presented, require_paired, to_hex,
+    load_or_create as load_pairing, mint, presented, require_paired, to_hex, unpaired,
 };
 pub(super) use settings::LanSettings;
 pub(crate) use stage::{Offer, RelayStage};
@@ -45,9 +46,16 @@ const MAX_RECORDING: Duration = Duration::from_secs(601);
 /// The longest recording's PCM, so an oversized recording stops as it
 /// streams.
 const MAX_AUDIO_BYTES: usize = canonical_samples(MAX_RECORDING) as usize * 2;
-/// Maximum wait for the opening and the first audio, and the gap after which
-/// the press ends a recording whose audio stopped arriving.
-pub(super) const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Maximum wait for the opening and the first audio, and the quiet limit
+/// while auto-stop is off.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long a recording may go without audio arriving before the press ends
+/// it: the auto-stop time, which ends it after as long without speech, so
+/// every device keeps one rule.
+pub(super) fn quiet_limit(auto_stop: Option<AutoStop>) -> Duration {
+    auto_stop.map_or(IDLE_TIMEOUT, AutoStop::get)
+}
 /// How long the phone may take to ask for Return once the text landed.
 const SUBMIT_WAIT: Duration = Duration::from_secs(10);
 
@@ -75,20 +83,49 @@ impl Opening {
     }
 }
 
+/// How a stream opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Opened {
+    /// It starts a recording, which a later stream can continue when the
+    /// client named it.
+    Started(Opening, Option<RecordingId>),
+    /// It continues the recording of this name, whose stream failed.
+    Continued(RecordingId),
+}
+
+/// The name a client gives its recording.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct RecordingId(Vec<u8>);
+
+impl RecordingId {
+    const MAX_BYTES: usize = 32;
+
+    fn accept(id: Vec<u8>) -> Result<Self, RelayError> {
+        if id.is_empty() || id.len() > Self::MAX_BYTES {
+            return Err(RelayError::UnusableRecordingId);
+        }
+        Ok(Self(id))
+    }
+}
+
 /// Whether the phone can still ask for Return once its audio is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ReplyChannel {
     /// It ended with a `RelayStop`, so a `RelaySubmit` can follow.
     Open,
-    /// It half-closed, so it sends nothing more.
+    /// It half-closed after its stop, or never stopped, so it sends nothing
+    /// more.
     Closed,
 }
 
 /// How a recording's audio stopped arriving.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PushEnd {
-    /// The client ended it with a `RelayStop` or a half-close.
-    ClientStopped(ReplyChannel),
+    /// The client ended it with a `RelayStop`.
+    ClientStopped,
+    /// The client half-closed a recording it didn't name, which ends it. It
+    /// sends nothing more.
+    ClientClosed,
     /// The press stopped reading, as the Mac stopped the recording.
     PressEnded,
 }
@@ -105,7 +142,7 @@ pub(super) enum Reply {
 
 /// Reads the opening message and validates it. A stream that opens with
 /// anything else never gets as far as claiming the recorder.
-pub(super) async fn open<S>(stream: &mut S) -> Result<Opening, RelayError>
+pub(super) async fn open<S>(stream: &mut S) -> Result<Opened, RelayError>
 where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
 {
@@ -114,7 +151,17 @@ where
         .map_err(|_elapsed| RelayError::NotStarted)?;
     match first {
         Some(Ok(request)) => match request.body {
-            Some(wire::relay_request::Body::Start(start)) => Opening::accept(start),
+            Some(wire::relay_request::Body::Start(mut start)) => {
+                let recording = start
+                    .recording_id
+                    .take()
+                    .map(RecordingId::accept)
+                    .transpose()?;
+                Ok(Opened::Started(Opening::accept(start)?, recording))
+            }
+            Some(wire::relay_request::Body::Continuation(continuation)) => {
+                RecordingId::accept(continuation.recording_id).map(Opened::Continued)
+            }
             _other => Err(RelayError::NotStarted),
         },
         Some(Err(status)) => Err(RelayError::ClientStream(status)),
@@ -150,11 +197,17 @@ where
                     return decode(opening, &chunk.chunk).map(Some);
                 }
                 Some(wire::relay_request::Body::Stop(_stop)) => return Ok(None),
-                Some(wire::relay_request::Body::Start(_start)) => {
+                Some(
+                    wire::relay_request::Body::Start(_)
+                    | wire::relay_request::Body::Continuation(_),
+                ) => {
                     return Err(RelayError::RestartedMidStream);
                 }
                 Some(wire::relay_request::Body::Submit(_submit)) => {
                     return Err(RelayError::SubmittedMidRecording);
+                }
+                Some(wire::relay_request::Body::Cancel(_cancel)) => {
+                    return Err(RelayError::ClientCancelled);
                 }
                 None => {}
             },
@@ -165,14 +218,14 @@ where
 }
 
 /// Forwards a recording's audio to its press until the recording
-/// ends. `sent` counts the bytes already forwarded, toward the size cap.
+/// ends. `sent` counts the bytes forwarded, toward the size cap.
 /// Dropping `feed` on return ends the recording at the press. A client that
 /// goes quiet is the press's to end: its capture stops once audio stalls.
 pub(super) async fn forward<S>(
     stream: &mut S,
     opening: Opening,
     feed: SyncSender<Vec<i16>>,
-    mut sent: usize,
+    sent: &mut usize,
 ) -> Result<PushEnd, RelayError>
 where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
@@ -181,30 +234,44 @@ where
         match stream.next().await {
             Some(Ok(request)) => match request.body {
                 Some(wire::relay_request::Body::Audio(chunk)) => {
-                    sent += chunk.chunk.len();
-                    if sent > MAX_AUDIO_BYTES {
-                        return Err(RelayError::TooLarge);
-                    }
+                    count(sent, &chunk)?;
                     let samples = decode(opening, &chunk.chunk)?;
                     if !feed_press(&feed, samples).await {
                         return Ok(PushEnd::PressEnded);
                     }
                 }
                 Some(wire::relay_request::Body::Stop(_stop)) => {
-                    return Ok(PushEnd::ClientStopped(ReplyChannel::Open));
+                    return Ok(PushEnd::ClientStopped);
                 }
-                Some(wire::relay_request::Body::Start(_start)) => {
+                Some(
+                    wire::relay_request::Body::Start(_)
+                    | wire::relay_request::Body::Continuation(_),
+                ) => {
                     return Err(RelayError::RestartedMidStream);
                 }
                 Some(wire::relay_request::Body::Submit(_submit)) => {
                     return Err(RelayError::SubmittedMidRecording);
                 }
+                Some(wire::relay_request::Body::Cancel(_cancel)) => {
+                    return Err(RelayError::ClientCancelled);
+                }
                 None => {}
             },
             Some(Err(status)) => return Err(RelayError::ClientStream(status)),
-            None => return Ok(PushEnd::ClientStopped(ReplyChannel::Closed)),
+            // A named recording's session reads its stream ending before the
+            // stop as a failure, so only an unnamed one ends here.
+            None => return Ok(PushEnd::ClientClosed),
         }
     }
+}
+
+/// Counts a chunk toward the recording's size cap.
+fn count(sent: &mut usize, audio: &wire::RelayAudio) -> Result<(), RelayError> {
+    *sent += audio.chunk.len();
+    if *sent > MAX_AUDIO_BYTES {
+        return Err(RelayError::TooLarge);
+    }
+    Ok(())
 }
 
 /// Hands `samples` to the press, waiting while its feed is full: a chunk
@@ -251,12 +318,68 @@ where
         };
         match request.map_err(RelayError::ClientStream)?.body {
             Some(wire::relay_request::Body::Submit(_submit)) => return Ok(Reply::Submit),
+            Some(wire::relay_request::Body::Cancel(_cancel)) => {
+                return Err(RelayError::ClientCancelled);
+            }
             Some(
                 wire::relay_request::Body::Start(_)
+                | wire::relay_request::Body::Continuation(_)
                 | wire::relay_request::Body::Audio(_)
                 | wire::relay_request::Body::Stop(_),
             ) => return Err(RelayError::RecordingEnded),
             // A newer client's field, skipped as during the recording.
+            None => {}
+        }
+    }
+}
+
+/// Reads a recording's stream once the press takes no more of its audio,
+/// until the client half-closes, so a `RelayCancel` reaches the press while
+/// it transcribes. `asked` hears a `RelaySubmit` sent ahead of COMPLETED.
+///
+/// A client whose recording the Mac ended may not have heard so yet: its
+/// audio is dropped until its stop. It is held to what a recording may
+/// send all the same: whole samples, and the size cap with the bytes
+/// `sent`.
+pub(super) async fn after_audio<S>(
+    stream: &mut S,
+    opening: Opening,
+    ended: PushEnd,
+    mut sent: usize,
+    asked: oneshot::Sender<()>,
+) -> Result<(), RelayError>
+where
+    S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
+{
+    let mut is_stopped = ended != PushEnd::PressEnded;
+    let mut asked = Some(asked);
+    loop {
+        let Some(request) = stream.next().await else {
+            return Ok(());
+        };
+        match request.map_err(RelayError::ClientStream)?.body {
+            Some(wire::relay_request::Body::Cancel(_cancel)) => {
+                return Err(RelayError::ClientCancelled);
+            }
+            Some(wire::relay_request::Body::Audio(audio)) if !is_stopped => {
+                count(&mut sent, &audio)?;
+                decode(opening, &audio.chunk)?;
+            }
+            Some(wire::relay_request::Body::Stop(_stop)) if !is_stopped => is_stopped = true,
+            Some(wire::relay_request::Body::Submit(_submit)) if is_stopped => {
+                if let Some(asked) = asked.take() {
+                    let _ = asked.send(());
+                }
+            }
+            Some(wire::relay_request::Body::Submit(_submit)) => {
+                return Err(RelayError::SubmittedMidRecording);
+            }
+            Some(
+                wire::relay_request::Body::Start(_)
+                | wire::relay_request::Body::Continuation(_)
+                | wire::relay_request::Body::Audio(_)
+                | wire::relay_request::Body::Stop(_),
+            ) => return Err(RelayError::RecordingEnded),
             None => {}
         }
     }
@@ -273,11 +396,23 @@ fn decode(opening: Opening, audio: &[u8]) -> Result<Vec<i16>, RelayError> {
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum RelayError {
-    #[error("a relay stream must open with RelayStart")]
+    #[error("a relay stream must open with RelayStart or RelayContinuation")]
     NotStarted,
 
-    #[error("a second RelayStart arrived mid-stream")]
+    #[error("a second RelayStart or RelayContinuation arrived mid-stream")]
     RestartedMidStream,
+
+    #[error("a recording_id must be 1 to {} bytes", RecordingId::MAX_BYTES)]
+    UnusableRecordingId,
+
+    #[error("the recording_id names a recording still under way")]
+    RecordingIdInUse,
+
+    #[error("the phone has too many recordings a stream can continue")]
+    TooManyRecordings,
+
+    #[error("the recording to continue is over")]
+    RecordingOver,
 
     #[error("a RelaySubmit arrived before the recording ended")]
     SubmittedMidRecording,
@@ -297,8 +432,36 @@ pub(super) enum RelayError {
     #[error(transparent)]
     Audio(ProtocolError),
 
+    #[error("the relay client cancelled the recording")]
+    ClientCancelled,
+
     #[error("the relay client's stream failed: {0}")]
     ClientStream(#[source] Status),
+}
+
+impl RelayError {
+    /// The client's stream broke, as a lost connection does, rather than
+    /// failing to decode.
+    pub(super) fn is_lost_stream(&self) -> bool {
+        matches!(self, Self::ClientStream(status) if is_lost(status))
+    }
+}
+
+/// A stream that ended without its `RelayStop`, as a dropped connection or a
+/// cancelled RPC ends it.
+pub(super) fn ended_before_stop() -> Status {
+    Status::unavailable("the relay client's stream ended before its stop")
+}
+
+/// Whether a stream failed as a lost connection fails it: its keepalive
+/// timed out (`Unavailable`), or its connection broke (`Unknown`). A
+/// cancelled RPC reads as the stream ending. Anything else, such as an
+/// oversized or undecodable message, is the client's fault.
+pub(super) fn is_lost(status: &Status) -> bool {
+    matches!(
+        status.code(),
+        tonic::Code::Unavailable | tonic::Code::Unknown
+    )
 }
 
 impl From<&RelayError> for RpcErrorCode {
@@ -306,13 +469,18 @@ impl From<&RelayError> for RpcErrorCode {
         match error {
             RelayError::NotStarted
             | RelayError::RestartedMidStream
+            | RelayError::UnusableRecordingId
+            | RelayError::RecordingIdInUse
             | RelayError::SubmittedMidRecording
             | RelayError::RecordingEnded
             | RelayError::UnsupportedFormat
             | RelayError::Audio(_) => Self::InvalidRequest,
+            RelayError::TooManyRecordings => Self::Busy,
             RelayError::TooLarge => Self::PayloadTooLarge,
             RelayError::ShuttingDown => Self::ShuttingDown,
-            RelayError::ClientStream(_) => Self::Cancelled,
+            RelayError::RecordingOver
+            | RelayError::ClientCancelled
+            | RelayError::ClientStream(_) => Self::Cancelled,
         }
     }
 }
@@ -425,10 +593,21 @@ mod tests {
         iter(messages.into_iter().map(Ok))
     }
 
+    /// The recording a stream starts, and the name it gave it.
+    async fn started<S>(stream: &mut S) -> (Opening, Option<RecordingId>)
+    where
+        S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
+    {
+        match open(stream).await.expect("a valid opening") {
+            Opened::Started(opening, recording) => (opening, recording),
+            Opened::Continued(recording) => panic!("{recording:?} starts no recording"),
+        }
+    }
+
     async fn pcm_opening() -> Opening {
-        open(&mut requests(vec![start(wire::AudioFormat::PcmS16le)]))
+        started(&mut requests(vec![start(wire::AudioFormat::PcmS16le)]))
             .await
-            .expect("a valid opening")
+            .0
     }
 
     #[tokio::test]
@@ -440,9 +619,9 @@ mod tests {
         let first = first_audio(&mut stream, opening, &shutdown).await.unwrap();
         assert_eq!(first, Some(vec![1]));
         let (feed, press) = std::sync::mpsc::sync_channel(8);
-        let ended = forward(&mut stream, opening, feed, 2).await.unwrap();
+        let ended = forward(&mut stream, opening, feed, &mut 2).await.unwrap();
 
-        assert_eq!(ended, PushEnd::ClientStopped(ReplyChannel::Open));
+        assert_eq!(ended, PushEnd::ClientStopped);
         assert_eq!(press.try_iter().collect::<Vec<_>>(), [vec![2, 3]]);
     }
 
@@ -453,33 +632,104 @@ mod tests {
         let (feed, press) = std::sync::mpsc::sync_channel(8);
         drop(press);
 
-        let ended = forward(&mut stream, opening, feed, 0).await.unwrap();
+        let ended = forward(&mut stream, opening, feed, &mut 0).await.unwrap();
 
         assert_eq!(ended, PushEnd::PressEnded);
     }
 
     #[tokio::test]
-    async fn a_half_closed_recording_takes_no_return() {
+    async fn a_half_close_before_the_stop_ends_the_recording() {
         let opening = pcm_opening().await;
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
 
-        let ended = forward(&mut requests(vec![chunk(&[2, 0])]), opening, feed, 0)
-            .await
-            .unwrap();
+        let ended = forward(&mut requests(vec![chunk(&[2, 0])]), opening, feed, &mut 0).await;
 
-        assert_eq!(ended, PushEnd::ClientStopped(ReplyChannel::Closed));
+        assert_eq!(ended.unwrap(), PushEnd::ClientClosed);
+    }
+
+    fn cancel() -> wire::RelayRequest {
+        wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Cancel(wire::RelayCancel {})),
+        }
+    }
+
+    /// What the client said once its audio was no longer taken, and whether
+    /// it asked for Return.
+    async fn said_after(
+        ended: PushEnd,
+        sent: Vec<wire::RelayRequest>,
+    ) -> (Result<(), RelayError>, bool) {
+        let (asked, mut asking) = oneshot::channel();
+        let opening = pcm_opening().await;
+        let said = after_audio(&mut requests(sent), opening, ended, 0, asked).await;
+        (said, asking.try_recv().is_ok())
+    }
+
+    #[tokio::test]
+    async fn a_cancel_is_read_after_a_submit_sent_ahead_of_completed() {
+        let (said, asked) = said_after(PushEnd::ClientStopped, vec![submit(), cancel()]).await;
+
+        assert!(matches!(said, Err(RelayError::ClientCancelled)));
+        assert!(asked);
+    }
+
+    /// The client hears late that the Mac ended its recording, so what it
+    /// sent meanwhile is no fault of its own.
+    #[tokio::test]
+    async fn audio_and_the_stop_are_dropped_once_the_mac_ended_the_recording() {
+        let sent = vec![chunk(&[2, 0]), stop(), submit()];
+
+        let (said, asked) = said_after(PushEnd::PressEnded, sent).await;
+
+        assert!(said.is_ok(), "the half-close ends the reading");
+        assert!(asked);
+    }
+
+    #[tokio::test]
+    async fn audio_dropped_once_the_mac_ended_the_recording_counts_toward_the_cap() {
+        let (asked, _asking) = oneshot::channel();
+        let opening = pcm_opening().await;
+        let mut late = requests(vec![chunk(&[2, 0])]);
+        let ended = PushEnd::PressEnded;
+
+        let said = after_audio(&mut late, opening, ended, MAX_AUDIO_BYTES, asked).await;
+
+        assert!(matches!(said, Err(RelayError::TooLarge)));
+    }
+
+    #[tokio::test]
+    async fn audio_dropped_once_the_mac_ended_the_recording_must_still_be_whole_samples() {
+        let (said, _asked) = said_after(PushEnd::PressEnded, vec![chunk(&[2])]).await;
+
+        assert!(matches!(said, Err(RelayError::Audio(_))));
+    }
+
+    #[tokio::test]
+    async fn a_submit_ahead_of_the_stop_is_refused_once_the_mac_ended_the_recording() {
+        let (said, asked) = said_after(PushEnd::PressEnded, vec![submit()]).await;
+
+        assert!(matches!(said, Err(RelayError::SubmittedMidRecording)));
+        assert!(!asked);
+    }
+
+    #[tokio::test]
+    async fn audio_after_the_stop_is_refused_as_the_mac_transcribes() {
+        let (said, _asked) = said_after(PushEnd::ClientStopped, vec![chunk(&[2, 0])]).await;
+
+        assert!(matches!(said, Err(RelayError::RecordingEnded)));
     }
 
     #[tokio::test]
     async fn audio_past_the_cap_is_refused() {
         let opening = pcm_opening().await;
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
+        let mut sent = MAX_AUDIO_BYTES;
 
         let error = forward(
             &mut requests(vec![chunk(&[2, 0])]),
             opening,
             feed,
-            MAX_AUDIO_BYTES,
+            &mut sent,
         )
         .await
         .expect_err("the cap counts audio already sent");
@@ -530,9 +780,7 @@ mod tests {
     async fn pcm_opens_without_rate_metadata() {
         let mut stream = requests(vec![start(wire::AudioFormat::PcmS16le)]);
 
-        let opening = open(&mut stream)
-            .await
-            .expect("the format defines its rate");
+        let (opening, _recording) = started(&mut stream).await;
 
         assert_eq!(opening.format, wire::AudioFormat::PcmS16le);
     }
@@ -544,19 +792,86 @@ mod tests {
                 body: Some(wire::relay_request::Body::Start(wire::RelayStart {
                     format: wire::AudioFormat::PcmS16le as i32,
                     device: device as i32,
+                    recording_id: None,
                 })),
             }])
         };
 
-        let watch = open(&mut opening(wire::RecordingDevice::Watch))
-            .await
-            .expect("a valid opening");
-        let older = open(&mut opening(wire::RecordingDevice::Unspecified))
-            .await
-            .expect("an older client's opening is valid");
+        let (watch, _) = started(&mut opening(wire::RecordingDevice::Watch)).await;
+        let (older, _) = started(&mut opening(wire::RecordingDevice::Unspecified)).await;
 
         assert_eq!(watch.device(), Some(RecordingDevice::Watch));
         assert_eq!(older.device(), None);
+    }
+
+    fn named(recording_id: &[u8]) -> wire::RelayRequest {
+        wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Start(wire::RelayStart {
+                format: wire::AudioFormat::PcmS16le as i32,
+                recording_id: Some(recording_id.to_vec()),
+                ..Default::default()
+            })),
+        }
+    }
+
+    fn resume(recording_id: &[u8]) -> wire::RelayRequest {
+        wire::RelayRequest {
+            body: Some(wire::relay_request::Body::Continuation(
+                wire::RelayContinuation {
+                    recording_id: recording_id.to_vec(),
+                },
+            )),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stream_continues_the_recording_its_resume_names() {
+        let (_, recording) = started(&mut requests(vec![named(b"walk")])).await;
+        let (_, unnamed) = started(&mut requests(vec![start(wire::AudioFormat::PcmS16le)])).await;
+
+        let resumed = open(&mut requests(vec![resume(b"walk")]))
+            .await
+            .expect("a resume opens a stream");
+
+        assert_eq!(unnamed, None);
+        assert_eq!(
+            resumed,
+            Opened::Continued(recording.expect("the recording named itself"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recording_id_that_is_empty_or_too_long_is_refused() {
+        for unusable in [vec![], vec![7; RecordingId::MAX_BYTES + 1]] {
+            let starting = open(&mut requests(vec![named(&unusable)])).await;
+            let resuming = open(&mut requests(vec![resume(&unusable)])).await;
+
+            assert!(matches!(starting, Err(RelayError::UnusableRecordingId)));
+            assert!(matches!(resuming, Err(RelayError::UnusableRecordingId)));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_resume_after_the_opening_is_refused() {
+        let opening = pcm_opening().await;
+        let (feed, _press) = std::sync::mpsc::sync_channel(8);
+        let shutdown = CancellationToken::new();
+
+        let before_audio =
+            first_audio(&mut requests(vec![resume(b"walk")]), opening, &shutdown).await;
+        let mid_recording =
+            forward(&mut requests(vec![resume(b"walk")]), opening, feed, &mut 0).await;
+
+        assert!(matches!(before_audio, Err(RelayError::RestartedMidStream)));
+        assert!(matches!(mid_recording, Err(RelayError::RestartedMidStream)));
+    }
+
+    #[test]
+    fn a_recording_goes_quiet_for_as_long_as_its_auto_stop() {
+        let auto_stop = AutoStop::new(Duration::from_secs(4)).expect("in range");
+
+        assert_eq!(quiet_limit(Some(auto_stop)), Duration::from_secs(4));
+        assert_eq!(quiet_limit(None), IDLE_TIMEOUT);
     }
 
     #[tokio::test]
@@ -602,7 +917,7 @@ mod tests {
             .await
             .expect("the first audio");
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
-        forward(&mut stream, opening, feed, 2)
+        forward(&mut stream, opening, feed, &mut 2)
             .await
             .expect("the stop ends the recording");
 
@@ -626,7 +941,8 @@ mod tests {
         let shutdown = CancellationToken::new();
         let before_audio = first_audio(&mut requests(vec![submit()]), opening, &shutdown).await;
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
-        let mid_recording = forward(&mut requests(vec![submit(), stop()]), opening, feed, 0).await;
+        let mid_recording =
+            forward(&mut requests(vec![submit(), stop()]), opening, feed, &mut 0).await;
 
         for error in [before_audio.unwrap_err(), mid_recording.unwrap_err()] {
             assert!(matches!(error, RelayError::SubmittedMidRecording));
@@ -723,9 +1039,9 @@ mod tests {
             press.iter().collect::<Vec<_>>()
         });
 
-        let ended = forward(&mut stream, opening, feed, 0).await.unwrap();
+        let ended = forward(&mut stream, opening, feed, &mut 0).await.unwrap();
 
-        assert_eq!(ended, PushEnd::ClientStopped(ReplyChannel::Open));
+        assert_eq!(ended, PushEnd::ClientStopped);
         assert_eq!(reading.await.unwrap(), [vec![1], vec![2], vec![3]]);
     }
 
@@ -735,7 +1051,7 @@ mod tests {
         let mut stream = requests(vec![chunk(&[1, 0]), start(wire::AudioFormat::PcmS16le)]);
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
 
-        let error = forward(&mut stream, opening, feed, 0)
+        let error = forward(&mut stream, opening, feed, &mut 0)
             .await
             .expect_err("one start per stream");
 
@@ -749,11 +1065,11 @@ mod tests {
         let mut stream = requests(vec![newer_field, chunk(&[1, 0]), stop()]);
         let (feed, press) = std::sync::mpsc::sync_channel(8);
 
-        let ended = forward(&mut stream, opening, feed, 0)
+        let ended = forward(&mut stream, opening, feed, &mut 0)
             .await
             .expect("the unknown is skipped");
 
-        assert_eq!(ended, PushEnd::ClientStopped(ReplyChannel::Open));
+        assert_eq!(ended, PushEnd::ClientStopped);
         assert_eq!(press.try_iter().collect::<Vec<_>>(), [vec![1]]);
     }
 

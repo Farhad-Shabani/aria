@@ -427,10 +427,24 @@ impl From<wire::DictationResult> for DictationResult {
     }
 }
 
+/// Saturates: a quiet limit past `u32::MAX` ms (49 days) reads as that.
+fn quiet_limit_ms(duration: std::time::Duration) -> u32 {
+    u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
+}
+
 impl From<RelayStage> for wire::RelayEvent {
     fn from(outcome: RelayStage) -> Self {
         let mut event = Self::default();
         let stage = match outcome {
+            RelayStage::Recording { quiet_limit } => {
+                event.quiet_limit_ms = quiet_limit_ms(quiet_limit);
+                wire::RelayStage::Recording
+            }
+            RelayStage::Continued { taken, quiet_limit } => {
+                event.taken_bytes = taken;
+                event.quiet_limit_ms = quiet_limit_ms(quiet_limit);
+                wire::RelayStage::Continued
+            }
             RelayStage::Transcribing => wire::RelayStage::Transcribing,
             RelayStage::Completed {
                 text,
@@ -3893,6 +3907,22 @@ mod tests {
     use aria_voice::dictation::DictationError;
 
     use super::*;
+
+    #[test]
+    fn recording_and_continued_tell_the_client_its_quiet_limit() {
+        let quiet_limit = std::time::Duration::from_millis(4_500);
+        let recording = wire::RelayEvent::from(RelayStage::Recording { quiet_limit });
+        let continued = wire::RelayEvent::from(RelayStage::Continued {
+            taken: 320,
+            quiet_limit,
+        });
+
+        assert_eq!(recording.stage(), wire::RelayStage::Recording);
+        assert_eq!(recording.quiet_limit_ms, 4_500);
+        assert_eq!(continued.stage(), wire::RelayStage::Continued);
+        assert_eq!(continued.taken_bytes, 320);
+        assert_eq!(continued.quiet_limit_ms, 4_500);
+    }
 
     #[test]
     fn submitted_text_reads_as_completed_to_a_phone_that_ignores_the_return() {
