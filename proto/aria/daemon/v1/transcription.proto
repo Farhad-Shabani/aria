@@ -28,12 +28,13 @@ service SystemTranscriptionService {
   // Refused with HISTORY_UNAVAILABLE while history can't open, since only
   // history knows the files it names.
   rpc DiscardUnsaved(DiscardUnsavedTranscriptRequest) returns (DiscardUnsavedTranscriptResponse);
-  // Copy an unsaved transcript to `destination`, then delete it. A file
-  // already there is replaced, and keeps its mode. Refused with
-  // INVALID_REQUEST for a destination in either Aria folder or a file
-  // history saved, with UNSAVED_TRANSCRIPT_MISSING once the transcript is
-  // gone, and with HISTORY_UNAVAILABLE while history can't open.
-  rpc SaveUnsaved(SaveUnsavedTranscriptRequest) returns (SaveUnsavedTranscriptResponse);
+  // Stream an unsaved transcript for the caller to write at `destination`,
+  // a file it can write, then DiscardUnsaved. Refused with INVALID_REQUEST
+  // for a destination in ~/.aria or a file history saved, BUSY for the
+  // running session's file, UNSAVED_TRANSCRIPT_MISSING once the transcript
+  // is gone, and HISTORY_UNAVAILABLE while history can't open. Chunks
+  // arrive in order. The text is whole only once the stream ends with OK.
+  rpc ExportUnsaved(ExportUnsavedTranscriptRequest) returns (stream ExportUnsavedTranscriptResponse);
 }
 
 message StartSystemTranscriptionRequest {
@@ -98,16 +99,15 @@ message DiscardUnsavedTranscriptRequest {
 
 message DiscardUnsavedTranscriptResponse {}
 
-message SaveUnsavedTranscriptRequest {
+message ExportUnsavedTranscriptRequest {
   string name = 1;
   // An absolute file path.
   string destination = 2;
 }
 
-message SaveUnsavedTranscriptResponse {
-  // The copy is saved, but the unsaved transcript stayed, because removing
-  // it failed or another file took its name.
-  bool kept = 1;
+message ExportUnsavedTranscriptResponse {
+  // At most 64 KiB.
+  bytes chunk = 1;
 }
 
 message StopSystemTranscriptionRequest {}

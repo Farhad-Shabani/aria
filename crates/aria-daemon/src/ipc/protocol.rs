@@ -39,7 +39,7 @@ use aria_voice::history::{ChatPage, ChatQuery, ClearHistoryResult, PromptResult}
 use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use aria_voice::stt::LanguageCodeError;
-use aria_voice::system_transcription::unsaved::{Saved, UnsavedText, UnsavedTranscriptList};
+use aria_voice::system_transcription::unsaved::{UnsavedText, UnsavedTranscriptList};
 use aria_voice::system_transcription::{
     SystemAudioLevel, SystemTranscriptionSnapshot, SystemTranscriptionStage,
     SystemTranscriptionStarted, SystemTranscriptionStopped, TranscriptSaving,
@@ -1501,23 +1501,13 @@ impl TryFrom<wire::StartSystemTranscriptionRequest> for Option<std::path::PathBu
 }
 
 /// The unsaved transcript's name, and where its copy goes.
-impl TryFrom<wire::SaveUnsavedTranscriptRequest> for (String, std::path::PathBuf) {
+impl TryFrom<wire::ExportUnsavedTranscriptRequest> for (String, std::path::PathBuf) {
     type Error = ProtocolError;
 
-    fn try_from(request: wire::SaveUnsavedTranscriptRequest) -> Result<Self, Self::Error> {
+    fn try_from(request: wire::ExportUnsavedTranscriptRequest) -> Result<Self, Self::Error> {
         let destination =
             absolute_path(&request.destination).ok_or(ProtocolError::InvalidTranscriptPath)?;
         Ok((request.name, destination))
-    }
-}
-
-impl From<Saved> for wire::SaveUnsavedTranscriptResponse {
-    fn from(saved: Saved) -> Self {
-        let kept = match saved {
-            Saved::Removed => false,
-            Saved::Kept => true,
-        };
-        Self { kept }
     }
 }
 
@@ -5951,9 +5941,9 @@ mod tests {
     }
 
     #[test]
-    fn an_unsaved_transcript_saves_only_to_an_absolute_path() {
+    fn an_unsaved_transcript_exports_only_to_an_absolute_path() {
         let decode = |destination: &str| {
-            <(String, std::path::PathBuf)>::try_from(wire::SaveUnsavedTranscriptRequest {
+            <(String, std::path::PathBuf)>::try_from(wire::ExportUnsavedTranscriptRequest {
                 name: "2026-11-25T10-00-00Z-1a2b3c4d.txt".into(),
                 destination: destination.into(),
             })

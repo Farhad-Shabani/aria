@@ -1,8 +1,15 @@
 //! The system transcription service: wire translation over the daemon's
 //! system transcription slot.
 
+use std::io::{self, Read};
+use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 
+use aria_settings::rpc::RpcFailure;
+use aria_voice::system_transcription::unsaved::UnsavedError;
+use tokio::sync::mpsc;
+use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
 
 use crate::ipc::wire;
@@ -35,7 +42,7 @@ impl wire::system_transcription_service_server::SystemTranscriptionService
         request: Request<wire::StartSystemTranscriptionRequest>,
     ) -> Result<Response<wire::StartSystemTranscriptionResponse>, Status> {
         const METHOD: &str = "SystemTranscriptionService/Start";
-        let output = Option::<std::path::PathBuf>::try_from(request.into_inner())
+        let output = Option::<PathBuf>::try_from(request.into_inner())
             .map_err(|error| super::invalid_request(METHOD, &error))?;
         let state = Arc::clone(&self.state);
         match super::blocking(METHOD, move || state.start(output)).await? {
@@ -124,20 +131,116 @@ impl wire::system_transcription_service_server::SystemTranscriptionService
         }
     }
 
-    async fn save_unsaved(
+    type ExportUnsavedStream = ExportStream;
+
+    async fn export_unsaved(
         &self,
-        request: Request<wire::SaveUnsavedTranscriptRequest>,
-    ) -> Result<Response<wire::SaveUnsavedTranscriptResponse>, Status> {
-        const METHOD: &str = "SystemTranscriptionService/SaveUnsaved";
-        let (name, destination) = <(String, std::path::PathBuf)>::try_from(request.into_inner())
+        request: Request<wire::ExportUnsavedTranscriptRequest>,
+    ) -> Result<Response<Self::ExportUnsavedStream>, Status> {
+        const METHOD: &str = "SystemTranscriptionService/ExportUnsaved";
+        let (name, destination) = <(String, PathBuf)>::try_from(request.into_inner())
             .map_err(|error| super::invalid_request(METHOD, &error))?;
         let state = Arc::clone(&self.state);
-        match super::blocking(METHOD, move || state.save_unsaved(&name, &destination)).await? {
-            Ok(saved) => {
-                super::served(METHOD);
-                Ok(Response::new(saved.into()))
+        let source =
+            match super::blocking(METHOD, move || state.export_unsaved(&name, &destination)).await?
+            {
+                Ok(source) => source,
+                Err(failure) => return Err(super::failed(METHOD, failure)),
+            };
+        let (chunks, receiver) = mpsc::channel(EXPORT_CAPACITY);
+        tokio::task::spawn_blocking(move || {
+            let sent = send_chunks(source, |chunk| {
+                chunks
+                    .blocking_send(Ok(wire::ExportUnsavedTranscriptResponse { chunk }))
+                    .is_ok()
+            });
+            match sent {
+                Ok(Exported::Whole) => super::served(METHOD),
+                Ok(Exported::Abandoned) => {
+                    tracing::debug!(method = METHOD, "the caller left before the export ended");
+                }
+                Err(error) => {
+                    let failure = RpcFailure::from(&UnsavedError::Io(error));
+                    let _ = chunks.blocking_send(Err(super::failed(METHOD, failure)));
+                }
             }
-            Err(failure) => Err(super::failed(METHOD, failure)),
+        });
+        Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
+    }
+}
+
+/// How much of a transcript one export message carries.
+const EXPORT_CHUNK_BYTES: u64 = 64 * 1024;
+/// Chunks queued for a slow caller, so one that stalls holds little memory.
+const EXPORT_CAPACITY: usize = 4;
+
+type ExportStream =
+    Pin<Box<dyn Stream<Item = Result<wire::ExportUnsavedTranscriptResponse, Status>> + Send>>;
+
+/// How an export ended without a read error.
+#[derive(Debug, PartialEq, Eq)]
+enum Exported {
+    Whole,
+    /// The caller stopped taking chunks, as when it hung up.
+    Abandoned,
+}
+
+/// Reads `source` to its end, a chunk at a time, and hands each to `send`,
+/// which says whether the caller took it.
+fn send_chunks(
+    mut source: impl Read,
+    mut send: impl FnMut(Vec<u8>) -> bool,
+) -> io::Result<Exported> {
+    loop {
+        let mut chunk = Vec::new();
+        (&mut source)
+            .take(EXPORT_CHUNK_BYTES)
+            .read_to_end(&mut chunk)?;
+        if chunk.is_empty() {
+            return Ok(Exported::Whole);
         }
+        if !send(chunk) {
+            return Ok(Exported::Abandoned);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_export_sends_the_whole_file_in_bounded_chunks() {
+        let text: Vec<u8> = (0..200 * 1024).map(|byte| (byte % 251) as u8).collect();
+        let mut chunks = Vec::new();
+
+        let exported = send_chunks(text.as_slice(), |chunk| {
+            chunks.push(chunk);
+            true
+        })
+        .unwrap();
+
+        assert_eq!(exported, Exported::Whole);
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| chunk.len() as u64 <= EXPORT_CHUNK_BYTES)
+        );
+        assert_eq!(chunks.concat(), text);
+    }
+
+    #[test]
+    fn an_export_stops_once_the_caller_leaves() {
+        let text = vec![b'a'; 200 * 1024];
+        let mut sent = 0;
+
+        let exported = send_chunks(text.as_slice(), |_| {
+            sent += 1;
+            false
+        })
+        .unwrap();
+
+        assert_eq!(exported, Exported::Abandoned);
+        assert_eq!(sent, 1);
     }
 }

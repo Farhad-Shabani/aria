@@ -3,6 +3,7 @@
 //! A mutexed slot rather than an actor: a system transcription must outlive the
 //! RPC that started it, so nothing here ties cancellation to a request.
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::thread::{self, JoinHandle};
@@ -16,7 +17,7 @@ use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::config::{SpeakerConfig, SystemTranscriptionConfig};
 use aria_voice::history::TRANSCRIPTION_INTERRUPTED;
 use aria_voice::system_transcription::unsaved::{
-    Saved, UnsavedFolder, UnsavedText, UnsavedTranscriptList,
+    UnsavedFolder, UnsavedText, UnsavedTranscriptList,
 };
 use aria_voice::system_transcription::{
     Kept, SaveHistory, SystemAudioCapture, SystemTranscriptionError,
@@ -291,19 +292,17 @@ impl SystemTranscriptionState {
             .map_err(|error| RpcFailure::from(&error))
     }
 
-    /// Copies `name` to `destination`, then removes it. The copy runs
-    /// without the files lock, since the destination may be a slow volume.
-    pub(super) fn save_unsaved(&self, name: &str, destination: &Path) -> Result<Saved, RpcFailure> {
-        let mut copy = {
-            let _files = self.lock_files();
-            let running = self.running();
-            self.unsaved_folder()?
-                .start_save(name, destination, running.as_deref())
-                .map_err(|error| RpcFailure::from(&error))?
-        };
-        copy.write().map_err(|error| RpcFailure::from(&error))?;
+    /// Opens `name` to read, for a copy the caller writes at `destination`.
+    pub(super) fn export_unsaved(
+        &self,
+        name: &str,
+        destination: &Path,
+    ) -> Result<File, RpcFailure> {
         let _files = self.lock_files();
-        Ok(copy.finish())
+        let running = self.running();
+        self.unsaved_folder()?
+            .open_to_save(name, destination, running.as_deref())
+            .map_err(|error| RpcFailure::from(&error))
     }
 
     fn unsaved_folder(&self) -> Result<UnsavedFolder, RpcFailure> {

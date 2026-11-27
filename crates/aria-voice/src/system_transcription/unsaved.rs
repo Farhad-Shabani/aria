@@ -2,6 +2,7 @@
 //! full. Each waits in Aria's own `~/.aria/unsaved` folder until the person
 //! saves or discards it.
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -108,34 +109,34 @@ impl UnsavedFolder {
         }
     }
 
-    /// Starts saving `name` to `destination`, a file of the person's outside
-    /// Aria's folders, unless `running` still writes it. Refused while
-    /// history can't open, since only history knows the files it names.
-    /// The copy runs next, without the caller's files lock.
+    /// Opens `name` to read, for a copy the caller writes at
+    /// `destination`: a file of the person's outside `~/.aria` that no
+    /// session is writing. Refused while history can't open, since only
+    /// history knows the files it names.
     ///
-    /// `start_save(name, "/Users/me/Documents/meeting.txt", None)?.write()?`,
-    /// then `.finish()` → `Saved::Removed`.
-    pub fn start_save(
+    /// `open_to_save(name, "/Users/me/Documents/meeting.txt", None)` → the
+    /// transcript, open to read from its start.
+    pub fn open_to_save(
         &self,
         name: &str,
         destination: &Path,
         running: Option<&Path>,
-    ) -> Result<UnsavedCopy, UnsavedError> {
+    ) -> Result<File, UnsavedError> {
         self.folders.check()?;
         let Some(owned) = &self.owned else {
             return Err(UnsavedError::History(HistoryError::Unavailable));
         };
         let transcript = self.get(name)?;
-        if running == Some(transcript.path.as_path()) {
+        let writes = |path: &Path| {
+            running.is_some_and(|running| {
+                OwnedFiles::locate(HashSet::from([running.to_path_buf()])).contains(path)
+            })
+        };
+        if writes(&transcript.path) || writes(destination) {
             return Err(UnsavedError::Busy);
         }
         self.folders.check_destination(destination, Some(owned))?;
-        let source = transcript_file::open(&transcript.path)?;
-        Ok(UnsavedCopy {
-            source,
-            path: transcript.path,
-            destination: destination.to_path_buf(),
-        })
+        Ok(transcript_file::open(&transcript.path)?)
     }
 
     /// Every unsaved transcript but `running`'s and those history owns,
@@ -236,58 +237,6 @@ pub struct UnsavedTranscriptList {
     pub unsaved_dir: PathBuf,
 }
 
-/// A save under way: the unsaved transcript open to read, and where its
-/// copy goes.
-pub struct UnsavedCopy {
-    source: File,
-    path: PathBuf,
-    destination: PathBuf,
-}
-
-impl UnsavedCopy {
-    /// Writes the copy whole at the destination, over any file there.
-    pub fn write(&mut self) -> Result<(), UnsavedError> {
-        transcript_file::copy(&mut self.source, &self.destination).map_err(UnsavedError::Io)
-    }
-
-    /// Removes the unsaved transcript once its copy is written, unless
-    /// another file took its name meanwhile.
-    pub fn finish(self) -> Saved {
-        let source = match self.source.metadata() {
-            Ok(source) => source,
-            Err(error) => {
-                tracing::warn!(%error, "a saved transcript's unsaved file was kept");
-                return Saved::Kept;
-            }
-        };
-        match transcript_file::inspect(&self.path) {
-            Ok(now) if transcript_file::same_file(&now, &source) => {}
-            Ok(_) | Err(OpenError::Foreign) => return Saved::Kept,
-            Err(OpenError::Missing) => return Saved::Removed,
-            Err(OpenError::Io(error)) => {
-                tracing::warn!(%error, "a saved transcript's unsaved file was kept");
-                return Saved::Kept;
-            }
-        }
-        match transcript_file::unlink(&self.path) {
-            Ok(Removal::Removed | Removal::Missing | Removal::Unavailable) => Saved::Removed,
-            Ok(Removal::Foreign) => Saved::Kept,
-            Err(error) => {
-                tracing::warn!(%error, "a saved transcript's unsaved file was kept");
-                Saved::Kept
-            }
-        }
-    }
-}
-
-/// What became of an unsaved transcript whose copy is written.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Saved {
-    Removed,
-    /// It stayed, since removing it failed or another file took its name.
-    Kept,
-}
-
 /// An unsaved transcript's text, as much as one read returns.
 pub struct UnsavedText {
     pub text: String,
@@ -335,7 +284,7 @@ pub enum UnsavedError {
     Folders(#[from] FolderError),
     #[error(transparent)]
     Destination(#[from] OutputError),
-    #[error("the unsaved transcript couldn't be read, copied or moved")]
+    #[error("the unsaved transcript couldn't be read or moved")]
     Io(#[source] io::Error),
     #[error(transparent)]
     History(#[from] HistoryError),
@@ -605,55 +554,21 @@ mod tests {
         }
     }
 
-    fn mode(path: &Path) -> u32 {
-        fs::metadata(path).unwrap().permissions().mode() & 0o777
-    }
-
-    fn saved(
-        folder: &UnsavedFolder,
-        name: &str,
-        destination: &Path,
-    ) -> Result<Saved, UnsavedError> {
-        let mut copy = folder.start_save(name, destination, None)?;
-        copy.write()?;
-        Ok(copy.finish())
-    }
-
     #[test]
-    fn a_save_copies_the_whole_transcript_privately_then_removes_it() {
+    fn opening_to_save_reads_the_whole_transcript_from_its_start() {
         let home = tempfile::tempdir().unwrap();
         let folder = folder(home.path(), Some(OwnedFiles::default()));
         let name = "2026-11-25T10-00-00Z-0000000a.txt";
         let text = "[00:00:01] heard\n".repeat(100_000);
-        let unsaved = written(&folder, name, &text);
-        let destination = home.path().join("Documents/meeting.txt");
-        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        written(&folder, name, &text);
 
-        let outcome = saved(&folder, name, &destination).unwrap();
+        let mut source = folder
+            .open_to_save(name, &home.path().join("meeting.txt"), None)
+            .unwrap();
 
-        assert_eq!(outcome, Saved::Removed);
-        assert_eq!(fs::read_to_string(&destination).unwrap(), text);
-        assert_eq!(mode(&destination), 0o600);
-        assert!(!unsaved.exists());
-    }
-
-    #[test]
-    fn a_save_over_a_file_replaces_it_and_keeps_its_mode() {
-        let home = tempfile::tempdir().unwrap();
-        let folder = folder(home.path(), Some(OwnedFiles::default()));
-        let name = "2026-11-25T10-00-00Z-0000000a.txt";
-        written(&folder, name, "[00:00:01] heard");
-        let destination = home.path().join("meeting.txt");
-        fs::write(&destination, "an older meeting, and longer").unwrap();
-        fs::set_permissions(&destination, fs::Permissions::from_mode(0o644)).unwrap();
-
-        saved(&folder, name, &destination).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(&destination).unwrap(),
-            "[00:00:01] heard"
-        );
-        assert_eq!(mode(&destination), 0o644);
+        let mut read = String::new();
+        io::Read::read_to_string(&mut source, &mut read).unwrap();
+        assert_eq!(read, text);
     }
 
     #[test]
@@ -673,8 +588,9 @@ mod tests {
             transcripts.join("meeting.txt"),
             transcripts.join("new/meeting.txt"),
             alias.join("meeting.txt"),
+            home.path().join(".aria/settings.toml"),
         ] {
-            let refused = folder.start_save(name, &inside, None).map(drop);
+            let refused = folder.open_to_save(name, &inside, None).map(drop);
 
             let Err(error) = refused else {
                 panic!("{inside:?} was accepted")
@@ -699,7 +615,7 @@ mod tests {
         let name = "2026-11-25T10-00-00Z-0000000a.txt";
         written(&folder, name, "[00:00:01] heard");
 
-        let Err(refused) = folder.start_save(name, &destination, None).map(drop) else {
+        let Err(refused) = folder.open_to_save(name, &destination, None).map(drop) else {
             panic!("a file history saved was replaced")
         };
 
@@ -711,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn a_link_in_place_of_a_transcript_is_never_copied() {
+    fn a_link_in_place_of_a_transcript_is_never_opened() {
         let home = tempfile::tempdir().unwrap();
         let folder = folder(home.path(), Some(OwnedFiles::default()));
         let secret = home.path().join("secret.txt");
@@ -721,14 +637,14 @@ mod tests {
         std::os::unix::fs::symlink(&secret, folder.folders.unsaved().join(name)).unwrap();
         let destination = home.path().join("meeting.txt");
 
-        let refused = folder.start_save(name, &destination, None).map(drop);
+        let refused = folder.open_to_save(name, &destination, None).map(drop);
 
         assert!(matches!(refused, Err(UnsavedError::Foreign)));
         assert!(!destination.exists());
     }
 
     #[test]
-    fn a_save_of_a_gone_running_or_unchecked_transcript_copies_nothing() {
+    fn a_save_of_a_gone_running_or_unchecked_transcript_is_refused() {
         let home = tempfile::tempdir().unwrap();
         let name = "2026-11-25T10-00-00Z-0000000a.txt";
         let destination = home.path().join("meeting.txt");
@@ -746,7 +662,7 @@ mod tests {
             (&opened, name, Some(running.as_path()), RpcErrorCode::Busy),
             (&unchecked, name, None, RpcErrorCode::HistoryUnavailable),
         ] {
-            let refused = folder.start_save(name, &destination, running).map(drop);
+            let refused = folder.open_to_save(name, &destination, running).map(drop);
 
             let Err(error) = refused else {
                 panic!("{code:?} was accepted")
@@ -758,25 +674,23 @@ mod tests {
     }
 
     #[test]
-    fn a_file_that_took_the_name_during_the_copy_stays() {
+    fn a_save_onto_the_running_sessions_file_is_refused_however_it_is_spelled() {
         let home = tempfile::tempdir().unwrap();
         let folder = folder(home.path(), Some(OwnedFiles::default()));
         let name = "2026-11-25T10-00-00Z-0000000a.txt";
-        let unsaved = written(&folder, name, "[00:00:01] first");
-        let destination = home.path().join("meeting.txt");
+        written(&folder, name, "[00:00:01] heard");
+        let output = home.path().join("Notes.txt");
+        fs::write(&output, "[00:00:01] live").unwrap();
 
-        let mut copy = folder.start_save(name, &destination, None).unwrap();
-        copy.write().unwrap();
-        fs::remove_file(&unsaved).unwrap();
-        written(&folder, name, "[00:00:01] second");
-        let outcome = copy.finish();
+        let refused = folder
+            .open_to_save(name, &home.path().join("NOTES.TXT"), Some(&output))
+            .map(drop);
 
-        assert_eq!(outcome, Saved::Kept);
-        assert_eq!(fs::read_to_string(&unsaved).unwrap(), "[00:00:01] second");
-        assert_eq!(
-            fs::read_to_string(&destination).unwrap(),
-            "[00:00:01] first"
-        );
+        let Err(error) = refused else {
+            panic!("the running session's file was accepted")
+        };
+        assert_eq!(RpcErrorCode::from(&error), RpcErrorCode::Busy);
+        assert_eq!(fs::read_to_string(&output).unwrap(), "[00:00:01] live");
     }
 
     #[test]
