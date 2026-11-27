@@ -16,7 +16,7 @@ use crate::audio::{CaptureError, RecordingReader, StopSignal, Stopper};
 use crate::voice_activity::{SileroVad, VoiceActivityDetector};
 use crate::wake_word::WakeWordDetector;
 
-use super::{AudioCapture, Inputs, MicrophoneError, RecordingMode};
+use super::{AudioCapture, Inputs, MicrophoneError, RecordingMode, Source};
 
 use crate::audio::InputDeviceId;
 pub use devices::{InputDevice, input_devices, is_available, resolve_input};
@@ -84,7 +84,11 @@ impl Microphone {
     // second concurrent record would silently queue behind the first.
     pub fn record(&mut self, mode: RecordingMode) -> Result<(RecordingReader, Stopper)> {
         let stopper = Stopper::new();
-        let recording = self.start(mode, Inputs::Local, StopSignal::from(stopper.clone()))?;
+        let recording = self.start(
+            mode,
+            Source::Microphone(Inputs::Local),
+            StopSignal::from(stopper.clone()),
+        )?;
         Ok((recording, stopper))
     }
 }
@@ -183,9 +187,12 @@ impl AudioCapture for Microphone {
     fn start(
         &self,
         mode: RecordingMode,
-        _inputs: Inputs,
+        source: Source,
         stop: StopSignal,
     ) -> Result<RecordingReader> {
+        let Source::Microphone(_inputs) = source else {
+            return Err(CaptureError::PushedUnsupported);
+        };
         let (mut recording, writer) = recording::ends();
         self.commands
             .send(worker::Command::Record(worker::RecordCommand {

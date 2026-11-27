@@ -14,9 +14,9 @@ audio can include background voices, even when a voice filter excludes them
 from the text.
 
 On your computer, Aria keeps a recording in memory while it transcribes it.
-Only history saves audio to disk. The iPhone and Apple Watch apps record to a
-temporary file, and delete it once they're done with it. Swap or a crash
-dump can still put audio on disk, and deletion isn't secure erasure.
+Only history saves audio to disk. The iPhone and Apple Watch apps send audio
+to your Mac as they record, without saving it. Swap or a crash dump can still
+put audio on disk, and deletion isn't secure erasure.
 
 On a Mac, **Mute while recording** asks macOS to silence other apps, except
 apps already using the microphone. Aria doesn't record, save, or send their

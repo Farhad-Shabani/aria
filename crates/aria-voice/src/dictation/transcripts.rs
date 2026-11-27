@@ -73,6 +73,14 @@ pub struct Delivered {
     pub words: Option<u32>,
 }
 
+/// How many words a press delivered. Without a count from the press, the
+/// count covers the whole text: "see you soon" with no count is 3.
+pub fn word_count(delivered: Option<Delivered>, text: &str) -> u32 {
+    delivered
+        .and_then(|delivered| delivered.words)
+        .unwrap_or_else(|| text.split_whitespace().count() as u32)
+}
+
 /// The Return a dictation offers once its text landed whole: pressed at
 /// most once, and only where the text went. Dropping it presses nothing.
 pub struct ReturnOffer {

@@ -10,15 +10,17 @@ use std::time::{Duration, Instant};
 use crate::audio::capture::modes::{CaptureProgress, CaptureRecording};
 use crate::audio::limit::LimitedWriter;
 use crate::audio::recording::{self, RecordingWriter};
-use crate::audio::{CaptureError, RecordingReader, RecordingSource, StopSignal};
+use crate::audio::{CaptureError, RecordingReader, RecordingSource, StopSignal, canonical_samples};
 use crate::voice_activity::VoiceActivityDetector;
 
-use super::{MicrophoneError, RecordingMode};
+use super::{MicrophoneError, PushedFeed, RecordingMode};
 
 /// How often the recording checks `stop` while no audio arrives.
 const STOP_POLL: Duration = Duration::from_millis(10);
 
-/// Records one utterance at a time from samples a caller pushes in.
+/// Records one utterance at a time from samples a caller pushes in. A
+/// remote device's feed goes in, and a recording of it comes out, ended
+/// as its mode says.
 pub struct PushedCapture<V> {
     maximum_duration: Duration,
     /// One recording runs at a time, as for a microphone, so the lock is
@@ -34,26 +36,27 @@ impl<V: VoiceActivityDetector + Send + 'static> PushedCapture<V> {
         }
     }
 
-    /// Records `first`, then the samples `feed` brings, until `mode` or
-    /// `stop` ends the recording, the feed closes, or no samples arrive for
-    /// `stall`. The caller waits for `first`, so a source that never sends
-    /// leaves it holding `stop`. `finished` runs once, when capture ends,
-    /// whether or not it started.
+    /// Records the feed's first samples, then what it brings, until `mode`
+    /// or `stop` ends the recording, the feed closes, or no samples arrive
+    /// for its stall. The caller waits for the first samples itself, so it
+    /// handles `stop` for a source that never sends.
     pub fn start(
         &self,
         mode: RecordingMode,
-        first: Vec<i16>,
-        feed: Receiver<Vec<i16>>,
-        stall: Duration,
+        feed: PushedFeed,
         stop: StopSignal,
-        finished: impl FnOnce() + Send + 'static,
     ) -> Result<RecordingReader, CaptureError> {
-        let finished = Finished(Some(finished));
+        let PushedFeed {
+            first,
+            rest,
+            stall,
+            finished,
+        } = feed;
         let (recording, writer) = recording::ends();
         let limited = LimitedWriter::new(self.maximum_duration, &writer)?;
         let session = Session {
             mode,
-            feed,
+            feed: rest,
             stall,
             maximum_duration: self.maximum_duration,
         };
@@ -61,7 +64,10 @@ impl<V: VoiceActivityDetector + Send + 'static> PushedCapture<V> {
         writer.begin(RecordingSource::Pushed);
         thread::Builder::new()
             .name("aria-pushed-capture".to_owned())
-            .spawn(move || session.run(limited, &first, &vad, writer, stop, finished))
+            .spawn(move || {
+                let finished = Finished(Some(finished));
+                session.run(limited, &first, &vad, writer, stop, finished);
+            })
             .map_err(MicrophoneError::SpawnWorker)?;
         Ok(recording)
     }
@@ -112,7 +118,8 @@ impl Session {
         first: &[i16],
         stop: &StopSignal,
     ) -> Result<(), CaptureError> {
-        if recording.push(first)? == CaptureProgress::Complete {
+        let mut room = Room(canonical_samples(self.maximum_duration));
+        if room.push(recording, first)? == CaptureProgress::Complete {
             return Ok(());
         }
         let deadline = Instant::now() + self.maximum_duration;
@@ -121,7 +128,7 @@ impl Session {
             match self.feed.recv_timeout(STOP_POLL) {
                 Ok(samples) => {
                     heard = Instant::now();
-                    if recording.push(&samples)? == CaptureProgress::Complete {
+                    if room.push(recording, &samples)? == CaptureProgress::Complete {
                         return Ok(());
                     }
                 }
@@ -136,10 +143,16 @@ impl Session {
                 Err(RecvTimeoutError::Disconnected) => return Ok(()),
             }
             if stop.should_stop() {
-                return self.drain_tail(recording);
+                return self.drain_tail(recording, &mut room);
             }
+            // The sender's clock started first and its packets lag, so its
+            // own limit can land just past this one.
             if Instant::now() >= deadline {
-                return Err(CaptureError::DeadlineExceeded(self.maximum_duration));
+                tracing::info!(
+                    stage = "recording",
+                    "the pushed audio reached the recording limit; keeping what arrived"
+                );
+                return Ok(());
             }
         }
     }
@@ -149,18 +162,55 @@ impl Session {
     fn drain_tail<V: VoiceActivityDetector>(
         &self,
         recording: &mut CaptureRecording<V>,
+        room: &mut Room,
     ) -> Result<(), CaptureError> {
         let Some(limited) = recording.tail() else {
             return Ok(());
         };
         while let Ok(samples) = self.feed.try_recv() {
-            limited.push(&samples)?;
+            let fits = room.take(samples.len());
+            limited.push(&samples[..fits])?;
+            if fits < samples.len() {
+                break;
+            }
         }
         Ok(())
     }
 }
 
-/// Runs the caller's closure once, on every way out, panics included.
+/// The samples a pushed recording has left before its limit. The sender
+/// can't hear the Mac's limit in time, so audio past it ends the recording
+/// with what fits instead of failing it.
+struct Room(u64);
+
+impl Room {
+    /// How many of `wanted` samples fit, now spent.
+    fn take(&mut self, wanted: usize) -> usize {
+        let fits = wanted.min(usize::try_from(self.0).unwrap_or(usize::MAX));
+        self.0 -= fits as u64;
+        fits
+    }
+
+    fn push<V: VoiceActivityDetector>(
+        &mut self,
+        recording: &mut CaptureRecording<V>,
+        samples: &[i16],
+    ) -> Result<CaptureProgress, CaptureError> {
+        let fits = self.take(samples.len());
+        let progress = recording.push(&samples[..fits])?;
+        if self.0 == 0 {
+            tracing::info!(
+                stage = "recording",
+                "the pushed audio reached the recording limit; keeping what fits"
+            );
+            return Ok(CaptureProgress::Complete);
+        }
+        Ok(progress)
+    }
+}
+
+/// Runs the caller's closure once, on every way out of a capture that
+/// started, panics included.
 struct Finished<F: FnOnce()>(Option<F>);
 
 impl<F: FnOnce()> Drop for Finished<F> {
@@ -185,16 +235,27 @@ mod tests {
 
     struct Harness {
         capture: PushedCapture<Loudness>,
+        stall: Duration,
         finished: Arc<AtomicBool>,
     }
 
     impl Harness {
         fn new() -> Self {
-            let capture = PushedCapture::new(Duration::from_secs(60), Loudness);
             Self {
-                capture,
+                capture: PushedCapture::new(Duration::from_secs(60), Loudness),
+                stall: STALL,
                 finished: Arc::new(AtomicBool::new(false)),
             }
+        }
+
+        fn with_limit(mut self, limit: Duration) -> Self {
+            self.capture = PushedCapture::new(limit, Loudness);
+            self
+        }
+
+        fn with_stall(mut self, stall: Duration) -> Self {
+            self.stall = stall;
+            self
         }
 
         fn start(
@@ -205,11 +266,13 @@ mod tests {
         ) -> (SyncSender<Vec<i16>>, Result<RecordingReader, CaptureError>) {
             let (feed, samples) = sync_channel(64);
             let finished = Arc::clone(&self.finished);
-            let outcome = self
-                .capture
-                .start(mode, first, samples, STALL, stop, move || {
+            let outcome = self.capture.start(
+                mode,
+                PushedFeed::new(first, samples, self.stall, move || {
                     finished.store(true, Ordering::SeqCst);
-                });
+                }),
+                stop,
+            );
             (feed, outcome)
         }
     }
@@ -300,6 +363,67 @@ mod tests {
             recorded_duration(recording.expect("audio arrived")).expect("the recording finishes");
 
         assert_eq!(audio, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn audio_that_fills_the_limit_ends_the_recording_at_once() {
+        let harness = Harness::new()
+            .with_limit(Duration::from_secs(1))
+            .with_stall(Duration::from_secs(30));
+        let (feed, recording) = harness.start(
+            speech(Duration::from_millis(500)),
+            RecordingMode::UntilStopped,
+            StopSignal::never(),
+        );
+        feed.send(speech(Duration::from_millis(500))).expect("sent");
+        let filled = Instant::now();
+
+        let audio =
+            recorded_duration(recording.expect("audio arrived")).expect("the recording finishes");
+
+        assert_eq!(audio, Duration::from_secs(1));
+        assert!(
+            filled.elapsed() < Duration::from_millis(500),
+            "no wait for the deadline"
+        );
+        drop(feed);
+    }
+
+    #[test]
+    fn audio_past_the_limit_ends_the_recording_with_what_fits() {
+        let harness = Harness::new().with_limit(Duration::from_secs(1));
+        let (feed, recording) = harness.start(
+            speech(Duration::from_millis(700)),
+            RecordingMode::UntilStopped,
+            StopSignal::never(),
+        );
+        feed.send(speech(Duration::from_millis(700))).expect("sent");
+
+        let audio =
+            recorded_duration(recording.expect("audio arrived")).expect("the recording finishes");
+
+        assert_eq!(audio, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_feed_still_sending_at_the_limit_ends_with_what_arrived() {
+        let harness = Harness::new().with_limit(Duration::from_millis(200));
+        let (feed, recording) = harness.start(
+            speech(Duration::from_millis(10)),
+            RecordingMode::UntilStopped,
+            StopSignal::never(),
+        );
+        let sending = std::thread::spawn(move || {
+            while feed.send(speech(Duration::from_millis(1))).is_ok() {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+
+        let audio =
+            recorded_duration(recording.expect("audio arrived")).expect("the recording finishes");
+
+        assert!(audio < Duration::from_millis(200), "{audio:?}");
+        sending.join().expect("the sender stops once capture ends");
     }
 
     #[test]

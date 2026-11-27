@@ -19,7 +19,7 @@ use crate::audio::{RecordingReader, RecordingSource, canonical_duration, canonic
 use crate::primitives::file_inspection::{InspectedFile, InspectionError};
 
 use super::RecordingMode;
-use super::{AudioCapture, CaptureError, Inputs};
+use super::{AudioCapture, CaptureError, Source};
 
 type Result<T> = std::result::Result<T, WavReplayError>;
 
@@ -65,9 +65,12 @@ impl AudioCapture for WavReplayCapture {
     fn start(
         &self,
         _mode: RecordingMode,
-        _inputs: Inputs,
+        source: Source,
         stop: StopSignal,
     ) -> std::result::Result<RecordingReader, CaptureError> {
+        let Source::Microphone(_inputs) = source else {
+            return Err(CaptureError::PushedUnsupported);
+        };
         let mut recording = match self.pace {
             ReplayPace::Immediate => RecordingReader::from_pcm16(&self.samples),
             ReplayPace::Realtime => {
@@ -174,11 +177,41 @@ fn checked_reader(
 mod tests {
     use super::*;
     use crate::audio::WavError;
+    use crate::audio::capture::{Inputs, PushedFeed};
     use crate::audio::testing::{FIXTURE_SAMPLES, canonical_fixture, write_fixture};
     use crate::audio::wav::wav_spec;
 
     const MAXIMUM_DURATION: Duration = Duration::from_secs(10);
     const PACE: ReplayPace = ReplayPace::Immediate;
+
+    #[test]
+    fn a_refused_feed_never_says_it_finished() {
+        let directory = tempfile::tempdir().unwrap();
+        let replay = WavReplayCapture::new(
+            Duration::from_secs(5),
+            &canonical_fixture(directory.path()),
+            ReplayPace::Immediate,
+        )
+        .unwrap();
+        let (told, finished) = std::sync::mpsc::channel();
+        let feed = PushedFeed::new(
+            Vec::new(),
+            std::sync::mpsc::channel().1,
+            Duration::ZERO,
+            move || {
+                told.send(()).unwrap();
+            },
+        );
+
+        let refused = replay.start(
+            RecordingMode::UntilStopped,
+            Source::Pushed(feed),
+            StopSignal::never(),
+        );
+
+        assert!(matches!(refused, Err(CaptureError::PushedUnsupported)));
+        assert_eq!(finished.try_iter().count(), 0);
+    }
 
     #[test]
     fn replays_the_fixture_as_recorded_audio() {
@@ -189,7 +222,7 @@ mod tests {
         let mut recording = capture
             .start(
                 RecordingMode::UntilStopped,
-                Inputs::Local,
+                Source::Microphone(Inputs::Local),
                 StopSignal::never(),
             )
             .expect("replay must succeed");
@@ -210,7 +243,7 @@ mod tests {
         let mut recording = capture
             .start(
                 RecordingMode::UntilStopped,
-                Inputs::Local,
+                Source::Microphone(Inputs::Local),
                 StopSignal::never(),
             )
             .expect("replay must start");
@@ -235,7 +268,7 @@ mod tests {
         let mut recording = capture
             .start(
                 RecordingMode::UntilStopped,
-                Inputs::Local,
+                Source::Microphone(Inputs::Local),
                 StopSignal::never(),
             )
             .expect("replay must start");

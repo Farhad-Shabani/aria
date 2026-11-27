@@ -12,8 +12,7 @@ use super::follower::EngineFollower;
 use crate::daemon::DaemonLifetime;
 use crate::daemon::config::{WakeConfig, auto_device};
 use crate::daemon::inference::pairing_id;
-use crate::daemon::relay::Showing;
-use aria_kit::audio::{RecordingReader, WakeWordMonitor};
+use aria_kit::audio::{PushedFeed, RecordingReader, WakeWordMonitor};
 use aria_kit::cancel::{CancelToken, Deadline};
 use aria_platform::delivery::DeliveryFactory;
 use aria_primitives::lazy::Lazy;
@@ -25,10 +24,9 @@ use aria_settings::{
 };
 use aria_voice::config::{DictationConfig, SpeakerConfig, SttBackend};
 use aria_voice::dictation::{
-    ActiveDictation, Announcement, CapturedMicrophone, DeliveredRecording, DictationCoordinator,
-    DictationError, DictationEvent, DictationEventEmitter, DictationOutcome, DictationRequest,
-    DictationSettings, DictationStage, EscapeRule, RecordingId, StopMode, Transcribed,
-    subscribers::DictationSubscribers,
+    ActiveDictation, DictationCoordinator, DictationError, DictationEvent, DictationEventEmitter,
+    DictationOutcome, DictationRequest, DictationSettings, DictationStage, EscapeRule, Executed,
+    RecordingDevice, RecordingId, StopMode, Transcribed, subscribers::DictationSubscribers,
 };
 use aria_voice::history::{HistoryEntry, HistoryError, HistorySource, RetryOptions};
 use aria_voice::microphone::Gate;
@@ -98,6 +96,8 @@ pub(super) struct RetrySetup {
 struct ReadyDictation {
     coordinator: DictationCoordinator<RuntimeExecutor>,
     slot: EngineSlot,
+    /// A capture that serves no phone takes no pushed audio.
+    takes_pushed: bool,
 }
 
 /// A coordinator the daemon already holds, or how to build one when the first
@@ -188,6 +188,7 @@ impl DictationRuntime {
                     .map(|built| ReadyDictation {
                         coordinator: built.coordinator,
                         slot: built.slot,
+                        takes_pushed: built.capture.takes_pushed(),
                     })
                 },
             ))),
@@ -213,11 +214,6 @@ impl DictationRuntime {
     }
 
     #[cfg(test)]
-    pub(in crate::daemon) fn set_emitter(&mut self, emitter: EventEmitter<DictationEvent>) {
-        self.emitter = emitter;
-    }
-
-    #[cfg(test)]
     pub(in crate::daemon) fn execute_with(&mut self, executor: RuntimeExecutor) {
         let policy = aria_voice::dictation::DictationPolicy::new(MAX_DICTATION_TIMEOUT)
             .expect("the longest timeout is a valid policy");
@@ -226,6 +222,7 @@ impl DictationRuntime {
         self.coordinator = CoordinatorState::Ready(ReadyDictation {
             coordinator: DictationCoordinator::new(policy, execution, Arc::clone(&self.microphone)),
             slot,
+            takes_pushed: false,
         });
     }
 
@@ -270,6 +267,7 @@ impl DictationRuntime {
             coordinator: CoordinatorState::Ready(ReadyDictation {
                 coordinator,
                 slot: slot.clone(),
+                takes_pushed: capture.takes_pushed(),
             }),
             retry: Lazy::new(move || {
                 Ok(RetrySetup {
@@ -372,56 +370,34 @@ impl DictationRuntime {
         self.emitter.emit(DictationStage::Failed(code));
     }
 
-    /// Shows a remote recording to every subscriber as it starts, under a
-    /// fresh id from the counter presses use. Claims nothing. Only a daemon
-    /// that built its coordinator at startup serves a relay, so this never
-    /// waits on a model.
-    pub(in crate::daemon) fn announce_recording(
+    /// Runs a press on the audio `feed` brings as a phone or watch records,
+    /// from `device`. Escape or a manual press on the Mac stops it.
+    /// `after_text` runs before the press frees the microphone.
+    pub(in crate::daemon) fn dictate_pushed<T>(
         &self,
-        microphone: CapturedMicrophone,
-    ) -> Result<Announcement, DictationRuntimeError> {
-        let ready = self.loaded()?;
-        let mute_sound = self.snapshot()?.mute_sound;
-        Ok(ready
-            .coordinator
-            .announce_recording(microphone, mute_sound, &self.emitter))
-    }
-
-    /// Ends an announced recording nothing delivers. False when a newer
-    /// recording started since, so nothing was said.
-    pub(in crate::daemon) fn cancel_announced(&self, recording: RecordingId) -> bool {
-        // A coordinator that was never built announced nothing.
-        self.ready()
-            .is_some_and(|ready| ready.coordinator.cancel_announced(recording, &self.emitter))
-    }
-
-    /// Delivers a recording captured elsewhere through the press pipeline.
-    /// The same stages reach every subscriber, so the Mac's status pill
-    /// follows a relayed recording as it follows a press. An announcement
-    /// `showing` continues ends with the pipeline's own terminal stage, or,
-    /// returned before that, as its drop ends it.
-    pub(in crate::daemon) fn dictate_recording(
-        &self,
-        recording: &mut RecordingReader,
-        showing: Showing,
+        feed: PushedFeed,
+        device: Option<RecordingDevice>,
         settings: DictationSettings,
         cancel: CancelToken,
-    ) -> Result<DeliveredRecording, DictationRuntimeError> {
+        after_text: impl FnOnce(Executed) -> Result<T, DictationError>,
+    ) -> Result<T, DictationRuntimeError> {
         if cancel.is_cancelled() {
             return Err(DictationError::Cancelled.into());
         }
         let events = self.operation_emitter(None);
-        let coordinator = match self.loaded() {
-            Ok(ready) => &ready.coordinator,
+        let ready = match self.loaded() {
+            Ok(ready) => ready,
             Err(error) => {
-                // The failure is the announcement's terminal stage.
-                drop(showing.into_relayed());
                 events.emit(DictationStage::Failed((&error).into()));
                 return Err(error.into());
             }
         };
-        coordinator
-            .deliver_recording(recording, showing.into_relayed(), settings, cancel, &events)
+        if !ready.takes_pushed {
+            return Err(DictationRuntimeError::PushedUnsupported);
+        }
+        ready
+            .coordinator
+            .execute_pushed(feed, device, settings, cancel, &events, after_text)
             .map_err(DictationRuntimeError::Execution)
     }
 
@@ -681,6 +657,9 @@ pub(in crate::daemon) enum DictationRuntimeError {
 
     #[error(transparent)]
     Execution(#[from] DictationError),
+
+    #[error("this Mac's capture takes no pushed audio")]
+    PushedUnsupported,
 }
 
 impl From<&DictationRuntimeError> for RpcErrorCode {
@@ -689,6 +668,7 @@ impl From<&DictationRuntimeError> for RpcErrorCode {
             DictationRuntimeError::Settings(error) => error.into(),
             DictationRuntimeError::Initialization(error) => error.into(),
             DictationRuntimeError::Execution(error) => error.into(),
+            DictationRuntimeError::PushedUnsupported => Self::Unsupported,
         }
     }
 }
@@ -974,6 +954,31 @@ mod event_tests {
     }
 
     #[test]
+    fn a_capture_without_pushed_input_refuses_a_pushed_press() {
+        let directory = tempfile::tempdir().unwrap();
+        let settings =
+            Arc::new(SettingsStore::open(directory.path().join("settings.toml")).unwrap());
+        let mut runtime = DictationRuntime::detached(settings);
+        let spy = PressSpy::default();
+        runtime.execute_with(Box::new(spy.clone()));
+        let (_samples, rest) = std::sync::mpsc::channel();
+
+        let refused = runtime.dictate_pushed(
+            PushedFeed::new(vec![0; 160], rest, Duration::from_secs(1), || {}),
+            Some(RecordingDevice::Phone),
+            runtime.relay_settings().unwrap().dictation,
+            CancelToken::never(),
+            |_executed| Ok(()),
+        );
+
+        assert!(matches!(
+            refused,
+            Err(DictationRuntimeError::PushedUnsupported)
+        ));
+        assert!(spy.runs().is_empty(), "no press starts");
+    }
+
+    #[test]
     fn a_hold_runs_without_the_stored_auto_stop() {
         let directory = tempfile::tempdir().unwrap();
         let settings =
@@ -1060,9 +1065,7 @@ mod history_tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use aria_settings::Settings;
-    use aria_voice::dictation::{
-        DictationExecutor, DictationPolicy, DictationResult, ExecutionControl,
-    };
+    use aria_voice::dictation::{DictationExecutor, DictationPolicy, Executed, ExecutionControl};
     use aria_voice::history::{AudioAvailability, DictationContent, HistorySource, HistoryStatus};
 
     use super::*;
@@ -1077,9 +1080,10 @@ mod history_tests {
         fn execute(
             &self,
             _: DictationSettings,
+            _: aria_voice::dictation::PressAudio,
             _: &Arc<ExecutionControl>,
             _: &DictationEventEmitter,
-        ) -> Result<DictationResult, DictationError> {
+        ) -> Result<Executed, DictationError> {
             panic!("history retry must not capture or deliver");
         }
 
@@ -1109,16 +1113,6 @@ mod history_tests {
                 transcript: aria_voice::stt::Transcript::new("recovered words").unwrap(),
                 engine: "test",
             })
-        }
-
-        fn deliver_recording(
-            &self,
-            _: &mut RecordingReader,
-            _: DictationSettings,
-            _: &Arc<aria_voice::dictation::ExecutionControl>,
-            _: &DictationEventEmitter,
-        ) -> Result<DeliveredRecording, DictationError> {
-            panic!("this test never delivers a relayed recording");
         }
     }
 
@@ -1201,7 +1195,11 @@ mod history_tests {
                 runtime: DictationRuntime {
                     emitter: EventEmitter::unsubscribed(),
                     settings,
-                    coordinator: CoordinatorState::Ready(ReadyDictation { coordinator, slot }),
+                    coordinator: CoordinatorState::Ready(ReadyDictation {
+                        coordinator,
+                        slot,
+                        takes_pushed: false,
+                    }),
                     history,
                     microphone,
                     retry: Lazy::new(|| Err(ConfigError::WakeRequiresMicrophone)),
@@ -1240,7 +1238,7 @@ mod history_tests {
             AudioAvailability::Available { .. }
         ));
         assert_eq!(*fixture.seen.lock().unwrap(), [("fr".to_owned(), true)]);
-        assert!(fixture.runtime.microphone.admit_relay().is_some());
+        assert!(fixture.runtime.microphone.admit_return_press().is_some());
     }
 
     #[test]
@@ -1367,7 +1365,7 @@ mod history_tests {
         ));
         assert!(!unchanged.dictation().unwrap().retrying);
         assert!(fixture.seen.lock().unwrap().is_empty());
-        assert!(fixture.runtime.microphone.admit_relay().is_some());
+        assert!(fixture.runtime.microphone.admit_return_press().is_some());
     }
 
     #[tokio::test]
@@ -1450,6 +1448,7 @@ mod history_tests {
             fixture.runtime.coordinator = CoordinatorState::Ready(ReadyDictation {
                 coordinator: built.coordinator,
                 slot: built.slot,
+                takes_pushed: false,
             });
             fixture.runtime.retry = Lazy::new(move || {
                 Ok(RetrySetup {
@@ -1516,7 +1515,7 @@ mod history_tests {
         assert_eq!(entry.status, HistoryStatus::TranscriptionFailed);
         assert!(!entry.dictation().unwrap().retrying);
         assert!(matches!(entry.audio(), AudioAvailability::Available { .. }));
-        assert!(fixture.runtime.microphone.admit_relay().is_some());
+        assert!(fixture.runtime.microphone.admit_return_press().is_some());
         assert!(
             fixture
                 .runtime

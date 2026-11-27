@@ -31,11 +31,10 @@ enum Holder {
     /// Ends on its own terms: a stop names a recording, and an enrollment
     /// has none.
     Enrollment,
-    /// A recording relayed off a phone or watch. It holds the gate without
-    /// using the device: the audio was captured on the phone or watch and
-    /// arrives finished. Nothing local can stop it, because nothing local
-    /// started it.
-    Relay,
+    /// A Return a phone or watch asked for after its text. It holds the
+    /// gate without using the device, so no recording types under it. A stop
+    /// has nothing to end.
+    ReturnPress,
     HistoryRetry,
     /// Held only while the old speech model drops. A press meanwhile is
     /// refused, as for any other holder.
@@ -131,15 +130,28 @@ impl Gate {
         Some(self.claim())
     }
 
-    /// Admits a relayed recording, which owns the gate until its claim
-    /// drops. `None` when something is already recording — the phone is told
-    /// the Mac is busy, and the press at the keyboard wins.
-    pub fn admit_relay(self: &Arc<Self>) -> Option<Claim> {
+    /// Admits a press whose audio a phone or watch pushes in as it records.
+    /// `None` when something is already recording: the phone never stops a
+    /// press at the keyboard. Held as a dictation, so a press or Escape at
+    /// the keyboard stops it.
+    pub(crate) fn admit_pushed(self: &Arc<Self>, control: Arc<ExecutionControl>) -> Option<Claim> {
         let mut holder = self.hold();
         if holder.is_some() {
             return None;
         }
-        *holder = Some(Holder::Relay);
+        *holder = Some(Holder::Dictation(control));
+        Some(self.claim())
+    }
+
+    /// Admits the Return a phone or watch asked for after its text, until
+    /// the claim drops. `None` when something is already recording: the
+    /// phone is told the Mac is busy, and the press at the keyboard wins.
+    pub fn admit_return_press(self: &Arc<Self>) -> Option<Claim> {
+        let mut holder = self.hold();
+        if holder.is_some() {
+            return None;
+        }
+        *holder = Some(Holder::ReturnPress);
         Some(self.claim())
     }
 
@@ -189,7 +201,7 @@ impl Gate {
             Some(
                 Holder::Dictation(_)
                 | Holder::Enrollment
-                | Holder::Relay
+                | Holder::ReturnPress
                 | Holder::HistoryRetry
                 | Holder::EngineSwap,
             )
@@ -209,7 +221,10 @@ impl Gate {
         match self.hold().as_ref() {
             Some(Holder::Dictation(running)) => Some(ActiveDictation::new(Arc::clone(running))),
             Some(
-                Holder::Enrollment | Holder::Relay | Holder::HistoryRetry | Holder::EngineSwap,
+                Holder::Enrollment
+                | Holder::ReturnPress
+                | Holder::HistoryRetry
+                | Holder::EngineSwap,
             )
             | None => None,
         }
@@ -283,9 +298,44 @@ mod tests {
 
         assert!(gate.admit_engine_swap(&cancel).is_none());
         assert!(
-            gate.admit_relay().is_none(),
+            gate.admit_return_press().is_none(),
             "the enrollment still holds the gate"
         );
+    }
+
+    #[test]
+    fn a_pushed_press_never_takes_a_busy_microphone() {
+        let gate = Gate::new();
+        let Admitted::Claimed(press) =
+            gate.admit_dictation(StopMode::Manual, control(StopMode::Manual))
+        else {
+            panic!("an idle microphone admits a dictation");
+        };
+        assert!(gate.admit_pushed(control(StopMode::Manual)).is_none());
+        drop(press);
+        assert!(gate.admit_pushed(control(StopMode::Manual)).is_some());
+    }
+
+    #[test]
+    fn the_keyboard_stops_a_pushed_press() {
+        let gate = Gate::new();
+        let pushed = control(StopMode::Manual);
+        let _claim = gate
+            .admit_pushed(Arc::clone(&pushed))
+            .expect("an idle microphone admits a pushed press");
+        let _recording = pushed
+            .start_recording(
+                aria_settings::DeliveryMode::Streaming,
+                crate::dictation::TranscriptRoute::Deliver,
+                &DictationEventEmitter::unsubscribed(),
+            )
+            .unwrap();
+
+        assert!(gate.active_dictation().is_some(), "Escape reaches it");
+        assert!(matches!(
+            gate.admit_dictation(StopMode::Manual, control(StopMode::Manual)),
+            Admitted::StopAccepted
+        ));
     }
 
     #[test]
@@ -400,7 +450,7 @@ mod tests {
         let gate = Gate::new();
         let retry = gate.admit_history_retry().unwrap();
         assert!(gate.admit_history_retry().is_none());
-        assert!(gate.admit_relay().is_none());
+        assert!(gate.admit_return_press().is_none());
         assert!(gate.admit_enrollment().is_none());
         assert!(matches!(
             gate.admit_dictation(StopMode::Manual, control(StopMode::Manual)),
@@ -508,27 +558,28 @@ mod tests {
     /// nothing runs afterwards to tidy up. Without the drop, every later
     /// press is refused with no way back.
     #[test]
-    fn a_relay_holds_the_microphone_until_its_claim_drops() {
+    fn a_return_press_holds_the_microphone_until_its_claim_drops() {
         let gate = Gate::new();
 
-        let relaying = gate.admit_relay().expect("the microphone is idle");
-        assert!(gate.admit_relay().is_none(), "one relay at a time");
+        let pressing = gate.admit_return_press().expect("the microphone is idle");
+        assert!(gate.admit_return_press().is_none(), "one at a time");
         assert!(matches!(
             gate.admit_dictation(StopMode::Manual, control(StopMode::Manual)),
             Admitted::Busy
         ));
 
-        drop(relaying);
+        drop(pressing);
 
-        assert!(gate.admit_relay().is_some(), "a dropped claim releases");
+        assert!(
+            gate.admit_return_press().is_some(),
+            "a dropped claim releases"
+        );
     }
 
-    /// The audio was captured on the wrist and is already in the engine, so
-    /// a press has nothing left to cut short.
     #[test]
-    fn a_press_cannot_stop_a_relay() {
+    fn a_stop_does_not_end_a_return_press() {
         let gate = Gate::new();
-        let _relaying = gate.admit_relay().expect("the microphone is idle");
+        let _pressing = gate.admit_return_press().expect("the microphone is idle");
 
         assert!(!gate.stop_recording(RecordingId(0)));
     }

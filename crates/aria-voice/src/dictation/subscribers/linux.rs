@@ -34,7 +34,7 @@ impl LinuxFeedback {
             }
             // The device that records it tells the person it started.
             DictationStage::Recording {
-                origin: RecordingOrigin::Remote,
+                origin: RecordingOrigin::Remote(_),
                 ..
             }
             // The start cue played at the press.

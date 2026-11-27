@@ -16,12 +16,11 @@ use tokio::time::Instant;
 use aria_settings::Microphone;
 use aria_settings::rpc::RpcErrorCode;
 
+use super::capture::FEED_CHUNKS;
+
 /// How long a phone may take to confirm Stop. Past it, the phone may still
 /// be capturing, so its stream ends.
 const STOP_DEADLINE: Duration = Duration::from_secs(2);
-/// About six seconds of tenth-second chunks, far more than the capture
-/// thread ever lags.
-const FEED_CHUNKS: usize = 64;
 /// Start and Stop alternate, so two would do.
 const COMMANDS: usize = 4;
 

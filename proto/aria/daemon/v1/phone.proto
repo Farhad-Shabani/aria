@@ -4,30 +4,33 @@ syntax = "proto3";
 
 package aria.daemon.v1;
 
+import "aria/daemon/v1/dictation.proto";
 import "aria/daemon/v1/microphone.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 service RelayService {
-  // Take one recording from a phone or watch on the LAN, transcribe it
-  // through the model this daemon already holds, and deliver the text the
-  // way a press would. The client sends a `RelayStart`, then `RelayAudio`
-  // chunks, then a `RelayStop` or a half-close.
-  // The recorder stays claimed until the session ends, blocking local dictation.
+  // Take one recording from a phone or watch on the LAN as it is recorded,
+  // and run it as a press on the Mac from its first audio. The client sends a
+  // `RelayStart`, then `RelayAudio` chunks, then a `RelayStop` or a
+  // half-close. The press types as the Mac's delivery setting says,
+  // streaming included, and Escape or a manual press on the Mac stops it. It
+  // starts only while nothing records on the Mac.
   // Cancelling the RPC requests cancellation of transcription and delivery;
   // it cannot undo text already delivered.
-  // Uploads are capped at 4 MiB per message and four concurrent streams per
-  // connection. Audio more than a second past 600 seconds (19,232,000 bytes of
-  // PCM) is refused as it streams.
+  // Messages are capped at 4 MiB and four concurrent streams per connection.
+  // Audio more than a second past 600 seconds (19,232,000 bytes of PCM) is
+  // refused as it streams.
   // RelayStart must arrive within 10 seconds. After Start, a 10-second idle
-  // gap yields NO_SPEECH if no audio bytes arrived, or OVERALL_TIMEOUT if
-  // audio arrived. Uploads must finish within 120 seconds after Start.
+  // gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, it
+  // ends the recording with what it has. So does the Mac's recording limit.
+  // The press runs within the Mac's dictation timeouts.
   // Failures arrive as a status carrying an RpcError, not as an event:
-  //   BUSY - a recording is running
-  //   PAYLOAD_TOO_LARGE - an upload limit is exceeded, or the audio is too long
+  //   BUSY - a recording is running. This can arrive after the first audio.
+  //   PAYLOAD_TOO_LARGE - the audio is too long
+  //   UNSUPPORTED - the Mac's capture can't take audio from a device
   //   INVALID_REQUEST - an unsupported format, a missing, late or second
-  //     RelayStart, no audio, or PCM ending mid-sample
-  //   OVERALL_TIMEOUT - an unfinished upload stalls or exceeds 120 seconds
+  //     RelayStart, PCM ending mid-sample, or a chunk that isn't whole samples
   //   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
   //   SHUTTING_DOWN - the daemon is stopping
   //   CANCELLED - the client's own stream failed
@@ -35,21 +38,6 @@ service RelayService {
   //     DELIVERY_TARGET_CHANGED - as for a press on the Mac
   // Delivery failures do not return the text and can include partial delivery.
   rpc Relay(stream RelayRequest) returns (stream RelayEvent);
-
-  // Announces a remote recording as it starts, before its audio arrives, so
-  // the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
-  // `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
-  // One shows at a time: a second replaces the first, which ends without a
-  // word. The recording's `Relay` continues it by `recording_id`.
-  // `CancelRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
-  // and so does a `Relay` that continues it but fails before transcribing.
-  // Once a newer recording started, as a press on the Mac, it ends without a
-  // word instead, so the newer one's stages keep the pill.
-  //   INVALID_REQUEST - the device is unspecified
-  rpc StartRemoteRecording(StartRemoteRecordingRequest) returns (StartRemoteRecordingResponse);
-  // Ends an announced recording that won't be relayed, as when the device
-  // discards it. An id that isn't the one shown changes nothing.
-  rpc CancelRemoteRecording(CancelRemoteRecordingRequest) returns (CancelRemoteRecordingResponse);
 }
 
 // Pins the certificate the phone presented on this connection, in exchange
@@ -135,22 +123,6 @@ message RevokePhoneRequest {
 
 message RevokePhoneResponse {}
 
-message StartRemoteRecordingRequest {
-  RecordingDevice device = 1;
-}
-
-message StartRemoteRecordingResponse {
-  // The recording's id, as its dictation events carry it.
-  uint64 recording_id = 1;
-}
-
-message CancelRemoteRecordingRequest {
-  // As `StartRemoteRecordingResponse` gave it.
-  uint64 recording_id = 1;
-}
-
-message CancelRemoteRecordingResponse {}
-
 message RelayRequest {
   oneof body {
     RelayStart start = 1;
@@ -163,17 +135,7 @@ message RelayRequest {
 // The opening message of a stream. Any other opening message is refused.
 message RelayStart {
   AudioFormat format = 1;
-  // Press Return once the text is inserted, checked as a `RelaySubmit` is,
-  // before COMPLETED. Changes nothing where the app only copies. An app set
-  // to insert and press Return does this without it. Ignored unless the Mac
-  // lets the phone press Return (`Settings.phone_submits`).
-  bool submit = 2;
-  // The announced recording this relay continues, as
-  // `StartRemoteRecordingResponse` gave it. Its dictation events then carry
-  // this id. Absent, or an id no longer shown: the relay announces itself
-  // from `device` once its audio is in.
-  optional uint64 recording_id = 3;
-  // The phone or watch that recorded. Unspecified for an older client.
+  // The phone or watch that records. Unspecified for an older client.
   RecordingDevice device = 4;
 }
 
@@ -200,15 +162,21 @@ message RelayEvent {
   RelayStage stage = 1;
   // The text; only on COMPLETED.
   string text = 2;
-  // On COMPLETED: Return was pressed after the text, as `RelayStart.submit`
-  // or an app set to insert and press Return asks, so no `RelaySubmit` is
-  // taken. Terminal. Only while the Mac lets the phone press Return
-  // (`Settings.phone_submits`); otherwise such an app only types,
-  // and this stays false.
+  // On COMPLETED: Return was pressed after the text, as an app set to
+  // insert and press Return asks, so no `RelaySubmit` is taken. Terminal.
+  // Only while the Mac lets the phone press Return
+  // (`Settings.phone_submits`); otherwise such an app only types, and this
+  // stays false.
   bool submitted = 3;
   // On COMPLETED: the Mac takes one `RelaySubmit` for this text, and the
   // stream stays open for it. Absent when it takes none.
   ReturnOffer return_offer = 4;
+  // On COMPLETED: where the text went. NOT_TYPED or IN_HISTORY when the
+  // press ended away from its field, which can come after some words typed.
+  DeliveryOutcome delivery = 5;
+  // On COMPLETED: how many of the text's words went where `delivery` says,
+  // its last ones when some typed before.
+  uint32 word_count = 6;
 }
 
 // The Return the Mac offers after a relayed recording's text.
@@ -220,7 +188,8 @@ message ReturnOffer {
 
 enum RelayStage {
   RELAY_STAGE_UNSPECIFIED = 0;
-  // The upload is complete; transcribing is starting.
+  // The recording ended. The Mac can stop it before the client does, and
+  // drops audio sent after this.
   RELAY_STAGE_TRANSCRIBING = 1;
   // Transcription and delivery succeeded. Terminal, unless it carries a
   // `return_offer`: the stream then stays open for a `RelaySubmit`, and the

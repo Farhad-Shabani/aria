@@ -34,8 +34,8 @@ pub use stop::{StopSignal, Stopper};
 
 #[cfg(not(target_family = "wasm"))]
 pub use capture::{
-    AudioCapture, AutoStop, AutoStopError, Inputs, MicrophoneError, RecordingMode, ReplayPace,
-    SilenceDuration, SilenceDurationError, WavReplayCapture, WavReplayError,
+    AudioCapture, AutoStop, AutoStopError, Inputs, MicrophoneError, PushedFeed, RecordingMode,
+    ReplayPace, SilenceDuration, SilenceDurationError, Source, WavReplayCapture, WavReplayError,
 };
 #[cfg(all(feature = "microphone", not(target_family = "wasm")))]
 pub use capture::{

@@ -35,37 +35,9 @@ public enum Aria_Daemon_V1_RelayService: Sendable {
                 type: .bidirectionalStreaming
             )
         }
-        /// Namespace for "StartRemoteRecording" metadata.
-        public enum StartRemoteRecording: Sendable {
-            /// Request type for "StartRemoteRecording".
-            public typealias Input = Aria_Daemon_V1_StartRemoteRecordingRequest
-            /// Response type for "StartRemoteRecording".
-            public typealias Output = Aria_Daemon_V1_StartRemoteRecordingResponse
-            /// Descriptor for "StartRemoteRecording".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.RelayService"),
-                method: "StartRemoteRecording",
-                type: .unary
-            )
-        }
-        /// Namespace for "CancelRemoteRecording" metadata.
-        public enum CancelRemoteRecording: Sendable {
-            /// Request type for "CancelRemoteRecording".
-            public typealias Input = Aria_Daemon_V1_CancelRemoteRecordingRequest
-            /// Response type for "CancelRemoteRecording".
-            public typealias Output = Aria_Daemon_V1_CancelRemoteRecordingResponse
-            /// Descriptor for "CancelRemoteRecording".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "aria.daemon.v1.RelayService"),
-                method: "CancelRemoteRecording",
-                type: .unary
-            )
-        }
         /// Descriptors for all methods in the "aria.daemon.v1.RelayService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
-            Relay.descriptor,
-            StartRemoteRecording.descriptor,
-            CancelRemoteRecording.descriptor
+            Relay.descriptor
         ]
     }
 }
@@ -89,25 +61,27 @@ extension Aria_Daemon_V1_RelayService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Take one recording from a phone or watch on the LAN, transcribe it
-        /// > through the model this daemon already holds, and deliver the text the
-        /// > way a press would. The client sends a `RelayStart`, then `RelayAudio`
-        /// > chunks, then a `RelayStop` or a half-close.
-        /// > The recorder stays claimed until the session ends, blocking local dictation.
+        /// > Take one recording from a phone or watch on the LAN as it is recorded,
+        /// > and run it as a press on the Mac from its first audio. The client sends a
+        /// > `RelayStart`, then `RelayAudio` chunks, then a `RelayStop` or a
+        /// > half-close. The press types as the Mac's delivery setting says,
+        /// > streaming included, and Escape or a manual press on the Mac stops it. It
+        /// > starts only while nothing records on the Mac.
         /// > Cancelling the RPC requests cancellation of transcription and delivery;
         /// > it cannot undo text already delivered.
-        /// > Uploads are capped at 4 MiB per message and four concurrent streams per
-        /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
-        /// > PCM) is refused as it streams.
+        /// > Messages are capped at 4 MiB and four concurrent streams per connection.
+        /// > Audio more than a second past 600 seconds (19,232,000 bytes of PCM) is
+        /// > refused as it streams.
         /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
-        /// > gap yields NO_SPEECH if no audio bytes arrived, or OVERALL_TIMEOUT if
-        /// > audio arrived. Uploads must finish within 120 seconds after Start.
+        /// > gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, it
+        /// > ends the recording with what it has. So does the Mac's recording limit.
+        /// > The press runs within the Mac's dictation timeouts.
         /// > Failures arrive as a status carrying an RpcError, not as an event:
-        /// >   BUSY - a recording is running
-        /// >   PAYLOAD_TOO_LARGE - an upload limit is exceeded, or the audio is too long
+        /// >   BUSY - a recording is running. This can arrive after the first audio.
+        /// >   PAYLOAD_TOO_LARGE - the audio is too long
+        /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
         /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
-        /// >     RelayStart, no audio, or PCM ending mid-sample
-        /// >   OVERALL_TIMEOUT - an unfinished upload stalls or exceeds 120 seconds
+        /// >     RelayStart, PCM ending mid-sample, or a chunk that isn't whole samples
         /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
         /// >   SHUTTING_DOWN - the daemon is stopping
         /// >   CANCELLED - the client's own stream failed
@@ -131,62 +105,6 @@ extension Aria_Daemon_V1_RelayService {
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Aria_Daemon_V1_RelayEvent>) async throws -> Result
         ) async throws -> Result where Result: Sendable
-
-        /// Call the "StartRemoteRecording" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Announces a remote recording as it starts, before its audio arrives, so
-        /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
-        /// > `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
-        /// > One shows at a time: a second replaces the first, which ends without a
-        /// > word. The recording's `Relay` continues it by `recording_id`.
-        /// > `CancelRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
-        /// > and so does a `Relay` that continues it but fails before transcribing.
-        /// > Once a newer recording started, as a press on the Mac, it ends without a
-        /// > word instead, so the newer one's stages keep the pill.
-        /// >   INVALID_REQUEST - the device is unspecified
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_StartRemoteRecordingRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_StartRemoteRecordingRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_StartRemoteRecordingResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func startRemoteRecording<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_StartRemoteRecordingRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_StartRemoteRecordingRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_StartRemoteRecordingResponse>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_StartRemoteRecordingResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
-        /// Call the "CancelRemoteRecording" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Ends an announced recording that won't be relayed, as when the device
-        /// > discards it. An id that isn't the one shown changes nothing.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_CancelRemoteRecordingRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_CancelRemoteRecordingRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_CancelRemoteRecordingResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func cancelRemoteRecording<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_CancelRemoteRecordingRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_CancelRemoteRecordingRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_CancelRemoteRecordingResponse>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelRemoteRecordingResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
     }
 
     /// Generated client for the "aria.daemon.v1.RelayService" service.
@@ -209,25 +127,27 @@ extension Aria_Daemon_V1_RelayService {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Take one recording from a phone or watch on the LAN, transcribe it
-        /// > through the model this daemon already holds, and deliver the text the
-        /// > way a press would. The client sends a `RelayStart`, then `RelayAudio`
-        /// > chunks, then a `RelayStop` or a half-close.
-        /// > The recorder stays claimed until the session ends, blocking local dictation.
+        /// > Take one recording from a phone or watch on the LAN as it is recorded,
+        /// > and run it as a press on the Mac from its first audio. The client sends a
+        /// > `RelayStart`, then `RelayAudio` chunks, then a `RelayStop` or a
+        /// > half-close. The press types as the Mac's delivery setting says,
+        /// > streaming included, and Escape or a manual press on the Mac stops it. It
+        /// > starts only while nothing records on the Mac.
         /// > Cancelling the RPC requests cancellation of transcription and delivery;
         /// > it cannot undo text already delivered.
-        /// > Uploads are capped at 4 MiB per message and four concurrent streams per
-        /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
-        /// > PCM) is refused as it streams.
+        /// > Messages are capped at 4 MiB and four concurrent streams per connection.
+        /// > Audio more than a second past 600 seconds (19,232,000 bytes of PCM) is
+        /// > refused as it streams.
         /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
-        /// > gap yields NO_SPEECH if no audio bytes arrived, or OVERALL_TIMEOUT if
-        /// > audio arrived. Uploads must finish within 120 seconds after Start.
+        /// > gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, it
+        /// > ends the recording with what it has. So does the Mac's recording limit.
+        /// > The press runs within the Mac's dictation timeouts.
         /// > Failures arrive as a status carrying an RpcError, not as an event:
-        /// >   BUSY - a recording is running
-        /// >   PAYLOAD_TOO_LARGE - an upload limit is exceeded, or the audio is too long
+        /// >   BUSY - a recording is running. This can arrive after the first audio.
+        /// >   PAYLOAD_TOO_LARGE - the audio is too long
+        /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
         /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
-        /// >     RelayStart, no audio, or PCM ending mid-sample
-        /// >   OVERALL_TIMEOUT - an unfinished upload stalls or exceeds 120 seconds
+        /// >     RelayStart, PCM ending mid-sample, or a chunk that isn't whole samples
         /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
         /// >   SHUTTING_DOWN - the daemon is stopping
         /// >   CANCELLED - the client's own stream failed
@@ -260,84 +180,6 @@ extension Aria_Daemon_V1_RelayService {
                 onResponse: handleResponse
             )
         }
-
-        /// Call the "StartRemoteRecording" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Announces a remote recording as it starts, before its audio arrives, so
-        /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
-        /// > `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
-        /// > One shows at a time: a second replaces the first, which ends without a
-        /// > word. The recording's `Relay` continues it by `recording_id`.
-        /// > `CancelRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
-        /// > and so does a `Relay` that continues it but fails before transcribing.
-        /// > Once a newer recording started, as a press on the Mac, it ends without a
-        /// > word instead, so the newer one's stages keep the pill.
-        /// >   INVALID_REQUEST - the device is unspecified
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_StartRemoteRecordingRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_StartRemoteRecordingRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_StartRemoteRecordingResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func startRemoteRecording<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_StartRemoteRecordingRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_StartRemoteRecordingRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_StartRemoteRecordingResponse>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_StartRemoteRecordingResponse>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Aria_Daemon_V1_RelayService.Method.StartRemoteRecording.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
-
-        /// Call the "CancelRemoteRecording" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Ends an announced recording that won't be relayed, as when the device
-        /// > discards it. An id that isn't the one shown changes nothing.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Aria_Daemon_V1_CancelRemoteRecordingRequest` message.
-        ///   - serializer: A serializer for `Aria_Daemon_V1_CancelRemoteRecordingRequest` messages.
-        ///   - deserializer: A deserializer for `Aria_Daemon_V1_CancelRemoteRecordingResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func cancelRemoteRecording<Result>(
-            request: GRPCCore.ClientRequest<Aria_Daemon_V1_CancelRemoteRecordingRequest>,
-            serializer: some GRPCCore.MessageSerializer<Aria_Daemon_V1_CancelRemoteRecordingRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Aria_Daemon_V1_CancelRemoteRecordingResponse>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelRemoteRecordingResponse>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Aria_Daemon_V1_RelayService.Method.CancelRemoteRecording.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
     }
 }
 
@@ -348,25 +190,27 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Take one recording from a phone or watch on the LAN, transcribe it
-    /// > through the model this daemon already holds, and deliver the text the
-    /// > way a press would. The client sends a `RelayStart`, then `RelayAudio`
-    /// > chunks, then a `RelayStop` or a half-close.
-    /// > The recorder stays claimed until the session ends, blocking local dictation.
+    /// > Take one recording from a phone or watch on the LAN as it is recorded,
+    /// > and run it as a press on the Mac from its first audio. The client sends a
+    /// > `RelayStart`, then `RelayAudio` chunks, then a `RelayStop` or a
+    /// > half-close. The press types as the Mac's delivery setting says,
+    /// > streaming included, and Escape or a manual press on the Mac stops it. It
+    /// > starts only while nothing records on the Mac.
     /// > Cancelling the RPC requests cancellation of transcription and delivery;
     /// > it cannot undo text already delivered.
-    /// > Uploads are capped at 4 MiB per message and four concurrent streams per
-    /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
-    /// > PCM) is refused as it streams.
+    /// > Messages are capped at 4 MiB and four concurrent streams per connection.
+    /// > Audio more than a second past 600 seconds (19,232,000 bytes of PCM) is
+    /// > refused as it streams.
     /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
-    /// > gap yields NO_SPEECH if no audio bytes arrived, or OVERALL_TIMEOUT if
-    /// > audio arrived. Uploads must finish within 120 seconds after Start.
+    /// > gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, it
+    /// > ends the recording with what it has. So does the Mac's recording limit.
+    /// > The press runs within the Mac's dictation timeouts.
     /// > Failures arrive as a status carrying an RpcError, not as an event:
-    /// >   BUSY - a recording is running
-    /// >   PAYLOAD_TOO_LARGE - an upload limit is exceeded, or the audio is too long
+    /// >   BUSY - a recording is running. This can arrive after the first audio.
+    /// >   PAYLOAD_TOO_LARGE - the audio is too long
+    /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
     /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
-    /// >     RelayStart, no audio, or PCM ending mid-sample
-    /// >   OVERALL_TIMEOUT - an unfinished upload stalls or exceeds 120 seconds
+    /// >     RelayStart, PCM ending mid-sample, or a chunk that isn't whole samples
     /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
     /// >   SHUTTING_DOWN - the daemon is stopping
     /// >   CANCELLED - the client's own stream failed
@@ -394,74 +238,6 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
             onResponse: handleResponse
         )
     }
-
-    /// Call the "StartRemoteRecording" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Announces a remote recording as it starts, before its audio arrives, so
-    /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
-    /// > `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
-    /// > One shows at a time: a second replaces the first, which ends without a
-    /// > word. The recording's `Relay` continues it by `recording_id`.
-    /// > `CancelRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
-    /// > and so does a `Relay` that continues it but fails before transcribing.
-    /// > Once a newer recording started, as a press on the Mac, it ends without a
-    /// > word instead, so the newer one's stages keep the pill.
-    /// >   INVALID_REQUEST - the device is unspecified
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Aria_Daemon_V1_StartRemoteRecordingRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func startRemoteRecording<Result>(
-        request: GRPCCore.ClientRequest<Aria_Daemon_V1_StartRemoteRecordingRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_StartRemoteRecordingResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.startRemoteRecording(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_StartRemoteRecordingRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_StartRemoteRecordingResponse>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "CancelRemoteRecording" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Ends an announced recording that won't be relayed, as when the device
-    /// > discards it. An id that isn't the one shown changes nothing.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Aria_Daemon_V1_CancelRemoteRecordingRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func cancelRemoteRecording<Result>(
-        request: GRPCCore.ClientRequest<Aria_Daemon_V1_CancelRemoteRecordingRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelRemoteRecordingResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.cancelRemoteRecording(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Aria_Daemon_V1_CancelRemoteRecordingRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Aria_Daemon_V1_CancelRemoteRecordingResponse>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
 }
 
 // Helpers providing sugared APIs for 'ClientProtocol' methods.
@@ -471,25 +247,27 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Take one recording from a phone or watch on the LAN, transcribe it
-    /// > through the model this daemon already holds, and deliver the text the
-    /// > way a press would. The client sends a `RelayStart`, then `RelayAudio`
-    /// > chunks, then a `RelayStop` or a half-close.
-    /// > The recorder stays claimed until the session ends, blocking local dictation.
+    /// > Take one recording from a phone or watch on the LAN as it is recorded,
+    /// > and run it as a press on the Mac from its first audio. The client sends a
+    /// > `RelayStart`, then `RelayAudio` chunks, then a `RelayStop` or a
+    /// > half-close. The press types as the Mac's delivery setting says,
+    /// > streaming included, and Escape or a manual press on the Mac stops it. It
+    /// > starts only while nothing records on the Mac.
     /// > Cancelling the RPC requests cancellation of transcription and delivery;
     /// > it cannot undo text already delivered.
-    /// > Uploads are capped at 4 MiB per message and four concurrent streams per
-    /// > connection. Audio more than a second past 600 seconds (19,232,000 bytes of
-    /// > PCM) is refused as it streams.
+    /// > Messages are capped at 4 MiB and four concurrent streams per connection.
+    /// > Audio more than a second past 600 seconds (19,232,000 bytes of PCM) is
+    /// > refused as it streams.
     /// > RelayStart must arrive within 10 seconds. After Start, a 10-second idle
-    /// > gap yields NO_SPEECH if no audio bytes arrived, or OVERALL_TIMEOUT if
-    /// > audio arrived. Uploads must finish within 120 seconds after Start.
+    /// > gap yields NO_SPEECH if no audio bytes arrived. Once audio arrived, it
+    /// > ends the recording with what it has. So does the Mac's recording limit.
+    /// > The press runs within the Mac's dictation timeouts.
     /// > Failures arrive as a status carrying an RpcError, not as an event:
-    /// >   BUSY - a recording is running
-    /// >   PAYLOAD_TOO_LARGE - an upload limit is exceeded, or the audio is too long
+    /// >   BUSY - a recording is running. This can arrive after the first audio.
+    /// >   PAYLOAD_TOO_LARGE - the audio is too long
+    /// >   UNSUPPORTED - the Mac's capture can't take audio from a device
     /// >   INVALID_REQUEST - an unsupported format, a missing, late or second
-    /// >     RelayStart, no audio, or PCM ending mid-sample
-    /// >   OVERALL_TIMEOUT - an unfinished upload stalls or exceeds 120 seconds
+    /// >     RelayStart, PCM ending mid-sample, or a chunk that isn't whole samples
     /// >   APPLICATION_EXCLUDED - the app in front on the Mac has Aria switched off
     /// >   SHUTTING_DOWN - the daemon is stopping
     /// >   CANCELLED - the client's own stream failed
@@ -517,82 +295,6 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
             producer: producer
         )
         return try await self.relay(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "StartRemoteRecording" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Announces a remote recording as it starts, before its audio arrives, so
-    /// > the Mac can show it: DICTATION_STAGE_RECORDING, then CAPTURING with a
-    /// > `RemoteRecording`. Claims nothing, so a press on the Mac still starts.
-    /// > One shows at a time: a second replaces the first, which ends without a
-    /// > word. The recording's `Relay` continues it by `recording_id`.
-    /// > `CancelRemoteRecording` or 610 seconds end it with DICTATION_STAGE_CANCELLED,
-    /// > and so does a `Relay` that continues it but fails before transcribing.
-    /// > Once a newer recording started, as a press on the Mac, it ends without a
-    /// > word instead, so the newer one's stages keep the pill.
-    /// >   INVALID_REQUEST - the device is unspecified
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func startRemoteRecording<Result>(
-        _ message: Aria_Daemon_V1_StartRemoteRecordingRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_StartRemoteRecordingResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_StartRemoteRecordingRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.startRemoteRecording(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "CancelRemoteRecording" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Ends an announced recording that won't be relayed, as when the device
-    /// > discards it. An id that isn't the one shown changes nothing.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func cancelRemoteRecording<Result>(
-        _ message: Aria_Daemon_V1_CancelRemoteRecordingRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Aria_Daemon_V1_CancelRemoteRecordingResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Aria_Daemon_V1_CancelRemoteRecordingRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.cancelRemoteRecording(
             request: request,
             options: options,
             onResponse: handleResponse

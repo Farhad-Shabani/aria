@@ -15,7 +15,7 @@ use crate::speaker::Diarizer;
 use crate::stt::Transcription;
 use aria_harness::own_voice::{ArtifactKind, Placed, SPEAKERS_DIR, Truth};
 use aria_kit::audio::{
-    AudioCapture, CaptureError, Inputs, RecordingMode, RecordingReader, ReplayPace, StopSignal,
+    AudioCapture, CaptureError, RecordingMode, RecordingReader, ReplayPace, Source, StopSignal,
     WavReplayCapture,
 };
 use aria_kit::cancel::CancelToken;
@@ -76,13 +76,13 @@ impl AudioCapture for TimedCapture {
     fn start(
         &self,
         mode: RecordingMode,
-        inputs: Inputs,
+        source: Source,
         stop: StopSignal,
     ) -> Result<RecordingReader, CaptureError> {
         self.started
             .set(Instant::now())
             .expect("one replay per press");
-        self.capture.start(mode, inputs, stop)
+        self.capture.start(mode, source, stop)
     }
 }
 
@@ -1039,6 +1039,7 @@ fn dictate(speaker: &SpeakerConfig, wav: &Path, parakeet: &Arc<Parakeet>, press:
     });
     match pipeline.execute(
         settings,
+        crate::dictation::PressAudio::Captured,
         &ExecutionControl::for_test_lasting(
             StopMode::Manual,
             crate::dictation::EscapeRule::Passes,

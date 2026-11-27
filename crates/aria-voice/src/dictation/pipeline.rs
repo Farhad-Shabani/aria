@@ -33,9 +33,10 @@ use aria_speaker::wespeaker::WeSpeaker;
 
 use super::rewrites::{CorrectedTranscript, CorrectionSettings};
 use super::{
-    CaptionSnapshot, Delivered, DeliveredRecording, DeliveryMode, DictationError,
-    DictationEventEmitter, DictationResult, DictationSettings, DictationStage, ExecutionControl,
-    GhostSnapshot, HeardSpeaker, ReturnOffer, StopMode, Transcribed, TranscriptSink, Utterance,
+    CaptionSnapshot, Delivered, DeliveryMode, DictationError, DictationEventEmitter,
+    DictationResult, DictationSettings, DictationStage, Executed, ExecutionControl, GhostSnapshot,
+    HeardSpeaker, PressAudio, RecordingOrigin, ReturnOffer, StopMode, Transcribed, TranscriptSink,
+    Utterance,
 };
 use super::{CapturedMicrophone, Cleanup, Rewrites, meter, rewrites};
 
@@ -438,19 +439,23 @@ where
     pub fn execute(
         &self,
         settings: DictationSettings,
+        audio: PressAudio,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
         vocabulary: Option<&Vocabulary>,
-    ) -> Result<DictationResult, DictationError> {
+    ) -> Result<Executed, DictationError> {
         let captions = settings.route.delivers();
+        let remote = control.origin() != RecordingOrigin::Local;
         if captions {
             events.emit(CaptionSnapshot::empty(control.recording_id(), false));
         }
         let mut sinks = self.sinks();
-        let result = self.execute_stages(settings, control, events, &mut *sinks, vocabulary);
+        let result = self.execute_stages(settings, audio, control, events, &mut *sinks, vocabulary);
+        // Before the sinks finish, which lets go of where the text went.
+        let delivered = sinks.delivered();
         sinks.dictation_finished(result.as_ref().map(|_| ()));
         // The person at the keyboard has their own Return key.
-        drop(sinks.take_return_offer());
+        let return_offer = sinks.take_return_offer().filter(|_| remote);
         if captions {
             events.emit(CaptionSnapshot::empty(control.recording_id(), true));
         }
@@ -466,97 +471,11 @@ where
         if control.return_dropped() && !control.is_cancelled() {
             events.emit(DictationStage::ReturnDropped);
         }
-        result
-    }
-
-    /// A recording captured elsewhere, delivered as a complete press would
-    /// be: the sinks hear the same calls in the same order. Nothing was
-    /// captured here, so there are no captions and no recording stage.
-    pub fn deliver_recording(
-        &self,
-        recording: &mut RecordingReader,
-        mut settings: DictationSettings,
-        control: &Arc<ExecutionControl>,
-        events: &DictationEventEmitter,
-        vocabulary: Option<&Vocabulary>,
-    ) -> Result<DeliveredRecording, DictationError> {
-        // The recording is already finished, so there is nothing to stream.
-        settings.delivery_mode = DeliveryMode::Complete;
-        let mut sinks = self.sinks();
-        let result = self.deliver_recording_stages(
-            recording,
-            &settings,
-            control,
-            events,
-            &mut *sinks,
-            vocabulary,
-        );
-        sinks.dictation_finished(result.as_ref().map(|_| ()));
-        let return_offer = sinks.take_return_offer();
-        if let Err(error) = &result {
-            events.emit(DictationStage::ended_by(error.into()));
-        }
-        if control.return_dropped() && !control.is_cancelled() {
-            events.emit(DictationStage::ReturnDropped);
-        }
-        result.map(|text| DeliveredRecording { text, return_offer })
-    }
-
-    fn deliver_recording_stages(
-        &self,
-        recording: &mut RecordingReader,
-        settings: &DictationSettings,
-        control: &Arc<ExecutionControl>,
-        events: &DictationEventEmitter,
-        sinks: &mut S,
-        vocabulary: Option<&Vocabulary>,
-    ) -> Result<String, DictationError> {
-        check_execution(control)?;
-        let mut whole = recording.fork_window();
-        let stage_started = Instant::now();
-        sinks
-            .dictation_started(settings, control)
-            .map_err(|error| map_sink_error(error, control))
-            .map_err(|error| log_delivery_error(stage_started.elapsed(), error))?;
-        events.emit(DictationStage::Transcribing);
-        tracing::info!(stage = "transcription", "dictation stage started");
-        let cancel = CancelToken::from_fn({
-            let control = Arc::clone(control);
-            move || control.is_cancelled()
-        });
-        let result = (|| {
-            let (finished, served_by) = self.transcribe_served(
-                recording,
-                &settings.stt_language,
-                settings.own_voice_only,
-                settings.correction(vocabulary),
-                &cancel,
-            )?;
-            if let Some(engine) = served_by {
-                sinks.served_by(engine);
-            }
-            tracing::info!(
-                stage = "transcription",
-                status = "completed",
-                elapsed_ms = stage_started.elapsed().as_millis(),
-                "dictation stage completed"
-            );
-            check_execution(control)?;
-            events.emit(DictationStage::Delivering);
-            deliver_transcript(
-                &finished,
-                &mut Completion::Pending,
-                recording,
-                control,
-                sinks,
-            )?;
-            Ok(finished.transcript.into_text())
-        })();
-        sinks.recording_finished(&mut whole, result.as_ref().map(|_| ()));
-        if let Ok(text) = &result {
-            events.emit(DictationStage::delivered(sinks.delivered(), text));
-        }
-        result
+        result.map(|result| Executed {
+            result,
+            return_offer,
+            delivered,
+        })
     }
 
     /// Recording and transcription overlap: capture runs on its own thread
@@ -566,6 +485,7 @@ where
     fn execute_stages(
         &self,
         mut settings: DictationSettings,
+        audio: PressAudio,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
         sinks: &mut S,
@@ -587,7 +507,8 @@ where
         }
 
         let stage_started = Instant::now();
-        let mut recording = self.start_recording(&settings, control, events, stage_started)?;
+        let mut recording =
+            self.start_recording(&settings, audio, control, events, stage_started)?;
         // Decoding may release audio as it goes. The sinks get every sample.
         let mut whole = recording.fork_window();
         // Only a transcript delivered whole reaches the model.
@@ -675,6 +596,7 @@ where
     fn start_recording(
         &self,
         settings: &DictationSettings,
+        audio: PressAudio,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
         stage_started: Instant,
@@ -689,19 +611,19 @@ where
                 None => RecordingMode::UntilStopped,
             },
         };
+        let stop = StopSignal::from_fn(move || guard.should_stop());
         let recording = self
             .capture
-            .start(
-                mode,
-                settings.inputs,
-                StopSignal::from_fn(move || guard.should_stop()),
-            )
+            .start(mode, audio.source(settings.inputs), stop)
             .map_err(|error| map_capture_error(error, control))
             .map_err(|error| log_stage_error("recording", stage_started.elapsed(), error))?;
         match recording.source() {
             Some(source) => events.emit(DictationStage::Capturing {
                 id: control.recording_id(),
-                microphone: captured_microphone(source),
+                microphone: match control.origin() {
+                    RecordingOrigin::Local => captured_microphone(source),
+                    RecordingOrigin::Remote(device) => CapturedMicrophone::remote(device),
+                },
             }),
             None => tracing::warn!(stage = "recording", "capture started with no source"),
         }
@@ -1815,7 +1737,7 @@ mod tests {
     use crate::stt::{
         Cadence, ChunkStream, Emitted, Hypothesis, Language, Stream, Streaming, Transcription,
     };
-    use aria_kit::audio::Inputs;
+    use aria_kit::audio::{Inputs, PushedFeed, Source};
     use aria_kit::audio::{
         Recording, RecordingWriter, ReplayPace, WavReplayCapture, canonical_fixture, fixture_of,
     };
@@ -2118,10 +2040,12 @@ mod tests {
         ) -> Result<DictationResult, DictationError> {
             self.execute(
                 settings,
+                PressAudio::Captured,
                 &ExecutionControl::for_test(StopMode::Manual),
                 events,
                 None,
             )
+            .map(|executed| executed.result)
         }
     }
 
@@ -2200,7 +2124,7 @@ mod tests {
         fn start(
             &self,
             _mode: RecordingMode,
-            _inputs: Inputs,
+            _source: Source,
             _stop: StopSignal,
         ) -> Result<RecordingReader, CaptureError> {
             let (recording, mut push) = Recording::open();
@@ -2626,11 +2550,11 @@ mod tests {
         fn start(
             &self,
             mode: RecordingMode,
-            inputs: Inputs,
+            source: Source,
             stop: StopSignal,
         ) -> Result<RecordingReader, CaptureError> {
             self.0.lock().unwrap().push(mode);
-            Finished(SPEECH.to_vec()).start(mode, inputs, stop)
+            Finished(SPEECH.to_vec()).start(mode, source, stop)
         }
     }
 
@@ -2669,7 +2593,7 @@ mod tests {
         fn start(
             &self,
             _mode: RecordingMode,
-            _inputs: Inputs,
+            _source: Source,
             _stop: StopSignal,
         ) -> Result<RecordingReader, CaptureError> {
             Err(CaptureError::SourceGone)
@@ -2754,10 +2678,53 @@ mod tests {
     }
 
     #[test]
-    fn a_relayed_recording_into_a_prose_app_writes_prose() {
-        let (directory, capture) = capture();
+    fn a_local_press_leaves_return_to_the_keyboard() {
+        let (_directory, capture) = capture();
+        let log = CallLog::default();
         let pipeline = DictationPipeline::new(
             capture,
+            Transcription::complete(Answering("hello")),
+            (log.history(), log.cursor()),
+        );
+        let executed = pipeline
+            .execute(
+                settings(DeliveryMode::Complete, OutputMode::Insert),
+                PressAudio::Captured,
+                &ExecutionControl::for_test(StopMode::Manual),
+                &DictationEventEmitter::unsubscribed(),
+                None,
+            )
+            .expect("the press completes");
+        assert!(
+            executed.return_offer.is_none(),
+            "a press leaves Return to the keyboard"
+        );
+        assert!(pipeline.sinks().take_return_offer().is_none());
+    }
+
+    /// A capture that takes only pushed audio, and records a replay for it.
+    struct PushedOnly(WavReplayCapture);
+
+    impl AudioCapture for PushedOnly {
+        fn start(
+            &self,
+            mode: RecordingMode,
+            source: Source,
+            stop: StopSignal,
+        ) -> Result<RecordingReader, CaptureError> {
+            let Source::Pushed(_feed) = source else {
+                panic!("a pushed press records on no microphone");
+            };
+            self.0.start(mode, Source::Microphone(Inputs::Local), stop)
+        }
+    }
+
+    #[test]
+    fn a_pushed_press_into_a_prose_app_writes_prose() {
+        use crate::dictation::RecordingDevice;
+        let (_directory, replay) = capture();
+        let pipeline = DictationPipeline::new(
+            PushedOnly(replay),
             Transcription::complete(Answering("read and forward slash or write")),
             (CallLog::default().history(), CallLog::default().cursor()),
         );
@@ -2766,248 +2733,86 @@ mod tests {
             name: "Notes".into(),
             bundle_id: Some("com.apple.Notes".into()),
         });
-        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
-            .expect("the fixture reads");
-        let (events, _) = stage_events();
+        let feed = PushedFeed::new(
+            Vec::new(),
+            std::sync::mpsc::channel().1,
+            Duration::ZERO,
+            || {},
+        );
+
         let text = pipeline
-            .deliver_recording(
-                &mut recording,
+            .execute(
                 settings,
-                &ExecutionControl::for_test(StopMode::Manual),
-                &events,
+                PressAudio::Pushed(feed),
+                &ExecutionControl::for_test_remote(RecordingDevice::Watch),
+                &DictationEventEmitter::unsubscribed(),
                 None,
             )
-            .expect("the relayed recording completes")
+            .expect("the pushed press completes")
+            .result
             .text;
+
         assert_eq!(text, "read and/or write");
     }
 
-    /// The relay goes through this path, so a change to how a press reaches
-    /// history and the cursor reaches relayed recordings too.
     #[test]
-    fn a_relayed_recording_reaches_the_sinks_in_the_same_order_as_a_press() {
-        fn stages_after_capture(
-            stages: &std::sync::mpsc::Receiver<DictationStage>,
-        ) -> Vec<&'static str> {
-            stages
-                .try_iter()
-                .filter(|stage| !matches!(stage, DictationStage::Recording { .. }))
-                .map(|stage| stage.label())
-                .collect()
-        }
-        let press = CallLog::default();
-        let (directory, pressed_capture) = capture();
-        let pipeline = DictationPipeline::new(
-            pressed_capture,
-            Transcription::complete(Answering("hello")),
-            (press.history(), press.cursor()),
-        );
-        let (events, pressed) = stage_events();
-        let pressed_text = pipeline
-            .run_observed(
-                settings(DeliveryMode::Complete, OutputMode::Insert),
-                &events,
-            )
-            .expect("the press completes")
-            .text;
-
-        let relayed = CallLog::default();
-        let (_unused, relayed_capture) = capture();
-        let pipeline = DictationPipeline::new(
-            relayed_capture,
-            Transcription::complete(Answering("hello")),
-            (relayed.history(), relayed.cursor()),
-        );
-        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
-            .expect("the fixture reads");
-        let (events, delivered) = stage_events();
-        let relayed_text = pipeline
-            .deliver_recording(
-                &mut recording,
-                settings(DeliveryMode::Complete, OutputMode::Insert),
-                &ExecutionControl::for_test(StopMode::Manual),
-                &events,
-                None,
-            )
-            .expect("the relayed recording completes")
-            .text;
-
-        assert_eq!(relayed_text, pressed_text);
-        // A press streams each segment to history while capture is live; a
-        // finished recording is heard whole, so only the segments differ.
-        let without_segments = |log: &CallLog| {
-            log.entries()
-                .into_iter()
-                .filter(|entry| !entry.starts_with("segment:"))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(relayed.entries(), without_segments(&press));
-        // A press announces each segment as capture runs; both end the same way.
-        let relayed_stages = stages_after_capture(&delivered);
-        let pressed_stages = stages_after_capture(&pressed);
-        assert_eq!(relayed_stages, ["transcribing", "delivering", "delivered"]);
-        assert_eq!(
-            pressed_stages[pressed_stages.len() - 2..],
-            relayed_stages[1..]
-        );
-    }
-
-    /// History learns how a recording ended from the pipeline alone, so a
-    /// relayed failure is recorded as a press's would be.
-    #[test]
-    fn a_relayed_recording_that_fails_ends_in_history_as_a_press_does() {
-        struct Failing;
-        impl Recognizer for Failing {
-            fn validate_language(
-                &self,
-                _language: &Language,
-                _cancel: &CancelToken,
-            ) -> Result<(), TranscriptionError> {
-                Ok(())
-            }
-            fn recognize_with(
-                &self,
-                _samples: &[f32],
-                _language: &Language,
-                _cancel: &CancelToken,
-            ) -> Result<Hypothesis, TranscriptionError> {
-                Err(TranscriptionError::LoadPanicked)
-            }
-        }
-        /// Logs how each recording ended, which `RecordingSink` leaves out.
-        struct Ending(Arc<Mutex<Vec<String>>>);
-        impl crate::dictation::transcripts::TranscriptSink for Ending {
-            type Error = DictationError;
-            fn segment(
-                &mut self,
-                _utterance: crate::dictation::transcripts::Utterance<'_>,
-            ) -> Result<(), DictationError> {
-                Ok(())
-            }
-            fn completed(
-                &mut self,
-                _utterance: crate::dictation::transcripts::Utterance<'_>,
-            ) -> Result<(), DictationError> {
-                Ok(())
-            }
-            fn recording_finished(
-                &mut self,
-                _recording: &mut RecordingReader,
-                result: Result<(), &DictationError>,
-            ) {
-                self.0.lock().unwrap().push(match result {
-                    Ok(()) => "ok".to_owned(),
-                    Err(error) => error.to_string(),
-                });
-            }
-        }
-
-        let pressed = Arc::new(Mutex::new(Vec::new()));
-        let (directory, pressed_capture) = capture();
-        let pipeline = DictationPipeline::new(
-            pressed_capture,
-            Transcription::complete(Failing),
-            (Ending(Arc::clone(&pressed)), CallLog::default().cursor()),
-        );
-        let (events, _stages) = stage_events();
-        pipeline
-            .run_observed(
-                settings(DeliveryMode::Complete, OutputMode::Insert),
-                &events,
-            )
-            .expect_err("the press fails");
-
-        let relayed = Arc::new(Mutex::new(Vec::new()));
-        let (_unused, relayed_capture) = capture();
-        let pipeline = DictationPipeline::new(
-            relayed_capture,
-            Transcription::complete(Failing),
-            (Ending(Arc::clone(&relayed)), CallLog::default().cursor()),
-        );
-        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
-            .expect("the fixture reads");
-        let (events, _stages) = stage_events();
-        pipeline
-            .deliver_recording(
-                &mut recording,
-                settings(DeliveryMode::Complete, OutputMode::Insert),
-                &ExecutionControl::for_test(StopMode::Manual),
-                &events,
-                None,
-            )
-            .expect_err("the relayed recording fails");
-
-        let pressed = pressed.lock().unwrap().clone();
-        assert_eq!(pressed.len(), 1);
-        assert_ne!(pressed[0], "ok");
-        assert_eq!(*relayed.lock().unwrap(), pressed);
-    }
-
-    #[test]
-    fn only_a_delivered_recording_hands_back_a_return_offer() {
-        let (directory, capture) = capture();
+    fn a_pushed_press_reads_its_audio_shows_as_remote_and_offers_return() {
+        use crate::dictation::RecordingDevice;
+        let (_directory, replay) = capture();
         let log = CallLog::default();
         let pipeline = DictationPipeline::new(
-            capture,
+            PushedOnly(replay),
             Transcription::complete(Answering("hello")),
             (log.history(), log.cursor()),
         );
-        pipeline
-            .run_observed(
-                settings(DeliveryMode::Complete, OutputMode::Insert),
-                &DictationEventEmitter::unsubscribed(),
-            )
-            .expect("the press completes");
-        assert!(
-            pipeline.sinks().take_return_offer().is_none(),
-            "a press leaves Return to the keyboard"
+        let audio = PushedFeed::new(
+            Vec::new(),
+            std::sync::mpsc::channel().1,
+            Duration::ZERO,
+            || {},
         );
+        let settings = settings(DeliveryMode::Complete, OutputMode::Insert);
+        let (events, stages) = stage_events();
 
-        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
-            .expect("the fixture reads");
-        let delivered = pipeline
-            .deliver_recording(
-                &mut recording,
-                settings(DeliveryMode::Complete, OutputMode::Insert),
-                &ExecutionControl::for_test(StopMode::Manual),
-                &DictationEventEmitter::unsubscribed(),
+        let executed = pipeline
+            .execute(
+                settings,
+                PressAudio::Pushed(audio),
+                &ExecutionControl::for_test_remote(RecordingDevice::Watch),
+                &events,
                 None,
             )
-            .expect("the relayed recording is delivered");
-        delivered
+            .expect("the pushed press completes");
+
+        let stages: Vec<_> = stages.try_iter().collect();
+        assert!(stages.iter().any(|stage| matches!(
+            stage,
+            DictationStage::Recording {
+                origin: RecordingOrigin::Remote(Some(RecordingDevice::Watch)),
+                ..
+            }
+        )));
+        assert!(
+            stages.iter().any(|stage| matches!(
+                stage,
+                DictationStage::Capturing {
+                    microphone: CapturedMicrophone::Remote(RecordingDevice::Watch),
+                    ..
+                }
+            )),
+            "the pill names the device that records"
+        );
+        assert_eq!(
+            executed.delivered.map(|delivered| delivered.outcome),
+            Some(super::super::DeliveryOutcome::Inserted),
+            "the relay tells the device where the text went"
+        );
+        executed
             .return_offer
             .expect("typed text offers a Return")
             .press(&CancelToken::new())
             .expect("the field still holds the text");
-
         assert_eq!(log.entries().last().map(String::as_str), Some("return"));
-    }
-
-    #[test]
-    fn a_relayed_recording_is_delivered_complete_even_when_set_to_stream() {
-        let (directory, capture) = capture();
-        let log = CallLog::default();
-        let pipeline = DictationPipeline::new(
-            capture,
-            Transcription::complete(Answering("hello")),
-            (log.history(), log.cursor()),
-        );
-        let mut recording = RecordingReader::from_wav_file(canonical_fixture(directory.path()))
-            .expect("the fixture reads");
-
-        let text = pipeline
-            .deliver_recording(
-                &mut recording,
-                settings(DeliveryMode::Streaming, OutputMode::Copy),
-                &ExecutionControl::for_test(StopMode::Manual),
-                &DictationEventEmitter::unsubscribed(),
-                None,
-            )
-            .expect("the relayed recording is delivered")
-            .text;
-
-        assert_eq!(text, "hello");
-        assert!(log.entries().contains(&"deliver:hello".to_owned()));
     }
 
     #[test]
@@ -3157,12 +2962,13 @@ mod tests {
 
             let result = pipeline.execute(
                 settings,
+                PressAudio::Captured,
                 &control,
                 &DictationEventEmitter::unsubscribed(),
                 Some(&matcher),
             );
 
-            assert_eq!(result.unwrap().text, expected_text);
+            assert_eq!(result.unwrap().result.text, expected_text);
             assert_eq!(log.entries(), expected_log);
         }
     }
@@ -3232,6 +3038,7 @@ mod tests {
                     let result = pipeline
                         .execute(
                             settings(DeliveryMode::Streaming, OutputMode::Insert),
+                            PressAudio::Captured,
                             &ExecutionControl::for_test(StopMode::Manual),
                             &DictationEventEmitter::unsubscribed(),
                             vocabulary,
@@ -3244,7 +3051,7 @@ mod tests {
                         .map(|(_, text)| text.as_str())
                         .collect::<Vec<_>>()
                         .join(" ");
-                    assert_eq!(text, result.text, "delivery and result diverged");
+                    assert_eq!(text, result.result.text, "delivery and result diverged");
                     assert_eq!(
                         text,
                         if enabled {
@@ -3312,12 +3119,13 @@ mod tests {
         let result = pipeline
             .execute(
                 settings,
+                PressAudio::Captured,
                 &ExecutionControl::for_test(StopMode::Manual),
                 &DictationEventEmitter::unsubscribed(),
                 None,
             )
             .unwrap();
-        (result.text, log.entries())
+        (result.result.text, log.entries())
     }
 
     fn streaming() -> DictationSettings {
@@ -3481,12 +3289,13 @@ mod tests {
                 let result = pipeline
                     .execute(
                         settings(mode, OutputMode::Insert),
+                        PressAudio::Captured,
                         &ExecutionControl::for_test(StopMode::Manual),
                         &DictationEventEmitter::unsubscribed(),
                         matcher,
                     )
                     .unwrap();
-                assert_eq!(result.text, expected);
+                assert_eq!(result.result.text, expected);
                 assert_eq!(
                     log.entries().last().unwrap(),
                     &format!("completed:{expected}")
@@ -3831,12 +3640,13 @@ mod tests {
 
             let result = pipeline.execute(
                 settings,
+                PressAudio::Captured,
                 &control,
                 &DictationEventEmitter::unsubscribed(),
                 Some(&matcher),
             );
 
-            assert_eq!(result.unwrap().text, expected_text);
+            assert_eq!(result.unwrap().result.text, expected_text);
         }
     }
 
@@ -4088,7 +3898,7 @@ mod tests {
         fn start(
             &self,
             _mode: RecordingMode,
-            _inputs: Inputs,
+            _source: Source,
             _stop: StopSignal,
         ) -> Result<RecordingReader, CaptureError> {
             let (recording, mut writer) = Recording::open();
@@ -5707,6 +5517,7 @@ mod tests {
 
         let result = pipeline.execute(
             streaming(),
+            PressAudio::Captured,
             &control,
             &DictationEventEmitter::unsubscribed(),
             None,
@@ -5860,6 +5671,7 @@ mod tests {
         pipeline
             .execute(
                 streaming(),
+                PressAudio::Captured,
                 &ExecutionControl::for_test(StopMode::Manual),
                 &DictationEventEmitter::unsubscribed(),
                 None,
@@ -6686,6 +6498,7 @@ mod tests {
 
         let result = pipeline.execute(
             settings(DeliveryMode::Streaming, OutputMode::Insert),
+            PressAudio::Captured,
             &control,
             &DictationEventEmitter::unsubscribed(),
             None,

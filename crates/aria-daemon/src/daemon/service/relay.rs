@@ -1,12 +1,13 @@
 //! Receives LAN audio and dictates it through the press pipeline.
-//! [`crate::daemon::relay`] validates and collects the upload.
+//! [`crate::daemon::relay`] validates the stream and forwards its audio to
+//! the press.
 
 use std::pin::Pin;
 use std::sync::Arc;
 
-use aria_kit::audio::RecordingReader;
+use aria_kit::audio::PushedFeed;
 use aria_kit::cancel::CancelToken;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status, Streaming};
@@ -14,17 +15,14 @@ use tonic::{Request, Response, Status, Streaming};
 use crate::ipc::wire;
 use aria_platform::delivery::OutputMode;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
-use aria_voice::dictation::{DictationError, DictationSettings, RecordingId, ReturnOffer};
-use aria_voice::microphone::{Claim, Gate};
+use aria_voice::dictation::{Delivered, DictationError, DictationSettings, ReturnOffer};
+use aria_voice::microphone::Gate;
 
+use super::super::capture::FEED_CHUNKS;
 use super::super::dictation::{DictationRuntime, DictationRuntimeError, RelaySettings};
-use super::super::relay::{
-    self, Announcements, Collected, Opening, RelayError, RelayStage, Reply, ReplyChannel, Showing,
-};
+use super::super::relay::{self, Opening, PushEnd, RelayError, RelayStage, Reply, ReplyChannel};
 
 const METHOD: &str = "RelayService/Relay";
-const START_REMOTE_RECORDING: &str = "RelayService/StartRemoteRecording";
-const CANCEL_REMOTE_RECORDING: &str = "RelayService/CancelRemoteRecording";
 
 /// Room for every event one session emits, so the worker never waits on a
 /// client that is slow to read.
@@ -33,8 +31,6 @@ const EVENT_CAPACITY: usize = 8;
 /// Served only by persistent daemons with relay enabled.
 pub(in crate::daemon) struct RelayRpc {
     dictation: Arc<DictationRuntime>,
-    /// Every phone's and watch's, so one shows at a time.
-    announcements: Arc<Announcements>,
     microphone: Arc<Gate>,
     /// The daemon's stop, so a session in flight ends with it rather than
     /// holding the drain open until one of its own clocks runs out.
@@ -48,11 +44,30 @@ impl RelayRpc {
         shutdown: CancellationToken,
     ) -> Self {
         Self {
-            announcements: Announcements::new(Arc::clone(&dictation)),
             dictation,
             microphone,
             shutdown,
         }
+    }
+
+    /// The settings a relay reads at admission, and what its Return may do.
+    fn session_settings(&self) -> Result<(DictationSettings, ReturnPolicy), Status> {
+        let RelaySettings {
+            dictation: mut settings,
+            phone_submits,
+        } = self
+            .dictation
+            .relay_settings()
+            .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
+        let return_policy = ReturnPolicy::new(phone_submits, settings.output_mode);
+        settings.output_mode = return_policy.output_mode(settings.output_mode);
+        if settings.application_excluded() {
+            return Err(relay::redacted(super::failed(
+                METHOD,
+                &DictationError::ApplicationExcluded,
+            )));
+        }
+        Ok((settings, return_policy))
     }
 }
 
@@ -68,34 +83,12 @@ impl wire::relay_service_server::RelayService for RelayRpc {
     ) -> Result<Response<Self::RelayStream>, Status> {
         let mut requests = request.into_inner();
 
-        // Both before the stream opens, so a client that opened badly or
-        // arrived while a press was running learns it from the call rather
-        // than from an event it has to interpret.
+        // Before the stream opens, so a client that opened badly learns it
+        // from the call rather than from an event it has to interpret.
         let opening = relay::open(&mut requests)
             .await
             .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
-        // Taken first, so every refusal below ends the announcement too.
-        let showing = self.announcements.showing(&opening);
-        let claim = self
-            .microphone
-            .admit_relay()
-            .ok_or_else(|| relay::redacted(super::failed(METHOD, &RelayError::Busy)))?;
-
-        let RelaySettings {
-            dictation: mut settings,
-            phone_submits,
-        } = self
-            .dictation
-            .relay_settings()
-            .map_err(|error| relay::redacted(super::failed(METHOD, &error)))?;
-        let return_policy = ReturnPolicy::new(phone_submits, opening, settings.output_mode);
-        settings.output_mode = return_policy.output_mode(settings.output_mode);
-        if settings.application_excluded() {
-            return Err(relay::redacted(super::failed(
-                METHOD,
-                &DictationError::ApplicationExcluded,
-            )));
-        }
+        let (settings, return_policy) = self.session_settings()?;
         let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
         let session = Session {
             client: Client {
@@ -103,58 +96,16 @@ impl wire::relay_service_server::RelayService for RelayRpc {
                 shutdown: self.shutdown.clone(),
             },
             microphone: Arc::clone(&self.microphone),
-            upload: Upload {
-                dictation: Arc::clone(&self.dictation),
-                opening,
-                showing,
-                return_policy,
-                _claim: claim,
-                settings,
-            },
+            dictation: Arc::clone(&self.dictation),
+            opening,
+            return_policy,
+            settings,
         };
+        // The session's press claims the recorder once the first audio
+        // arrives.
         tokio::spawn(session.run(requests));
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
-
-    async fn start_remote_recording(
-        &self,
-        request: Request<wire::StartRemoteRecordingRequest>,
-    ) -> Result<Response<wire::StartRemoteRecordingResponse>, Status> {
-        let device = crate::ipc::protocol::recording_device(request.into_inner().device)
-            .ok_or_else(|| {
-                relay::redacted(super::failed(
-                    START_REMOTE_RECORDING,
-                    &RelayError::DeviceUnspecified,
-                ))
-            })?;
-        let id = self
-            .announcements
-            .start(device)
-            .map_err(|error| relay::redacted(super::failed(START_REMOTE_RECORDING, &error)))?;
-        super::served(START_REMOTE_RECORDING);
-        Ok(Response::new(wire::StartRemoteRecordingResponse {
-            recording_id: id.0,
-        }))
-    }
-
-    async fn cancel_remote_recording(
-        &self,
-        request: Request<wire::CancelRemoteRecordingRequest>,
-    ) -> Result<Response<wire::CancelRemoteRecordingResponse>, Status> {
-        self.announcements
-            .cancel(RecordingId(request.into_inner().recording_id));
-        super::served(CANCEL_REMOTE_RECORDING);
-        Ok(Response::new(wire::CancelRemoteRecordingResponse {}))
-    }
-}
-
-/// One relayed recording, from the first chunk to the pasted text, then the
-/// phone's ask for Return after it.
-struct Session {
-    client: Client,
-    /// Taken again for the offered Return, so no recording types under it.
-    microphone: Arc<Gate>,
-    upload: Upload,
 }
 
 /// What the session tells the relay client, and what ends the session
@@ -164,17 +115,16 @@ struct Client {
     shutdown: CancellationToken,
 }
 
-/// What hearing the upload takes. Owns the claim until the text lands, and
-/// any Return pressed with it: dropping it there — or earlier, as the client
-/// vanished or the daemon stopped — frees the recorder before the phone gets
-/// COMPLETED. Dropped before the dictation, it ends the announcement it
-/// continues.
-struct Upload {
+/// One relayed recording: its audio forwarded to a press on the Mac as it
+/// arrives, then the text, then the phone's ask for Return after it.
+struct Session {
+    client: Client,
+    /// Taken for any Return pressed after the text, so no recording types
+    /// under it.
+    microphone: Arc<Gate>,
     dictation: Arc<DictationRuntime>,
     opening: Opening,
-    showing: Showing,
     return_policy: ReturnPolicy,
-    _claim: Claim,
     settings: DictationSettings,
 }
 
@@ -183,11 +133,14 @@ impl Session {
         let Self {
             client,
             microphone,
-            upload,
+            dictation,
+            opening,
+            return_policy,
+            settings,
         } = self;
-        let (audio, channel) = match relay::collect(&mut requests, &client.shutdown).await {
-            Ok(Collected::Audio { audio, channel }) => (audio, channel),
-            Ok(Collected::Silent) => {
+        let first = match relay::first_audio(&mut requests, opening, &client.shutdown).await {
+            Ok(Some(first)) => first,
+            Ok(None) => {
                 tracing::info!(method = METHOD, status = "no_speech", "request served");
                 client.emit(Ok(RelayStage::NoSpeech.into())).await;
                 return;
@@ -199,25 +152,68 @@ impl Session {
                 return;
             }
         };
+        let sent = first.len() * 2;
+        let (feed, rest) = std::sync::mpsc::sync_channel(FEED_CHUNKS);
+        let (capture_ended, capturing) = oneshot::channel();
+        // Runs once the press's capture ends, as when the Mac stops it, so
+        // the phone hears TRANSCRIBING before the text. A session that
+        // already ended has no one to tell.
+        let samples = PushedFeed::new(first, rest, relay::IDLE_TIMEOUT, move || {
+            let _ = capture_ended.send(());
+        });
 
-        client.emit(Ok(RelayStage::Transcribing.into())).await;
-
-        let dictation = Arc::clone(&upload.dictation);
-        let cancel = client.cancel();
-        let heard = tokio::task::spawn_blocking(move || hear(upload, audio, cancel)).await;
-
-        // The pipeline announces every stage of the dictation itself; only
-        // a job that never ran to its end has nothing announced.
-        let heard = match heard {
-            Ok(Ok(Some(heard))) => heard,
-            Ok(Ok(None)) => {
+        let abort = CancellationToken::new();
+        let cancel = client.cancel_with(&abort);
+        let device = opening.device();
+        let job = tokio::task::spawn_blocking({
+            let dictation = Arc::clone(&dictation);
+            move || {
+                let pressing = cancel.clone();
+                dictation.dictate_pushed(samples, device, settings, cancel, move |executed| {
+                    let after = return_policy.after_text(executed.return_offer, &pressing)?;
+                    Ok(Heard {
+                        text: executed.result.text,
+                        delivered: executed.delivered,
+                        after,
+                    })
+                })
+            }
+        });
+        let forwarding = relay::forward(&mut requests, opening, feed, sent);
+        let (ended, joined) = follow_press(&client, capturing, job, forwarding, &abort).await;
+        let channel = match ended {
+            Ok(PushEnd::ClientStopped(channel)) => channel,
+            // The client is still recording, or gone, so it won't ask.
+            Ok(PushEnd::PressEnded) => ReplyChannel::Closed,
+            Err(error) => {
+                client
+                    .emit(Err(relay::redacted(super::failed(METHOD, &error))))
+                    .await;
+                return;
+            }
+        };
+        let heard = match joined {
+            Ok(Ok(heard)) => heard,
+            Ok(Err(error)) if is_silence(&error) => {
                 tracing::info!(method = METHOD, status = "no_speech", "request served");
                 client.emit(Ok(RelayStage::NoSpeech.into())).await;
                 return;
             }
-            Ok(Err(failure)) => {
+            Ok(Err(_error)) if client.shutdown.is_cancelled() => {
                 client
-                    .emit(Err(relay::redacted(super::failed(METHOD, failure))))
+                    .emit(Err(relay::redacted(super::failed(
+                        METHOD,
+                        &RelayError::ShuttingDown,
+                    ))))
+                    .await;
+                return;
+            }
+            Ok(Err(error)) => {
+                client
+                    .emit(Err(relay::redacted(super::failed(
+                        METHOD,
+                        RpcFailure::from(&error),
+                    ))))
                     .await;
                 return;
             }
@@ -235,33 +231,77 @@ impl Session {
                 return;
             }
         };
-
         complete(heard, channel, &microphone, &client, &mut requests).await;
     }
 }
 
-/// What the phone's Return may do after this upload's text. Decided at
-/// admission, so a settings change applies from the next upload.
+/// Runs until the press ends, and says what ended the pushing. The client
+/// hears TRANSCRIBING once, as the press's capture ends, whichever side ends
+/// it. A press refused before capture never says it, so the client hears
+/// only the refusal.
+async fn follow_press<J, F>(
+    client: &Client,
+    mut capturing: oneshot::Receiver<()>,
+    job: J,
+    forwarding: F,
+    abort: &CancellationToken,
+) -> (Result<PushEnd, RelayError>, J::Output)
+where
+    J: Future,
+    F: Future<Output = Result<PushEnd, RelayError>>,
+{
+    tokio::pin!(job);
+    tokio::pin!(forwarding);
+    let mut is_listening = true;
+    let mut pushed = None;
+    loop {
+        tokio::select! {
+            // A capture ends before its press can, so polling it first tells
+            // TRANSCRIBING ahead of the press's answer.
+            biased;
+            told = &mut capturing, if is_listening => {
+                is_listening = false;
+                if told.is_ok() {
+                    client.emit(Ok(RelayStage::Transcribing.into())).await;
+                }
+            }
+            // Ahead of the press, so a stop that arrived keeps its channel.
+            ended = &mut forwarding, if pushed.is_none() => {
+                if ended.is_err() {
+                    abort.cancel();
+                }
+                pushed = Some(ended);
+            }
+            joined = &mut job => {
+                // A capture can end between the poll above and this one.
+                if is_listening && capturing.try_recv().is_ok() {
+                    client.emit(Ok(RelayStage::Transcribing.into())).await;
+                }
+                // Still pushing: the client is recording, or gone.
+                break (pushed.unwrap_or(Ok(PushEnd::PressEnded)), joined);
+            }
+        }
+    }
+}
+
+/// What the phone's Return may do after this recording's text. Decided at
+/// admission, so a settings change applies from the next recording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReturnPolicy {
     /// The Mac doesn't let the phone press Return. The phone may write the
     /// output mode, so insert and press Return only types.
     Never,
     Offer,
-    /// As soon as the text lands, under the upload's claim.
+    /// As soon as the text lands, under the recording's claim.
     Press,
 }
 
 impl ReturnPolicy {
-    fn new(permitted: bool, opening: Opening, output_mode: OutputMode) -> Self {
-        if !permitted {
-            return Self::Never;
-        }
-        let asked = opening.submits() || output_mode == OutputMode::InsertAndSubmit;
-        if asked && output_mode != OutputMode::Copy {
-            Self::Press
-        } else {
-            Self::Offer
+    fn new(permitted: bool, output_mode: OutputMode) -> Self {
+        match (permitted, output_mode) {
+            (false, _) => Self::Never,
+            (true, OutputMode::InsertAndSubmit) => Self::Press,
+            (true, _) => Self::Offer,
         }
     }
 
@@ -307,7 +347,11 @@ async fn complete<S>(
         AfterText::Submitted => {
             tracing::info!(method = METHOD, status = "submitted", "request served");
             client
-                .emit(Ok(RelayStage::CompletedAndSubmitted(heard.text).into()))
+                .emit(Ok(RelayStage::CompletedAndSubmitted {
+                    text: heard.text,
+                    delivered: heard.delivered,
+                }
+                .into()))
                 .await;
             return;
         }
@@ -321,6 +365,7 @@ async fn complete<S>(
     client
         .emit(Ok(RelayStage::Completed {
             text: heard.text,
+            delivered: heard.delivered,
             return_offer: offered,
         }
         .into()))
@@ -347,6 +392,14 @@ impl Client {
         let events = self.events.clone();
         CancelToken::from_fn(move || shutdown.is_cancelled() || events.is_closed())
     }
+
+    /// As [`Client::cancel`], and also once `abort` fires, as when the
+    /// client's stream breaks mid-recording.
+    fn cancel_with(&self, abort: &CancellationToken) -> CancelToken {
+        let client = self.cancel();
+        let abort = abort.clone();
+        CancelToken::from_fn(move || client.is_cancelled() || abort.is_cancelled())
+    }
 }
 
 /// Presses the offered Return if the client asks before the offer lapses. `None`
@@ -371,7 +424,9 @@ where
     let microphone = Arc::clone(microphone);
     let cancel = client.cancel();
     let pressed = super::blocking(METHOD, move || {
-        let _claim = microphone.admit_relay().ok_or(DictationError::Busy)?;
+        let _claim = microphone
+            .admit_return_press()
+            .ok_or(DictationError::Busy)?;
         return_offer.press(&cancel)
     })
     .await;
@@ -387,6 +442,7 @@ where
 
 struct Heard {
     text: String,
+    delivered: Option<Delivered>,
     after: AfterText,
 }
 
@@ -394,40 +450,6 @@ enum AfterText {
     Offered(ReturnOffer),
     Submitted,
     Nothing,
-}
-
-/// Decodes the upload and dictates it. `None` is a recording nobody spoke
-/// in, which is an outcome rather than a failure.
-fn hear(upload: Upload, audio: Vec<u8>, cancel: CancelToken) -> Result<Option<Heard>, RpcFailure> {
-    let Upload {
-        dictation,
-        opening,
-        showing,
-        return_policy,
-        settings,
-        _claim,
-    } = upload;
-    let samples = relay::decode(opening, &audio).map_err(|error| RpcFailure::from(&error))?;
-    // A full recording is about 19 MB as bytes and again as samples, and
-    // transcription reads neither.
-    drop(audio);
-
-    let mut recording = RecordingReader::from_pcm16(&samples);
-    drop(samples);
-
-    let delivered =
-        match dictation.dictate_recording(&mut recording, showing, settings, cancel.clone()) {
-            Ok(delivered) => delivered,
-            Err(error) if is_silence(&error) => return Ok(None),
-            Err(error) => return Err(RpcFailure::from(&error)),
-        };
-    let after = return_policy
-        .after_text(delivered.return_offer, &cancel)
-        .map_err(|error| RpcFailure::from(&error))?;
-    Ok(Some(Heard {
-        text: delivered.text,
-        after,
-    }))
 }
 
 /// Whether the engine heard nothing. A recording of a quiet room is a fact
@@ -445,18 +467,17 @@ mod tests {
 
     use aria_voice::dictation::testing;
 
+    use aria_voice::dictation::DeliveryOutcome;
+
     use super::*;
 
-    async fn opening(submit: bool) -> Opening {
-        let start = wire::RelayRequest {
-            body: Some(wire::relay_request::Body::Start(wire::RelayStart {
-                format: wire::AudioFormat::PcmS16le as i32,
-                submit,
-                ..Default::default()
-            })),
+    fn client() -> (Client, mpsc::Receiver<Result<wire::RelayEvent, Status>>) {
+        let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
+        let client = Client {
+            events,
+            shutdown: CancellationToken::new(),
         };
-        let mut stream = tokio_stream::iter([Ok(start)]);
-        relay::open(&mut stream).await.expect("a valid opening")
+        (client, receiver)
     }
 
     fn submit() -> wire::RelayRequest {
@@ -492,13 +513,13 @@ mod tests {
             .expect("the press succeeds");
         let heard = Heard {
             text: "ship it".to_owned(),
+            delivered: Some(Delivered {
+                outcome: DeliveryOutcome::Inserted,
+                words: None,
+            }),
             after,
         };
-        let (events, mut receiver) = mpsc::channel(EVENT_CAPACITY);
-        let client = Client {
-            events,
-            shutdown: CancellationToken::new(),
-        };
+        let (client, mut receiver) = client();
 
         complete(heard, channel, microphone, &client, &mut requests).await;
         drop(client);
@@ -525,28 +546,128 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_permission_decides_what_the_phones_return_may_do() {
-        use OutputMode::{Copy, Insert, InsertAndSubmit, InsertOrCopy};
-        for (permitted, submit, chosen, policy, output_mode) in [
-            (false, true, Insert, ReturnPolicy::Never, Insert),
-            (false, false, InsertAndSubmit, ReturnPolicy::Never, Insert),
-            (
-                false,
-                false,
-                InsertOrCopy,
-                ReturnPolicy::Never,
-                InsertOrCopy,
-            ),
-            (true, false, Insert, ReturnPolicy::Offer, Insert),
-            (true, false, InsertOrCopy, ReturnPolicy::Offer, InsertOrCopy),
-            (true, true, Insert, ReturnPolicy::Press, Insert),
-            (true, true, InsertOrCopy, ReturnPolicy::Press, Insert),
-            (true, false, InsertAndSubmit, ReturnPolicy::Press, Insert),
-            (true, true, Copy, ReturnPolicy::Offer, Copy),
-        ] {
-            let decided = ReturnPolicy::new(permitted, opening(submit).await, chosen);
+    async fn completed_says_how_many_words_were_not_typed() {
+        let heard = Heard {
+            text: "hello over there".to_owned(),
+            delivered: Some(Delivered {
+                outcome: DeliveryOutcome::NotTyped,
+                words: Some(2),
+            }),
+            after: AfterText::Nothing,
+        };
+        let (client, mut receiver) = client();
 
-            let case = format!("{permitted} {submit} {chosen:?}");
+        let mut requests = tokio_stream::empty();
+        complete(
+            heard,
+            ReplyChannel::Closed,
+            &Gate::new(),
+            &client,
+            &mut requests,
+        )
+        .await;
+
+        let event = receiver.recv().await.expect("COMPLETED").expect("an event");
+        assert_eq!(event.stage(), wire::RelayStage::Completed);
+        assert_eq!(event.delivery(), wire::DeliveryOutcome::NotTyped);
+        assert_eq!(event.word_count, 2);
+    }
+
+    /// The events `follow_press` emitted, and what it says ended the pushing.
+    async fn followed<J: Future>(
+        capturing: oneshot::Receiver<()>,
+        job: J,
+        forwarding: impl Future<Output = Result<PushEnd, RelayError>>,
+    ) -> (
+        Vec<Result<wire::RelayEvent, Status>>,
+        Result<PushEnd, RelayError>,
+    ) {
+        let (client, mut receiver) = client();
+        let (ended, _joined) = follow_press(
+            &client,
+            capturing,
+            job,
+            forwarding,
+            &CancellationToken::new(),
+        )
+        .await;
+        drop(client);
+        let mut emitted = Vec::new();
+        while let Some(event) = receiver.recv().await {
+            emitted.push(event);
+        }
+        (emitted, ended)
+    }
+
+    #[tokio::test]
+    async fn a_press_refused_before_capture_never_says_transcribing() {
+        let (refused_feed, capturing) = oneshot::channel::<()>();
+        drop(refused_feed);
+
+        let (events, ended) = followed(
+            capturing,
+            std::future::ready(Err::<(), _>(DictationError::Busy)),
+            std::future::ready(Ok(PushEnd::PressEnded)),
+        )
+        .await;
+
+        assert!(events.is_empty());
+        assert!(matches!(ended, Ok(PushEnd::PressEnded)));
+    }
+
+    #[tokio::test]
+    async fn an_ended_capture_says_transcribing_once_before_the_press_answers() {
+        let (capture_ended, capturing) = oneshot::channel();
+        capture_ended.send(()).expect("the session listens");
+
+        let (events, ended) = followed(
+            capturing,
+            std::future::ready(()),
+            std::future::ready(Ok(PushEnd::ClientStopped(ReplyChannel::Open))),
+        )
+        .await;
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(stage(&events[0]), (wire::RelayStage::Transcribing, false));
+        assert!(matches!(
+            ended,
+            Ok(PushEnd::ClientStopped(ReplyChannel::Open))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_capture_that_ends_as_the_press_does_still_says_transcribing() {
+        let (capture_ended, capturing) = oneshot::channel();
+        let mut capture_ended = Some(capture_ended);
+        // Capture ends after its notice was polled, and the press with it.
+        let job = std::future::poll_fn(move |_| {
+            if let Some(ended) = capture_ended.take() {
+                ended.send(()).expect("the session listens");
+            }
+            std::task::Poll::Ready(())
+        });
+
+        let (events, _ended) = followed(capturing, job, std::future::pending()).await;
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(stage(&events[0]), (wire::RelayStage::Transcribing, false));
+    }
+
+    #[test]
+    fn the_permission_decides_what_the_phones_return_may_do() {
+        use OutputMode::{Copy, Insert, InsertAndSubmit, InsertOrCopy};
+        for (permitted, chosen, policy, output_mode) in [
+            (false, Insert, ReturnPolicy::Never, Insert),
+            (false, InsertAndSubmit, ReturnPolicy::Never, Insert),
+            (false, InsertOrCopy, ReturnPolicy::Never, InsertOrCopy),
+            (true, Insert, ReturnPolicy::Offer, Insert),
+            (true, InsertOrCopy, ReturnPolicy::Offer, InsertOrCopy),
+            (true, InsertAndSubmit, ReturnPolicy::Press, Insert),
+            (true, Copy, ReturnPolicy::Offer, Copy),
+        ] {
+            let decided = ReturnPolicy::new(permitted, chosen);
+
+            let case = format!("{permitted} {chosen:?}");
             assert_eq!(decided, policy, "{case}");
             assert_eq!(decided.output_mode(chosen), output_mode, "{case}");
         }
@@ -614,7 +735,9 @@ mod tests {
     #[tokio::test]
     async fn an_offered_return_is_refused_while_a_recording_runs() {
         let microphone = Gate::new();
-        let _recording = microphone.admit_relay().expect("the microphone is free");
+        let _recording = microphone
+            .admit_return_press()
+            .expect("the microphone is free");
         let requests = tokio_stream::iter([Ok(submit())]);
 
         let (events, presses) = after_landing(
@@ -632,30 +755,6 @@ mod tests {
         let refused = events[1].as_ref().expect_err("the press is refused");
         let failure = crate::ipc::protocol::rpc_failure(refused).expect("an Aria failure");
         assert_eq!(failure.code, RpcErrorCode::Busy);
-    }
-
-    #[tokio::test]
-    async fn a_remote_recording_must_name_its_device() {
-        use wire::relay_service_server::RelayService;
-        let directory = tempfile::tempdir().unwrap();
-        let settings = Arc::new(
-            aria_settings::SettingsStore::open(directory.path().join("settings.toml")).unwrap(),
-        );
-        let rpc = RelayRpc::new(
-            Arc::new(DictationRuntime::detached(settings)),
-            Gate::new(),
-            CancellationToken::new(),
-        );
-
-        let refused = rpc
-            .start_remote_recording(Request::new(wire::StartRemoteRecordingRequest {
-                device: wire::RecordingDevice::Unspecified as i32,
-            }))
-            .await
-            .expect_err("an unspecified device is refused");
-
-        let failure = crate::ipc::protocol::rpc_failure(&refused).expect("an Aria failure");
-        assert_eq!(failure.code, RpcErrorCode::InvalidRequest);
     }
 
     #[tokio::test]

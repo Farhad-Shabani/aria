@@ -27,10 +27,10 @@ use aria_settings::{
     StreamingUnavailable, StreamingUnavailableOutput, UpdateResult,
 };
 use aria_voice::dictation::{
-    CaptionSnapshot, CapturedMicrophone, DeliveryOutcome, DictationEvent, DictationOutcome,
-    DictationRequest, DictationResult, DictationRoute, DictationStage, EscapeRule, GhostSnapshot,
-    HeardSpeaker, MicLevel, RecordingDevice, RecordingId, RecordingOrigin, StopMode,
-    TranscriptRoute,
+    CaptionSnapshot, CapturedMicrophone, Delivered, DeliveryOutcome, DictationEvent,
+    DictationOutcome, DictationRequest, DictationResult, DictationRoute, DictationStage,
+    EscapeRule, GhostSnapshot, HeardSpeaker, MicLevel, RecordingDevice, RecordingId,
+    RecordingOrigin, StopMode, TranscriptRoute,
 };
 use aria_voice::enrollment::{
     EnrolledSpeaker, EnrollmentRequest, EnrollmentResult, EnrollmentStage,
@@ -425,30 +425,39 @@ impl From<wire::DictationResult> for DictationResult {
 
 impl From<RelayStage> for wire::RelayEvent {
     fn from(outcome: RelayStage) -> Self {
-        let (stage, text, submitted, return_offer) = match outcome {
-            RelayStage::Transcribing => {
-                (wire::RelayStage::Transcribing, String::new(), false, None)
-            }
-            RelayStage::Completed { text, return_offer } => (
-                wire::RelayStage::Completed,
+        let mut event = Self::default();
+        let stage = match outcome {
+            RelayStage::Transcribing => wire::RelayStage::Transcribing,
+            RelayStage::Completed {
                 text,
-                false,
-                return_offer.map(|offered| wire::ReturnOffer {
+                delivered,
+                return_offer,
+            } => {
+                event.set_delivered(delivered, &text);
+                event.text = text;
+                event.return_offer = return_offer.map(|offered| wire::ReturnOffer {
                     application_name: offered.application_name,
-                }),
-            ),
-            RelayStage::CompletedAndSubmitted(text) => {
-                (wire::RelayStage::Completed, text, true, None)
+                });
+                wire::RelayStage::Completed
             }
-            RelayStage::NoSpeech => (wire::RelayStage::NoSpeech, String::new(), false, None),
-            RelayStage::OfferTaken => (wire::RelayStage::OfferTaken, String::new(), false, None),
+            RelayStage::CompletedAndSubmitted { text, delivered } => {
+                event.set_delivered(delivered, &text);
+                event.text = text;
+                event.submitted = true;
+                wire::RelayStage::Completed
+            }
+            RelayStage::NoSpeech => wire::RelayStage::NoSpeech,
+            RelayStage::OfferTaken => wire::RelayStage::OfferTaken,
         };
-        Self {
-            stage: stage as i32,
-            text,
-            submitted,
-            return_offer,
-        }
+        event.stage = stage as i32;
+        event
+    }
+}
+
+impl wire::RelayEvent {
+    fn set_delivered(&mut self, delivered: Option<Delivered>, text: &str) {
+        self.delivery = delivery_outcome_code(delivered.map(|delivered| delivered.outcome)) as i32;
+        self.word_count = aria_voice::dictation::word_count(delivered, text);
     }
 }
 
@@ -2924,9 +2933,9 @@ impl TryFrom<wire::PhoneMicrophoneRequest> for Option<PhoneRequest> {
     }
 }
 
-/// Little-endian 16-bit PCM. The errors name no length, which stays out of
-/// logs.
-fn phone_samples(chunk: &[u8]) -> Result<Vec<i16>, ProtocolError> {
+/// Little-endian 16-bit PCM, as either phone stream sends it. The errors
+/// name no length, which stays out of logs.
+pub(crate) fn phone_samples(chunk: &[u8]) -> Result<Vec<i16>, ProtocolError> {
     if chunk.is_empty() {
         return Err(ProtocolError::EmptyAudio);
     }
@@ -3521,10 +3530,10 @@ impl TryFrom<&wire::DictationEvent> for DictationStage {
                             id: InputDeviceId::new(device.id.as_str()),
                         },
                         Some(Microphone::Phone(_)) => CapturedMicrophone::Pushed,
-                        // A device a newer daemon names reads as no microphone,
-                        // which a pill shows without a glyph.
-                        Some(Microphone::Remote(remote)) => recording_device(remote.device)
-                            .map_or(CapturedMicrophone::Prerecorded, CapturedMicrophone::Remote),
+                        // A device only a newer daemon names goes unnamed.
+                        Some(Microphone::Remote(remote)) => {
+                            CapturedMicrophone::remote(recording_device(remote.device))
+                        }
                         None => CapturedMicrophone::Prerecorded,
                     },
                 })
@@ -3810,13 +3819,22 @@ mod tests {
 
     #[test]
     fn submitted_text_reads_as_completed_to_a_phone_that_ignores_the_return() {
-        let submitted =
-            wire::RelayEvent::from(RelayStage::CompletedAndSubmitted("ship it".to_owned()));
+        let submitted = wire::RelayEvent::from(RelayStage::CompletedAndSubmitted {
+            text: "ship it".to_owned(),
+            delivered: Some(Delivered {
+                outcome: DeliveryOutcome::Inserted,
+                words: None,
+            }),
+        });
         assert_eq!(submitted.stage(), wire::RelayStage::Completed);
         assert_eq!(submitted.text, "ship it");
         assert!(submitted.submitted);
         let completed = wire::RelayEvent::from(RelayStage::Completed {
             text: "ship it".to_owned(),
+            delivered: Some(Delivered {
+                outcome: DeliveryOutcome::Inserted,
+                words: None,
+            }),
             return_offer: None,
         });
         assert!(!completed.submitted);

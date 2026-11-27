@@ -1,9 +1,9 @@
 //! Spies and builders the dictation tests share.
 
 use super::{
-    Cursor, DeliveredRecording, DeliveryMode, DictationError, DictationEventEmitter,
-    DictationExecutor, DictationResult, DictationSettings, EscapeRule, ExecutionControl,
-    RecordingId, ReturnOffer, StopMode, Transcribed, TranscriptSink, Utterance,
+    Cursor, DeliveryMode, DictationError, DictationEventEmitter, DictationExecutor,
+    DictationResult, DictationSettings, EscapeRule, Executed, ExecutionControl, RecordingId,
+    ReturnOffer, StopMode, Transcribed, TranscriptSink, Utterance,
 };
 use crate::history::HistorySource;
 use crate::stt::{Hypothesis, Language, Recognizer, Transcript, TranscriptionError};
@@ -455,12 +455,9 @@ pub enum Edge {
     Recording(RecordingId),
     Stopped,
     Cancelled,
-    /// A recording captured elsewhere reached delivery under this id.
-    Relayed(RecordingId),
 }
 
 /// Records until a stop or a cancel, reports each edge, and hears `HEARD`.
-/// A relayed recording reports its id and hears no speech.
 pub struct RecordsUntilStopped {
     edges: Mutex<mpsc::Sender<Edge>>,
 }
@@ -484,9 +481,10 @@ impl DictationExecutor for RecordsUntilStopped {
     fn execute(
         &self,
         settings: DictationSettings,
+        _audio: super::PressAudio,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<DictationResult, DictationError> {
+    ) -> Result<Executed, DictationError> {
         let recording = control.start_recording(
             aria_settings::DeliveryMode::Complete,
             settings.route,
@@ -501,9 +499,13 @@ impl DictationExecutor for RecordsUntilStopped {
             return Err(DictationError::Cancelled);
         }
         self.report(Edge::Stopped);
-        Ok(DictationResult {
-            text: HEARD.to_owned(),
-            own_voice: false,
+        Ok(Executed {
+            result: DictationResult {
+                text: HEARD.to_owned(),
+                own_voice: false,
+            },
+            return_offer: None,
+            delivered: None,
         })
     }
 
@@ -520,17 +522,6 @@ impl DictationExecutor for RecordsUntilStopped {
             transcript: Transcript::new(HEARD).map_err(DictationError::Transcription)?,
             engine: "test",
         })
-    }
-
-    fn deliver_recording(
-        &self,
-        _recording: &mut RecordingReader,
-        _settings: DictationSettings,
-        control: &Arc<ExecutionControl>,
-        _events: &DictationEventEmitter,
-    ) -> Result<DeliveredRecording, DictationError> {
-        self.report(Edge::Relayed(control.recording_id()));
-        Err(DictationError::NoSpeech)
     }
 }
 
@@ -552,9 +543,10 @@ impl DictationExecutor for PressSpy {
     fn execute(
         &self,
         settings: DictationSettings,
+        _audio: super::PressAudio,
         control: &Arc<ExecutionControl>,
         _events: &DictationEventEmitter,
-    ) -> Result<DictationResult, DictationError> {
+    ) -> Result<Executed, DictationError> {
         self.0
             .lock()
             .unwrap()
@@ -572,16 +564,6 @@ impl DictationExecutor for PressSpy {
         _cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError> {
         panic!("a press never retries history");
-    }
-
-    fn deliver_recording(
-        &self,
-        _recording: &mut RecordingReader,
-        _settings: DictationSettings,
-        _control: &Arc<ExecutionControl>,
-        _events: &DictationEventEmitter,
-    ) -> Result<DeliveredRecording, DictationError> {
-        panic!("a press spy never delivers a relayed recording");
     }
 }
 

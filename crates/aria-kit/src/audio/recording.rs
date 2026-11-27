@@ -46,6 +46,9 @@ pub enum CaptureError {
     #[error("the capture source stopped before the recording ended")]
     SourceGone,
 
+    #[error("this capture takes no pushed audio")]
+    PushedUnsupported,
+
     #[error("the recording already failed and its cause was reported")]
     AlreadyFailed,
 

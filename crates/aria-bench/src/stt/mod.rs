@@ -24,7 +24,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use aria_kit::audio::{
-    AudioCapture, Inputs, RecordingMode, RecordingReader, ReplayPace, StopSignal, WavReplayCapture,
+    AudioCapture, Inputs, RecordingMode, RecordingReader, ReplayPace, Source, StopSignal,
+    WavReplayCapture,
 };
 use aria_kit::primitives::error_chain;
 use aria_voice::stt::{Language, LanguageCode, TranscriptionError};
@@ -399,7 +400,7 @@ fn wav_replay(utterance: &Utterance, pace: ReplayPace) -> Result<RecordingReader
     let replay = WavReplayCapture::new(MAXIMUM_UTTERANCE, &utterance.audio, pace)?;
     Ok(replay.start(
         RecordingMode::UntilStopped,
-        Inputs::Local,
+        Source::Microphone(Inputs::Local),
         StopSignal::never(),
     )?)
 }

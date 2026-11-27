@@ -182,13 +182,13 @@ its model and the day it paired. **Revoke…** beside a phone unpairs that
 phone alone, and **Revoke All…** unpairs every phone at once. A revoked phone
 scans a new code to pair again.
 
-While your iPhone or Apple Watch records, the status pill on your Mac shows how
-long it has been recording and the device's icon. A dictation you start on
-your Mac meanwhile still starts, and the pill follows it instead.
+Your Mac runs a recording from your iPhone or Apple Watch like a dictation you
+start on your Mac. The recording reaches your Mac as you speak, and the status
+pill shows it with the device's icon.
 
-With **Mute while recording** on, other apps on your Mac stay silent until
-the device stops recording. Apps already using the microphone, such as a call,
-keep playing.
+Your Mac takes a device's recording only while nothing records on your Mac.
+Tap the Aria key to stop it, or press **Esc** to cancel it. **Mute while
+recording** doesn't silence other apps for a device's recording.
 
 **Allow your iPhone to press Return**, under **Settings → Phone**, is on by
 default. Your iPhone and Apple Watch can then ask your Mac to press
