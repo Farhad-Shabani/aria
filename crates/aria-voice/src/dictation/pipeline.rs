@@ -8,8 +8,7 @@ use aria_kit::speaker::{Admission, Gate, Released, Speaker, Timeline, TurnFeed};
 use aria_kit::transcription::Heard;
 use aria_kit::transcription::layer::Layer;
 use aria_kit::transcription::{
-    Attachment, Corrected, DeferredWords, Ending, Punctuated, SentenceEnds, Spacing, TypedBefore,
-    Unheld, Writing, check_cancelled,
+    Attachment, Endings, Punctuated, SegmentCorrector, Spacing, Writing, check_cancelled,
 };
 use aria_kit::voice_activity::{SileroVad, SpeechDetector, VoiceActivityDetector};
 
@@ -773,17 +772,25 @@ where
                 |timeline| announced.update(timeline, events),
             );
         }
-        let previews = (published.caption.is_some() || published.streaming) && M::INCREMENTAL;
+        let previews = (published.delivery.caption.is_some() || published.delivery.streaming)
+            && M::INCREMENTAL;
         let deliver = |published: &mut Published<'_>, sinks: &mut S, released: Released| {
             let Released { heard, speaker, .. } = released;
-            let segment = self
+            let typed = self
                 .rewritten(&heard, published, settings.cleanup, &cancel)
-                .map_err(|error| published.failure.take().unwrap_or_else(|| started(error)))?;
+                .map_err(|error| {
+                    published
+                        .delivery
+                        .failure
+                        .take()
+                        .unwrap_or_else(|| started(error))
+                })?;
             let speaker = speaker.as_ref().and_then(Label::enrolled).cloned();
-            published.publish(heard, &segment, speaker, sinks)
+            published.publish(heard, typed, speaker, sinks)
         };
         let failed = |error: HearingError, published: &mut Published<'_>| match error {
             HearingError::Transcription(_) => published
+                .delivery
                 .failure
                 .take()
                 .unwrap_or_else(|| hearing_failed(error, control, started_at)),
@@ -795,13 +802,13 @@ where
          -> Result<(), DictationError> {
             match event {
                 Event::Timeline(timeline) => announced.update(&timeline, events),
-                Event::Preview(shown) => published.provisional(&shown, sinks),
+                Event::Preview(shown) => published.delivery.provisional(&shown, sinks),
                 Event::Idle => {}
                 Event::Released(released) => {
                     deliver(published, sinks, released)?;
                 }
             }
-            published.retry(sinks);
+            published.delivery.retry(sinks);
             Ok(())
         };
         let ended = std::thread::scope(|scope| {
@@ -865,7 +872,7 @@ where
         cancel: &CancelToken,
         heard: impl FnMut(&Timeline),
     ) -> Result<Dictated, DictationError> {
-        let (control, started_at) = (published.control, published.started_at);
+        let (control, started_at) = (published.delivery.control, published.delivery.started_at);
         let started = |error| log_transcription_error(error, control, started_at);
         let timeline = hear_to_end(feed, cancel, heard)
             .map_err(|error| hearing_failed(error, control, started_at))?;
@@ -897,83 +904,70 @@ where
                 None => timeline.owner_name(),
             }
             .cloned();
-            let segment = self
+            let typed = self
                 .rewritten(&heard, &mut published, settings.cleanup, cancel)
                 .map_err(started)?;
-            published.publish(heard, &segment, speaker, sinks)?;
+            published.publish(heard, typed, speaker, sinks)?;
         }
         published.finish(finished, timeline.admitted_is_owner(), sinks)
     }
 
-    /// What one released segment publishes now: its fillers dropped, the
-    /// words more speech may still change held back, and the rest corrected
-    /// after what the press published before it.
+    /// What one released segment types now: its fillers dropped, the words
+    /// more speech may still change held back, and the rest corrected after
+    /// what the press typed before it.
     fn rewritten(
         &self,
         heard: &Heard,
         published: &mut Published<'_>,
         cleanup: Cleanup,
         cancel: &CancelToken,
-    ) -> Result<CorrectedSegment, TranscriptionError> {
+    ) -> Result<Option<Punctuated>, TranscriptionError> {
         let mut text = heard.segment.as_str().to_owned();
         self.rewrites.clean(&mut text, cleanup, cancel)?;
-        // Nothing fails after this check: the words `hold` takes back would
+        // Nothing fails after this check: the words `push` takes back would
         // be lost.
         check_cancelled(cancel)?;
-        let unheld = published.hold(&text, heard);
-        Ok(published.correct(unheld))
+        Ok(published
+            .ends
+            .push(&text, heard.segment.sentence_ended_before()))
     }
 }
 
-/// A segment's text once corrected, ready to punctuate and type.
-struct CorrectedSegment {
-    corrected: Corrected,
-    sentence_ended_before: Option<bool>,
-}
-
-/// What a stream holds back at each segment's end: the closing mark, and
-/// words the next segment may still change.
-#[derive(Default)]
-struct SegmentEnds {
-    sentences: SentenceEnds,
-    words: DeferredWords,
+/// What a stream holds back at each segment's end, the closing mark and
+/// words the next segment may still change, with when it began to hold
+/// them.
+struct SegmentEnds<'a> {
+    corrector: SegmentCorrector<'a>,
     /// When a segment last left words held, so a pause is noticed.
     held_since: Option<Instant>,
 }
 
-impl SegmentEnds {
-    /// What of `text` publishes now: the words held before, then `text`
-    /// up to the ones more speech may still change.
-    fn hold(
-        &mut self,
-        text: &str,
-        sentence_ended_before: Option<bool>,
-        vocabulary: &Vocabulary,
-        writing: Writing,
-    ) -> Unheld {
-        let unheld = self
-            .words
-            .hold(text, sentence_ended_before, vocabulary, writing);
-        self.held_since = self.words.is_holding().then(Instant::now);
-        unheld
+impl<'a> SegmentEnds<'a> {
+    fn new(corrector: SegmentCorrector<'a>) -> Self {
+        Self {
+            corrector,
+            held_since: None,
+        }
     }
 
-    /// The held words, once nothing follows them.
-    fn finish_words(&mut self) -> Option<Unheld> {
-        self.held_since = None;
-        self.words.finish()
+    /// What of `text` types now: the words held before, then `text` up to
+    /// the ones more speech may still change.
+    fn push(&mut self, text: &str, sentence_ended_before: Option<bool>) -> Option<Punctuated> {
+        let typed = self.corrector.push(text, sentence_ended_before);
+        self.held_since = self.corrector.is_holding().then(Instant::now);
+        typed
     }
 
     /// Releases deferred words after a pause. "cd forward slash" keeps
     /// waiting for its next word, and its wait starts over.
-    fn release_paused(&mut self) -> Option<Unheld> {
-        let released = self.words.release_paused();
-        self.held_since = self.words.is_holding().then(Instant::now);
+    fn release_paused(&mut self) -> Option<Punctuated> {
+        let released = self.corrector.release_paused();
+        self.held_since = self.corrector.is_holding().then(Instant::now);
         released
     }
 
     fn is_holding(&self) -> bool {
-        self.held_since.is_some()
+        self.corrector.is_holding()
     }
 
     /// Whether the held words have waited [`HELD_WAIT`] by `now`.
@@ -990,16 +984,18 @@ const QUEUE_RETRY: Duration = Duration::from_millis(250);
 /// detector, how long they wait. By then the speaker has moved on.
 const HELD_WAIT: Duration = Duration::from_millis(1500);
 
-/// What one dictation has put out so far, with the events and logs each
-/// step owes.
+/// What one dictation has put out so far: what its segments still hold
+/// back, and their delivery.
 struct Published<'a> {
+    ends: SegmentEnds<'a>,
+    delivery: Delivery<'a>,
+}
+
+/// Where a dictation's text goes, with the events and logs each step owes.
+struct Delivery<'a> {
     streaming: bool,
-    /// Every segment's text so far, spaced as the cursor typed it. Text
-    /// that failed to type counts too, so no word is lost.
-    written: String,
     /// The ghost text shown, until the next segment lands.
     ghost: Option<Arc<str>>,
-    ends: SegmentEnds,
     /// Where the last segment was decoded through: where its held mark
     /// lands.
     heard_to: u64,
@@ -1009,10 +1005,6 @@ struct Published<'a> {
     retried: Option<Instant>,
     caption: Option<CaptionSnapshot>,
     completion: Completion,
-    /// What corrects each segment, and decides which words may be held.
-    vocabulary: &'a Vocabulary,
-    /// Prose or commands, by the app in front at admission.
-    writing: Writing,
     control: &'a ExecutionControl,
     events: &'a DictationEventEmitter,
     started_at: Instant,
@@ -1026,67 +1018,45 @@ impl<'a> Published<'a> {
         events: &'a DictationEventEmitter,
         started_at: Instant,
     ) -> Self {
-        Self {
-            streaming: settings.delivery_mode == DeliveryMode::Streaming,
-            written: String::new(),
-            ghost: None,
-            ends: SegmentEnds::default(),
-            heard_to: 0,
-            failure: None,
-            retried: None,
-            caption: settings
-                .route
-                .delivers()
-                .then(|| CaptionSnapshot::empty(control.recording_id(), false)),
-            completion: Completion::Pending,
-            vocabulary,
-            writing: settings.writing(),
-            control,
-            events,
-            started_at,
-        }
-    }
-
-    /// What of `text` publishes now, the rest held for the next segment.
-    fn hold(&mut self, text: &str, heard: &Heard) -> Unheld {
+        let streaming = settings.delivery_mode == DeliveryMode::Streaming;
         // Complete delivery types the decoder's whole transcript, which
-        // keeps every mark, so no reading drops a held one.
-        let sentence_ended_before = self
-            .streaming
-            .then(|| heard.segment.sentence_ended_before())
-            .flatten();
-        self.ends
-            .hold(text, sentence_ended_before, self.vocabulary, self.writing)
-    }
-
-    /// Corrects `unheld` after what the press published before it.
-    fn correct(&self, unheld: Unheld) -> CorrectedSegment {
-        let before = TypedBefore::streamed(
-            &self.written,
-            &self.ends.sentences,
-            unheld.sentence_ended_before,
-        );
-        let corrected = self
-            .vocabulary
-            .correct_spoken(&unheld.text, before, self.writing)
-            .unwrap_or(Corrected {
-                text: unheld.text,
-                attachment: Attachment::default(),
-            });
-        CorrectedSegment {
-            corrected,
-            sentence_ended_before: unheld.sentence_ended_before,
+        // keeps every mark.
+        let endings = if streaming {
+            Endings::Deferred
+        } else {
+            Endings::AsDecoded
+        };
+        let corrector = SegmentCorrector::new(vocabulary)
+            .with_writing(settings.writing())
+            .with_endings(endings);
+        Self {
+            ends: SegmentEnds::new(corrector),
+            delivery: Delivery {
+                streaming,
+                ghost: None,
+                heard_to: 0,
+                failure: None,
+                retried: None,
+                caption: settings
+                    .route
+                    .delivers()
+                    .then(|| CaptionSnapshot::empty(control.recording_id(), false)),
+                completion: Completion::Pending,
+                control,
+                events,
+                started_at,
+            },
         }
     }
 
-    /// Publishes what `heard` let through: `segment` may open with words
-    /// held from an earlier segment and leave out its own last ones.
-    /// `speaker` is the enrolled voice of the press so far, which clients
-    /// show; the segment's own label is what history keeps.
+    /// Publishes what `heard` let through: `typed` may open with words held
+    /// from an earlier segment and leave out its own last ones. `speaker` is
+    /// the enrolled voice of the press so far, which clients show; the
+    /// segment's own label is what history keeps.
     fn publish<S>(
         &mut self,
         heard: Heard,
-        segment: &CorrectedSegment,
+        typed: Option<Punctuated>,
         speaker: Option<SpeakerName>,
         sinks: &mut S,
     ) -> Result<(), DictationError>
@@ -1094,15 +1064,16 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        if let Some(caption) = &mut self.caption {
+        let delivery = &mut self.delivery;
+        if let Some(caption) = &mut delivery.caption {
             caption.provisional = Arc::from("");
         }
-        self.ghost = None;
-        self.heard_to = heard.window.end;
+        delivery.ghost = None;
+        delivery.heard_to = heard.window.end;
         // A streamed segment of only fillers or held words has nothing to type.
-        if segment.corrected.text.is_empty() {
+        let Some(typed) = typed else {
             return Ok(());
-        }
+        };
         // Words held back end the span, so the typed ones end earlier, at a
         // point no one tracks.
         let spoken_to = heard
@@ -1110,41 +1081,16 @@ impl<'a> Published<'a> {
             .as_ref()
             .filter(|_| !self.ends.is_holding())
             .map(|span| span.end);
-        self.type_text(
-            segment,
-            heard.window.start,
-            heard.span,
-            spoken_to,
-            speaker,
-            sinks,
-        )
-        .or_else(|error| self.undelivered(error))
-    }
-
-    /// A streamed delivery that failed stops the press, which still drains
-    /// so history keeps every word. Any other delivery fails at once.
-    fn undelivered(&mut self, error: DictationError) -> Result<(), DictationError> {
-        if !self.streaming {
-            return Err(error);
-        }
-        self.give_up(error);
-        Ok(())
-    }
-
-    /// Publishes the deferred words `held`, corrected as a last segment. A
-    /// failure fails the press, as it does for any segment.
-    fn publish_held<S>(&mut self, held: Option<Unheld>, sinks: &mut S) -> Result<(), DictationError>
-    where
-        S: TranscriptSink,
-        S::Error: Into<DictationError>,
-    {
-        let Some(held) = held else {
-            return Ok(());
-        };
-        let held = self.correct(held);
-        // Held words close the last segment, so they end where it was heard to.
-        self.type_text(&held, self.heard_to, None, Some(self.heard_to), None, sinks)
-            .or_else(|error| self.undelivered(error))
+        delivery
+            .type_text(
+                &typed,
+                heard.window.start,
+                heard.span,
+                spoken_to,
+                speaker,
+                sinks,
+            )
+            .or_else(|error| delivery.undelivered(error))
     }
 
     /// With no audio to judge, held words wait [`HELD_WAIT`] by `now`.
@@ -1164,34 +1110,96 @@ impl<'a> Published<'a> {
             Pause::NotYet => false,
             Pause::Unjudged => self.ends.is_overdue(now),
         };
-        if !self.streaming || !paused {
+        if !self.delivery.streaming || !paused {
             return Ok(());
         }
         let held = self.ends.release_paused();
-        self.publish_held(held, sinks)
+        self.delivery.publish_held(held, sinks)
+    }
+
+    /// Publishes what the last segment still owes once nothing follows,
+    /// and returns everything the press typed.
+    fn publish_ends<S>(self, sinks: &mut S) -> Result<String, DictationError>
+    where
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+    {
+        let Self { ends, mut delivery } = self;
+        delivery.publish_ends(ends, sinks)
+    }
+
+    fn finish<S>(
+        self,
+        finished: Finished,
+        own_voice: bool,
+        sinks: &mut S,
+    ) -> Result<Dictated, DictationError>
+    where
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+    {
+        let Self { ends, mut delivery } = self;
+        let typed = delivery.publish_ends(ends, sinks)?;
+        delivery.finish(typed, finished, own_voice, sinks)
+    }
+}
+
+impl Delivery<'_> {
+    /// A streamed delivery that failed stops the press, which still drains
+    /// so history keeps every word. Any other delivery fails at once.
+    fn undelivered(&mut self, error: DictationError) -> Result<(), DictationError> {
+        if !self.streaming {
+            return Err(error);
+        }
+        self.give_up(error);
+        Ok(())
+    }
+
+    /// Publishes the deferred words `held`, corrected as a last segment. A
+    /// failure fails the press, as it does for any segment.
+    fn publish_held<S>(
+        &mut self,
+        held: Option<Punctuated>,
+        sinks: &mut S,
+    ) -> Result<(), DictationError>
+    where
+        S: TranscriptSink,
+        S::Error: Into<DictationError>,
+    {
+        let Some(held) = held else {
+            return Ok(());
+        };
+        // Held words close the last segment, so they end where it was heard to.
+        self.type_text(&held, self.heard_to, None, Some(self.heard_to), None, sinks)
+            .or_else(|error| self.undelivered(error))
     }
 
     /// Publishes what the last segment still owes once nothing follows: its
-    /// held words, then its closing mark. A cancelled press owes nothing.
-    fn publish_ends<S>(&mut self, sinks: &mut S) -> Result<(), DictationError>
+    /// held words, then its closing mark. Returns everything the press
+    /// typed. A cancelled press owes nothing.
+    fn publish_ends<S>(
+        &mut self,
+        ends: SegmentEnds<'_>,
+        sinks: &mut S,
+    ) -> Result<String, DictationError>
     where
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
         if self.control.is_cancelled() {
-            return Ok(());
+            return Ok(ends.corrector.text().to_owned());
         }
-        let held = self.ends.finish_words();
-        let held = self.publish_held(held, sinks);
-        self.close_last_sentence(sinks);
-        held
+        let end = ends.corrector.finish();
+        let held = self.publish_held(end.words, sinks);
+        self.close_last_sentence(end.mark, sinks);
+        held.map(|()| end.text)
     }
 
-    /// Punctuates `segment` and types it at `at`. The error is a delivery
-    /// that failed, already logged. The text is kept either way.
+    /// Types `typed` at `at`. The error is a delivery that failed, already
+    /// logged.
     fn type_text<S>(
         &mut self,
-        segment: &CorrectedSegment,
+        typed: &Punctuated,
         at: u64,
         span: Option<std::ops::Range<u64>>,
         spoken_to: Option<u64>,
@@ -1202,37 +1210,13 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        // Complete delivery types the decoder's own transcript, so joining
-        // here would only make the caption disagree with it.
-        let punctuated = if self.streaming {
-            let mut punctuated = self.ends.sentences.punctuate(
-                &segment.corrected.text,
-                segment.corrected.attachment,
-                segment.sentence_ended_before,
-            );
-            // The next segment may still join this one, so the space before
-            // a word after the caret waits until the press ends.
-            if punctuated.spacing.ending == Ending::Closed {
-                punctuated.spacing.ending = Ending::Open;
-            }
-            punctuated
-        } else {
-            Punctuated {
-                text: segment.corrected.text.clone(),
-                spacing: Spacing {
-                    attachment: segment.corrected.attachment,
-                    ending: Ending::Closed,
-                },
-            }
-        };
-        let spacing = punctuated.spacing;
-        self.keep(&punctuated.text, spacing);
         if self.failure.is_some() {
             return Ok(());
         }
+        let spacing = typed.spacing;
         // History keeps no names for dictation: the ring shows them.
         let utterance = Utterance {
-            text: &punctuated.text,
+            text: &typed.text,
             speaker: None,
             at,
             span,
@@ -1245,13 +1229,13 @@ impl<'a> Published<'a> {
         }
         let typed_at = Instant::now();
         // Queued text lands later, on a retry, so it was not typed here.
-        let typed = self.streaming && !sinks.is_queueing();
-        self.announce(&punctuated.text, spacing, speaker, sinks);
-        if typed {
+        let is_typed = self.streaming && !sinks.is_queueing();
+        self.announce(&typed.text, spacing, speaker, sinks);
+        if is_typed {
             // After the text and its announcement, so neither waits on the log.
             tracing::info!(
                 stage = "delivery",
-                words = punctuated.text.split_whitespace().count(),
+                words = typed.text.split_whitespace().count(),
                 elapsed_ms = typed_at.duration_since(self.started_at).as_millis(),
                 typing_ms = typed_at.duration_since(typing).as_millis(),
                 spoken_to_ms = spoken_to.map(|end| canonical_duration(end).as_millis()),
@@ -1301,27 +1285,23 @@ impl<'a> Published<'a> {
     /// Types the mark the last segment owes. A failure is only logged,
     /// unless queued words were still waiting: they can't land then, so the
     /// press fails.
-    fn close_last_sentence<S>(&mut self, sinks: &mut S)
+    fn close_last_sentence<S>(&mut self, mark: Option<Punctuated>, sinks: &mut S)
     where
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let Some(closing) = self.ends.sentences.finish() else {
+        let Some(mark) = mark else {
             return;
         };
-        self.keep(&closing, Spacing::default());
         if self.failure.is_some() {
             return;
         }
         let utterance = Utterance {
-            text: &closing,
+            text: &mark.text,
             speaker: None,
             at: self.heard_to,
             span: None,
-            spacing: Spacing {
-                ending: Ending::Open,
-                ..Spacing::default()
-            },
+            spacing: mark.spacing,
         };
         let words_waited = sinks.is_queueing();
         if let Err(error) = sinks.segment(utterance) {
@@ -1337,12 +1317,7 @@ impl<'a> Published<'a> {
             );
             return;
         }
-        self.announce(&closing, Spacing::default(), None, sinks);
-    }
-
-    fn keep(&mut self, text: &str, spacing: Spacing) {
-        let spaced = Caret::between(&self.written, "").insert_with(text, spacing);
-        self.written.push_str(&spaced);
+        self.announce(&mark.text, mark.spacing, None, sinks);
     }
 
     /// Tells clients what was published, and when streaming, whether it
@@ -1374,8 +1349,11 @@ impl<'a> Published<'a> {
         }
     }
 
+    /// `typed` is every segment's text, spaced as the cursor typed it. Text
+    /// that failed to type counts too, so no word is lost.
     fn finish<S>(
         mut self,
+        typed: String,
         finished: Finished,
         own_voice: bool,
         sinks: &mut S,
@@ -1384,7 +1362,6 @@ impl<'a> Published<'a> {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        self.publish_ends(sinks)?;
         if !self.streaming {
             return Ok(Dictated {
                 finished,
@@ -1392,7 +1369,7 @@ impl<'a> Published<'a> {
                 own_voice,
             });
         }
-        let transcript = Transcript::new(std::mem::take(&mut self.written))
+        let transcript = Transcript::new(typed)
             .map_err(|error| log_transcription_error(error, self.control, self.started_at))?;
         // Streaming already typed each segment with its own spacing.
         let completed = self
@@ -1852,6 +1829,7 @@ mod tests {
     use aria_kit::speaker::Embedder;
     use aria_kit::speaker::LevelSegmenter;
     use aria_kit::speaker::{Diarizer, SpeakerError};
+    use aria_kit::transcription::Corrected;
     use aria_platform::delivery::{DeliveryError, DeliveryOutcome, OutputMode, TextDelivery};
     use aria_settings::rpc::RpcErrorCode;
     use std::sync::{Arc, Mutex};
@@ -2369,9 +2347,11 @@ mod tests {
         let log = CallLog::default();
         let mut sinks = (log.history(), log.cursor());
         sinks.dictation_started(&settings, &control).unwrap();
-        published.provisional("turn lift at the light", &sinks);
-        published.provisional("turn left", &sinks);
-        published.provisional("", &sinks);
+        published
+            .delivery
+            .provisional("turn lift at the light", &sinks);
+        published.delivery.provisional("turn left", &sinks);
+        published.delivery.provisional("", &sinks);
         assert_eq!(log.entries(), ["prepare:Insert"]);
 
         drop(published);
@@ -2394,7 +2374,7 @@ mod tests {
         sinks.dictation_started(&settings, &control).unwrap();
         let heard = heard("turn left");
 
-        published.provisional("uncommitted guess", &sinks);
+        published.delivery.provisional("uncommitted guess", &sinks);
         publish_whole(&mut published, heard, "turn left", &mut sinks).unwrap();
 
         assert_eq!(log.entries(), ["prepare:Insert", "segment:turn left"]);
@@ -2415,7 +2395,7 @@ mod tests {
         let mut published =
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let sink = CallLog::default().history();
-        published.provisional(&text, &sink);
+        published.delivery.provisional(&text, &sink);
         drop(published);
         drop(events);
         assert_eq!(
@@ -3307,14 +3287,15 @@ mod tests {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let segment = CorrectedSegment {
-            corrected: Corrected {
-                text: text.to_owned(),
-                attachment: Attachment::default(),
-            },
-            sentence_ended_before: heard.segment.sentence_ended_before(),
+        let corrected = Corrected {
+            text: text.to_owned(),
+            attachment: Attachment::default(),
         };
-        published.publish(heard, &segment, None, sinks)
+        let typed = published
+            .ends
+            .corrector
+            .push_corrected(corrected, heard.segment.sentence_ended_before());
+        published.publish(heard, typed, None, sinks)
     }
 
     /// Publishes `text` as streaming does: deferred words held, then
@@ -3329,9 +3310,10 @@ mod tests {
         S: TranscriptSink,
         S::Error: Into<DictationError>,
     {
-        let unheld = published.hold(text, &heard);
-        let segment = published.correct(unheld);
-        published.publish(heard, &segment, None, sinks)
+        let typed = published
+            .ends
+            .push(text, heard.segment.sentence_ended_before());
+        published.publish(heard, typed, None, sinks)
     }
 
     fn finished(transcript: Transcript) -> super::Finished {
@@ -3969,11 +3951,11 @@ mod tests {
             Published::new(&settings, no_terms(), &control, &events, Instant::now());
         let mut sinks = (CallLog::default().history(), Cursor::new(PlacedDelivery));
         sinks.dictation_started(&settings, &control).unwrap();
-        published.provisional("turn lift", &sinks);
+        published.delivery.provisional("turn lift", &sinks);
 
         let heard = heard("turn left");
         publish_whole(&mut published, heard, "turn left", &mut sinks).unwrap();
-        published.provisional("", &sinks);
+        published.delivery.provisional("", &sinks);
         drop(published);
         drop(events);
 
@@ -4004,12 +3986,12 @@ mod tests {
             }),
         );
         sinks.dictation_started(&settings, &control).unwrap();
-        published.provisional("one", &sinks);
+        published.delivery.provisional("one", &sinks);
 
         let heard = heard("one");
         publish_whole(&mut published, heard, "one", &mut sinks).unwrap();
         // The recording drains after the failure, so previews keep arriving.
-        published.provisional("one two", &sinks);
+        published.delivery.provisional("one two", &sinks);
         drop(published);
         drop(events);
 
@@ -4998,7 +4980,7 @@ mod tests {
             publish_whole(&mut published, heard, text, &mut sinks).unwrap();
         }
 
-        assert!(published.failure.is_none());
+        assert!(published.delivery.failure.is_none());
         assert_eq!(log.entries(), ["segment:one", "segment:two"]);
         drop(published);
         drop(events);
@@ -5108,11 +5090,11 @@ mod tests {
 
         // The first retry is still refused. A second one within the interval
         // would type, so a queue still waiting proves it never asked.
-        published.retry(&mut sinks);
-        published.retry(&mut sinks);
+        published.delivery.retry(&mut sinks);
+        published.delivery.retry(&mut sinks);
         assert!(sinks.is_queueing());
-        published.retried = None;
-        published.retry(&mut sinks);
+        published.delivery.retried = None;
+        published.delivery.retry(&mut sinks);
         assert!(!sinks.is_queueing());
         drop(published);
         drop(events);
@@ -5668,7 +5650,7 @@ mod tests {
             pipeline.rewritten(&heard("one"), &mut published, settings.cleanup, &cancel);
 
         assert!(rewritten.is_err());
-        assert!(published.ends.words.is_holding());
+        assert!(published.ends.is_holding());
     }
 
     #[test]
