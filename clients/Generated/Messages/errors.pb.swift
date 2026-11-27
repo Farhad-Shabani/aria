@@ -111,6 +111,9 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
   /// System Audio Recording permission is missing or was denied.
   case systemTranscriptionPermissionDenied // = 801
   case systemTranscriptionCaptureFailed // = 802
+
+  /// An unsaved transcript is gone.
+  case unsavedTranscriptMissing // = 803
   case historyMissing // = 900
   case historyAudioUnavailable // = 901
   case historyUnavailable // = 902
@@ -121,6 +124,10 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
 
   /// A transcript is unreadable, or too long to read in full.
   case historyTranscriptUnreadable // = 905
+
+  /// Mac Audio holds its most entries. Aria evicts none. A new session runs
+  /// unsaved instead.
+  case historyFull // = 906
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -173,12 +180,14 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
     case 800: self = .systemTranscriptionUnsupportedOs
     case 801: self = .systemTranscriptionPermissionDenied
     case 802: self = .systemTranscriptionCaptureFailed
+    case 803: self = .unsavedTranscriptMissing
     case 900: self = .historyMissing
     case 901: self = .historyAudioUnavailable
     case 902: self = .historyUnavailable
     case 903: self = .historyProjectUnavailable
     case 904: self = .historyEntryEmpty
     case 905: self = .historyTranscriptUnreadable
+    case 906: self = .historyFull
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -229,12 +238,14 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
     case .systemTranscriptionUnsupportedOs: return 800
     case .systemTranscriptionPermissionDenied: return 801
     case .systemTranscriptionCaptureFailed: return 802
+    case .unsavedTranscriptMissing: return 803
     case .historyMissing: return 900
     case .historyAudioUnavailable: return 901
     case .historyUnavailable: return 902
     case .historyProjectUnavailable: return 903
     case .historyEntryEmpty: return 904
     case .historyTranscriptUnreadable: return 905
+    case .historyFull: return 906
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -285,12 +296,14 @@ public nonisolated enum Aria_Daemon_V1_ErrorCode: SwiftProtobuf.Enum, Swift.Case
     .systemTranscriptionUnsupportedOs,
     .systemTranscriptionPermissionDenied,
     .systemTranscriptionCaptureFailed,
+    .unsavedTranscriptMissing,
     .historyMissing,
     .historyAudioUnavailable,
     .historyUnavailable,
     .historyProjectUnavailable,
     .historyEntryEmpty,
     .historyTranscriptUnreadable,
+    .historyFull,
   ]
 
 }
@@ -345,7 +358,7 @@ public nonisolated struct Aria_Daemon_V1_SettingsPosition: Sendable {
 fileprivate nonisolated let _protobuf_package = "aria.daemon.v1"
 
 nonisolated extension Aria_Daemon_V1_ErrorCode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_INVALID_REQUEST\0\u{1}ERROR_CODE_BUSY\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNAUTHENTICATED\0\u{1}ERROR_CODE_UNSUPPORTED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_PAYLOAD_TOO_LARGE\0\u{1}ERROR_CODE_PERMISSION_DENIED\0\u{1}ERROR_CODE_DURABILITY_UNCONFIRMED\0\u{1}ERROR_CODE_SETTINGS_INVALID\0\u{2}Y\u{1}ERROR_CODE_OVERALL_TIMEOUT\0\u{1}ERROR_CODE_RECORDING_TIMEOUT\0\u{1}ERROR_CODE_DELIVERY_TIMEOUT\0\u{1}ERROR_CODE_CAPTURE_FAILED\0\u{1}ERROR_CODE_NO_SPEECH\0\u{1}ERROR_CODE_TRANSCRIPTION_FAILED\0\u{1}ERROR_CODE_DELIVERY_FAILED\0\u{2}\u{2}ERROR_CODE_DELIVERY_TARGET_CHANGED\0\u{1}ERROR_CODE_DELIVERY_INTERRUPTED\0\u{1}ERROR_CODE_APPLICATION_EXCLUDED\0\u{2}Z\u{1}ERROR_CODE_SYNTHESIS_FAILED\0\u{1}ERROR_CODE_PLAYBACK_FAILED\0\u{1}ERROR_CODE_SPEECH_TIMEOUT\0\u{1}ERROR_CODE_VOICE_UNAVAILABLE\0\u{2}a\u{1}ERROR_CODE_ASSISTANT_UNAVAILABLE\0\u{1}ERROR_CODE_ASSISTANT_FAILED\0\u{1}ERROR_CODE_ASSISTANT_TIMEOUT\0\u{1}ERROR_CODE_ASSISTANT_SIGNED_OUT\0\u{1}ERROR_CODE_PROMPT_UNREADABLE\0\u{1}ERROR_CODE_PROMPT_MISSING\0\u{1}ERROR_CODE_PROMPTS_FULL\0\u{1}ERROR_CODE_PROMPT_WRITE_FAILED\0\u{1}ERROR_CODE_CHAT_NAME_TAKEN\0\u{2}@\u{3}ERROR_CODE_SPEAKER_MODEL_MISSING\0\u{1}ERROR_CODE_SPEAKER_ALREADY_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_NOT_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_INCONSISTENT_SAMPLES\0\u{1}ERROR_CODE_SPEAKER_PROFILE_WRITE_FAILED\0\u{1}ERROR_CODE_SPEAKER_NO_SPEECH\0\u{2}g\u{4}ERROR_CODE_SYSTEM_TRANSCRIPTION_UNSUPPORTED_OS\0\u{1}ERROR_CODE_SYSTEM_TRANSCRIPTION_PERMISSION_DENIED\0\u{1}ERROR_CODE_SYSTEM_TRANSCRIPTION_CAPTURE_FAILED\0\u{2}b\u{1}ERROR_CODE_HISTORY_MISSING\0\u{1}ERROR_CODE_HISTORY_AUDIO_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_PROJECT_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_ENTRY_EMPTY\0\u{1}ERROR_CODE_HISTORY_TRANSCRIPT_UNREADABLE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_INVALID_REQUEST\0\u{1}ERROR_CODE_BUSY\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNAUTHENTICATED\0\u{1}ERROR_CODE_UNSUPPORTED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_PAYLOAD_TOO_LARGE\0\u{1}ERROR_CODE_PERMISSION_DENIED\0\u{1}ERROR_CODE_DURABILITY_UNCONFIRMED\0\u{1}ERROR_CODE_SETTINGS_INVALID\0\u{2}Y\u{1}ERROR_CODE_OVERALL_TIMEOUT\0\u{1}ERROR_CODE_RECORDING_TIMEOUT\0\u{1}ERROR_CODE_DELIVERY_TIMEOUT\0\u{1}ERROR_CODE_CAPTURE_FAILED\0\u{1}ERROR_CODE_NO_SPEECH\0\u{1}ERROR_CODE_TRANSCRIPTION_FAILED\0\u{1}ERROR_CODE_DELIVERY_FAILED\0\u{2}\u{2}ERROR_CODE_DELIVERY_TARGET_CHANGED\0\u{1}ERROR_CODE_DELIVERY_INTERRUPTED\0\u{1}ERROR_CODE_APPLICATION_EXCLUDED\0\u{2}Z\u{1}ERROR_CODE_SYNTHESIS_FAILED\0\u{1}ERROR_CODE_PLAYBACK_FAILED\0\u{1}ERROR_CODE_SPEECH_TIMEOUT\0\u{1}ERROR_CODE_VOICE_UNAVAILABLE\0\u{2}a\u{1}ERROR_CODE_ASSISTANT_UNAVAILABLE\0\u{1}ERROR_CODE_ASSISTANT_FAILED\0\u{1}ERROR_CODE_ASSISTANT_TIMEOUT\0\u{1}ERROR_CODE_ASSISTANT_SIGNED_OUT\0\u{1}ERROR_CODE_PROMPT_UNREADABLE\0\u{1}ERROR_CODE_PROMPT_MISSING\0\u{1}ERROR_CODE_PROMPTS_FULL\0\u{1}ERROR_CODE_PROMPT_WRITE_FAILED\0\u{1}ERROR_CODE_CHAT_NAME_TAKEN\0\u{2}@\u{3}ERROR_CODE_SPEAKER_MODEL_MISSING\0\u{1}ERROR_CODE_SPEAKER_ALREADY_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_NOT_ENROLLED\0\u{1}ERROR_CODE_SPEAKER_INCONSISTENT_SAMPLES\0\u{1}ERROR_CODE_SPEAKER_PROFILE_WRITE_FAILED\0\u{1}ERROR_CODE_SPEAKER_NO_SPEECH\0\u{2}g\u{4}ERROR_CODE_SYSTEM_TRANSCRIPTION_UNSUPPORTED_OS\0\u{1}ERROR_CODE_SYSTEM_TRANSCRIPTION_PERMISSION_DENIED\0\u{1}ERROR_CODE_SYSTEM_TRANSCRIPTION_CAPTURE_FAILED\0\u{1}ERROR_CODE_UNSAVED_TRANSCRIPT_MISSING\0\u{2}a\u{1}ERROR_CODE_HISTORY_MISSING\0\u{1}ERROR_CODE_HISTORY_AUDIO_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_PROJECT_UNAVAILABLE\0\u{1}ERROR_CODE_HISTORY_ENTRY_EMPTY\0\u{1}ERROR_CODE_HISTORY_TRANSCRIPT_UNREADABLE\0\u{1}ERROR_CODE_HISTORY_FULL\0")
 }
 
 nonisolated extension Aria_Daemon_V1_RpcError: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

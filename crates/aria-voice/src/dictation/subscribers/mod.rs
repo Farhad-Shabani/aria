@@ -96,12 +96,14 @@ fn message(code: RpcErrorCode) -> &'static str {
         | RpcErrorCode::SystemTranscriptionUnsupportedOs
         | RpcErrorCode::SystemTranscriptionPermissionDenied
         | RpcErrorCode::SystemTranscriptionCaptureFailed
+        | RpcErrorCode::UnsavedTranscriptMissing
         | RpcErrorCode::HistoryMissing
         | RpcErrorCode::HistoryAudioUnavailable
         | RpcErrorCode::HistoryUnavailable
         | RpcErrorCode::HistoryProjectUnavailable
         | RpcErrorCode::HistoryEntryEmpty
         | RpcErrorCode::HistoryTranscriptUnreadable
+        | RpcErrorCode::HistoryFull
         | RpcErrorCode::Unknown(_) => "Something went wrong. See the daemon log.",
     }
 }

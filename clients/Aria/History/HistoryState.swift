@@ -99,6 +99,11 @@ final class HistoryState: ObservableObject {
         if isOpen { refresh() }
     }
 
+    /// A Mac Audio session's entry appears as it starts and takes its excerpt as it ends.
+    func systemTranscriptionChanged() {
+        if isOpen { refresh() }
+    }
+
     /// A filter set during a clear waits for the refresh that ends it.
     func filter(query: String, section: HistorySection?) {
         guard query != self.query || section != self.section else { return }
@@ -204,7 +209,13 @@ final class HistoryState: ObservableObject {
             } catch {
                 guard generation == detailGeneration, !Task.isCancelled else { return }
                 isLoadingDetail = false
-                self.error = error as? HistoryFailure ?? .failed
+                let failure = error as? HistoryFailure ?? .failed
+                self.error = failure
+                // History removed it since the list loaded, as it does once the transcript file is gone.
+                if failure == .missing {
+                    items.removeAll { $0.id == id }
+                    select(nil)
+                }
             }
         }
     }

@@ -101,6 +101,7 @@ impl wire::settings_service_server::SettingsService for LanSettings {
 /// Paths, app bundle IDs and device ids can identify a person.
 /// Keep the folder field present so the phone can offer to clear it.
 fn without_mac_choices(snapshot: &mut wire::SettingsSnapshot) {
+    snapshot.transcripts_dir = String::new();
     if let Some(settings) = &mut snapshot.settings {
         settings.microphone = String::new();
         if settings.vocabulary_dir.is_some() {
@@ -365,6 +366,7 @@ mod tests {
             revision: 1,
             streaming_unavailable: Vec::new(),
             assistant_name: String::new(),
+            transcripts_dir: "/Users/you/.aria/transcripts".to_owned(),
             settings: Some(wire::Settings {
                 prompts: Some(wire::Prompts {
                     entries: vec![wire::Prompt {
@@ -381,8 +383,10 @@ mod tests {
 
         without_mac_choices(&mut snapshot);
 
+        assert_eq!(snapshot.transcripts_dir, "");
         let settings = snapshot.settings.unwrap();
         assert_eq!(settings.microphone, "");
+
         assert_eq!(settings.prompts, Some(wire::Prompts::default()));
         assert_eq!(settings.vocabulary_dir.as_deref(), Some(""));
         assert_eq!(

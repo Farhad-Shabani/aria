@@ -70,12 +70,15 @@ struct PaletteEntryDetail: View {
     }
 
     private static func note(transcript: String, read: HistoryItem.TranscriptRead?) -> String? {
-        let file = URL(fileURLWithPath: transcript).lastPathComponent
         return switch read {
-        case .truncated: "This is the first 1 MB. The whole transcript is in \(file)."
+        case .truncated: cutShortNote(file: URL(fileURLWithPath: transcript))
         case .unavailable: "The transcript file is gone or can’t be read, so this is only its start."
         case .whole, nil: nil
         }
+    }
+
+    static func cutShortNote(file: URL) -> String {
+        "This is the first 1 MB. The whole transcript is in \(file.lastPathComponent)."
     }
 
     @ViewBuilder

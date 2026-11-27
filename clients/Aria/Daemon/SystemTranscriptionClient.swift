@@ -35,8 +35,82 @@ enum SystemTranscriptionClient {
         }
     }
 
+    static func listUnsaved() async throws -> UnsavedTranscriptList {
+        try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_SystemTranscriptionService.Client(wrapping: client)
+                .listUnsaved(request: ClientRequest(message: .init()), options: options) { response in
+                    let message = try response.message
+                    guard !message.unsavedDir.isEmpty else { throw DaemonFailure.invalidResponse }
+                    let unsavedDir = URL(filePath: message.unsavedDir, directoryHint: .isDirectory)
+                    return UnsavedTranscriptList(
+                        transcripts: try message.transcripts.map { try UnsavedTranscript($0, in: unsavedDir) },
+                        isHistoryFull: message.historyFull, unsavedDir: unsavedDir)
+                }
+        }
+    }
+
+    static func readUnsaved(_ transcript: UnsavedTranscript) async throws -> UnsavedTranscriptText {
+        let sent = Aria_Daemon_V1_ReadUnsavedTranscriptRequest.with {
+            $0.name = transcript.name
+        }
+        return try await DaemonTransport.call { client, options in
+            try await Aria_Daemon_V1_SystemTranscriptionService.Client(wrapping: client)
+                .readUnsaved(request: ClientRequest(message: sent), options: options) { response in
+                    let message = try response.message
+                    switch message.read {
+                    case .whole: return .whole(message.text)
+                    case .truncated: return .truncated(message.text)
+                    case .unspecified, .unavailable, .UNRECOGNIZED: throw DaemonFailure.invalidResponse
+                    }
+                }
+        }
+    }
+
+    static func discardUnsaved(_ transcript: UnsavedTranscript) async throws {
+        let sent = Aria_Daemon_V1_DiscardUnsavedTranscriptRequest.with {
+            $0.name = transcript.name
+        }
+        try await DaemonTransport.call { client, options in
+            _ = try await Aria_Daemon_V1_SystemTranscriptionService.Client(wrapping: client)
+                .discardUnsaved(request: ClientRequest(message: sent), options: options) { try $0.message }
+        }
+    }
+
+    /// A long transcript written to a network volume can outlast the default.
+    static let exportTimeout = Duration.seconds(60)
+
+    /// Hands the transcript to `receive` a chunk at a time, in order, once the daemon accepts
+    /// `destination`. It's whole only once this returns.
+    static func exportUnsaved(
+        _ transcript: UnsavedTranscript, to destination: URL, receive: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        let sent = Aria_Daemon_V1_ExportUnsavedTranscriptRequest.with {
+            $0.name = transcript.name
+            $0.destination = destination.path(percentEncoded: false)
+        }
+        try await DaemonTransport.call(timeout: exportTimeout) { client, options in
+            try await Aria_Daemon_V1_SystemTranscriptionService.Client(wrapping: client)
+                .exportUnsaved(request: ClientRequest(message: sent), options: options) { response in
+                    for try await message in response.messages {
+                        try receive(message.chunk)
+                    }
+                }
+        }
+    }
+
     /// The daemon sends an empty path for no file.
     static func transcriptFile(atPath path: String) -> URL? {
         path.isEmpty ? nil : URL(filePath: path)
+    }
+}
+
+extension UnsavedTranscript {
+    /// A transcript the daemon listed in `folder`. Its name must be a plain file name there.
+    init(_ wire: Aria_Daemon_V1_UnsavedTranscript, in folder: URL) throws {
+        guard !wire.name.isEmpty, !wire.name.contains("/"), ![".", ".."].contains(wire.name), wire.hasStartedAt
+        else { throw DaemonFailure.invalidResponse }
+        self.init(
+            name: wire.name, path: folder.appending(path: wire.name, directoryHint: .notDirectory),
+            startedAt: wire.startedAt.date, duration: wire.duration.timeInterval)
     }
 }

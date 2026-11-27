@@ -4,6 +4,7 @@ struct PaletteView: View {
     @ObservedObject var controller: PaletteController
     @ObservedObject var systemTranscription: SystemTranscriptionStatus
     let history: HistoryState
+    let unsaved: UnsavedTranscripts
 
     var body: some View {
         Group {
@@ -11,7 +12,7 @@ struct PaletteView: View {
             case .commands:
                 PaletteCommandsPage(
                     controller: controller, systemTranscription: systemTranscription, history: history,
-                    chats: controller.chats, microphones: controller.microphones)
+                    unsaved: unsaved, chats: controller.chats, microphones: controller.microphones)
             case .liveTranscript:
                 PaletteLivePage(controller: controller, systemTranscription: systemTranscription, history: history)
             case .phonePairing:
@@ -27,6 +28,8 @@ struct PaletteView: View {
                 if let draft = Binding($controller.model.draft) {
                     PalettePromptPage(controller: controller, draft: draft)
                 }
+            case .unsaved(let transcript):
+                PaletteUnsavedPage(controller: controller, unsaved: unsaved, transcript: transcript)
             }
         }
         .environment(\.audioLevel, systemTranscription.isRunning ? systemTranscription.level : nil)

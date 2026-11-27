@@ -63,12 +63,14 @@ pub enum RpcErrorCode {
     SystemTranscriptionUnsupportedOs,
     SystemTranscriptionPermissionDenied,
     SystemTranscriptionCaptureFailed,
+    UnsavedTranscriptMissing,
     HistoryMissing,
     HistoryAudioUnavailable,
     HistoryUnavailable,
     HistoryProjectUnavailable,
     HistoryEntryEmpty,
     HistoryTranscriptUnreadable,
+    HistoryFull,
     /// A code this build does not name, kept as it arrived so a newer daemon's
     /// failure is still reportable.
     Unknown(i32),
@@ -134,12 +136,14 @@ impl RpcErrorCode {
             Self::SystemTranscriptionUnsupportedOs => "system_transcription_unsupported_os",
             Self::SystemTranscriptionPermissionDenied => "system_transcription_permission_denied",
             Self::SystemTranscriptionCaptureFailed => "system_transcription_capture_failed",
+            Self::UnsavedTranscriptMissing => "unsaved_transcript_missing",
             Self::HistoryMissing => "history_missing",
             Self::HistoryAudioUnavailable => "history_audio_unavailable",
             Self::HistoryUnavailable => "history_unavailable",
             Self::HistoryProjectUnavailable => "history_project_unavailable",
             Self::HistoryEntryEmpty => "history_entry_empty",
             Self::HistoryTranscriptUnreadable => "history_transcript_unreadable",
+            Self::HistoryFull => "history_full",
             Self::Unknown(_) => "unknown",
         }
     }

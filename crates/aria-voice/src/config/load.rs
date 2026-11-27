@@ -18,7 +18,6 @@ use aria_settings::{
 /// A HuggingFace repo id, resolved by the sidecar against its own cache.
 const DEFAULT_PARAKEET_MLX_MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v3";
 
-const DEFAULT_SYSTEM_TRANSCRIPTION_TRANSCRIPTS_DIR: &str = ".aria/transcripts";
 const DEFAULT_SPEAKERS_DIR: &str = ".aria/speakers";
 /// The engine that a setting makes system transcription run: its own backend, or the stt engine
 /// when that one streams. `None` when no setting chooses one.
@@ -51,11 +50,6 @@ impl SystemTranscriptionConfig {
             .unwrap_or_else(|| local(LocalStt::Parakeet, None, SttDevice::Cpu, home));
         Ok(Self {
             engine: SystemTranscriptionEngine::new(transcription)?,
-            transcripts_dir: settings
-                .system_transcription
-                .transcripts_dir
-                .clone()
-                .unwrap_or_else(|| home.join(DEFAULT_SYSTEM_TRANSCRIPTION_TRANSCRIPTS_DIR)),
         })
     }
 }
@@ -691,7 +685,6 @@ mod tests {
                     model_directory: PathBuf::from("/home/user/.aria/models/moonshine/base"),
                 })
                 .unwrap(),
-                transcripts_dir: PathBuf::from("/home/user/.aria/transcripts"),
             }
         );
     }

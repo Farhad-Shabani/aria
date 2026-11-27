@@ -2412,14 +2412,30 @@ pub(super) mod tests {
     fn a_prompt_runs_only_on_a_mac_audio_transcript_read_whole() {
         let home = tempfile::tempdir().expect("a temp home");
         let (runtime, _events) = runtime_with(home.path(), logging_assistants(&Arc::default()));
-        let folder = home.path().join("transcripts");
-        std::fs::create_dir(&folder).expect("the transcript folder");
-        let transcript = folder.join("session.txt");
-        std::fs::write(&transcript, "[00:00:01] Ship it Friday.").expect("the transcript");
-        let created_at_ms = now_ms();
-        runtime
-            .history
-            .save_transcript(&transcript, created_at_ms, 1_000, None);
+        let store = runtime.history.storage().expect("history opens");
+        let (sink, kept) = aria_voice::system_transcription::TranscriptFolders::at(home.path())
+            .start(
+                None,
+                Some(store),
+                aria_voice::system_transcription::SaveHistory::On,
+            )
+            .expect("the session begins");
+        drop(sink);
+        let aria_voice::system_transcription::Kept::History {
+            path: transcript,
+            id,
+        } = kept
+        else {
+            panic!("history names the session");
+        };
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .and_then(|mut file| {
+                std::io::Write::write_all(&mut file, b"[00:00:01] Ship it Friday.")
+            })
+            .expect("the transcript");
+        runtime.history.finish_transcript(id, 1_000, None);
         let entry = runtime
             .history
             .list(aria_voice::history::HistoryQuery {
@@ -2440,7 +2456,8 @@ pub(super) mod tests {
             "[00:00:01] Ship it Friday."
         );
 
-        std::fs::remove_dir_all(&folder).expect("the transcript's folder goes");
+        std::fs::remove_dir_all(transcript.parent().expect("the transcript's folder"))
+            .expect("the transcript's folder goes");
         let error =
             entry_request(&runtime, entry, "Polish", file).expect_err("only the excerpt is left");
 

@@ -41,11 +41,11 @@ final class PalettePanel {
         panel.makeKeyAndOrderFront(nil)
     }
 
-    /// Shows `openPanel` as a sheet, so the palette stays open while the user chooses. `nil` when
-    /// they cancel.
-    func choose(_ openPanel: NSOpenPanel) async -> URL? {
-        guard await openPanel.beginSheetModal(for: panel) == .OK else { return nil }
-        return openPanel.url
+    /// Shows an open or save panel as a sheet, so the palette stays open while the user chooses.
+    /// `nil` when they cancel.
+    func choose(_ savePanel: NSSavePanel) async -> URL? {
+        guard await savePanel.beginSheetModal(for: panel) == .OK else { return nil }
+        return savePanel.url
     }
 
     func hide() {

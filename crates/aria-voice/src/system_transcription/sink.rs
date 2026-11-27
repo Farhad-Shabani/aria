@@ -1,20 +1,18 @@
 //! The transcript file a system transcription writes as it hears.
 
-use std::fs::{DirBuilder, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::fs::File;
+use std::io::{self, Write};
 use std::ops::Range;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use aria_kit::audio::canonical_duration;
 use time::OffsetDateTime;
-use time::macros::format_description;
 
 use crate::dictation::{TranscriptSink, Utterance};
+use crate::history::{CreateError, Store};
 use crate::speaker::Label;
-
-const MAX_NAME_ATTEMPTS: u32 = 100;
+use crate::transcript_file::{self, Creation};
 
 /// A pause this long always starts a new paragraph.
 pub const GAP_BREAK: Duration = Duration::from_secs(3);
@@ -32,9 +30,7 @@ const MAX_PARAGRAPH_CHARS: usize = 600;
 pub struct TranscriptFile {
     file: File,
     path: PathBuf,
-    /// Bytes already in the file at open — `create_at` appends, and the
-    /// rewrite must never touch them.
-    preamble: u64,
+    owner: Owner,
     paragraph: String,
     /// Seconds into the recording at the open paragraph's first and latest
     /// segments.
@@ -62,92 +58,69 @@ struct Paragraph {
     text: String,
 }
 
+/// Whose path a session's file sits at, which decides whether a rewrite may
+/// replace the file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Owner {
+    /// Aria made the file in its own folder, so its path is the session's.
+    Aria,
+    /// The caller named the file, and any program may append to it while the
+    /// session runs. Aria only appends to it and never rewrites it.
+    Caller,
+}
+
 impl TranscriptFile {
-    /// A new timestamped file in the transcripts directory. Sessions that
-    /// start in the same second get `-2`, `-3` and so on, so each owns its
-    /// file and deleting one never takes another's text.
-    pub fn create(directory: &Path) -> io::Result<(Self, PathBuf)> {
-        let stamp = OffsetDateTime::now_utc()
-            .format(format_description!(
-                "[year]-[month]-[day]T[hour]-[minute]-[second]Z"
-            ))
-            .map_err(io::Error::other)?;
-        for attempt in 1..=MAX_NAME_ATTEMPTS {
-            let name = match attempt {
-                1 => format!("{stamp}.txt"),
-                _ => format!("{stamp}-{attempt}.txt"),
-            };
-            let mut options = File::options();
-            options.create_new(true);
-            match Self::open(directory.join(name), options) {
+    /// A new file in `directory`, under a name no session had before.
+    pub(crate) fn create(directory: &Path) -> io::Result<(Self, PathBuf)> {
+        for name in transcript_file::names_at(OffsetDateTime::now_utc()) {
+            let path = directory.join(name?);
+            match transcript_file::create(&path, Creation::New) {
+                Ok(file) => return Ok((Self::opened(file, path.clone(), Owner::Aria), path)),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                opened => return opened,
+                Err(error) => return Err(error),
             }
         }
-        Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "every transcript name for this second is taken",
-        ))
+        Err(transcript_file::taken())
+    }
+
+    /// A new file in `directory` that `history` names from its start, under
+    /// a name nothing has on disk or in history. Returns the entry's id.
+    pub(crate) fn create_recorded(
+        directory: &Path,
+        history: &Store,
+    ) -> Result<(Self, PathBuf, u64), CreateError> {
+        let (file, path, id) = history.create_transcript(directory)?;
+        Ok((Self::opened(file, path.clone(), Owner::Aria), path, id))
     }
 
     /// The caller's exact file, appended to when it already exists. A file or
     /// folder this creates is private to its owner. An existing file keeps
     /// its mode.
-    pub fn create_at(path: PathBuf) -> io::Result<(Self, PathBuf)> {
-        let mut options = File::options();
-        options.create(true);
-        Self::open(path, options)
+    pub(crate) fn append_to(path: PathBuf) -> io::Result<(Self, PathBuf)> {
+        let file = transcript_file::create(&path, Creation::Append)?;
+        Ok((Self::opened(file, path.clone(), Owner::Caller), path))
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    fn open(path: PathBuf, mut options: OpenOptions) -> io::Result<(Self, PathBuf)> {
-        if let Some(parent) = path.parent() {
-            DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(parent)?;
-        }
-        let file = options
-            .append(true)
-            .mode(0o600)
-            .custom_flags(
-                (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
-            )
-            .open(&path)?;
-        // In a shared folder another user can plant the file first. A planted
-        // FIFO would block the open without `NONBLOCK`.
-        let metadata = file.metadata()?;
-        if !metadata.is_file()
-            || metadata.uid() != rustix::process::getuid().as_raw()
-            || metadata.nlink() != 1
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "the transcript file belongs to another user or has other links",
-            ));
-        }
-        let preamble = file.metadata()?.len();
+    fn opened(file: File, path: PathBuf, owner: Owner) -> Self {
         let now = Instant::now();
-        Ok((
-            Self {
-                file,
-                path: path.clone(),
-                preamble,
-                paragraph: String::new(),
-                paragraph_at: 0,
-                paragraph_ended: 0,
-                paragraph_span: None,
-                paragraph_embedding: Vec::new(),
-                label: None,
-                last_segment: now,
-                separate: false,
-                history: Vec::new(),
-            },
+        Self {
+            file,
             path,
-        ))
+            owner,
+            paragraph: String::new(),
+            paragraph_at: 0,
+            paragraph_ended: 0,
+            paragraph_span: None,
+            paragraph_embedding: Vec::new(),
+            label: None,
+            last_segment: now,
+            separate: false,
+            history: Vec::new(),
+        }
     }
 
     /// Where each written paragraph's audio sat, in stream positions. What a
@@ -162,10 +135,11 @@ impl TranscriptFile {
             .collect()
     }
 
-    /// Rewrites every paragraph written so far under `labels`, leaving the
-    /// preamble bytes untouched. Rename-atomic: the streamed file stands
-    /// until the replacement is whole. Safe to run again — a session that
-    /// keeps correcting itself calls this once per correction.
+    /// Rewrites every paragraph written so far under the labels `label`
+    /// gives. Rename-atomic: the streamed file stands until the replacement
+    /// is whole. Safe to run again. A session that keeps correcting itself
+    /// calls this once per correction. A caller's file keeps the labels
+    /// given while listening.
     /// `label` is asked after the open paragraph closes, so the spans it
     /// answers about include it. It may answer for only the first
     /// paragraphs; the rest lose their labels rather than borrow a
@@ -175,7 +149,7 @@ impl TranscriptFile {
         label: impl FnOnce(&[Option<Range<u64>>]) -> Vec<Option<Label>>,
     ) -> io::Result<()> {
         self.flush_paragraph()?;
-        if self.history.is_empty() {
+        if self.history.is_empty() || self.owner == Owner::Caller {
             return Ok(());
         }
         let mut labels = label(&self.paragraph_spans());
@@ -213,30 +187,15 @@ impl TranscriptFile {
             }
         }
 
-        let existing = File::open(&self.path)?;
-        // A temp file opens private to its owner. The transcript may not be,
-        // and a rewrite is not the moment to change who can read a session.
-        let permissions = existing.metadata()?.permissions();
-        let mut preamble = Vec::new();
-        existing.take(self.preamble).read_to_end(&mut preamble)?;
-        let parent = self.path.parent().unwrap_or(Path::new("."));
-        let mut replacement = tempfile::NamedTempFile::new_in(parent)?;
-        replacement.as_file().set_permissions(permissions)?;
-        replacement.write_all(&preamble)?;
+        let mut contents = Vec::new();
         for (index, block) in blocks.iter().enumerate() {
             if index > 0 {
-                replacement.write_all(b"\n")?;
+                contents.push(b'\n');
             }
-            replacement
-                .write_all(render(block.at, block.label.as_ref(), &block.text).as_bytes())?;
+            contents
+                .extend_from_slice(render(block.at, block.label.as_ref(), &block.text).as_bytes());
         }
-        replacement.flush()?;
-        replacement
-            .persist(&self.path)
-            .map_err(|error| error.error)?;
-        // persist() unlinked the inode this handle held; without reopening,
-        // every later paragraph writes into a file no path reaches.
-        self.file = File::options().append(true).open(&self.path)?;
+        self.file = transcript_file::rewrite(&self.path, &self.file, &contents)?;
         Ok(())
     }
 
@@ -431,16 +390,88 @@ mod tests {
     use super::*;
     use crate::speaker::SpeakerName;
     use aria_kit::audio::CANONICAL_SAMPLE_RATE;
+    use aria_platform::sqlite::AtRest;
     use std::fs;
 
     fn enrolled(name: &str) -> Label {
         Label::Enrolled(SpeakerName::new(name).expect("a usable name"))
     }
 
+    #[test]
+    fn a_line_another_writer_appends_after_a_rewrite_stays() {
+        let directory = tempfile::tempdir().unwrap();
+        let history = Store::open(&directory.path().join("history"), &AtRest::for_tests()).unwrap();
+        let (mut sink, path, _id) =
+            TranscriptFile::create_recorded(&directory.path().join("transcripts"), &history)
+                .unwrap();
+        sink.segment(spanning(0, 2, Some(&Label::Anonymous(1)), "heard"))
+            .unwrap();
+        sink.segment(heard(None, "first")).unwrap();
+        sink.flush_paragraph().unwrap();
+        sink.rewrite(|_| vec![Some(Label::Anonymous(2))]).unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"\nsomeone else's line")
+            .unwrap();
+
+        sink.segment(heard(None, "second")).unwrap();
+        sink.flush_paragraph().unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("someone else's line"), "{text}");
+        assert!(text.trim_end().ends_with("second"), "{text}");
+    }
+
+    #[test]
+    fn a_write_only_output_file_opens_and_gets_the_session_after_its_text() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("meeting.txt");
+        fs::write(&path, "earlier\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o200)).unwrap();
+
+        let (mut sink, _) = TranscriptFile::append_to(path.clone()).unwrap();
+        sink.segment(heard(Some(&Label::Anonymous(1)), "heard"))
+            .unwrap();
+        sink.flush_paragraph().unwrap();
+        drop(sink);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "earlier\n[00:00:00] Speaker 1: heard\n"
+        );
+    }
+
+    #[test]
+    fn a_note_appended_to_the_output_file_survives_speaker_correction() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("meeting.txt");
+        let (mut sink, _) = TranscriptFile::append_to(path.clone()).unwrap();
+        sink.segment(heard(Some(&Label::Anonymous(1)), "heard"))
+            .unwrap();
+        sink.flush_paragraph().unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"\na note\n")
+            .unwrap();
+
+        sink.rewrite(|_| vec![Some(Label::Anonymous(2))]).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "[00:00:00] Speaker 1: heard\n\na note\n"
+        );
+    }
+
     fn open_in_tempdir() -> (tempfile::TempDir, TranscriptFile, PathBuf) {
         let directory = tempfile::tempdir().expect("test directory is created");
-        let (sink, path) =
-            TranscriptFile::create(directory.path()).expect("the transcript file is created");
+        let (sink, path) = TranscriptFile::create(&directory.path().join("transcripts"))
+            .expect("the transcript file is created");
         (directory, sink, path)
     }
 
@@ -452,11 +483,11 @@ mod tests {
 
         let link = directory.path().join("link.txt");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        assert!(TranscriptFile::create_at(link).is_err());
+        assert!(TranscriptFile::append_to(link).is_err());
 
         let second = directory.path().join("second.txt");
         fs::hard_link(&target, &second).unwrap();
-        assert!(TranscriptFile::create_at(second).is_err());
+        assert!(TranscriptFile::append_to(second).is_err());
         assert_eq!(fs::read_to_string(&target).unwrap(), "");
 
         let fifo = directory.path().join("fifo.txt");
@@ -470,7 +501,7 @@ mod tests {
             outcome,
             aria_primitives::process::WaitOutcome::Exited(status) if status.success()
         ));
-        assert!(TranscriptFile::create_at(fifo).is_err());
+        assert!(TranscriptFile::append_to(fifo).is_err());
     }
 
     #[test]
@@ -495,7 +526,7 @@ mod tests {
         let shared = directory.path().join("shared.txt");
         fs::write(&shared, "").unwrap();
         fs::set_permissions(&shared, fs::Permissions::from_mode(0o644)).unwrap();
-        drop(TranscriptFile::create_at(shared.clone()).unwrap());
+        drop(TranscriptFile::append_to(shared.clone()).unwrap());
         assert_eq!(mode(&shared), 0o644);
     }
 
@@ -543,12 +574,6 @@ mod tests {
 
         let written = fs::read_to_string(&path).expect("the transcript file is readable");
         assert_eq!(written, "[00:00:00] hello there general kenobi\n");
-        assert!(
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .expect("the file has a name")
-                .ends_with("Z.txt")
-        );
     }
 
     #[test]
@@ -699,32 +724,6 @@ mod tests {
         assert_eq!(
             written,
             "[00:00:00] Speaker 1: hello\n\n[00:00:00] Speaker 1: still here\n"
-        );
-    }
-
-    #[test]
-    fn a_rewrite_relabels_but_preserves_the_preamble() {
-        let directory = tempfile::tempdir().expect("test directory is created");
-        let path = directory.path().join("transcript.txt");
-        fs::write(&path, "earlier session\n").expect("the preamble is written");
-        let (mut sink, path) =
-            TranscriptFile::create_at(path).expect("the transcript file is created");
-
-        sink.segment(heard(Some(&Label::Anonymous(1)), "hello"))
-            .expect("the write succeeds");
-        sink.segment(heard(Some(&Label::Anonymous(2)), "hi back"))
-            .expect("the write succeeds");
-        sink.rewrite(|spans| {
-            assert_eq!(spans.len(), 2);
-            vec![Some(enrolled("alex")), Some(Label::Anonymous(1))]
-        })
-        .expect("the rewrite succeeds");
-        drop(sink);
-
-        let written = fs::read_to_string(&path).expect("the transcript file is readable");
-        assert_eq!(
-            written,
-            "earlier session\n[00:00:00] alex: hello\n\n[00:00:00] Speaker 1: hi back\n"
         );
     }
 

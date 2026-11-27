@@ -1,5 +1,7 @@
 mod store;
 
+pub use store::transcripts::TRANSCRIPTION_INTERRUPTED;
+pub(crate) use store::transcripts::{CreateError, OwnedFiles};
 pub use store::{DB_FILE, DIRECTORY, MAX_ENTRY_BYTES, NewAsk, RetryLease, Store};
 
 use aria_primitives::Cause;
@@ -8,6 +10,8 @@ use std::path::PathBuf;
 use aria_platform::delivery::Application;
 use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_settings::{ChatKey, Quote};
+
+use crate::transcript_file::{OpenError, ReadError};
 
 #[derive(Clone)]
 pub struct HistoryEntry {
@@ -139,6 +143,15 @@ pub enum TranscriptRead {
     Truncated,
     /// The file is gone or unreadable. The text is the excerpt.
     Unavailable,
+}
+
+impl TranscriptRead {
+    pub(crate) fn of(text: crate::transcript_file::Text) -> (String, Self) {
+        match text {
+            crate::transcript_file::Text::Whole(text) => (text, Self::Whole),
+            crate::transcript_file::Text::Truncated(text) => (text, Self::Truncated),
+        }
+    }
 }
 
 /// One kind of saved item. Each section keeps its own budget, so one never
@@ -317,6 +330,8 @@ pub enum HistoryError {
     Storage(#[source] Cause),
     #[error("another chat of that assistant already has the name")]
     ChatNameTaken,
+    #[error("Transcription history is full. Delete transcripts to save more.")]
+    Full,
 }
 
 impl HistoryError {
@@ -351,6 +366,7 @@ impl From<&HistoryError> for RpcErrorCode {
             HistoryError::Timeout => Self::OverallTimeout,
             HistoryError::Transcription { code, .. } => *code,
             HistoryError::ChatNameTaken => Self::ChatNameTaken,
+            HistoryError::Full => Self::HistoryFull,
         }
     }
 }
@@ -392,6 +408,16 @@ impl From<rusqlite::Error> for HistoryError {
                 Self::TooLarge
             }
             error => Self::storage(error),
+        }
+    }
+}
+
+impl From<ReadError> for HistoryError {
+    fn from(error: ReadError) -> Self {
+        match error {
+            ReadError::Open(OpenError::Missing) => Self::Missing,
+            ReadError::Open(OpenError::Foreign) | ReadError::NotText => Self::TranscriptUnreadable,
+            ReadError::Open(OpenError::Io(error)) | ReadError::Io(error) => Self::storage(error),
         }
     }
 }

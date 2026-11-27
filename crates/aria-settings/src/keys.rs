@@ -175,7 +175,7 @@ keys! {
     DictationVocabularyDir: "dictation.vocabulary.dir", Live, Phone, [], Kind::Path, None,
         "The project folder to read terms from. Absent means the folder the request names.";
     HistoryEnabled: "history.enabled", Live, Phone, [], Kind::Bool, Some("true"),
-        "Saves dictation history.";
+        "Saves history. Off, a Mac Audio transcript waits unsaved until you save or discard it.";
     HistoryKeepAudio: "history.keep_audio", Live, Phone, [], Kind::Bool, Some("false"),
         "Keeps each recording's audio for 24 hours.";
     SystemTranscriptionBackend: "transcription.backend", Live, Mac, [], Kind::Choice(backend::STREAMING), None,
@@ -184,8 +184,6 @@ keys! {
         "Absent means setup's download for that engine.";
     SystemTranscriptionDevice: "transcription.device", Live, Mac, [], Kind::Choice(&["cpu", "gpu"]), None,
         "cpu or gpu. parakeet only.";
-    SystemTranscriptionTranscriptsDir: "transcription.transcripts_dir", Live, Mac, [], Kind::Path, Some("\"~/.aria/transcripts\""),
-        "Where Transcription saves transcripts.";
     AssistantId: "assistant.id", Live, Mac, [], Kind::Choice(&["claude-code", "codex", "local-model"]), Some("claude-code"),
         "Who answers `aria ask`: claude-code, codex, or local-model.";
     AssistantModels: "assistant.models", Live, Mac, [], Kind::Models, None,

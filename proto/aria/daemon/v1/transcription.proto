@@ -5,7 +5,9 @@ syntax = "proto3";
 package aria.daemon.v1;
 
 import "aria/daemon/v1/errors.proto";
+import "aria/daemon/v1/history.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
 
 service SystemTranscriptionService {
   // Capture the machine's own audio output and transcribe it to a file
@@ -15,17 +17,96 @@ service SystemTranscriptionService {
   rpc Start(StartSystemTranscriptionRequest) returns (StartSystemTranscriptionResponse);
   rpc Stop(StopSystemTranscriptionRequest) returns (StopSystemTranscriptionResponse);
   rpc GetStatus(GetSystemTranscriptionStatusRequest) returns (GetSystemTranscriptionStatusResponse);
+  // The unsaved transcripts, oldest first, except the running session's.
+  // A session run with history off or full leaves one, also when a crash
+  // cut it short. They wait in `~/.aria/unsaved`, which never moves.
+  rpc ListUnsaved(ListUnsavedTranscriptsRequest) returns (ListUnsavedTranscriptsResponse);
+  // An unsaved transcript's text: all of it, or its first 1 MiB.
+  // Fails with UNSAVED_TRANSCRIPT_MISSING once the transcript is gone.
+  rpc ReadUnsaved(ReadUnsavedTranscriptRequest) returns (ReadUnsavedTranscriptResponse);
+  // Delete an unsaved transcript. One already gone counts as deleted.
+  // Refused with HISTORY_UNAVAILABLE while history can't open, since only
+  // history knows the files it names.
+  rpc DiscardUnsaved(DiscardUnsavedTranscriptRequest) returns (DiscardUnsavedTranscriptResponse);
+  // Stream an unsaved transcript for the caller to write at `destination`,
+  // a file it can write, then DiscardUnsaved. Refused with INVALID_REQUEST
+  // for a destination in ~/.aria or a file history saved, BUSY for the
+  // running session's file, UNSAVED_TRANSCRIPT_MISSING once the transcript
+  // is gone, and HISTORY_UNAVAILABLE while history can't open. Chunks
+  // arrive in order. The text is whole only once the stream ends with OK.
+  rpc ExportUnsaved(ExportUnsavedTranscriptRequest) returns (stream ExportUnsavedTranscriptResponse);
 }
 
 message StartSystemTranscriptionRequest {
-  // Absolute file path for the transcript. Absent: a timestamped file in
-  // the configured transcripts directory.
+  // Absolute file path for the transcript, outside `~/.aria`. Absent: a
+  // timestamped file in `~/.aria/transcripts`, or in `~/.aria/unsaved` when
+  // history won't save it.
   optional string transcript_path = 1;
 }
 
 message StartSystemTranscriptionResponse {
   bool already_running = 1;
   string transcript_path = 2;
+  TranscriptSaving saving = 3;
+}
+
+// What keeps a session's transcript once it ends.
+enum TranscriptSaving {
+  TRANSCRIPT_SAVING_UNSPECIFIED = 0;
+  // `~/.aria/transcripts`, with a history entry from the start.
+  TRANSCRIPT_SAVING_HISTORY = 1;
+  // Unsaved, because history is off.
+  TRANSCRIPT_SAVING_HISTORY_OFF = 2;
+  // Unsaved, because Mac Audio history is full.
+  TRANSCRIPT_SAVING_HISTORY_FULL = 3;
+  // The file the caller named. History never names it.
+  TRANSCRIPT_SAVING_OUTPUT = 4;
+}
+
+message ListUnsavedTranscriptsRequest {}
+
+message ListUnsavedTranscriptsResponse {
+  repeated UnsavedTranscript transcripts = 1;
+  // Whether Mac Audio history is full, which is why a session with history
+  // on runs unsaved. False while history can't open.
+  bool history_full = 2;
+  string unsaved_dir = 4;
+}
+
+message UnsavedTranscript {
+  // The file's name in `unsaved_dir`, which ReadUnsaved and DiscardUnsaved
+  // take. The file is plain text, private to its owner.
+  string name = 1;
+  google.protobuf.Timestamp started_at = 2;
+  // How long the session wrote to it.
+  google.protobuf.Duration duration = 3;
+}
+
+message ReadUnsavedTranscriptRequest {
+  string name = 1;
+}
+
+message ReadUnsavedTranscriptResponse {
+  string text = 1;
+  // WHOLE or TRUNCATED.
+  HistoryTranscriptRead read = 2;
+}
+
+message DiscardUnsavedTranscriptRequest {
+  string name = 1;
+}
+
+message DiscardUnsavedTranscriptResponse {}
+
+message ExportUnsavedTranscriptRequest {
+  string name = 1;
+  // An absolute file path.
+  string destination = 2;
+}
+
+message ExportUnsavedTranscriptResponse {
+  // At most 64 KiB.
+  bytes chunk = 1;
 }
 
 message StopSystemTranscriptionRequest {}

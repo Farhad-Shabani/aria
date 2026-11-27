@@ -24,15 +24,16 @@ aria-settings         = { workspace = true }
 aria-speaker          = { workspace = true }
 aria-stt              = { workspace = true, features = [ "moonshine", "nemotron", "parakeet", "whisper", "whisper-candle" ] }
 aria-tts              = { workspace = true, features = [ "kokoro", "qwen", "system" ] }
+getrandom             = { workspace = true, features = [ "std" ] }
 ignore                = "0.4"
-rusqlite              = { workspace = true, features = [ "blob" ] }
+rusqlite              = { workspace = true, features = [ "blob", "functions" ] }
 rustix                = { workspace = true, features = [ "fs", "process", "system", "termios" ] }
 serde                 = { workspace = true }
 serde_json            = { workspace = true }
 sha2                  = { workspace = true }
 tempfile              = { workspace = true }
 thiserror             = { workspace = true }
-time                  = { workspace = true }
+time                  = { workspace = true, features = [ "parsing" ] }
 tracing               = { workspace = true }
 unicode-normalization = "0.1"
 

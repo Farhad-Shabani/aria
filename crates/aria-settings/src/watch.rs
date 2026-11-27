@@ -144,6 +144,10 @@ impl SettingsCache {
         })
     }
 
+    pub(crate) fn home(&self) -> &Path {
+        &self.home
+    }
+
     pub(crate) fn snapshot(&self) -> Arc<Loaded> {
         Arc::clone(&self.lock_state().loaded)
     }

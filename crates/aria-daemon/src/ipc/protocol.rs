@@ -39,9 +39,10 @@ use aria_voice::history::{ChatPage, ChatQuery, ClearHistoryResult, PromptResult}
 use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use aria_voice::stt::LanguageCodeError;
+use aria_voice::system_transcription::unsaved::{UnsavedText, UnsavedTranscriptList};
 use aria_voice::system_transcription::{
     SystemAudioLevel, SystemTranscriptionSnapshot, SystemTranscriptionStage,
-    SystemTranscriptionStarted, SystemTranscriptionStopped,
+    SystemTranscriptionStarted, SystemTranscriptionStopped, TranscriptSaving,
 };
 use prost::Message;
 use std::collections::BTreeMap;
@@ -151,7 +152,9 @@ impl TryFrom<wire::RpcError> for RpcFailure {
 fn grpc_code(code: RpcErrorCode) -> tonic::Code {
     match code {
         RpcErrorCode::InvalidRequest => tonic::Code::InvalidArgument,
-        RpcErrorCode::Busy | RpcErrorCode::PayloadTooLarge => tonic::Code::ResourceExhausted,
+        RpcErrorCode::Busy | RpcErrorCode::PayloadTooLarge | RpcErrorCode::HistoryFull => {
+            tonic::Code::ResourceExhausted
+        }
         RpcErrorCode::Cancelled => tonic::Code::Cancelled,
         RpcErrorCode::Unauthenticated => tonic::Code::Unauthenticated,
         RpcErrorCode::Unsupported => tonic::Code::Unimplemented,
@@ -180,6 +183,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
             tonic::Code::AlreadyExists
         }
         RpcErrorCode::HistoryMissing
+        | RpcErrorCode::UnsavedTranscriptMissing
         | RpcErrorCode::PromptMissing
         | RpcErrorCode::SpeakerNotEnrolled
         | RpcErrorCode::VoiceUnavailable => tonic::Code::NotFound,
@@ -1032,14 +1036,15 @@ impl TryFrom<wire::SavePromptRequest> for PromptDraft {
     }
 }
 
-/// A relative path would name a file beside the daemon, not the caller.
 fn prompt_file(file: String) -> Result<std::path::PathBuf, PromptError> {
-    let path = std::path::PathBuf::from(&file);
-    if path.is_absolute() && !file.contains('\0') {
-        Ok(path)
-    } else {
-        Err(PromptError::File)
-    }
+    absolute_path(&file).ok_or(PromptError::File)
+}
+
+/// A file path a client sent. A relative path would name a file beside the
+/// daemon, not the caller.
+fn absolute_path(path: &str) -> Option<std::path::PathBuf> {
+    let absolute = std::path::PathBuf::from(path);
+    (absolute.is_absolute() && !path.contains('\0')).then_some(absolute)
 }
 
 impl TryFrom<wire::GetPromptRequest> for PromptSource {
@@ -1406,15 +1411,42 @@ impl From<SystemTranscriptionStarted> for wire::StartSystemTranscriptionResponse
         Self {
             already_running: started.already_running,
             transcript_path: started.transcript.display().to_string(),
+            saving: wire::TranscriptSaving::from(started.saving) as i32,
         }
     }
 }
 
-impl From<wire::StartSystemTranscriptionResponse> for SystemTranscriptionStarted {
-    fn from(response: wire::StartSystemTranscriptionResponse) -> Self {
-        Self {
+impl TryFrom<wire::StartSystemTranscriptionResponse> for SystemTranscriptionStarted {
+    type Error = ProtocolError;
+
+    fn try_from(response: wire::StartSystemTranscriptionResponse) -> Result<Self, Self::Error> {
+        let saving = match wire::TranscriptSaving::try_from(response.saving) {
+            Ok(wire::TranscriptSaving::History) => TranscriptSaving::History,
+            Ok(wire::TranscriptSaving::HistoryOff) => TranscriptSaving::HistoryOff,
+            Ok(wire::TranscriptSaving::HistoryFull) => TranscriptSaving::HistoryFull,
+            Ok(wire::TranscriptSaving::Output) => TranscriptSaving::Output,
+            Ok(wire::TranscriptSaving::Unspecified) | Err(_) => {
+                return Err(ProtocolError::InvalidEnum {
+                    field: "transcript saving",
+                    value: response.saving,
+                });
+            }
+        };
+        Ok(Self {
             already_running: response.already_running,
             transcript: response.transcript_path.into(),
+            saving,
+        })
+    }
+}
+
+impl From<TranscriptSaving> for wire::TranscriptSaving {
+    fn from(saving: TranscriptSaving) -> Self {
+        match saving {
+            TranscriptSaving::History => Self::History,
+            TranscriptSaving::HistoryOff => Self::HistoryOff,
+            TranscriptSaving::HistoryFull => Self::HistoryFull,
+            TranscriptSaving::Output => Self::Output,
         }
     }
 }
@@ -1463,14 +1495,48 @@ impl TryFrom<wire::StartSystemTranscriptionRequest> for Option<std::path::PathBu
     fn try_from(request: wire::StartSystemTranscriptionRequest) -> Result<Self, Self::Error> {
         request
             .transcript_path
-            .map(|path| {
-                let output = std::path::PathBuf::from(&path);
-                if !output.is_absolute() || path.contains('\0') {
-                    return Err(ProtocolError::InvalidTranscriptPath);
-                }
-                Ok(output)
-            })
+            .map(|path| absolute_path(&path).ok_or(ProtocolError::InvalidTranscriptPath))
             .transpose()
+    }
+}
+
+/// The unsaved transcript's name, and where its copy goes.
+impl TryFrom<wire::ExportUnsavedTranscriptRequest> for (String, std::path::PathBuf) {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::ExportUnsavedTranscriptRequest) -> Result<Self, Self::Error> {
+        let destination =
+            absolute_path(&request.destination).ok_or(ProtocolError::InvalidTranscriptPath)?;
+        Ok((request.name, destination))
+    }
+}
+
+impl From<UnsavedText> for wire::ReadUnsavedTranscriptResponse {
+    fn from(unsaved: UnsavedText) -> Self {
+        Self {
+            text: unsaved.text,
+            read: wire::HistoryTranscriptRead::from(unsaved.read) as i32,
+        }
+    }
+}
+
+impl From<UnsavedTranscriptList> for wire::ListUnsavedTranscriptsResponse {
+    fn from(unsaved: UnsavedTranscriptList) -> Self {
+        Self {
+            transcripts: unsaved
+                .transcripts
+                .into_iter()
+                .map(|transcript| wire::UnsavedTranscript {
+                    name: transcript.name().to_owned(),
+                    started_at: Some(wire_time(Duration::from_millis(transcript.started_at_ms()))),
+                    duration: Some(wire_duration(Duration::from_millis(
+                        transcript.duration_ms(),
+                    ))),
+                })
+                .collect(),
+            history_full: unsaved.history_full,
+            unsaved_dir: unsaved.unsaved_dir.display().to_string(),
+        }
     }
 }
 
@@ -2080,24 +2146,28 @@ fn history_content(
     }
 }
 
+impl From<aria_voice::history::TranscriptRead> for wire::HistoryTranscriptRead {
+    fn from(read: aria_voice::history::TranscriptRead) -> Self {
+        use aria_voice::history::TranscriptRead;
+        match read {
+            TranscriptRead::Whole => Self::Whole,
+            TranscriptRead::Truncated => Self::Truncated,
+            TranscriptRead::Unavailable => Self::Unavailable,
+        }
+    }
+}
+
 fn history_details(
     content: aria_voice::history::HistoryContent,
 ) -> Option<wire::history_entry::Details> {
-    use aria_voice::history::{HistoryContent, TranscriptRead};
+    use aria_voice::history::HistoryContent;
     match content {
         HistoryContent::Dictation(_) => None,
         HistoryContent::Ask { reply, .. } => Some(wire::history_entry::Details::Reply(reply)),
         HistoryContent::SystemTranscription { transcript, read } => Some(
             wire::history_entry::Details::Transcript(wire::HistoryTranscript {
                 path: transcript.to_string_lossy().into_owned(),
-                read: read.map(|read| {
-                    let read = match read {
-                        TranscriptRead::Whole => wire::HistoryTranscriptRead::Whole,
-                        TranscriptRead::Truncated => wire::HistoryTranscriptRead::Truncated,
-                        TranscriptRead::Unavailable => wire::HistoryTranscriptRead::Unavailable,
-                    };
-                    read as i32
-                }),
+                read: read.map(|read| wire::HistoryTranscriptRead::from(read) as i32),
             }),
         ),
     }
@@ -2683,9 +2753,11 @@ impl TryFrom<wire::SettingsSnapshot> for SettingsSnapshot {
                 })
             })
             .collect::<Result<StreamingSupport, ProtocolError>>()?;
+        let transcripts_dir = snapshot.transcripts_dir.into();
         Ok(Self {
             revision: snapshot.revision,
             streaming_unavailable,
+            transcripts_dir,
             settings: Settings {
                 output_mode: decode_enum::<wire::OutputMode>(settings.output_mode, "output mode")?,
                 delivery_mode: decode_enum::<wire::DeliveryMode>(
@@ -3023,6 +3095,7 @@ impl From<&SettingsSnapshot> for wire::SettingsSnapshot {
                 .map(AssistantId::display_name)
                 .unwrap_or_default()
                 .to_owned(),
+            transcripts_dir: snapshot.transcripts_dir.display().to_string(),
         }
     }
 }
@@ -3636,12 +3709,14 @@ pub(crate) fn error_code_to_wire(code: RpcErrorCode) -> i32 {
         RpcErrorCode::SystemTranscriptionCaptureFailed => {
             wire::ErrorCode::SystemTranscriptionCaptureFailed
         }
+        RpcErrorCode::UnsavedTranscriptMissing => wire::ErrorCode::UnsavedTranscriptMissing,
         RpcErrorCode::HistoryMissing => wire::ErrorCode::HistoryMissing,
         RpcErrorCode::HistoryAudioUnavailable => wire::ErrorCode::HistoryAudioUnavailable,
         RpcErrorCode::HistoryUnavailable => wire::ErrorCode::HistoryUnavailable,
         RpcErrorCode::HistoryProjectUnavailable => wire::ErrorCode::HistoryProjectUnavailable,
         RpcErrorCode::HistoryEntryEmpty => wire::ErrorCode::HistoryEntryEmpty,
         RpcErrorCode::HistoryTranscriptUnreadable => wire::ErrorCode::HistoryTranscriptUnreadable,
+        RpcErrorCode::HistoryFull => wire::ErrorCode::HistoryFull,
         RpcErrorCode::Unknown(value) => return value,
     };
     encoded as i32
@@ -3698,6 +3773,7 @@ pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolEr
         Ok(wire::ErrorCode::SystemTranscriptionCaptureFailed) => {
             RpcErrorCode::SystemTranscriptionCaptureFailed
         }
+        Ok(wire::ErrorCode::UnsavedTranscriptMissing) => RpcErrorCode::UnsavedTranscriptMissing,
         Ok(wire::ErrorCode::HistoryMissing) => RpcErrorCode::HistoryMissing,
         Ok(wire::ErrorCode::HistoryAudioUnavailable) => RpcErrorCode::HistoryAudioUnavailable,
         Ok(wire::ErrorCode::HistoryUnavailable) => RpcErrorCode::HistoryUnavailable,
@@ -3706,6 +3782,7 @@ pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolEr
         Ok(wire::ErrorCode::HistoryTranscriptUnreadable) => {
             RpcErrorCode::HistoryTranscriptUnreadable
         }
+        Ok(wire::ErrorCode::HistoryFull) => RpcErrorCode::HistoryFull,
         Ok(wire::ErrorCode::Unspecified) => {
             return Err(ProtocolError::InvalidEnum {
                 field: "error code",
@@ -3914,12 +3991,12 @@ mod tests {
     fn an_aria_key_round_trips_and_unspecified_is_refused() {
         for key in [AriaKey::RightOption, AriaKey::Fn] {
             let snapshot = SettingsSnapshot {
-                streaming_unavailable: StreamingSupport::default(),
                 revision: 1,
                 settings: Settings {
                     aria_key: key,
                     ..Settings::default()
                 },
+                ..SettingsSnapshot::default()
             };
             let decoded =
                 SettingsSnapshot::try_from(wire::SettingsSnapshot::from(&snapshot)).unwrap();
@@ -4009,7 +4086,6 @@ mod tests {
             );
         }
         let snapshot = SettingsSnapshot {
-            streaming_unavailable: StreamingSupport::default(),
             settings: Settings {
                 assistant_models: [
                     (AssistantId::ClaudeCode, "claude-example".to_owned()),
@@ -4072,7 +4148,6 @@ mod tests {
                 patch
             );
             let snapshot = SettingsSnapshot {
-                streaming_unavailable: StreamingSupport::default(),
                 settings: Settings {
                     assistant_id,
                     ..Default::default()
@@ -4161,6 +4236,22 @@ mod tests {
         let status = Status::unavailable("connection refused");
 
         assert_eq!(rpc_failure(&status), None);
+    }
+
+    #[test]
+    fn a_start_response_that_doesnt_say_where_its_transcript_goes_is_refused() {
+        let response = wire::StartSystemTranscriptionResponse {
+            saving: wire::TranscriptSaving::Unspecified as i32,
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            SystemTranscriptionStarted::try_from(response),
+            Err(ProtocolError::InvalidEnum {
+                field: "transcript saving",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -4854,12 +4945,12 @@ mod tests {
     fn mute_sound_preserves_snapshot_value_and_patch_presence_on_the_wire() {
         for mute_sound in [false, true] {
             let snapshot = SettingsSnapshot {
-                streaming_unavailable: StreamingSupport::default(),
                 revision: 4,
                 settings: Settings {
                     mute_sound,
                     ..Default::default()
                 },
+                ..SettingsSnapshot::default()
             };
             let decoded = wire::SettingsSnapshot::from(&snapshot);
             assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
@@ -4878,12 +4969,12 @@ mod tests {
     fn hold_microphone_survives_the_wire() {
         for hold_microphone in [false, true] {
             let snapshot = SettingsSnapshot {
-                streaming_unavailable: StreamingSupport::default(),
                 revision: 4,
                 settings: Settings {
                     hold_microphone,
                     ..Default::default()
                 },
+                ..SettingsSnapshot::default()
             };
             let decoded = wire::SettingsSnapshot::from(&snapshot);
             assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
@@ -4902,12 +4993,12 @@ mod tests {
     fn return_sends_survives_the_wire() {
         for return_sends in [false, true] {
             let snapshot = SettingsSnapshot {
-                streaming_unavailable: StreamingSupport::default(),
                 revision: 4,
                 settings: Settings {
                     return_sends,
                     ..Default::default()
                 },
+                ..SettingsSnapshot::default()
             };
             let decoded = wire::SettingsSnapshot::from(&snapshot);
             assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
@@ -4926,12 +5017,12 @@ mod tests {
     fn phone_submits_survives_the_wire() {
         for phone_submits in [false, true] {
             let snapshot = SettingsSnapshot {
-                streaming_unavailable: StreamingSupport::default(),
                 revision: 4,
                 settings: Settings {
                     phone_submits,
                     ..Default::default()
                 },
+                ..SettingsSnapshot::default()
             };
             let encoded = wire::SettingsSnapshot::from(&snapshot).encode_to_vec();
             let decoded = wire::SettingsSnapshot::decode(encoded.as_slice()).unwrap();
@@ -4953,12 +5044,12 @@ mod tests {
         let ten_seconds = Some(AutoStop::new(Duration::from_secs(10)).unwrap());
         for auto_stop in [None, ten_seconds] {
             let snapshot = SettingsSnapshot {
-                streaming_unavailable: StreamingSupport::default(),
                 revision: 4,
                 settings: Settings {
                     auto_stop,
                     ..Default::default()
                 },
+                ..SettingsSnapshot::default()
             };
             let decoded = wire::SettingsSnapshot::from(&snapshot);
             assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
@@ -4981,6 +5072,7 @@ mod tests {
             ),
             revision: 3,
             settings: Settings::default(),
+            ..SettingsSnapshot::default()
         };
 
         let wire = wire::SettingsSnapshot::from(&snapshot);
@@ -5011,12 +5103,12 @@ mod tests {
         )])
         .unwrap();
         let snapshot = SettingsSnapshot {
-            streaming_unavailable: StreamingSupport::default(),
             revision: 2,
             settings: Settings {
                 application_overrides: overrides.clone(),
                 ..Default::default()
             },
+            ..SettingsSnapshot::default()
         };
         let decoded = wire::SettingsSnapshot::from(&snapshot);
         assert_eq!(SettingsSnapshot::try_from(decoded).unwrap(), snapshot);
@@ -5837,6 +5929,27 @@ mod tests {
     }
 
     #[test]
+    fn an_unsaved_transcript_exports_only_to_an_absolute_path() {
+        let decode = |destination: &str| {
+            <(String, std::path::PathBuf)>::try_from(wire::ExportUnsavedTranscriptRequest {
+                name: "2026-11-25T10-00-00Z-1a2b3c4d.txt".into(),
+                destination: destination.into(),
+            })
+        };
+        assert_eq!(
+            decode("/tmp/meeting.txt").unwrap(),
+            (
+                "2026-11-25T10-00-00Z-1a2b3c4d.txt".into(),
+                "/tmp/meeting.txt".into()
+            )
+        );
+        assert!(matches!(
+            decode("notes/meeting.txt"),
+            Err(ProtocolError::InvalidTranscriptPath)
+        ));
+    }
+
+    #[test]
     fn a_chat_target_round_trips_and_an_empty_one_is_refused() {
         let target = ChatTarget {
             workdir: "/tmp".into(),
@@ -6330,6 +6443,11 @@ mod history_tests {
             (
                 RpcErrorCode::HistoryTranscriptUnreadable,
                 tonic::Code::FailedPrecondition,
+            ),
+            (RpcErrorCode::HistoryFull, tonic::Code::ResourceExhausted),
+            (
+                RpcErrorCode::UnsavedTranscriptMissing,
+                tonic::Code::NotFound,
             ),
         ] {
             assert_eq!(

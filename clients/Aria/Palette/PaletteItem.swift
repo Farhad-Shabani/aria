@@ -4,6 +4,7 @@ enum PaletteItem: Identifiable, Equatable {
     case entry(HistoryItem)
     case chat(SavedChat)
     case result(PromptResult)
+    case unsaved(UnsavedTranscript)
 
     var id: String {
         switch self {
@@ -13,6 +14,7 @@ enum PaletteItem: Identifiable, Equatable {
         case .chat(let chat):
             "chat-\(chat.key.assistantID.rawValue)-\(chat.key.name)"
         case .result(let result): "result-\(result.id)"
+        case .unsaved(let transcript): "unsaved-\(transcript.name)"
         }
     }
 
@@ -26,6 +28,8 @@ enum PaletteItem: Identifiable, Equatable {
         case .entry(let entry): entry.name
         case .chat(let chat): "\(chat.name), chat"
         case .result(let result): "\(result.promptName) result"
+        case .unsaved(let transcript):
+            "\(UnsavedTranscripts.title), \(transcript.startedAt.formatted(date: .abbreviated, time: .shortened))"
         }
     }
 
@@ -36,7 +40,7 @@ enum PaletteItem: Identifiable, Equatable {
         case .entry(let entry): entry.canCopy
         case .chat(let chat): chat.newest.canCopy
         case .result: true
-        case .command: false
+        case .command, .unsaved: false
         }
     }
 
@@ -56,7 +60,7 @@ enum PaletteItem: Identifiable, Equatable {
         switch self {
         case .entry(let entry): entry
         case .chat(let chat): chat.newest
-        case .command, .result: nil
+        case .command, .result, .unsaved: nil
         }
     }
 }

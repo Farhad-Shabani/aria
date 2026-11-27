@@ -42,23 +42,42 @@ audio**. Click the stop button beside it to end it.
 
 ## Transcript files
 
-By default, Aria saves files under `~/.aria/transcripts`. To choose another
-path:
+With history on, Aria saves each transcript in `~/.aria/transcripts`, a folder
+only Aria writes to. The transcript appears in [history](./history.md) as soon
+as it starts, and stays until you delete it. Deleting that entry, or clearing
+history, deletes its file.
+
+To open the folder, choose **Settings → Privacy → Transcripts folder**, then
+click **Open**. Don't move or edit the files there. To keep a copy of a saved
+transcript elsewhere, choose **Show in Finder** on its history entry, then
+copy the file. A transcript saved in another folder stays where it is, and
+history keeps it.
+
+With history off, or with history full, a transcript waits unsaved in
+`~/.aria/unsaved`. When it ends, Aria lists it as **Unsaved Transcript**, with
+these choices:
+
+- **Save…** (**⌘S**) saves it where you choose, outside `~/.aria`, as your
+  own file. History doesn't list it.
+- **Discard…** deletes it, once you confirm.
+
+While history can't open, Aria can't save or discard it. Try again later.
+
+To save to a file of your own instead:
 
 ```sh
 aria transcribe start \
   --output "$PWD/meeting.txt"
 ```
 
-If the file exists, Transcription appends to it. Don't run this while another
-transcription is running.
+If the file exists, Transcription adds to its end and leaves the rest as it is.
+Speaker labels stay as Aria gave them while listening, since Aria never
+corrects them in this file. If another app writes to the file during a
+session, Aria keeps that text. Run one transcription at a time. Your file never
+appears in history, and Aria never moves or deletes it.
 
-With history on, a transcript saved under the default folder also appears
-in [history](./history.md) for up to 30 days. Deleting that entry, or clearing
-history, deletes its file. When the entry expires, the file stays. A file you
-name with `--output` never appears in history. Turning off history doesn't stop
-Transcription from saving files. They don't get history's private-file
-protections, so delete them when you no longer need them.
+Transcript files are plain text. Aria doesn't encrypt them as it does history,
+so delete them when you no longer need them.
 
 ## Model
 

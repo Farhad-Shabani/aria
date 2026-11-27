@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         width: OverlayStyle.captionWidth, bottomMargin: OverlayStyle.captionBottomMargin)
     let status: StatusController
     let systemTranscriptionStatus: SystemTranscriptionStatus
+    let unsavedTranscripts: UnsavedTranscripts
     private let ghost: GhostController
     private(set) lazy var askShortcut: PressController = PressController(
         events: events,
@@ -47,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var askChordChange: AnyCancellable?
     private(set) lazy var palette = PaletteController(
         prompts: promptHotkeys, ask: askShortcut, systemTranscription: systemTranscriptionStatus, history: history,
-        chats: chats, events: events,
+        chats: chats, unsaved: unsavedTranscripts, events: events,
         setup: setupStatus, settingsHealth: settingsHealth,
         openSettings: { [weak self] pane in
             guard let self else { return }
@@ -66,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let status = StatusController(events: events, prompts: promptHotkeys)
         self.status = status
         systemTranscriptionStatus = SystemTranscriptionStatus(events: events)
+        unsavedTranscripts = UnsavedTranscripts(events: events)
         ghost = GhostController(events: events)
         super.init()
         events.onChat { [weak self] event in
@@ -82,6 +84,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         events.onDictation { [weak self] event in
             guard let event, [.delivered, .failed, .cancelled].contains(event.stage) else { return }
             self?.history.dictationEnded()
+        }
+        events.onSystemTranscription { [weak self] event in
+            guard let event, [.started, .stopped, .failed].contains(event.stage) else { return }
+            self?.history.systemTranscriptionChanged()
         }
     }
 

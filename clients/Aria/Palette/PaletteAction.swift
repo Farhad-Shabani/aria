@@ -28,6 +28,12 @@ struct PaletteAction: Identifiable, Equatable {
         case turnOnPhonePairing
         case addWord(String)
         case removeWord(String)
+        /// A Mac Audio entry's transcript file.
+        case showInFinder(URL)
+        /// Asks where, then saves it there as the person's own file.
+        case saveTranscript(UnsavedTranscript)
+        /// Asks first, since it can't be undone.
+        case discardTranscript(UnsavedTranscript)
     }
 
     let kind: Kind
@@ -51,6 +57,9 @@ struct PaletteAction: Identifiable, Equatable {
         case .turnOnPhonePairing: "turn-on-phone-pairing"
         case .addWord: "add-word"
         case .removeWord: "remove-word"
+        case .showInFinder: "show-in-finder"
+        case .saveTranscript: "save-transcript"
+        case .discardTranscript: "discard-transcript"
         }
     }
 
@@ -72,6 +81,9 @@ struct PaletteAction: Identifiable, Equatable {
         case .turnOnPhonePairing: "Turn On"
         case .addWord: "Add to Dictionary"
         case .removeWord: "Remove"
+        case .showInFinder: "Show in Finder"
+        case .saveTranscript: "Save…"
+        case .discardTranscript: "Discard…"
         }
     }
 
@@ -92,6 +104,9 @@ struct PaletteAction: Identifiable, Equatable {
         case .turnOnPhonePairing: .turnOn
         case .addWord: .addWord
         case .removeWord: .delete
+        case .showInFinder: .showInFinder
+        case .saveTranscript: .saveTranscript
+        case .discardTranscript: .delete
         }
     }
 }

@@ -294,15 +294,21 @@ fn segmentation_model() -> Check {
 /// System transcription accepts any engine that streams. A config or model it can't
 /// use warns, because dictation still works without it.
 fn system_transcription() -> Check {
-    let resolved = loaded(SystemTranscriptionConfig::load);
+    let resolved = loaded(|settings, home| {
+        let transcripts = home.join(aria_settings::TRANSCRIPTS_DIRECTORY);
+        Ok((
+            SystemTranscriptionConfig::load(settings, home)?,
+            transcripts,
+        ))
+    });
     match resolved {
-        Ok(config) => match config.engine.check_model() {
+        Ok((config, transcripts)) => match config.engine.check_model() {
             Ok(_) => Check::ok(
                 SYSTEM_TRANSCRIPTION,
                 format!(
                     "{} writing to {}",
                     config.engine.backend_name(),
-                    config.transcripts_dir.display()
+                    transcripts.display()
                 ),
             ),
             Err(error) => Check::warning(

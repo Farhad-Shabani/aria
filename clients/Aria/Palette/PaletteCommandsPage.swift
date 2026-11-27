@@ -4,6 +4,7 @@ struct PaletteCommandsPage: View {
     @ObservedObject var controller: PaletteController
     @ObservedObject var systemTranscription: SystemTranscriptionStatus
     @ObservedObject var history: HistoryState
+    @ObservedObject var unsaved: UnsavedTranscripts
     @ObservedObject var chats: Chats
     @ObservedObject var microphones: Microphones
 
@@ -60,6 +61,9 @@ struct PaletteCommandsPage: View {
         }
         .onChange(of: controller.model.dictionaryNotice) { _, notice in
             if let notice { NSAccessibility.announce(notice.message) }
+        }
+        .onChange(of: unsaved.listFailure) { _, failure in
+            if let failure { NSAccessibility.announce(failure) }
         }
         .onChange(of: chats.lastOutcome) { _, outcome in
             if let outcome { NSAccessibility.announce(outcome.announcement) }
@@ -175,6 +179,7 @@ struct PaletteCommandsPage: View {
         case .entry(let entry):
             PaletteEntryRow(
                 entry: entry, symbol: entry.kind.symbol, isSelected: isSelected,
+                name: controller.model.liveName(of: entry),
                 replying: chats.replying(quoting: entry.id) != nil
                     ? PaletteReplyingBadge { controller.openReplying(quoting: entry.id) } : nil,
                 thread: thread(for: entry)
@@ -192,6 +197,8 @@ struct PaletteCommandsPage: View {
             ) { controller.choose(item) }
         case .result(let result):
             PaletteResultRow(result: result, isSelected: isSelected) { controller.choose(item) }
+        case .unsaved(let transcript):
+            PaletteUnsavedRow(transcript: transcript, isSelected: isSelected) { controller.choose(item) }
         }
     }
 
@@ -242,6 +249,9 @@ struct PaletteCommandsPage: View {
         } else if let notice = controller.model.dictionaryNotice {
             DictionaryNoticeText(notice: notice)
         } else if let failure = chats.lastStop?.failure {
+            NoticeText(notice: failure)
+        } else if let failure = unsaved.listFailure {
+            // Unsaved transcripts appear when history is off, so this outranks it.
             NoticeText(notice: failure)
         } else if !controller.model.keepsHistory {
             Text("Nothing is saved.")

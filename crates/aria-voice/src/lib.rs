@@ -9,4 +9,5 @@ pub mod speaker;
 pub mod speech;
 pub mod stt;
 pub mod system_transcription;
+mod transcript_file;
 pub mod vocabulary;

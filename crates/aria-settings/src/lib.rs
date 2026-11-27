@@ -36,8 +36,8 @@ use aria_kit::transcription::LanguageCodeError;
 use aria_kit::audio::{AutoStopError, SilenceDurationError};
 
 pub use checked::{
-    CaptureChoice, CheckedSettings, Choices, DictationTimeouts, LocalStt, SttChoice, TtsEngine,
-    Voices, WakeEngine,
+    CaptureChoice, CheckedSettings, Choices, DictationTimeouts, LocalStt, SttChoice,
+    TRANSCRIPTS_DIRECTORY, TtsEngine, Voices, WakeEngine,
 };
 pub use choices::{
     DeliveryMode, Microphone, MicrophoneId, MicrophoneIdError, Settings, Shortcut, StoreError,

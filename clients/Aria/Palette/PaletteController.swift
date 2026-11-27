@@ -1,6 +1,7 @@
 import Carbon.HIToolbox
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 import os
 
 private let log = Logger(subsystem: "io.github.farhad-shabani.aria", category: "Palette")
@@ -20,6 +21,7 @@ final class PaletteController: ObservableObject {
     let systemTranscription: SystemTranscriptionStatus
     let history: HistoryState
     let chats: Chats
+    let unsaved: UnsavedTranscripts
     /// `nil` until the app tracks it.
     private(set) var phonePairing: PhonePairing?
     /// Lists the devices only while the palette lists the microphones.
@@ -43,6 +45,8 @@ final class PaletteController: ObservableObject {
     private var historySettingChange: AnyCancellable?
     private var assistantChange: AnyCancellable?
     private var systemTranscriptionChange: AnyCancellable?
+    private var transcriptFileChange: AnyCancellable?
+    private var unsavedChange: AnyCancellable?
     private var entriesChange: AnyCancellable?
     private var filterChange: AnyCancellable?
     private var pageChange: AnyCancellable?
@@ -67,7 +71,7 @@ final class PaletteController: ObservableObject {
 
     init(
         prompts: PromptHotkeys, ask: PressController, systemTranscription: SystemTranscriptionStatus,
-        history: HistoryState, chats: Chats,
+        history: HistoryState, chats: Chats, unsaved: UnsavedTranscripts,
         events: DaemonEvents, setup: SetupStatus, settingsHealth: SettingsHealth,
         openSettings: @escaping @MainActor (SettingsPane?) -> Void,
         openSetup: @escaping @MainActor () -> Void,
@@ -79,6 +83,7 @@ final class PaletteController: ObservableObject {
         self.systemTranscription = systemTranscription
         self.history = history
         self.chats = chats
+        self.unsaved = unsaved
         self.openSettings = openSettings
         self.openSetup = openSetup
         self.openedByShortcut = openedByShortcut
@@ -113,6 +118,11 @@ final class PaletteController: ObservableObject {
         systemTranscriptionChange = systemTranscription.$isRunning
             .removeDuplicates()
             .sink { [weak self] isRunning in self?.model.isSystemTranscriptionRunning = isRunning }
+        transcriptFileChange = systemTranscription.$transcriptFile
+            .removeDuplicates()
+            .sink { [weak self] file in self?.model.transcriptFile = file }
+        unsavedChange = unsaved.$transcripts
+            .sink { [weak self] transcripts in self?.model.replace(unsaved: transcripts) }
         entriesChange = history.$days
             .sink { [weak self] days in self?.model.replace(entries: days.flatMap(\.items)) }
         // The model owns what the list is narrowed to. History only follows.
@@ -177,7 +187,8 @@ final class PaletteController: ObservableObject {
         case .open:
             open()
             openedByShortcut()
-        case .close: close()
+        case .close:
+            if model.requestClose() { close() }
         }
     }
 
@@ -241,8 +252,13 @@ final class PaletteController: ObservableObject {
         switch item {
         case .command(let command):
             run(command)
+        case .entry(let entry) where model.isLive(entry):
+            model.show(.liveTranscript)
         case .entry(let entry):
             openEntry(entry.id)
+        case .unsaved(let transcript):
+            unsaved.clearError()
+            model.open(unsaved: transcript)
         case .chat(let chat):
             chats.open(chat.key, folder: chat.newest.project)
             showChat()
@@ -339,7 +355,7 @@ final class PaletteController: ObservableObject {
                 guard let text = await history.typingText(of: entry.id), !Task.isCancelled else { return }
                 deliver(text)
             }
-        case .command:
+        case .command, .unsaved:
             break
         }
     }
@@ -412,7 +428,8 @@ final class PaletteController: ObservableObject {
             hasTranscript: !systemTranscription.transcript.lines.isEmpty, detail: history.detail,
             chat: chats.shown, replying: selectedReplying, history: history.work, hasFrontApp: frontApp != nil,
             phonePairingStatus: phonePairing?.status ?? .loading,
-            canSwitchPhonePairing: phonePairing?.canSwitch ?? false, isEditingDictionary: dictionaryEdit != nil)
+            canSwitchPhonePairing: phonePairing?.canSwitch ?? false, isEditingDictionary: dictionaryEdit != nil,
+            isChangingUnsaved: unsaved.isChanging)
     }
 
     private var selectedReplying: Chat? {
@@ -450,7 +467,33 @@ final class PaletteController: ObservableObject {
         case .turnOnPhonePairing:
             guard let phonePairing else { return }
             Task { await phonePairing.turn(on: true) }
+        case .showInFinder(let file):
+            close()
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+        case .saveTranscript(let transcript): save(transcript)
+        case .discardTranscript: model.isConfirmingTranscriptDiscard = true
         }
+    }
+
+    private func save(_ transcript: UnsavedTranscript) {
+        Task {
+            let savePanel = NSSavePanel()
+            savePanel.nameFieldStringValue = transcript.path.lastPathComponent
+            savePanel.allowedContentTypes = [.plainText]
+            savePanel.canCreateDirectories = true
+            guard let destination = await panel.choose(savePanel) else { return }
+            await unsaved.save(transcript, to: destination)
+        }
+    }
+
+    func discardShownTranscript() {
+        guard case .unsaved(let transcript) = model.page else { return }
+        Task { await unsaved.discard(transcript) }
+    }
+
+    func saveShownTranscript() {
+        guard case .unsaved(let transcript) = model.page else { return }
+        save(transcript)
     }
 
     func toggleMenu() {
@@ -734,9 +777,13 @@ final class PaletteController: ObservableObject {
         let setup = setup
         Task { await setup.refresh() }
         if model.keepsHistory { history.open() }
+        // A session that ended while the palette was closed may have left a transcript unsaved.
+        unsaved.spawnRefresh()
         nameAssistants()
         readDictionary()
-        panel.show(PaletteView(controller: self, systemTranscription: systemTranscription, history: history))
+        panel.show(
+            PaletteView(
+                controller: self, systemTranscription: systemTranscription, history: history, unsaved: unsaved))
     }
 
     /// On every open, since an editor can change the file between opens.

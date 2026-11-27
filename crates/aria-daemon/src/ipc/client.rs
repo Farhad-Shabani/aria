@@ -715,7 +715,7 @@ impl DaemonClient {
             wire::StartSystemTranscriptionRequest { transcript_path },
             |request| system_transcription.start(request),
         )?;
-        Ok(response.into())
+        SystemTranscriptionStarted::try_from(response).map_err(ClientError::from)
     }
 
     pub(crate) fn enroll(

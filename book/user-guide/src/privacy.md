@@ -178,9 +178,10 @@ phone can change only language, output, voice filtering, project vocabulary,
 and history settings.
 
 [Transcripts](./transcribe-system-audio.md#transcript-files) are separate files
-with no automatic expiry. History lists transcripts saved under the default
-folder, and deleting one there deletes its file. Choose a folder with suitable permissions
-and sharing settings. Delete the files when you no longer need them.
+with no automatic expiry. History lists each transcript in
+`~/.aria/transcripts`, and deleting its entry deletes the file. With history
+off, or with history full, a transcript waits in `~/.aria/unsaved` until you
+save or discard it. Delete the files when you no longer need them.
 
 [Project vocabulary](./project-spellings.md) scans the folder you choose. Its cache
 contains collected names and source locations. Disabling corrections keeps

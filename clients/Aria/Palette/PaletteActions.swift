@@ -1,3 +1,5 @@
+import Foundation
+
 /// What can be done on the palette's page or with its selected row, decided
 /// from the state alone. The controller does them.
 struct PaletteActions {
@@ -20,6 +22,8 @@ struct PaletteActions {
     var canSwitchPhonePairing = false
     /// One edit at a time, so a held key doesn't send the same one again.
     var isEditingDictionary = false
+    /// One save or discard of an unsaved transcript at a time.
+    var isChangingUnsaved = false
 
     var all: [PaletteAction] {
         guard !model.isRenaming else { return [] }
@@ -48,6 +52,11 @@ struct PaletteActions {
             case .loading, .daemonOff, .failed, .restarting:
                 return []
             }
+        case .unsaved(let transcript):
+            return [
+                PaletteAction(kind: .saveTranscript(transcript), isInFooter: true, isEnabled: !isChangingUnsaved),
+                PaletteAction(kind: .discardTranscript(transcript), isInFooter: true, isEnabled: !isChangingUnsaved),
+            ]
         case .result:
             switch result?.state {
             case .replied(let text)?:
@@ -78,7 +87,7 @@ struct PaletteActions {
             }
         case .result(let result):
             return [PaletteAction(kind: .copyText(result.text)), PaletteAction(kind: .open(.result(result)))]
-        case nil: return []
+        case .unsaved, nil: return []
         }
     }
 
@@ -160,7 +169,7 @@ struct PaletteActions {
             else { return nil }
             if isTyped { return .start(quote: quote, entry: entry) }
             return hasFrontApp ? .type(quote) : nil
-        case .commands, .liveTranscript, .phonePairing, .prompt:
+        case .commands, .liveTranscript, .phonePairing, .prompt, .unsaved:
             return nil
         }
     }
@@ -185,7 +194,7 @@ struct PaletteActions {
         case .result:
             guard case .replied(let reply)? = result?.state else { return nil }
             text = reply
-        case .commands, .chat, .liveTranscript, .phonePairing, .prompt:
+        case .commands, .chat, .liveTranscript, .phonePairing, .prompt, .unsaved:
             return nil
         }
         return text.contains { !$0.isWhitespace } ? text : nil
@@ -243,6 +252,9 @@ struct PaletteActions {
         }
         if entry.canRename {
             actions.append(PaletteAction(kind: .rename(entry), isEnabled: history.canRename(entry.id)))
+        }
+        if case .systemTranscription(let transcript, _) = entry.kind, entry.status != .deletionPending {
+            actions.append(PaletteAction(kind: .showInFinder(URL(filePath: transcript))))
         }
         actions.append(PaletteAction(kind: .delete(entry), isEnabled: history.canDelete(entry)))
         if !isOpen { actions.append(PaletteAction(kind: .open(.entry(entry)))) }

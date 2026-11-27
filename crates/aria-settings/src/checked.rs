@@ -29,6 +29,10 @@ impl CheckedSettings {
     }
 }
 
+/// Under the home folder: where Mac Audio keeps the transcripts that
+/// history names. Only Aria writes there, and it never moves.
+pub const TRANSCRIPTS_DIRECTORY: &str = ".aria/transcripts";
+
 impl Deref for CheckedSettings {
     type Target = SettingsFile;
 

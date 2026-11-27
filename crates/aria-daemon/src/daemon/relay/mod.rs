@@ -375,12 +375,14 @@ pub(in crate::daemon) fn redacted(status: Status) -> Status {
         | RpcErrorCode::SystemTranscriptionUnsupportedOs
         | RpcErrorCode::SystemTranscriptionPermissionDenied
         | RpcErrorCode::SystemTranscriptionCaptureFailed
+        | RpcErrorCode::UnsavedTranscriptMissing
         | RpcErrorCode::HistoryMissing
         | RpcErrorCode::HistoryAudioUnavailable
         | RpcErrorCode::HistoryUnavailable
         | RpcErrorCode::HistoryProjectUnavailable
         | RpcErrorCode::HistoryEntryEmpty
         | RpcErrorCode::HistoryTranscriptUnreadable
+        | RpcErrorCode::HistoryFull
         | RpcErrorCode::Unknown(_) => SOMETHING_WENT_WRONG.to_owned(),
     };
     failure_status(RpcFailure::new(failure.code, message))

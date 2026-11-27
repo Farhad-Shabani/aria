@@ -466,7 +466,6 @@ pub struct SystemTranscription {
     pub backend: Option<String>,
     pub model: Option<PathBuf>,
     pub device: Option<DeviceName>,
-    pub transcripts_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -1047,10 +1046,6 @@ impl SettingsFile {
                 Key::SystemTranscriptionModel,
                 system_transcription.model.as_mut(),
             ),
-            (
-                Key::SystemTranscriptionTranscriptsDir,
-                system_transcription.transcripts_dir.as_mut(),
-            ),
             (Key::AssistantWorkdir, assistant.workdir.as_mut()),
             (Key::MemoryDir, memory.dir.as_mut()),
             (Key::WakeModel, wake.model.as_mut()),
@@ -1375,10 +1370,6 @@ impl SettingsFile {
             (
                 Key::SystemTranscriptionModel,
                 &self.system_transcription.model,
-            ),
-            (
-                Key::SystemTranscriptionTranscriptsDir,
-                &self.system_transcription.transcripts_dir,
             ),
             (Key::MemoryDir, &self.memory.dir),
             (Key::WakeModel, &self.wake.model),
@@ -1939,7 +1930,6 @@ pub(super) mod tests {
             "[memory]\ndir = \"notes\"\n",
             "[assistant]\nworkdir = \"src\"\n",
             "[assistant]\nproject_roots = [\"src\"]\n",
-            "[transcription]\ntranscripts_dir = \"out\"\n",
         ] {
             let error = Loaded::parse(text, Path::new(HOME)).unwrap_err();
             assert!(error.to_string().contains("absolute"), "{error}");
@@ -1999,7 +1989,7 @@ pub(super) mod tests {
              [tts.kokoro]\nmodel = \"~/a\"\nvoices = \"~/a\"\n\
              [tts.qwen]\nmodel = \"~/a\"\ntokenizer = \"~/a\"\n\
              [stt]\nbackend = \"parakeet-mlx\"\nmodel = \"~/a\"\ninterpreter = \"~/a\"\n\
-             [transcription]\nmodel = \"~/a\"\ntranscripts_dir = \"~/a\"\n\
+             [transcription]\nmodel = \"~/a\"\n\
              [speaker]\nmodel = \"~/a\"\nsegmentation_model = \"~/a\"\nprofiles_dir = \"~/a\"\n\
              [capture]\npath = \"~/a\"\n",
         );
@@ -2014,7 +2004,6 @@ pub(super) mod tests {
             Key::SttModel,
             Key::SttInterpreter,
             Key::SystemTranscriptionModel,
-            Key::SystemTranscriptionTranscriptsDir,
             Key::SpeakerModel,
             Key::SpeakerSegmentationModel,
             Key::SpeakerProfilesDir,

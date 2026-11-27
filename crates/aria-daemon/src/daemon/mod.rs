@@ -91,4 +91,4 @@ pub use aria_voice::enrollment::{
 };
 pub use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 pub use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
-pub use aria_voice::system_transcription::SystemTranscriptionStage;
+pub use aria_voice::system_transcription::{SystemTranscriptionStage, TranscriptSaving};

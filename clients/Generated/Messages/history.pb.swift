@@ -383,7 +383,8 @@ public nonisolated struct Aria_Daemon_V1_ClearHistoryResponse: Sendable {
 
   public var deletedEntryCount: UInt64 = 0
 
-  /// Rows are deleted, but some audio remains for background cleanup.
+  /// Rows are deleted, but some audio, or a transcript file Aria can't reach
+  /// or remove yet, remains for background cleanup.
   public var audioCleanupPending: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -801,7 +802,9 @@ public nonisolated struct Aria_Daemon_V1_HistoryEntry: @unchecked Sendable {
 
 /// A system transcription's transcript file. The entry's `text` is the file's
 /// first KiB, which search covers. Get reads up to 1 MiB of the file instead.
-/// Delete and Clear delete the file as well. Expiry leaves it.
+/// Only Delete and Clear end the entry, and they delete the file as well:
+/// Mac Audio entries never expire or make room for others. An entry whose
+/// session still runs has no `duration` and an empty `text`.
 public nonisolated struct Aria_Daemon_V1_HistoryTranscript: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
