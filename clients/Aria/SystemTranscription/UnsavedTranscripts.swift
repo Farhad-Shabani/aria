@@ -51,7 +51,7 @@ final class UnsavedTranscripts: ObservableObject {
     @Published private(set) var transcripts: [UnsavedTranscript] = []
     @Published private(set) var isHistoryFull = false
     /// Aria’s folders, as the last list named them.
-    private var ariaDirs: [URL] = []
+    private var ariaFolders: [URL] = []
     /// Why the last save, discard, or read failed.
     @Published private(set) var error: String?
     /// Why the last list failed, so the person knows a transcript may be missing from it.
@@ -89,7 +89,7 @@ final class UnsavedTranscripts: ObservableObject {
             guard change == listChanges else { return }
             transcripts = list.transcripts
             isHistoryFull = list.isHistoryFull
-            ariaDirs = [list.transcriptsDir, list.unsavedDir]
+            ariaFolders = [list.transcriptsDir, list.unsavedDir]
             listFailure = nil
         } catch {
             // A page that left mid-list cancelled it, which is no failure.
@@ -106,7 +106,7 @@ final class UnsavedTranscripts: ObservableObject {
         defer { isChanging = false }
         // Saving it beside itself would put the copy where Discard then removes it. The check
         // resolves links on disk, which may be a slow volume, so it runs off the main actor.
-        let (folder, aria) = (destination.deletingLastPathComponent(), ariaDirs)
+        let (folder, aria) = (destination.deletingLastPathComponent(), ariaFolders)
         let isInAria = await Task.detached { Self.isInAriaFolders(folder, aria: aria) }.value
         guard !isInAria else {
             error = "Choose a place outside Aria’s transcript folders."

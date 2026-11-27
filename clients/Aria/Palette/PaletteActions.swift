@@ -52,7 +52,7 @@ struct PaletteActions {
             case .loading, .daemonOff, .failed, .restarting:
                 return []
             }
-        case .unsavedTranscript(let transcript):
+        case .unsaved(let transcript):
             return [
                 PaletteAction(kind: .saveTranscript(transcript), isInFooter: true, isEnabled: !isChangingUnsaved),
                 PaletteAction(kind: .discardTranscript(transcript), isInFooter: true, isEnabled: !isChangingUnsaved),
@@ -169,7 +169,7 @@ struct PaletteActions {
             else { return nil }
             if isTyped { return .start(quote: quote, entry: entry) }
             return hasFrontApp ? .type(quote) : nil
-        case .commands, .liveTranscript, .phonePairing, .prompt, .unsavedTranscript:
+        case .commands, .liveTranscript, .phonePairing, .prompt, .unsaved:
             return nil
         }
     }
@@ -194,7 +194,7 @@ struct PaletteActions {
         case .result:
             guard case .replied(let reply)? = result?.state else { return nil }
             text = reply
-        case .commands, .chat, .liveTranscript, .phonePairing, .prompt, .unsavedTranscript:
+        case .commands, .chat, .liveTranscript, .phonePairing, .prompt, .unsaved:
             return nil
         }
         return text.contains { !$0.isWhitespace } ? text : nil

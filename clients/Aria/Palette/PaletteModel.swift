@@ -254,7 +254,7 @@ struct PaletteModel: Equatable {
     mutating func replace(unsaved: [UnsavedTranscript]) {
         keepingSelection { $0.unsaved = unsaved }
         switch page {
-        case .unsavedTranscript(let shown)
+        case .unsaved(let shown)
         where !unsaved.contains(where: { $0.name == shown.name }):
             show(.commands)
         case .liveTranscript where !isSystemTranscriptionRunning:
@@ -268,7 +268,7 @@ struct PaletteModel: Equatable {
     }
 
     mutating func open(unsaved transcript: UnsavedTranscript) {
-        show(.unsavedTranscript(transcript))
+        show(.unsaved(transcript))
         isConfirmingTranscriptDiscard = false
     }
 
@@ -706,8 +706,8 @@ struct PaletteModel: Equatable {
 
     /// The palette's shortcut, pressed while it's open. Returns whether it closes: an unsaved
     /// transcript asks first, as Escape does.
-    mutating func closeRequested() -> Bool {
-        if case .unsavedTranscript = page {
+    mutating func requestClose() -> Bool {
+        if case .unsaved = page {
             isConfirmingTranscriptDiscard = true
             return false
         }
@@ -720,7 +720,7 @@ struct PaletteModel: Equatable {
             renaming = nil
             return false
         }
-        guard closeRequested() else { return false }
+        guard requestClose() else { return false }
         if page == .prompt {
             if draft?.hasChanges == true {
                 waitingDraft = nil

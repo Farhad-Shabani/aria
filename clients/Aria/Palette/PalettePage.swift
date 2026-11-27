@@ -14,5 +14,5 @@ enum PalettePage: Equatable {
     /// A prompt being written or edited: `PaletteModel.draft`.
     case prompt
     /// A transcript waiting to be saved or discarded.
-    case unsavedTranscript(UnsavedTranscript)
+    case unsaved(UnsavedTranscript)
 }

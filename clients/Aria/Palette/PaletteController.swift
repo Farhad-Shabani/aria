@@ -188,7 +188,7 @@ final class PaletteController: ObservableObject {
             open()
             openedByShortcut()
         case .close:
-            if model.closeRequested() { close() }
+            if model.requestClose() { close() }
         }
     }
 
@@ -487,12 +487,12 @@ final class PaletteController: ObservableObject {
     }
 
     func discardShownTranscript() {
-        guard case .unsavedTranscript(let transcript) = model.page else { return }
+        guard case .unsaved(let transcript) = model.page else { return }
         Task { await unsaved.discard(transcript) }
     }
 
     func saveShownTranscript() {
-        guard case .unsavedTranscript(let transcript) = model.page else { return }
+        guard case .unsaved(let transcript) = model.page else { return }
         save(transcript)
     }
 

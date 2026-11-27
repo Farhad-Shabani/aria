@@ -28,7 +28,7 @@ struct PaletteView: View {
                 if let draft = Binding($controller.model.draft) {
                     PalettePromptPage(controller: controller, draft: draft)
                 }
-            case .unsavedTranscript(let transcript):
+            case .unsaved(let transcript):
                 PaletteUnsavedPage(controller: controller, unsaved: unsaved, transcript: transcript)
             }
         }

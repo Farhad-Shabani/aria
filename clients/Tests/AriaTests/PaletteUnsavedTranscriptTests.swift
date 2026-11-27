@@ -99,16 +99,16 @@ final class PaletteUnsavedTranscriptTests: XCTestCase {
 
         XCTAssertFalse(model.escape())
         model.isConfirmingTranscriptDiscard = false
-        XCTAssertFalse(model.closeRequested())
+        XCTAssertFalse(model.requestClose())
 
         XCTAssertTrue(model.isConfirmingTranscriptDiscard)
-        XCTAssertEqual(model.page, .unsavedTranscript(transcript))
+        XCTAssertEqual(model.page, .unsaved(transcript))
     }
 
     func testTheShortcutClosesAnyOtherPageAtOnce() {
         var model = openModel(unsaved: [Self.transcript("a.txt")])
 
-        XCTAssertTrue(model.closeRequested())
+        XCTAssertTrue(model.requestClose())
         XCTAssertFalse(model.isConfirmingTranscriptDiscard)
     }
 
@@ -138,7 +138,7 @@ final class PaletteUnsavedTranscriptTests: XCTestCase {
         XCTAssertEqual(model.page, .liveTranscript, "Another file isn't this session's")
 
         model.replace(unsaved: [Self.transcript("other.txt"), ended])
-        XCTAssertEqual(model.page, .unsavedTranscript(ended))
+        XCTAssertEqual(model.page, .unsaved(ended))
     }
 
     func testOnlyTheRunningSessionsEntryOpensTheLivePageAndReadsAsTranscribing() {
