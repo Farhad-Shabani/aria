@@ -2,22 +2,12 @@
 
 use std::borrow::Cow;
 
-use super::Vocabulary;
 use super::claim::{Claimed, Place, Word};
-use super::correction::Writing;
+use super::correction::{Reading, Writing};
 use super::symbol_words::{
     Joins, Name, is_name, is_symbol, joins_always, name_at, opens_a_join_after, opens_a_name,
 };
 use super::vocabulary::is_english;
-
-/// What a join depends on besides the words. "and forward slash or" →
-/// `and/or` in prose, `and /or` in commands.
-#[derive(Clone, Copy)]
-pub(super) struct Reading<'a> {
-    pub(super) vocabulary: &'a Vocabulary,
-    pub(super) writing: Writing,
-    pub(super) place: Place,
-}
 
 /// Claims each run of words that symbols join: "user underscore id" →
 /// `user_id`.
@@ -82,6 +72,59 @@ pub(super) fn claim<'a>(text: &str, reading: Reading<'_>, claimed: &mut Claimed<
         index = last + 1;
     }
     apart
+}
+
+/// Defers a symbol at the end that the next text may join: "user
+/// underscore" types `user` and defers "underscore".
+///
+/// The word before defers too when it has a joined form, as "two" in "two
+/// dot". A name the text ends partway through defers whole: "back".
+pub(super) fn defer(text: &str, reading: Reading<'_>, claimed: &mut Claimed<'_>) {
+    let heard = claimed.words();
+    let open = name_open_at_end(text, heard);
+    let (named, open) = heard.split_at(open.unwrap_or(heard.len()));
+    let (mut words, mut names) = merge_names(text, named.to_vec());
+    let mut names_a_symbol: Vec<bool> = names.iter().map(Option::is_some).collect();
+    let open = open.first().zip(open.last());
+    let open = open.map(|(first, last)| first.span.start..last.span.end);
+    if let Some(open) = &open {
+        words.push(Word::plain(open.clone()));
+        names_a_symbol.push(true);
+        names.push(None);
+    }
+    let cut = claimed.deferred_from();
+    let cut_inside = words
+        .iter()
+        .zip(&names_a_symbol)
+        .find(|(word, names)| **names && word.span.start < cut && cut < word.span.end)
+        .map(|(word, _)| word.span.start);
+    for at in cut_inside.into_iter().chain(open.map(|open| open.start)) {
+        claimed.defer_at(at);
+    }
+    let joining = joining(text, &words, &names, reading);
+    while let Some(at) = symbol_to_defer(
+        text,
+        &words,
+        &names,
+        &names_a_symbol,
+        &joining,
+        claimed.deferred_from(),
+    ) {
+        claimed.defer_at(at);
+    }
+}
+
+/// Whether `text` ends on the name of a slash or backslash with no mark
+/// after it, as "src forward slash" and "dot dot forward slash" do.
+pub(super) fn waits_for_its_word(text: &str) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    (0..words.len()).any(|index| {
+        name_at(words[index..].iter().copied()).is_some_and(|name| {
+            name.words == words.len() - index
+                && name.mark.is_none()
+                && name.typed.ends_with(joins_always)
+        })
+    })
 }
 
 /// Which words beside it a symbol word glues to.
@@ -275,46 +318,6 @@ fn nameable<'s>(
                 && (*offset == 0 || !line_break(text, words, index + offset - 1))
         })
         .map(move |(_, word)| word.typed(text))
-}
-
-/// Defers a symbol at the end that the next text may join: "user
-/// underscore" types `user` and defers "underscore".
-///
-/// The word before defers too when it has a joined form, as "two" in "two
-/// dot". A name the text ends partway through defers whole: "back".
-pub(super) fn defer(text: &str, reading: Reading<'_>, claimed: &mut Claimed<'_>) {
-    let heard = claimed.words();
-    let open = name_open_at_end(text, heard);
-    let (named, open) = heard.split_at(open.unwrap_or(heard.len()));
-    let (mut words, mut names) = merge_names(text, named.to_vec());
-    let mut names_a_symbol: Vec<bool> = names.iter().map(Option::is_some).collect();
-    let open = open.first().zip(open.last());
-    let open = open.map(|(first, last)| first.span.start..last.span.end);
-    if let Some(open) = &open {
-        words.push(Word::plain(open.clone()));
-        names_a_symbol.push(true);
-        names.push(None);
-    }
-    let cut = claimed.deferred_from();
-    let cut_inside = words
-        .iter()
-        .zip(&names_a_symbol)
-        .find(|(word, names)| **names && word.span.start < cut && cut < word.span.end)
-        .map(|(word, _)| word.span.start);
-    for at in cut_inside.into_iter().chain(open.map(|open| open.start)) {
-        claimed.defer_at(at);
-    }
-    let joining = joining(text, &words, &names, reading);
-    while let Some(at) = symbol_to_defer(
-        text,
-        &words,
-        &names,
-        &names_a_symbol,
-        &joining,
-        claimed.deferred_from(),
-    ) {
-        claimed.defer_at(at);
-    }
 }
 
 /// Where a name the text ends on starts, while more words may change it:

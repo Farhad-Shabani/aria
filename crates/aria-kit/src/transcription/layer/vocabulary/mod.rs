@@ -236,113 +236,6 @@ impl Vocabulary {
         Ok(matcher)
     }
 
-    fn build(
-        terms: &[Term],
-        personal: &PersonalRules,
-        respellings: &Respellings,
-        limit: usize,
-        cancel: &CancelToken,
-    ) -> Result<Self, MatchError> {
-        let mut matcher = Self {
-            index: HashMap::new(),
-            path_names: HashSet::new(),
-            personal: PersonalRules::default(),
-            term_count: terms.len(),
-            estimated_bytes: 0,
-        };
-        matcher.grow(
-            std::mem::size_of::<Self>() + personal.estimated_bytes(),
-            limit,
-        )?;
-        for term in terms {
-            if cancel.is_cancelled() {
-                return Err(MatchError::Cancelled);
-            }
-            validate_name(&term.canonical)?;
-            let symbolic = has_symbol(&term.canonical);
-            for (index, form) in matching_forms(&term.canonical).enumerate() {
-                if cancel.is_cancelled() {
-                    return Err(MatchError::Cancelled);
-                }
-                // A pair already corrects a name without a symbol, and such a
-                // name types as heard.
-                if symbolic {
-                    for respelling in respellings.of(&form) {
-                        matcher.add(respelling, Candidate::new(term, Origin::Respelled), limit)?;
-                    }
-                }
-                let origin = if index == 0 {
-                    Origin::Written
-                } else {
-                    Origin::Spoken
-                };
-                matcher.add(form, Candidate::new(term, origin), limit)?;
-            }
-        }
-        matcher.share_with_pairs(personal, cancel)?;
-        if cancel.is_cancelled() {
-            return Err(MatchError::Cancelled);
-        }
-        Ok(matcher)
-    }
-
-    fn add(&mut self, form: String, candidate: Candidate, limit: usize) -> Result<(), MatchError> {
-        let Some(bucket) = self.add_bucket(&form, limit)? else {
-            return Ok(());
-        };
-        let bytes = match bucket.aliases.get_mut(&form) {
-            Some(existing) => existing.settle(candidate),
-            None => bucket.insert(form, candidate),
-        };
-        self.grow(bytes, limit)
-    }
-
-    fn share_with_pairs(
-        &mut self,
-        personal: &PersonalRules,
-        cancel: &CancelToken,
-    ) -> Result<(), MatchError> {
-        for (alias, canonical) in personal.pairs() {
-            if cancel.is_cancelled() {
-                return Err(MatchError::Cancelled);
-            }
-            let alias = normalize(&alias);
-            if let Some(candidate) = first_word(&alias)
-                .and_then(|first| self.index.get_mut(first.as_ref()))
-                .and_then(|bucket| bucket.aliases.get_mut(&alias))
-                && candidate.origin != Origin::Written
-                && candidate.name.canonical() != Some(canonical)
-            {
-                candidate.name = Name::Shared;
-            }
-        }
-        Ok(())
-    }
-
-    fn add_bucket(&mut self, alias: &str, limit: usize) -> Result<Option<&mut Bucket>, MatchError> {
-        let Some(first) = first_word(alias).map(Cow::into_owned) else {
-            return Ok(None);
-        };
-        let capacity = self.index.capacity();
-        let mut bytes = 0;
-        if !self.index.contains_key(&first) {
-            bytes += first.capacity();
-            self.index.insert(first.clone(), Bucket::default());
-        }
-        bytes +=
-            (self.index.capacity() - capacity) * 2 * (std::mem::size_of::<(String, Bucket)>() + 1);
-        self.grow(bytes, limit)?;
-        Ok(self.index.get_mut(&first))
-    }
-
-    fn grow(&mut self, bytes: usize, limit: usize) -> Result<(), MatchError> {
-        self.estimated_bytes += bytes;
-        if self.estimated_bytes > limit {
-            return Err(MatchError::TooLarge);
-        }
-        Ok(())
-    }
-
     /// Adds the project's path names: "crates forward slash aria" →
     /// `crates/aria`. They count toward `limit` and the snapshot size, as
     /// terms do.
@@ -496,6 +389,113 @@ impl Vocabulary {
         if let Some(start) = earliest {
             claimed.defer_at(start);
         }
+    }
+
+    fn build(
+        terms: &[Term],
+        personal: &PersonalRules,
+        respellings: &Respellings,
+        limit: usize,
+        cancel: &CancelToken,
+    ) -> Result<Self, MatchError> {
+        let mut matcher = Self {
+            index: HashMap::new(),
+            path_names: HashSet::new(),
+            personal: PersonalRules::default(),
+            term_count: terms.len(),
+            estimated_bytes: 0,
+        };
+        matcher.grow(
+            std::mem::size_of::<Self>() + personal.estimated_bytes(),
+            limit,
+        )?;
+        for term in terms {
+            if cancel.is_cancelled() {
+                return Err(MatchError::Cancelled);
+            }
+            validate_name(&term.canonical)?;
+            let symbolic = has_symbol(&term.canonical);
+            for (index, form) in matching_forms(&term.canonical).enumerate() {
+                if cancel.is_cancelled() {
+                    return Err(MatchError::Cancelled);
+                }
+                // A pair already corrects a name without a symbol, and such a
+                // name types as heard.
+                if symbolic {
+                    for respelling in respellings.of(&form) {
+                        matcher.add(respelling, Candidate::new(term, Origin::Respelled), limit)?;
+                    }
+                }
+                let origin = if index == 0 {
+                    Origin::Written
+                } else {
+                    Origin::Spoken
+                };
+                matcher.add(form, Candidate::new(term, origin), limit)?;
+            }
+        }
+        matcher.share_with_pairs(personal, cancel)?;
+        if cancel.is_cancelled() {
+            return Err(MatchError::Cancelled);
+        }
+        Ok(matcher)
+    }
+
+    fn add(&mut self, form: String, candidate: Candidate, limit: usize) -> Result<(), MatchError> {
+        let Some(bucket) = self.add_bucket(&form, limit)? else {
+            return Ok(());
+        };
+        let bytes = match bucket.aliases.get_mut(&form) {
+            Some(existing) => existing.settle(candidate),
+            None => bucket.insert(form, candidate),
+        };
+        self.grow(bytes, limit)
+    }
+
+    fn share_with_pairs(
+        &mut self,
+        personal: &PersonalRules,
+        cancel: &CancelToken,
+    ) -> Result<(), MatchError> {
+        for (alias, canonical) in personal.pairs() {
+            if cancel.is_cancelled() {
+                return Err(MatchError::Cancelled);
+            }
+            let alias = normalize(&alias);
+            if let Some(candidate) = first_word(&alias)
+                .and_then(|first| self.index.get_mut(first.as_ref()))
+                .and_then(|bucket| bucket.aliases.get_mut(&alias))
+                && candidate.origin != Origin::Written
+                && candidate.name.canonical() != Some(canonical)
+            {
+                candidate.name = Name::Shared;
+            }
+        }
+        Ok(())
+    }
+
+    fn add_bucket(&mut self, alias: &str, limit: usize) -> Result<Option<&mut Bucket>, MatchError> {
+        let Some(first) = first_word(alias).map(Cow::into_owned) else {
+            return Ok(None);
+        };
+        let capacity = self.index.capacity();
+        let mut bytes = 0;
+        if !self.index.contains_key(&first) {
+            bytes += first.capacity();
+            self.index.insert(first.clone(), Bucket::default());
+        }
+        bytes +=
+            (self.index.capacity() - capacity) * 2 * (std::mem::size_of::<(String, Bucket)>() + 1);
+        self.grow(bytes, limit)?;
+        Ok(self.index.get_mut(&first))
+    }
+
+    fn grow(&mut self, bytes: usize, limit: usize) -> Result<(), MatchError> {
+        self.estimated_bytes += bytes;
+        if self.estimated_bytes > limit {
+            return Err(MatchError::TooLarge);
+        }
+        Ok(())
     }
 
     /// `text` with each claim typed, and personal rules applied to the
@@ -755,19 +755,9 @@ fn spoken_symbol(character: char, hyphen: &'static str, name: usize) -> Option<&
     match character {
         '-' => Some(hyphen),
         _ => {
-            let names = symbol_names(character);
+            let names = symbol_words::listed_names(character);
             names.get(name).or(names.first()).copied()
         }
-    }
-}
-
-// Plain talk needs "forward slash" for `/`, but a listed name is said on
-// purpose, so "slash" names its `/` too: "src slash main" → `src/main`.
-fn symbol_names(character: char) -> Vec<&'static str> {
-    let names = symbol_words::names(character).iter().copied();
-    match character {
-        '/' => names.chain(["slash"]).collect(),
-        _ => names.collect(),
     }
 }
 
@@ -792,7 +782,7 @@ fn aliases(canonical: &str) -> Vec<String> {
     // Each alias says a symbol by one of its names throughout, never a mix.
     let names = canonical
         .chars()
-        .map(|character| symbol_names(character).len())
+        .map(|character| symbol_words::listed_names(character).len())
         .max()
         .unwrap_or(1);
     for hyphen in ["dash"]

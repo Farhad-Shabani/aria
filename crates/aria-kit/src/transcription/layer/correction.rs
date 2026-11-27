@@ -1,10 +1,8 @@
 use crate::cancel::CancelToken;
 
 use super::super::Attachment;
-use super::super::sentences::SentenceEnds;
 use super::claim::{Claimed, Place};
 use super::symbols;
-use super::symbols::Reading;
 use super::{Layer, TranscriptionError, Vocabulary, check_cancelled, check_size, numbers};
 
 /// Joins the words around a spoken symbol, as in "user underscore id" →
@@ -40,6 +38,26 @@ impl Layer for JoinSymbols {
     }
 }
 
+/// What dictated text is for. Only a named slash after a plain English
+/// word types differently.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Writing {
+    /// A terminal or editor. "run forward slash review" → `run /review`.
+    #[default]
+    Commands,
+    /// A document or chat. "and forward slash or" → `and/or`.
+    Prose,
+}
+
+/// Dictated text as corrected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Corrected {
+    pub text: String,
+    /// Type `text` with this as
+    /// [`Spacing::attachment`](crate::transcription::Spacing::attachment).
+    pub attachment: Attachment,
+}
+
 /// A step that claims dictated words. Reading the words claims vocabulary
 /// terms first, and typing applies personal rules last, to what no step
 /// claimed. No step rewrites an earlier claim.
@@ -52,6 +70,15 @@ pub(super) enum Step {
     Numbers,
     /// Spoken symbols, which join their neighbors, claimed or not.
     Symbols,
+}
+
+/// What a join depends on besides the words. "and forward slash or" →
+/// `and/or` in prose, `and /or` in commands.
+#[derive(Clone, Copy)]
+pub(super) struct Reading<'a> {
+    pub(super) vocabulary: &'a Vocabulary,
+    pub(super) writing: Writing,
+    pub(super) place: Place,
 }
 
 /// The steps of [`Vocabulary::correct_spoken`], in order.
@@ -134,45 +161,6 @@ pub(super) enum TypedBefore<'a> {
     Text(&'a str),
     /// A finished sentence. "forward slash main" → ` /main`.
     Apart,
-}
-
-impl<'a> TypedBefore<'a> {
-    /// What sits before a streamed segment typed after `typed`. It is
-    /// [`Self::Apart`] when `sentence_ended_before` says a sentence ended,
-    /// or when it is `None` and `sentences` holds back a closing mark.
-    pub(super) fn streamed(
-        typed: &'a str,
-        sentences: &SentenceEnds,
-        sentence_ended_before: Option<bool>,
-    ) -> Self {
-        if typed.is_empty() {
-            Self::Nothing
-        } else if sentences.reads_on(sentence_ended_before) {
-            Self::Text(typed)
-        } else {
-            Self::Apart
-        }
-    }
-}
-
-/// What dictated text is for. Only a named slash after a plain English
-/// word types differently.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Writing {
-    /// A terminal or editor. "run forward slash review" → `run /review`.
-    #[default]
-    Commands,
-    /// A document or chat. "and forward slash or" → `and/or`.
-    Prose,
-}
-
-/// Dictated text as corrected.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Corrected {
-    pub text: String,
-    /// Type `text` with this as
-    /// [`Spacing::attachment`](crate::transcription::Spacing::attachment).
-    pub attachment: Attachment,
 }
 
 impl Vocabulary {

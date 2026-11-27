@@ -34,6 +34,19 @@ pub struct Spacing {
     pub ending: Ending,
 }
 
+/// Whether a space comes before inserted text.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Attachment {
+    /// After `Hello`, `world` → ` world` but `,` → `,`.
+    #[default]
+    AsWritten,
+    /// No space. After `src`, `/main` → `/main`.
+    Joined,
+    /// Spaced like a word, even with a symbol first. After `cd`, `../src`
+    /// → ` ../src`.
+    Apart,
+}
+
 /// Whether a space follows inserted text before a word after the caret.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Ending {
@@ -46,19 +59,6 @@ pub enum Ending {
     /// Like [`Self::Open`]. The next text starts with this one's held-back
     /// mark, as `. Then rest`.
     MarkDeferred,
-}
-
-/// Whether a space comes before inserted text.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum Attachment {
-    /// After `Hello`, `world` → ` world` but `,` → `,`.
-    #[default]
-    AsWritten,
-    /// No space. After `src`, `/main` → `/main`.
-    Joined,
-    /// Spaced like a word, even with a symbol first. After `cd`, `../src`
-    /// → ` ../src`.
-    Apart,
 }
 
 impl Caret {

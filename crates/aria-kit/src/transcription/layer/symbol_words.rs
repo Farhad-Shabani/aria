@@ -140,11 +140,21 @@ pub(super) fn is_name(word: &str) -> bool {
 
 /// The names of `character`: `\` → "backslash", "back slash". Empty when
 /// no spoken symbol types it.
-pub(super) fn names(character: char) -> &'static [&'static str] {
+fn names(character: char) -> &'static [&'static str] {
     SYMBOLS
         .iter()
         .find(|(symbol, ..)| symbol.chars().eq([character]))
         .map_or(&[], |(_, names, _)| names)
+}
+
+// Plain talk needs "forward slash" for `/`, but a listed name is said on
+// purpose, so "slash" names its `/` too: "src slash main" → `src/main`.
+pub(super) fn listed_names(character: char) -> Vec<&'static str> {
+    let names = names(character).iter().copied();
+    match character {
+        '/' => names.chain(["slash"]).collect(),
+        _ => names.collect(),
+    }
 }
 
 /// The first name of `character`: `_` → "underscore".
