@@ -69,6 +69,12 @@ final class DaemonSettings: ObservableObject {
         answer?.streamingUnavailable ?? []
     }
 
+    /// Where Mac Audio saves transcripts, as the daemon last said. Empty before it answers, and
+    /// from an older daemon.
+    var transcriptsDir: String {
+        answer?.transcriptsDir ?? ""
+    }
+
     var isHistoryEnabled: Bool {
         snapshot?.historyEnabled ?? true
     }

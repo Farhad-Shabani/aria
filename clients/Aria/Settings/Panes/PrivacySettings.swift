@@ -10,7 +10,7 @@ struct PrivacySettings: View {
                 Toggle(isOn: editor.binding(\.historyEnabled, \.historyEnabled)) {
                     Text(SettingsRow.saveHistory.title)
                     Text(
-                        "Dictations, transcripts, and chats stay on your Mac for up to 30 days."
+                        "Dictations and chats stay on your Mac for up to 30 days. Transcripts stay until you delete them."
                     )
                 }
                 .settingsRow(.saveHistory)
@@ -21,6 +21,10 @@ struct PrivacySettings: View {
                 }
                 .disabled(!editor.snapshot.historyEnabled)
                 .settingsRow(.keepAudio)
+                // A daemon from before this row sends none.
+                if !settings.transcriptsDir.isEmpty {
+                    TranscriptsFolderRow(folder: settings.transcriptsDir)
+                }
             }
             Section {
                 Toggle(

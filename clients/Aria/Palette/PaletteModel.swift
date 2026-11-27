@@ -55,8 +55,15 @@ struct PaletteModel: Equatable {
             menuIndex = nil
         }
     }
+    /// The running session's file, or the last one's.
+    var transcriptFile: URL?
     /// While off, no saved entry or history command shows.
     var keepsHistory = false
+    /// Pinned at the top of the commands page, under a running session's row, whether or not
+    /// history is on. Oldest first.
+    private(set) var unsaved: [UnsavedTranscript] = []
+    /// Leaving an unsaved transcript's page asks first.
+    var isConfirmingTranscriptDiscard = false
     /// `nil` until read, when every word typed counts as unlisted.
     private var dictionary: ListedWords?
     var dictionaryWords: [String]? { dictionary?.words }
@@ -159,6 +166,7 @@ struct PaletteModel: Equatable {
         section = nil
         isConfirmingClear = false
         isConfirmingDiscard = false
+        isConfirmingTranscriptDiscard = false
         waitingDraft = nil
         editFailure = nil
         renaming = nil
@@ -238,6 +246,44 @@ struct PaletteModel: Equatable {
         let selectedID = selected?.id
         self.microphones = microphones.map { .microphone($0, isChosen: $0.id == chosen) }
         reselect(selectedID)
+    }
+
+    /// Follows the daemon's list while the palette is open. The selection stays on its row. A page
+    /// whose transcript left the list goes back to the commands.
+    /// The live page of a session that ended unsaved moves to its transcript.
+    mutating func replace(unsaved: [UnsavedTranscript]) {
+        keepingSelection { $0.unsaved = unsaved }
+        switch page {
+        case .unsavedTranscript(let shown)
+        where !unsaved.contains(where: { $0.name == shown.name }):
+            show(.commands)
+        case .liveTranscript where !isSystemTranscriptionRunning:
+            guard let file = transcriptFile?.standardizedFileURL,
+                let ended = unsaved.first(where: { $0.path.standardizedFileURL == file })
+            else { return }
+            open(unsaved: ended)
+        default:
+            break
+        }
+    }
+
+    mutating func open(unsaved transcript: UnsavedTranscript) {
+        show(.unsavedTranscript(transcript))
+        isConfirmingTranscriptDiscard = false
+    }
+
+    /// Whether `entry` is the running session's, which the live page shows as it grows.
+    func isLive(_ entry: HistoryItem) -> Bool {
+        guard isSystemTranscriptionRunning, let transcriptFile,
+            case .systemTranscription(let transcript, _) = entry.kind
+        else { return false }
+        return URL(filePath: transcript).standardizedFileURL == transcriptFile.standardizedFileURL
+    }
+
+    /// What the running session's row reads before its entry has a title or an excerpt. `nil`
+    /// for any other entry, which reads as its name.
+    func liveName(of entry: HistoryItem) -> String? {
+        isLive(entry) && entry.title == nil && entry.text.isEmpty ? "Transcribing…" : nil
     }
 
     /// Lists the microphone choices, with the chosen one selected.
@@ -384,10 +430,20 @@ struct PaletteModel: Equatable {
         guard input == nil, listing == nil else { return commands.map(PaletteItem.command) }
         let entries = keepsHistory ? threaded(entries) : []
         guard section == nil else { return entries }
+        let unsaved = matchingUnsaved.map(PaletteItem.unsaved)
         guard !isShowingHistoryFirst else {
-            return (isSystemTranscriptionRunning ? [.command(.liveTranscript)] : []) + entries
+            return (isSystemTranscriptionRunning ? [.command(.liveTranscript)] : []) + unsaved + entries
         }
-        return commands.map(PaletteItem.command) + entries
+        let commands = commands.map(PaletteItem.command)
+        let live = commands.prefix { $0.command?.action == .showLiveTranscript }
+        return Array(live) + unsaved + commands.dropFirst(live.count) + entries
+    }
+
+    private var matchingUnsaved: [UnsavedTranscript] {
+        let needle = query.trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return unsaved }
+        let titles = [UnsavedTranscripts.title, "mac audio"]
+        return titles.contains { $0.localizedStandardContains(needle) } ? unsaved : []
     }
 
     var unlistedWord: String? {
@@ -416,7 +472,7 @@ struct PaletteModel: Equatable {
         switch selected {
         case .entry(let entry) where entry.resultCount > 0: entry
         case .result: thread.flatMap { thread in entries.first { $0.id == thread.entryID } }
-        case .entry, .chat, .command, nil: nil
+        case .entry, .chat, .command, .unsaved, nil: nil
         }
     }
 
@@ -648,10 +704,24 @@ struct PaletteModel: Equatable {
         focusedResultID = order[min(max(index + step, 0), order.count - 1)]
     }
 
+    /// The palette's shortcut, pressed while it's open. Returns whether it closes: an unsaved
+    /// transcript asks first, as Escape does.
+    mutating func closeRequested() -> Bool {
+        if case .unsavedTranscript = page {
+            isConfirmingTranscriptDiscard = true
+            return false
+        }
+        return true
+    }
+
     /// Returns whether the palette closes.
     mutating func escape() -> Bool {
         if renaming != nil {
             renaming = nil
+            return false
+        }
+        if case .unsavedTranscript = page {
+            isConfirmingTranscriptDiscard = true
             return false
         }
         if page == .prompt {

@@ -254,6 +254,7 @@ final class HistoryStateTests: XCTestCase {
         newest.chat = Self.chat
         var older = Self.item(1)
         older.chat = Self.chat
+        harness.entries.append(newest)
         var effects = harness.effects
         effects.list = { _, _, before in
             before == nil
@@ -306,6 +307,18 @@ final class HistoryStateTests: XCTestCase {
         state.delete(2)
         await waitUntil { state.detail?.id == 1 }
         XCTAssertEqual(state.items.map(\.id), [1])
+        state.close()
+    }
+
+    func testOpeningAnEntryHistoryRemovedDropsItsRowAndSaysSo() async {
+        let harness = Harness()
+        let state = await refreshed(harness.effects)
+        harness.entries.removeAll { $0.id == 1 }
+        state.select(1)
+        await waitUntil { state.error == .missing }
+        XCTAssertEqual(state.items.map(\.id), [2])
+        XCTAssertNil(state.selectedID)
+        XCTAssertNil(state.detail)
         state.close()
     }
 

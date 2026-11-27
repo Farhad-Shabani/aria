@@ -14,6 +14,8 @@ struct PaletteKey: Equatable {
     /// Return alone types a new line in the instructions.
     static let save = PaletteKey(character: "\r", modifiers: .command, label: "⌘↩")
     static let saveAsPrompt = PaletteKey(character: "s", modifiers: .command, label: "⌘S")
+    static let saveTranscript = PaletteKey(character: "s", modifiers: .command, label: "⌘S")
+    static let showInFinder = PaletteKey(character: "r", modifiers: [.command, .shift], label: "⇧⌘R")
     static let addWord = PaletteKey(character: "d", modifiers: .command, label: "⌘D")
     static let delete = PaletteKey(character: "\u{7F}", modifiers: .command, label: "⌘⌫")
     static let transcribeAgain = PaletteKey(character: "r", modifiers: .command, label: "⌘R")

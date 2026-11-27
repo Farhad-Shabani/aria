@@ -4,6 +4,7 @@ struct PaletteCommandsPage: View {
     @ObservedObject var controller: PaletteController
     @ObservedObject var systemTranscription: SystemTranscriptionStatus
     @ObservedObject var history: HistoryState
+    @ObservedObject var unsaved: UnsavedTranscripts
     @ObservedObject var chats: Chats
     @ObservedObject var microphones: Microphones
 
@@ -175,6 +176,7 @@ struct PaletteCommandsPage: View {
         case .entry(let entry):
             PaletteEntryRow(
                 entry: entry, symbol: entry.kind.symbol, isSelected: isSelected,
+                name: controller.model.liveName(of: entry),
                 replying: chats.replying(quoting: entry.id) != nil
                     ? PaletteReplyingBadge { controller.openReplying(quoting: entry.id) } : nil,
                 thread: thread(for: entry)
@@ -192,6 +194,8 @@ struct PaletteCommandsPage: View {
             ) { controller.choose(item) }
         case .result(let result):
             PaletteResultRow(result: result, isSelected: isSelected) { controller.choose(item) }
+        case .unsaved(let transcript):
+            PaletteUnsavedRow(transcript: transcript, isSelected: isSelected) { controller.choose(item) }
         }
     }
 
@@ -247,6 +251,8 @@ struct PaletteCommandsPage: View {
             Text("Nothing is saved.")
         } else if let error = history.error {
             NoticeText(notice: error.message)
+        } else if let failure = unsaved.listFailure {
+            NoticeText(notice: failure)
         } else if history.isClearing {
             PaletteFooterProgress("Clearing…")
         } else if let notice = history.notice {
