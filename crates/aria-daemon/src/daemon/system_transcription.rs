@@ -301,7 +301,7 @@ impl SystemTranscriptionState {
         let _files = self.lock_files();
         let running = self.running();
         self.unsaved_folder()?
-            .open_to_save(name, destination, running.as_deref())
+            .open_to_export(name, destination, running.as_deref())
             .map_err(|error| RpcFailure::from(&error))
     }
 

@@ -19,9 +19,14 @@ use crate::transcript_file::{self, is_within};
 /// `TranscriptFolders::at("/Users/me")` → `/Users/me/.aria/transcripts` and
 /// `/Users/me/.aria/unsaved`.
 pub struct TranscriptFolders {
+    /// `~/.aria`, which holds both folders and Aria's other data.
+    aria: PathBuf,
     transcripts: PathBuf,
     unsaved: PathBuf,
 }
+
+/// Under the home folder.
+const ARIA_DIRECTORY: &str = ".aria";
 
 /// How a session's file is kept once the session ends.
 ///
@@ -127,6 +132,7 @@ pub enum SaveHistory {
 impl TranscriptFolders {
     pub fn at(home: &Path) -> Self {
         Self {
+            aria: home.join(ARIA_DIRECTORY),
             transcripts: home.join(aria_settings::TRANSCRIPTS_DIRECTORY),
             unsaved: home.join(unsaved::DIRECTORY),
         }
@@ -221,8 +227,7 @@ impl TranscriptFolders {
         {
             return Err(OutputError::Dotted);
         }
-        let aria = self.transcripts.parent().unwrap_or(&self.transcripts);
-        for folder in [aria, &self.transcripts, &self.unsaved] {
+        for folder in [&self.aria, &self.transcripts, &self.unsaved] {
             if is_within(destination, folder).map_err(OutputError::Io)? {
                 return Err(OutputError::InAriaFolder);
             }

@@ -2,7 +2,6 @@
 //! full. Each waits in Aria's own `~/.aria/unsaved` folder until the person
 //! saves or discards it.
 
-use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -114,9 +113,9 @@ impl UnsavedFolder {
     /// session is writing. Refused while history can't open, since only
     /// history knows the files it names.
     ///
-    /// `open_to_save(name, "/Users/me/Documents/meeting.txt", None)` → the
+    /// `open_to_export(name, "/Users/me/Documents/meeting.txt", None)` → the
     /// transcript, open to read from its start.
-    pub fn open_to_save(
+    pub fn open_to_export(
         &self,
         name: &str,
         destination: &Path,
@@ -128,9 +127,7 @@ impl UnsavedFolder {
         };
         let transcript = self.get(name)?;
         let writes = |path: &Path| {
-            running.is_some_and(|running| {
-                OwnedFiles::locate(HashSet::from([running.to_path_buf()])).contains(path)
-            })
+            running.is_some_and(|running| transcript_file::is_same_path(path, running))
         };
         if writes(&transcript.path) || writes(destination) {
             return Err(UnsavedError::Busy);
@@ -563,7 +560,7 @@ mod tests {
         written(&folder, name, &text);
 
         let mut source = folder
-            .open_to_save(name, &home.path().join("meeting.txt"), None)
+            .open_to_export(name, &home.path().join("meeting.txt"), None)
             .unwrap();
 
         let mut read = String::new();
@@ -590,7 +587,7 @@ mod tests {
             alias.join("meeting.txt"),
             home.path().join(".aria/settings.toml"),
         ] {
-            let refused = folder.open_to_save(name, &inside, None).map(drop);
+            let refused = folder.open_to_export(name, &inside, None).map(drop);
 
             let Err(error) = refused else {
                 panic!("{inside:?} was accepted")
@@ -615,7 +612,7 @@ mod tests {
         let name = "2026-11-25T10-00-00Z-0000000a.txt";
         written(&folder, name, "[00:00:01] heard");
 
-        let Err(refused) = folder.open_to_save(name, &destination, None).map(drop) else {
+        let Err(refused) = folder.open_to_export(name, &destination, None).map(drop) else {
             panic!("a file history saved was replaced")
         };
 
@@ -637,7 +634,7 @@ mod tests {
         std::os::unix::fs::symlink(&secret, folder.folders.unsaved().join(name)).unwrap();
         let destination = home.path().join("meeting.txt");
 
-        let refused = folder.open_to_save(name, &destination, None).map(drop);
+        let refused = folder.open_to_export(name, &destination, None).map(drop);
 
         assert!(matches!(refused, Err(UnsavedError::Foreign)));
         assert!(!destination.exists());
@@ -662,7 +659,7 @@ mod tests {
             (&opened, name, Some(running.as_path()), RpcErrorCode::Busy),
             (&unchecked, name, None, RpcErrorCode::HistoryUnavailable),
         ] {
-            let refused = folder.open_to_save(name, &destination, running).map(drop);
+            let refused = folder.open_to_export(name, &destination, running).map(drop);
 
             let Err(error) = refused else {
                 panic!("{code:?} was accepted")
@@ -683,7 +680,7 @@ mod tests {
         fs::write(&output, "[00:00:01] live").unwrap();
 
         let refused = folder
-            .open_to_save(name, &home.path().join("NOTES.TXT"), Some(&output))
+            .open_to_export(name, &home.path().join("NOTES.TXT"), Some(&output))
             .map(drop);
 
         let Err(error) = refused else {

@@ -209,6 +209,22 @@ pub(crate) fn same_file(a: &Metadata, b: &Metadata) -> bool {
     (a.dev(), a.ino()) == (b.dev(), b.ino())
 }
 
+/// Whether `a` and `b` are one path: by spelling, or by name in one folder
+/// however a link or letter case spells that folder. Neither needs to exist.
+pub(crate) fn is_same_path(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    let (Some(folder_a), Some(name_a), Some(folder_b), Some(name_b)) =
+        (a.parent(), a.file_name(), b.parent(), b.file_name())
+    else {
+        return false;
+    };
+    name_key(name_a) == name_key(name_b)
+        && folder_identity(folder_a)
+            .is_some_and(|identity| folder_identity(folder_b) == Some(identity))
+}
+
 const MAX_STAGING_ATTEMPTS: u32 = 100;
 
 /// Makes a new private file at a hidden name beside `destination`, for a

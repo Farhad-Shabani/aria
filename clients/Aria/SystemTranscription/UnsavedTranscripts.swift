@@ -42,8 +42,8 @@ final class UnsavedTranscripts: ObservableObject {
         var list: () async throws -> UnsavedTranscriptList
         var discard: (UnsavedTranscript) async throws -> Void
         var read: (UnsavedTranscript) async throws -> UnsavedTranscriptText
-        /// Copies the transcript over whatever is at the destination.
-        var copy: (_ transcript: UnsavedTranscript, _ destination: URL) async throws -> Void
+        /// Writes a copy of the transcript over whatever is at the destination.
+        var export: (_ transcript: UnsavedTranscript, _ destination: URL) async throws -> Void
     }
 
     /// Oldest first, as the daemon lists them.
@@ -101,9 +101,9 @@ final class UnsavedTranscripts: ObservableObject {
         guard begin() else { return false }
         defer { isChanging = false }
         do {
-            try await effects.copy(transcript, destination)
+            try await effects.export(transcript, destination)
         } catch {
-            log.error("Copying an unsaved transcript failed: \(String(describing: error), privacy: .private)")
+            log.error("Exporting an unsaved transcript failed: \(String(describing: error), privacy: .private)")
             if Self.isGone(error) {
                 showGone()
                 return false
@@ -219,7 +219,7 @@ extension UnsavedTranscripts.Effects {
             list: { try await SystemTranscriptionClient.listUnsaved() },
             discard: { try await SystemTranscriptionClient.discardUnsaved($0) },
             read: { try await SystemTranscriptionClient.readUnsaved($0) },
-            copy: { transcript, destination in
+            export: { transcript, destination in
                 try await write(to: destination) { receive in
                     try await SystemTranscriptionClient.exportUnsaved(transcript, to: destination, receive: receive)
                 }
