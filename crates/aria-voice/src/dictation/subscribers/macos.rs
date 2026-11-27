@@ -83,7 +83,7 @@ impl Cue {
             DictationStage::Failed(_) => Some(Self::Error),
             // The device that records it tells the person it started.
             DictationStage::Recording {
-                origin: RecordingOrigin::Remote,
+                origin: RecordingOrigin::Remote(_),
                 ..
             }
             // The start cue played at the press.
@@ -164,7 +164,7 @@ mod tests {
     fn a_remote_recording_starts_without_a_cue() {
         let remote = DictationStage::Recording {
             id: crate::dictation::RecordingId(1),
-            origin: RecordingOrigin::Remote,
+            origin: RecordingOrigin::Remote(None),
             delivery: aria_settings::DeliveryMode::Complete,
             route: crate::dictation::TranscriptRoute::Deliver,
         };

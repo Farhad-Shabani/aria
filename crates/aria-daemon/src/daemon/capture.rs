@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use crate::daemon::config::WakeConfig;
 use aria_kit::audio::{
     AudioCapture, CaptureError, IdleStream, InputDevice, InputDeviceId, Inputs, Microphone,
-    MicrophoneError, PreparedMicrophone, PushedCapture, RecordingMode, RecordingReader, StopSignal,
-    WakeWordMonitor, WavReplayCapture, is_available,
+    MicrophoneError, PreparedMicrophone, PushedCapture, PushedFeed, RecordingMode, RecordingReader,
+    Source, StopSignal, WakeWordMonitor, WavReplayCapture, is_available,
 };
 use aria_kit::voice_activity::SileroVad;
 use aria_primitives::error_chain;
@@ -33,6 +33,10 @@ const STOP_POLL: Duration = Duration::from_millis(10);
 /// A phone that goes this quiet mid-recording has dropped. The recording
 /// keeps what it sent.
 const PHONE_STALL: Duration = Duration::from_secs(2);
+/// How many chunks a pushed recording's feed holds: about six seconds of
+/// tenth-second chunks, far more than the capture thread ever lags. A full
+/// feed ends an attached phone's recording, and a relay waits for room.
+pub(in crate::daemon) const FEED_CHUNKS: usize = 64;
 
 pub(in crate::daemon) enum CaptureBackend {
     Microphone {
@@ -53,6 +57,8 @@ pub(in crate::daemon) struct PhoneInput {
     phones: Arc<PhoneMicrophone>,
     /// Whether a chosen Mac device is available, which decides the phone.
     available: fn(&InputDeviceId) -> bool,
+    /// Also records what a relay pushes in. The gate runs one recording at a
+    /// time.
     capture: PushedCapture<SileroVad>,
 }
 
@@ -141,14 +147,17 @@ impl PhoneInput {
         tracing::info!(stage = "recording", "recording on the phone");
         let phones = Arc::clone(&self.phones);
         let id = recording.id;
-        Started::Phone(self.capture.start(
+        let capture = self.capture.start(
             mode,
-            first,
-            recording.feed,
-            PHONE_STALL,
+            PushedFeed::new(first, recording.feed, PHONE_STALL, move || phones.stop(id)),
             stop,
-            move || phones.stop(id),
-        ))
+        );
+        // A capture that refuses the feed never runs `finished`, and the
+        // phone is already recording.
+        if capture.is_err() {
+            self.phones.stop(id);
+        }
+        Started::Phone(capture)
     }
 
     /// Ends an attached phone's stream once `preference` rules it out, so it
@@ -163,6 +172,12 @@ impl PhoneInput {
 }
 
 impl CaptureBackend {
+    /// Whether a phone or watch can push a press's audio in: only a
+    /// capture that serves phones records it.
+    pub(in crate::daemon) fn takes_pushed(&self) -> bool {
+        matches!(self, Self::Microphone { phone: Some(_), .. })
+    }
+
     /// The rule for whether a press would record on an attached phone.
     pub(in crate::daemon) fn admits_phone(&self) -> AdmitsPhone {
         match self {
@@ -300,11 +315,14 @@ impl Supervised for MicrophoneFollower {
     }
 }
 
+/// Every press's microphone is chosen here: the phone or watch that started
+/// it, else the attached phone or the Mac device `dictation.microphone`
+/// picks.
 impl AudioCapture for CaptureBackend {
     fn start(
         &self,
         mode: RecordingMode,
-        inputs: Inputs,
+        source: Source,
         stop: StopSignal,
     ) -> Result<RecordingReader, CaptureError> {
         match self {
@@ -314,6 +332,14 @@ impl AudioCapture for CaptureBackend {
                 phone,
                 ..
             } => {
+                let inputs = match source {
+                    Source::Microphone(inputs) => inputs,
+                    Source::Pushed(feed) => {
+                        let phone = phone.as_ref().ok_or(CaptureError::PushedUnsupported)?;
+                        tracing::info!(stage = "recording", "recording pushed audio");
+                        return phone.capture.start(mode, feed, stop);
+                    }
+                };
                 let preference = preference.borrow().clone();
                 // The follower applies a change soon after it, but this press
                 // must not record on a device it didn't choose. An unchanged
@@ -326,9 +352,9 @@ impl AudioCapture for CaptureBackend {
                     },
                     None => stop,
                 };
-                microphone.start(mode, inputs, stop)
+                microphone.start(mode, Source::Microphone(inputs), stop)
             }
-            Self::WavReplay(capture) => capture.start(mode, inputs, stop),
+            Self::WavReplay(capture) => capture.start(mode, source, stop),
         }
     }
 }
@@ -461,10 +487,14 @@ mod tests {
 
         /// `available` stands in for the Mac's devices.
         fn with_devices(available: fn(&InputDeviceId) -> bool) -> Self {
+            Self::load_with(available, Duration::from_secs(60))
+        }
+
+        fn load_with(available: fn(&InputDeviceId) -> bool, recording_timeout: Duration) -> Self {
             let phones = PhoneMicrophone::new();
             let (setting, _) = watch::channel(Preference::Automatic);
-            let mut input = PhoneInput::load(Arc::clone(&phones), Duration::from_secs(60))
-                .expect("silero loads");
+            let mut input =
+                PhoneInput::load(Arc::clone(&phones), recording_timeout).expect("silero loads");
             input.available = available;
             Self {
                 input: Arc::new(input),
@@ -521,6 +551,77 @@ mod tests {
             fake.commands.recv().await,
             Some(PhoneCommand::Stop(_))
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_phone_recording_that_cant_start_asks_the_phone_to_stop() {
+        // No recording fits a zero limit, so the capture refuses to start.
+        let phone = Phone::load_with(|_| false, Duration::ZERO);
+        let mut fake = FakePhone::attach(&phone.phones);
+        let starting = phone.start(Inputs::Any, StopSignal::never());
+
+        let (started, ()) = tokio::join!(starting, async {
+            assert!(matches!(
+                fake.commands.recv().await,
+                Some(PhoneCommand::Start(_))
+            ));
+            fake.send(PhoneRequest::Audio(speech())).unwrap();
+        });
+
+        assert!(matches!(started, Started::Phone(Err(_))));
+        let told = tokio::time::timeout(Duration::from_secs(2), fake.commands.recv()).await;
+        assert!(matches!(told, Ok(Some(PhoneCommand::Stop(_)))));
+    }
+
+    #[test]
+    fn a_capture_that_serves_no_phone_refuses_pushed_audio() {
+        let directory = tempfile::tempdir().unwrap();
+        let fixture = aria_kit::audio::fixture_of(directory.path(), 1_600);
+        let replay = CaptureBackend::WavReplay(
+            WavReplayCapture::new(Duration::from_secs(5), &fixture, ReplayPace::Immediate).unwrap(),
+        );
+        let (_feed, rest) = std::sync::mpsc::sync_channel(FEED_CHUNKS);
+
+        let refused = replay.start(
+            RecordingMode::UntilStopped,
+            Source::Pushed(PushedFeed::new(
+                speech(),
+                rest,
+                Duration::from_secs(1),
+                || {},
+            )),
+            StopSignal::never(),
+        );
+
+        assert!(!replay.takes_pushed());
+        assert!(matches!(refused, Err(CaptureError::PushedUnsupported)));
+    }
+
+    #[test]
+    fn a_pushed_recording_says_when_the_mac_stops_capturing_it() {
+        let phone = Phone::load();
+        let (_feed, rest) = std::sync::mpsc::sync_channel(FEED_CHUNKS);
+        let (told, ended) = std::sync::mpsc::channel();
+        let stopper = Stopper::new();
+        let feed = PushedFeed::new(speech(), rest, Duration::from_secs(60), move || {
+            told.send(()).expect("the test is listening");
+        });
+
+        let _recording = phone
+            .input
+            .capture
+            .start(
+                RecordingMode::UntilStopped,
+                feed,
+                StopSignal::from(stopper.clone()),
+            )
+            .expect("capture starts");
+        assert!(ended.recv_timeout(Duration::from_millis(200)).is_err());
+        stopper.stop();
+
+        ended
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the relay hears that capture ended while the phone still sends");
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -317,22 +317,6 @@ mod tests {
             // apart.
             Err(Status::aborted("the stand-in relay was reached"))
         }
-
-        async fn start_remote_recording(
-            &self,
-            _request: tonic::Request<wire::StartRemoteRecordingRequest>,
-        ) -> std::result::Result<tonic::Response<wire::StartRemoteRecordingResponse>, Status>
-        {
-            Err(Status::aborted("the stand-in relay was reached"))
-        }
-
-        async fn cancel_remote_recording(
-            &self,
-            _request: tonic::Request<wire::CancelRemoteRecordingRequest>,
-        ) -> std::result::Result<tonic::Response<wire::CancelRemoteRecordingResponse>, Status>
-        {
-            Err(Status::aborted("the stand-in relay was reached"))
-        }
     }
 
     /// No phone attached, and a setting that never changes.
@@ -559,16 +543,6 @@ mod tests {
             .code()
     }
 
-    async fn announce(channel: &Channel) -> tonic::Code {
-        wire::relay_service_client::RelayServiceClient::new(channel.clone())
-            .start_remote_recording(wire::StartRemoteRecordingRequest {
-                device: wire::RecordingDevice::Watch as i32,
-            })
-            .await
-            .expect_err("the stand-in relay refuses every call")
-            .code()
-    }
-
     async fn settings(channel: &Channel) -> tonic::Code {
         wire::settings_service_client::SettingsServiceClient::new(channel.clone())
             .get(wire::GetSettingsRequest {})
@@ -626,8 +600,6 @@ mod tests {
         let mut reached = Vec::new();
         for path in [
             "/aria.daemon.v1.RelayService/Relay",
-            "/aria.daemon.v1.RelayService/StartRemoteRecording",
-            "/aria.daemon.v1.RelayService/CancelRemoteRecording",
             "/aria.daemon.v1.SettingsService/Get",
             "/aria.daemon.v1.PhoneMicrophoneService/Attach",
             "/aria.daemon.v1.MicrophoneService/List",
@@ -657,8 +629,6 @@ mod tests {
             reached,
             [
                 "/aria.daemon.v1.RelayService/Relay",
-                "/aria.daemon.v1.RelayService/StartRemoteRecording",
-                "/aria.daemon.v1.RelayService/CancelRemoteRecording",
                 "/aria.daemon.v1.SettingsService/Get",
                 "/aria.daemon.v1.PhoneMicrophoneService/Attach",
                 "/aria.daemon.v1.PairingService/Pair",
@@ -704,7 +674,6 @@ mod tests {
             aria_settings::rpc::RpcErrorCode::Unauthenticated
         );
         assert_eq!(relay(&channel).await, tonic::Code::Unauthenticated);
-        assert_eq!(announce(&channel).await, tonic::Code::Unauthenticated);
         assert_eq!(settings(&channel).await, tonic::Code::Unauthenticated);
         assert_eq!(microphone(&channel).await, tonic::Code::Unauthenticated);
 
@@ -719,7 +688,6 @@ mod tests {
             .await
             .expect("the live code should pair");
         assert_eq!(relay(&channel).await, tonic::Code::Aborted);
-        assert_eq!(announce(&channel).await, tonic::Code::Aborted);
         assert_eq!(settings(&channel).await, tonic::Code::Aborted);
         assert_eq!(microphone(&channel).await, tonic::Code::InvalidArgument);
         let reused = pair(&channel, code.raw())

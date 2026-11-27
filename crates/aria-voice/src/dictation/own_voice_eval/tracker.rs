@@ -12,7 +12,7 @@ use super::{Truth, source_regions};
 use crate::config::SpeakerConfig;
 use crate::speaker::VoiceprintTracker;
 use aria_kit::audio::{
-    AudioCapture, Inputs, RecordingMode, ReplayPace, StopSignal, WavReplayCapture,
+    AudioCapture, Inputs, RecordingMode, ReplayPace, Source, StopSignal, WavReplayCapture,
 };
 
 /// The judgment of the latest turn, as the tracker shows it.
@@ -65,7 +65,7 @@ pub(super) fn evaluate(speaker: &SpeakerConfig, wav: &Path, truth: &Truth) -> (V
     let mut recording = capture
         .start(
             RecordingMode::UntilStopped,
-            Inputs::Local,
+            Source::Microphone(Inputs::Local),
             StopSignal::from_fn(|| false),
         )
         .expect("the fixture opens");

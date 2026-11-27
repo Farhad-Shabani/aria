@@ -123,8 +123,8 @@ public nonisolated struct Aria_Daemon_V1_AttachedPhone: Sendable {
   public init() {}
 }
 
-/// A paired phone or watch recording on its own microphone, for its audio to
-/// be relayed once it ends.
+/// A paired phone or watch recording on its own microphone, its audio
+/// relayed as it records.
 public nonisolated struct Aria_Daemon_V1_RemoteRecording: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for

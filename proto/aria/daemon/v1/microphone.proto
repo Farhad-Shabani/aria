@@ -27,8 +27,8 @@ message ListMicrophonesResponse {
 
 message AttachedPhone {}
 
-// A paired phone or watch recording on its own microphone, for its audio to
-// be relayed once it ends.
+// A paired phone or watch recording on its own microphone, its audio
+// relayed as it records.
 message RemoteRecording {
   RecordingDevice device = 1;
 }

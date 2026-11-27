@@ -60,26 +60,28 @@ pub(super) struct OutputSlot {
     is_released: bool,
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 impl OutputSlot {
     /// Puts `mute` in the slot, as a mute that already landed.
     pub(super) fn hold(slot: &Mutex<Self>, mute: OutputMute) {
         lock(slot).mute = Some(mute);
     }
 
-    #[cfg(test)]
     pub(super) fn is_muted(slot: &Mutex<Self>) -> bool {
         lock(slot).mute.is_some()
     }
 }
 
+/// How long a start waits for other apps to go quiet. Past it, recording
+/// starts anyway and the mute lands once it's ready.
+const MUTE_WAIT: Duration = Duration::from_millis(150);
+
 impl OutputSlot {
     /// Mutes other apps on a thread of its own, since CoreAudio can be slow,
-    /// and waits up to `wait` for it. Past that, the mute lands when ready.
+    /// and waits up to `MUTE_WAIT` for it.
     pub(super) fn mute(
         slot: &Arc<Mutex<Self>>,
         acquire: fn() -> Option<OutputMute>,
-        wait: Option<Duration>,
         recording: super::RecordingId,
     ) {
         let (muted, waiting) = mpsc::channel();
@@ -97,9 +99,7 @@ impl OutputSlot {
             });
         match spawned {
             Ok(_) => {
-                if let Some(wait) = wait
-                    && waiting.recv_timeout(wait).is_err()
-                {
+                if waiting.recv_timeout(MUTE_WAIT).is_err() {
                     tracing::warn!(
                         %recording,
                         "muting other apps is slow; recording starts without waiting"

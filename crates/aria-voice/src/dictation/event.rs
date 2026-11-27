@@ -67,9 +67,9 @@ pub enum DictationStage {
 pub enum RecordingOrigin {
     /// This machine's capture: its own microphone, or the attached phone.
     Local,
-    /// A remote recording: the device records it itself, and this machine
-    /// only shows it.
-    Remote,
+    /// A paired device records it on its own microphone and plays its own
+    /// cue. `None` when an older client named no device.
+    Remote(Option<RecordingDevice>),
 }
 
 /// What a live recording captures from.
@@ -83,6 +83,14 @@ pub enum CapturedMicrophone {
     Prerecorded,
     /// A remote recording: the device records it itself.
     Remote(RecordingDevice),
+}
+
+impl CapturedMicrophone {
+    /// A remote recording's microphone. One whose device goes unnamed shows
+    /// as prerecorded, which a pill draws without a glyph.
+    pub fn remote(device: Option<RecordingDevice>) -> Self {
+        device.map_or(Self::Prerecorded, Self::Remote)
+    }
 }
 
 /// A paired device that makes a remote recording.
@@ -107,9 +115,7 @@ impl DictationStage {
     pub fn delivered(delivered: Option<Delivered>, text: &str) -> Self {
         Self::Delivered {
             outcome: delivered.map(|delivered| delivered.outcome),
-            words: delivered
-                .and_then(|delivered| delivered.words)
-                .unwrap_or_else(|| text.split_whitespace().count() as u32),
+            words: super::word_count(delivered, text),
         }
     }
 

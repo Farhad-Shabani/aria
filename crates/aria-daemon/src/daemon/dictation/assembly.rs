@@ -20,10 +20,9 @@ use aria_settings::config::ConfigError;
 use aria_settings::rpc::RpcErrorCode;
 use aria_voice::config::{DictationConfig, PairingId, SpeakerConfig, SttBackend, SttConfig};
 use aria_voice::dictation::{
-    Cleanup, ConfiguredLayers, Cursor, DeliveredRecording, DictationCoordinator, DictationError,
-    DictationEventEmitter, DictationExecutor, DictationPipeline, DictationPolicy,
-    DictationPolicyError, DictationResult, DictationSettings, ExecutionControl, LlmCleanupError,
-    Rewrites, SoundMuting, Transcribed,
+    Cleanup, ConfiguredLayers, Cursor, DictationCoordinator, DictationError, DictationEventEmitter,
+    DictationExecutor, DictationPipeline, DictationPolicy, DictationPolicyError, DictationSettings,
+    Executed, ExecutionControl, LlmCleanupError, PressAudio, Rewrites, SoundMuting, Transcribed,
 };
 use aria_voice::stt::{
     Language, Mode, Recognizer, Streaming, Transcription, TranscriptionError, Whole,
@@ -98,13 +97,14 @@ where
     fn execute(
         &self,
         settings: DictationSettings,
+        audio: PressAudio,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<DictationResult, DictationError> {
+    ) -> Result<Executed, DictationError> {
         let project = settings.project.clone();
         self.prepared(project.as_ref(), |vocabulary| {
             self.pipeline
-                .execute(settings, control, events, Some(vocabulary))
+                .execute(settings, audio, control, events, Some(vocabulary))
         })
     }
 
@@ -127,20 +127,6 @@ where
                 self.engine,
                 cancel,
             )
-        })
-    }
-
-    fn deliver_recording(
-        &self,
-        recording: &mut RecordingReader,
-        settings: DictationSettings,
-        control: &Arc<ExecutionControl>,
-        events: &DictationEventEmitter,
-    ) -> Result<DeliveredRecording, DictationError> {
-        let project = settings.project.clone();
-        self.prepared(project.as_ref(), |vocabulary| {
-            self.pipeline
-                .deliver_recording(recording, settings, control, events, Some(vocabulary))
         })
     }
 }
@@ -408,10 +394,13 @@ impl DictationExecutor for EngineSlot {
     fn execute(
         &self,
         settings: DictationSettings,
+        audio: PressAudio,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<DictationResult, DictationError> {
-        self.current().executor.execute(settings, control, events)
+    ) -> Result<Executed, DictationError> {
+        self.current()
+            .executor
+            .execute(settings, audio, control, events)
     }
 
     fn transcribe(
@@ -431,18 +420,6 @@ impl DictationExecutor for EngineSlot {
             cleanup,
             cancel,
         )
-    }
-
-    fn deliver_recording(
-        &self,
-        recording: &mut RecordingReader,
-        settings: DictationSettings,
-        control: &Arc<ExecutionControl>,
-        events: &DictationEventEmitter,
-    ) -> Result<DeliveredRecording, DictationError> {
-        self.current()
-            .executor
-            .deliver_recording(recording, settings, control, events)
     }
 }
 
@@ -511,10 +488,13 @@ impl DictationExecutor for Unusable {
     fn execute(
         &self,
         settings: DictationSettings,
+        audio: PressAudio,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<DictationResult, DictationError> {
-        self.engine()?.executor.execute(settings, control, events)
+    ) -> Result<Executed, DictationError> {
+        self.engine()?
+            .executor
+            .execute(settings, audio, control, events)
     }
 
     fn transcribe(
@@ -534,18 +514,6 @@ impl DictationExecutor for Unusable {
             cleanup,
             cancel,
         )
-    }
-
-    fn deliver_recording(
-        &self,
-        recording: &mut RecordingReader,
-        settings: DictationSettings,
-        control: &Arc<ExecutionControl>,
-        events: &DictationEventEmitter,
-    ) -> Result<DeliveredRecording, DictationError> {
-        self.engine()?
-            .executor
-            .deliver_recording(recording, settings, control, events)
     }
 }
 
@@ -758,9 +726,9 @@ pub(in crate::daemon::dictation) mod tests {
     use aria_kit::audio::RecordingReader;
     use aria_settings::Settings;
     use aria_voice::dictation::{
-        Cleanup, DeliveredRecording, DictationCoordinator, DictationError, DictationEventEmitter,
-        DictationExecutor, DictationOutcome, DictationPolicy, DictationRequest, DictationResult,
-        DictationSettings, ExecutionControl, StopMode, Transcribed,
+        Cleanup, DictationCoordinator, DictationError, DictationEventEmitter, DictationExecutor,
+        DictationOutcome, DictationPolicy, DictationRequest, DictationResult, DictationSettings,
+        Executed, ExecutionControl, PressAudio, StopMode, Transcribed,
     };
     use aria_voice::stt::{Language, TranscriptionError};
 
@@ -781,12 +749,17 @@ pub(in crate::daemon::dictation) mod tests {
         fn execute(
             &self,
             _: DictationSettings,
+            _: PressAudio,
             _: &Arc<ExecutionControl>,
             _: &DictationEventEmitter,
-        ) -> Result<DictationResult, DictationError> {
-            Ok(DictationResult {
-                text: self.name.to_owned(),
-                own_voice: false,
+        ) -> Result<Executed, DictationError> {
+            Ok(Executed {
+                result: DictationResult {
+                    text: self.name.to_owned(),
+                    own_voice: false,
+                },
+                return_offer: None,
+                delivered: None,
             })
         }
 
@@ -799,16 +772,6 @@ pub(in crate::daemon::dictation) mod tests {
             _: Cleanup,
             _: &CancelToken,
         ) -> Result<Transcribed, DictationError> {
-            panic!("these tests only press");
-        }
-
-        fn deliver_recording(
-            &self,
-            _: &mut RecordingReader,
-            _: DictationSettings,
-            _: &Arc<ExecutionControl>,
-            _: &DictationEventEmitter,
-        ) -> Result<DeliveredRecording, DictationError> {
             panic!("these tests only press");
         }
     }
@@ -841,10 +804,11 @@ pub(in crate::daemon::dictation) mod tests {
     pub(in crate::daemon::dictation) fn press(slot: &EngineSlot) -> Result<String, DictationError> {
         slot.execute(
             settings(),
+            PressAudio::Captured,
             &ExecutionControl::for_test(StopMode::OnSilence),
             &DictationEventEmitter::unsubscribed(),
         )
-        .map(|result| result.text)
+        .map(|executed| executed.result.text)
     }
 
     /// Only the server pinned at pairing receives audio, and only under the

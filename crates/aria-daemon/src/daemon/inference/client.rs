@@ -971,6 +971,7 @@ mod tests {
             pipeline
                 .execute(
                     settings(DeliveryMode::Streaming, OutputMode::Insert),
+                    aria_voice::dictation::PressAudio::Captured,
                     &running,
                     &events,
                     None,
@@ -1002,7 +1003,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(result.text, "hello world");
+        assert_eq!(result.result.text, "hello world");
         let entries = delivered.entries();
         assert!(entries.contains(&"engine:whisper".to_owned()));
         assert!(entries.contains(&"completed:hello world".to_owned()));
@@ -1015,7 +1016,7 @@ mod tests {
         fn start(
             &self,
             _: aria_kit::audio::RecordingMode,
-            _: aria_kit::audio::Inputs,
+            _: aria_kit::audio::Source,
             _: aria_kit::audio::StopSignal,
         ) -> Result<aria_kit::audio::RecordingReader, aria_kit::audio::CaptureError> {
             Ok(self.0.lock().unwrap().take().unwrap())
@@ -1055,6 +1056,7 @@ mod tests {
             .hearing_speech(Some(Loud))
             .execute(
                 settings(DeliveryMode::Streaming, OutputMode::Insert),
+                aria_voice::dictation::PressAudio::Captured,
                 &ExecutionControl::for_test(StopMode::Manual),
                 &DictationEventEmitter::unsubscribed(),
                 None,
@@ -1063,7 +1065,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        assert_eq!(result.text, "hello world");
+        assert_eq!(result.result.text, "hello world");
         let entries = delivered.entries();
         assert!(entries.contains(&"engine:parakeet".to_owned()));
         assert!(entries.contains(&"deliver:hello world".to_owned()));
@@ -1184,6 +1186,7 @@ mod tests {
                 pipeline
                     .execute(
                         settings(delivery, OutputMode::Insert),
+                        aria_voice::dictation::PressAudio::Captured,
                         &ExecutionControl::for_test(StopMode::Manual),
                         &DictationEventEmitter::unsubscribed(),
                         None,
@@ -1201,7 +1204,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             server.stop().await;
-            assert_eq!(result.text, "hello", "{delivery:?}");
+            assert_eq!(result.result.text, "hello", "{delivery:?}");
             let text: String = delivered
                 .entries()
                 .iter()

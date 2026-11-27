@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use aria::audio::{
-    AudioCapture, Inputs, RecordingMode, ReplayPace, StopSignal, Stopper, WavReplayCapture,
+    AudioCapture, Inputs, RecordingMode, ReplayPace, Source, StopSignal, Stopper, WavReplayCapture,
 };
 use aria_harness::{inputs, stats};
 use aria_stt::{CancelToken, EngineConfig};
@@ -170,7 +170,7 @@ fn first_text_ms<T: Recognizer>(
     let started = now();
     let mut recording = capture.start(
         RecordingMode::UntilStopped,
-        Inputs::Local,
+        Source::Microphone(Inputs::Local),
         StopSignal::from(stopper.clone()),
     )?;
     // Every exit after capture starts must stop replay, including initialization failures.

@@ -9,6 +9,8 @@ mod pushed;
 mod wav_replay;
 
 use aria_primitives::Cause;
+use std::fmt;
+use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use crate::audio::{CaptureError, RecordingReader, ResampleError, StopSignal};
@@ -40,13 +42,68 @@ pub trait AudioCapture: Send + Sync + 'static {
     ///
     /// A live source writes from its own thread and polls `stop` there, so
     /// the caller can transcribe while audio arrives. A source with no
-    /// remote input ignores `inputs`.
+    /// remote input ignores the inputs `source` allows, and one that takes
+    /// no pushed audio refuses it with [`CaptureError::PushedUnsupported`].
     fn start(
         &self,
         mode: RecordingMode,
-        inputs: Inputs,
+        source: Source,
         stop: StopSignal,
     ) -> Result<RecordingReader, CaptureError>;
+}
+
+/// Who records one recording. `Source::Microphone(Inputs::Local)` records
+/// from this machine's input device. `Source::Pushed(feed)` records the
+/// samples a remote device sends as it records.
+#[derive(Debug)]
+pub enum Source {
+    /// This machine's capture, from the inputs it may use.
+    Microphone(Inputs),
+    /// Audio a remote device pushes in as it records it: the device that
+    /// started the recording.
+    Pushed(PushedFeed),
+}
+
+/// Audio pushed in from outside, as it arrives: a remote device's 16 kHz
+/// samples, chunk by chunk, until it stops sending.
+#[cfg_attr(
+    not(feature = "microphone"),
+    expect(dead_code, reason = "only a pushed capture reads it")
+)]
+pub struct PushedFeed {
+    pub(crate) first: Vec<i16>,
+    pub(crate) rest: Receiver<Vec<i16>>,
+    pub(crate) stall: Duration,
+    pub(crate) finished: Box<dyn FnOnce() + Send>,
+}
+
+impl PushedFeed {
+    /// The recording opens with `first` and goes on with what `rest`
+    /// brings, until it closes or no samples arrive for `stall`.
+    /// `finished` runs once, when a capture that took the feed ends. A
+    /// capture that refuses the feed never runs it.
+    pub fn new(
+        first: Vec<i16>,
+        rest: Receiver<Vec<i16>>,
+        stall: Duration,
+        finished: impl FnOnce() + Send + 'static,
+    ) -> Self {
+        Self {
+            first,
+            rest,
+            stall,
+            finished: Box::new(finished),
+        }
+    }
+}
+
+impl fmt::Debug for PushedFeed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PushedFeed")
+            .field("stall", &self.stall)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Which inputs one recording may use.
@@ -64,10 +121,10 @@ impl<C: AudioCapture> AudioCapture for std::sync::Arc<C> {
     fn start(
         &self,
         mode: RecordingMode,
-        inputs: Inputs,
+        source: Source,
         stop: StopSignal,
     ) -> Result<RecordingReader, CaptureError> {
-        (**self).start(mode, inputs, stop)
+        (**self).start(mode, source, stop)
     }
 }
 

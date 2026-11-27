@@ -7,7 +7,7 @@ use aria_kit::cancel::{CancelToken, Deadline};
 
 use crate::microphone::{Admitted, Claim, Gate};
 use crate::stt::{Language, Transcript, TranscriptionError};
-use aria_kit::audio::{CaptureError, RecordingReader};
+use aria_kit::audio::{CaptureError, Inputs, PushedFeed, RecordingReader, Source};
 use aria_primitives::error_chain;
 use aria_settings::rpc::RpcErrorCode;
 use aria_settings::{DeliveryMode, MAX_DICTATION_TIMEOUT};
@@ -15,15 +15,10 @@ use aria_settings::{DeliveryMode, MAX_DICTATION_TIMEOUT};
 #[cfg(target_os = "macos")]
 use super::output::{OutputMute, OutputSlot};
 
-/// How long a start waits for other apps to go quiet. Past it, recording
-/// starts anyway and the mute lands once it's ready.
-#[cfg(target_os = "macos")]
-const MUTE_WAIT: Duration = Duration::from_millis(150);
-
 use super::{
-    CapturedMicrophone, Cleanup, DictationEventEmitter, DictationOutcome, DictationResult,
-    DictationSettings, DictationStage, RecordingId, RecordingOrigin, ReturnOffer, SoundMuting,
-    StopMode, TranscriptRoute,
+    Cleanup, Delivered, DictationEventEmitter, DictationOutcome, DictationResult,
+    DictationSettings, DictationStage, RecordingDevice, RecordingId, RecordingOrigin, ReturnOffer,
+    SoundMuting, StopMode, TranscriptRoute,
 };
 
 /// What a recording said, and the engine that heard it.
@@ -32,30 +27,49 @@ pub struct Transcribed {
     pub engine: &'static str,
 }
 
-/// Whether the pill already shows a recording captured elsewhere.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Relayed {
-    /// An announcement showed its `Recording` and `Capturing` under this id.
-    Announced(RecordingId),
-    /// Nothing shows it yet, so delivery announces it from this microphone.
-    Unannounced(CapturedMicrophone),
+/// How a press ended, and the Return it offers. A watch press that typed
+/// its text into a chat can also carry a Return to send it.
+#[derive(Debug)]
+pub struct Executed {
+    pub result: DictationResult,
+    /// Return after the text. Only a pushed press keeps it: the person at
+    /// the keyboard has their own Return key.
+    pub return_offer: Option<ReturnOffer>,
+    /// Where the text went, and how many words went there. `None` for a
+    /// press that asked only for its text.
+    pub delivered: Option<Delivered>,
 }
 
-/// A recording captured elsewhere, once its text went where a press's would.
+/// Where one press reads its audio. A key press is `Captured`: the Mac's
+/// microphone or the attached iPhone records it. A phone or watch tap is
+/// `Pushed` and reads what that device sends.
 #[derive(Debug)]
-pub struct DeliveredRecording {
-    pub text: String,
-    /// Return after the text, for whoever captured the recording to ask for.
-    pub return_offer: Option<ReturnOffer>,
+pub enum PressAudio {
+    /// The executor's own capture, from the inputs the settings allow.
+    Captured,
+    /// Audio the phone or watch that started the press pushes in as it
+    /// records.
+    Pushed(PushedFeed),
+}
+
+impl PressAudio {
+    /// The source the capture records from, which chooses its microphone.
+    pub(crate) fn source(self, inputs: Inputs) -> Source {
+        match self {
+            Self::Captured => Source::Microphone(inputs),
+            Self::Pushed(feed) => Source::Pushed(feed),
+        }
+    }
 }
 
 pub trait DictationExecutor: Send + Sync + 'static {
     fn execute(
         &self,
         settings: DictationSettings,
+        audio: PressAudio,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<DictationResult, DictationError>;
+    ) -> Result<Executed, DictationError>;
 
     /// Hears a recording captured somewhere else — a phone or watch on the
     /// LAN — through the engine this executor already holds. No capture and
@@ -71,28 +85,17 @@ pub trait DictationExecutor: Send + Sync + 'static {
         cleanup: Cleanup,
         cancel: &CancelToken,
     ) -> Result<Transcribed, DictationError>;
-
-    /// Hears a recording captured somewhere else and publishes it to the
-    /// sinks exactly as a complete-delivery press would: history first, then
-    /// the cursor. The caller holds the microphone already. Only this path
-    /// hands back a Return offer: a press has the person's own Return key.
-    fn deliver_recording(
-        &self,
-        recording: &mut RecordingReader,
-        settings: DictationSettings,
-        control: &Arc<ExecutionControl>,
-        events: &DictationEventEmitter,
-    ) -> Result<DeliveredRecording, DictationError>;
 }
 
 impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
     fn execute(
         &self,
         settings: DictationSettings,
+        audio: PressAudio,
         control: &Arc<ExecutionControl>,
         events: &DictationEventEmitter,
-    ) -> Result<DictationResult, DictationError> {
-        (**self).execute(settings, control, events)
+    ) -> Result<Executed, DictationError> {
+        (**self).execute(settings, audio, control, events)
     }
 
     fn transcribe(
@@ -112,16 +115,6 @@ impl<E: DictationExecutor + ?Sized> DictationExecutor for Box<E> {
             cleanup,
             cancel,
         )
-    }
-
-    fn deliver_recording(
-        &self,
-        recording: &mut RecordingReader,
-        settings: DictationSettings,
-        control: &Arc<ExecutionControl>,
-        events: &DictationEventEmitter,
-    ) -> Result<DeliveredRecording, DictationError> {
-        (**self).deliver_recording(recording, settings, control, events)
     }
 }
 
@@ -275,6 +268,7 @@ impl From<&DictationError> for RpcErrorCode {
             DictationError::DeliveryTargetChanged => Self::DeliveryTargetChanged,
             DictationError::DeliveryInterrupted => Self::DeliveryInterrupted,
             DictationError::ApplicationExcluded => Self::ApplicationExcluded,
+            DictationError::Capture(CaptureError::PushedUnsupported) => Self::Unsupported,
             DictationError::Capture(_) => Self::CaptureFailed,
             DictationError::NoSpeech => Self::NoSpeech,
             DictationError::Transcription(_) | DictationError::Speaker(_) => {
@@ -347,6 +341,7 @@ pub enum EscapeRule {
 #[derive(Debug)]
 pub struct ExecutionControl {
     id: RecordingId,
+    origin: RecordingOrigin,
     stop_mode: StopMode,
     escape: EscapeRule,
     /// The caller's cancellation. The dictation never fires it.
@@ -377,6 +372,7 @@ pub struct ExecutionControl {
 impl ExecutionControl {
     fn new(
         id: RecordingId,
+        origin: RecordingOrigin,
         stop_mode: StopMode,
         escape: EscapeRule,
         cancellation: CancelToken,
@@ -385,6 +381,7 @@ impl ExecutionControl {
     ) -> Self {
         Self {
             id,
+            origin,
             stop_mode,
             escape,
             caller: cancellation,
@@ -432,6 +429,7 @@ impl ExecutionControl {
         let policy = DictationPolicy::new(overall).expect("test policy is valid");
         Arc::new(Self::new(
             RecordingId(0),
+            RecordingOrigin::Local,
             stop_mode,
             escape,
             cancellation,
@@ -440,8 +438,25 @@ impl ExecutionControl {
         ))
     }
 
+    #[cfg(test)]
+    pub(crate) fn for_test_remote(device: RecordingDevice) -> Arc<Self> {
+        Arc::new(Self::new(
+            RecordingId(0),
+            RecordingOrigin::Remote(Some(device)),
+            StopMode::Manual,
+            EscapeRule::Cancels,
+            CancelToken::new(),
+            Deadline::never(),
+            SoundMuting::Never,
+        ))
+    }
+
     pub(crate) fn recording_id(&self) -> RecordingId {
         self.id
+    }
+
+    pub(crate) fn origin(&self) -> RecordingOrigin {
+        self.origin
     }
 
     pub(crate) fn stop_mode(&self) -> StopMode {
@@ -533,7 +548,7 @@ impl ExecutionControl {
         self.mute_other_apps();
         events.emit(DictationStage::Recording {
             id: self.id,
-            origin: RecordingOrigin::Local,
+            origin: self.origin,
             delivery,
             route,
         });
@@ -545,7 +560,7 @@ impl ExecutionControl {
         if self.sound_muting == SoundMuting::Never {
             return;
         }
-        OutputSlot::mute(&self.output, self.acquire_mute, Some(MUTE_WAIT), self.id);
+        OutputSlot::mute(&self.output, self.acquire_mute, self.id);
     }
 
     fn restore_output(&self) {
@@ -815,40 +830,6 @@ impl Drop for ExecutionGuard<'_> {
     }
 }
 
-/// A recording another device makes, on show until it drops.
-#[derive(Debug)]
-pub struct Announcement {
-    id: RecordingId,
-    #[cfg(target_os = "macos")]
-    output: Arc<std::sync::Mutex<OutputSlot>>,
-}
-
-impl Announcement {
-    pub fn id(&self) -> RecordingId {
-        self.id
-    }
-}
-
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
-impl Announcement {
-    /// One that muted other apps, whose sound comes back through `restore`.
-    pub fn for_test(id: RecordingId, restore: impl FnOnce() + Send + 'static) -> Self {
-        let announced = Self {
-            id,
-            output: Arc::default(),
-        };
-        OutputSlot::hold(&announced.output, OutputMute::with_restore(restore));
-        announced
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for Announcement {
-    fn drop(&mut self) {
-        OutputSlot::release(&self.output);
-    }
-}
-
 /// Owns execution control for dictation operations. Admission is the
 /// microphone's, which every recording operation shares.
 pub struct DictationCoordinator<E> {
@@ -856,11 +837,7 @@ pub struct DictationCoordinator<E> {
     executor: E,
     microphone: Arc<Gate>,
     sound_muting: SoundMuting,
-    #[cfg(target_os = "macos")]
-    acquire_mute: fn() -> Option<OutputMute>,
-    /// Counts from one; zero is what the wire refuses. A lock rather than an
-    /// atomic, so no recording starts between deciding an announcement is
-    /// the newest and saying it ended.
+    /// Counts from one. The wire refuses zero.
     next_recording: Mutex<u64>,
 }
 
@@ -874,8 +851,6 @@ where
             executor,
             microphone,
             sound_muting: SoundMuting::Never,
-            #[cfg(target_os = "macos")]
-            acquire_mute: OutputMute::acquire,
             next_recording: Mutex::new(1),
         }
     }
@@ -908,12 +883,66 @@ where
                     tracing::info_span!("dictation", recording = %control.recording_id()).entered();
                 let _execution = ExecutionGuard(&control);
                 let started = Instant::now();
-                let result = self.executor.execute(settings, &control, events);
+                let result =
+                    self.executor
+                        .execute(settings, PressAudio::Captured, &control, events);
                 log_execution_result(&result, started);
-                result.map(DictationOutcome::Completed)
+                result.map(|executed| DictationOutcome::Completed(executed.result))
             }
             Admission::StopAccepted => Ok(DictationOutcome::StopAccepted),
         }
+    }
+
+    /// Runs a press on the `feed` that `device` pushes in as it records,
+    /// and on nothing else. A watch tap's samples go in, and `after_text`
+    /// gets how the press ended. It starts only while nothing records, and
+    /// Escape or a manual press stops it. The device ends the recording and
+    /// plays its own cue, so the Mac neither stops it on silence nor mutes
+    /// other apps. `after_text` runs while the press still holds the
+    /// microphone, so nothing records under a Return it presses.
+    pub fn execute_pushed<T>(
+        &self,
+        feed: PushedFeed,
+        device: Option<RecordingDevice>,
+        mut settings: DictationSettings,
+        cancellation: CancelToken,
+        events: &DictationEventEmitter,
+        after_text: impl FnOnce(Executed) -> Result<T, DictationError>,
+    ) -> Result<T, DictationError> {
+        settings.stop_mode = StopMode::Manual;
+        settings.auto_stop = None;
+        let control = Arc::new(ExecutionControl::new(
+            take_recording_id(&mut self.counter()),
+            RecordingOrigin::Remote(device),
+            settings.stop_mode,
+            EscapeRule::Cancels,
+            cancellation,
+            self.policy.deadline(),
+            SoundMuting::Never,
+        ));
+        let Some(_claim) = self.microphone.admit_pushed(Arc::clone(&control)) else {
+            tracing::info!(
+                status = "rejected",
+                reason = "busy",
+                "pushed dictation rejected"
+            );
+            return Err(DictationError::Busy);
+        };
+        tracing::info!(
+            status = "admitted",
+            recording = %control.recording_id(),
+            delivery_mode = ?settings.delivery_mode,
+            output_mode = ?settings.output_mode,
+            "pushed dictation admitted"
+        );
+        let _span = tracing::info_span!("dictation", recording = %control.recording_id()).entered();
+        let _execution = ExecutionGuard(&control);
+        let started = Instant::now();
+        let result = self
+            .executor
+            .execute(settings, PressAudio::Pushed(feed), &control, events);
+        log_execution_result(&result, started);
+        after_text(result?)
     }
 
     fn admit(
@@ -924,6 +953,7 @@ where
     ) -> Result<Admission, DictationError> {
         let control = Arc::new(ExecutionControl::new(
             take_recording_id(&mut self.counter()),
+            RecordingOrigin::Local,
             settings.stop_mode,
             escape,
             cancellation,
@@ -985,99 +1015,10 @@ where
         self.sound_muting == SoundMuting::Allowed && mute_sound
     }
 
-    /// Shows a recording another device makes, before its audio arrives:
-    /// `Recording`, then `Capturing` from `microphone`, under a fresh id.
-    /// Claims nothing, so a press still starts. Other apps stay muted until
-    /// the announcement drops, as they do for a press.
-    pub fn announce_recording(
-        &self,
-        microphone: CapturedMicrophone,
-        _mute_sound: bool,
-        events: &DictationEventEmitter,
-    ) -> Announcement {
-        let announced = Announcement {
-            id: self.announce(TranscriptRoute::Deliver, microphone, events),
-            #[cfg(target_os = "macos")]
-            output: Arc::default(),
-        };
-        // No start cue plays on the Mac, so nothing waits for the quiet.
-        #[cfg(target_os = "macos")]
-        if self.mutes(_mute_sound) {
-            OutputSlot::mute(&announced.output, self.acquire_mute, None, announced.id);
-        }
-        announced
-    }
-
-    /// Ends an announced recording that won't be delivered, with
-    /// `Cancelled`. Says nothing once a newer recording started, whose
-    /// stages the pill shows instead. True when it said it.
-    pub fn cancel_announced(&self, recording: RecordingId, events: &DictationEventEmitter) -> bool {
-        let next = self.counter();
-        let is_newest = *next == recording.0 + 1;
-        if is_newest {
-            events.emit(DictationStage::Cancelled);
-        }
-        is_newest
-    }
-
-    fn announce(
-        &self,
-        route: TranscriptRoute,
-        microphone: CapturedMicrophone,
-        events: &DictationEventEmitter,
-    ) -> RecordingId {
-        let mut next = self.counter();
-        let id = take_recording_id(&mut next);
-        // Under the lock, so a `Cancelled` for an older announcement can't
-        // land after these.
-        events.emit(DictationStage::Recording {
-            id,
-            origin: RecordingOrigin::Remote,
-            delivery: DeliveryMode::Complete,
-            route,
-        });
-        events.emit(DictationStage::Capturing { id, microphone });
-        id
-    }
-
     fn counter(&self) -> MutexGuard<'_, u64> {
         self.next_recording
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Delivers a recording captured elsewhere through the press's own
-    /// sinks. The caller holds the microphone claim, so there is no
-    /// admission here, and its client bounds the work, so no deadline. An
-    /// unannounced recording is announced first, so the pill shows it from
-    /// its own `Recording` rather than a stale one.
-    pub fn deliver_recording(
-        &self,
-        recording: &mut RecordingReader,
-        relayed: Relayed,
-        settings: DictationSettings,
-        cancellation: CancelToken,
-        events: &DictationEventEmitter,
-    ) -> Result<DeliveredRecording, DictationError> {
-        let id = match relayed {
-            Relayed::Announced(id) => id,
-            Relayed::Unannounced(microphone) => self.announce(settings.route, microphone, events),
-        };
-        let control = Arc::new(ExecutionControl::new(
-            id,
-            settings.stop_mode,
-            EscapeRule::Passes,
-            cancellation,
-            Deadline::never(),
-            SoundMuting::Never,
-        ));
-        let _span = tracing::info_span!("dictation", recording = %control.recording_id()).entered();
-        let started = Instant::now();
-        let result = self
-            .executor
-            .deliver_recording(recording, settings, &control, events);
-        log_execution_result(&result, started);
-        result
     }
 
     /// Hears audio the caller captured, through the engine already loaded.
@@ -1346,9 +1287,9 @@ mod tests {
 
         assert!(matches!(next, Err(DictationError::OverallTimeout(actual)) if actual == timeout));
         assert!(started.elapsed() < Duration::from_millis(200));
-        assert!(coordinator.microphone.admit_relay().is_none());
+        assert!(coordinator.microphone.admit_return_press().is_none());
         drop(first);
-        assert!(coordinator.microphone.admit_relay().is_some());
+        assert!(coordinator.microphone.admit_return_press().is_some());
     }
 
     #[test]
@@ -1575,6 +1516,7 @@ mod tests {
     fn muting_control(acquire_mute: fn() -> Option<OutputMute>) -> Arc<ExecutionControl> {
         let mut control = ExecutionControl::new(
             RecordingId(0),
+            RecordingOrigin::Local,
             StopMode::Manual,
             EscapeRule::Passes,
             CancelToken::new(),
@@ -1692,39 +1634,6 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn an_announcement_mutes_other_apps_until_it_drops() {
-        static WRITES: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
-        fn mute() -> Option<OutputMute> {
-            WRITES.lock().unwrap().push(1);
-            Some(OutputMute::with_restore(|| WRITES.lock().unwrap().push(0)))
-        }
-        let (executor, _edges) = RecordsUntilStopped::new();
-        let mut coordinator = DictationCoordinator::new(
-            DictationPolicy::new(Duration::from_secs(5)).unwrap(),
-            executor,
-            crate::microphone::Gate::new(),
-        )
-        .with_sound_muting(SoundMuting::Allowed);
-        coordinator.acquire_mute = mute;
-
-        let announced = coordinator.announce_recording(
-            crate::dictation::CapturedMicrophone::Remote(crate::dictation::RecordingDevice::Watch),
-            true,
-            &DictationEventEmitter::unsubscribed(),
-        );
-        let waited = Instant::now();
-        while !OutputSlot::is_muted(&announced.output) && waited.elapsed() < Duration::from_secs(2)
-        {
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert_eq!(*WRITES.lock().unwrap(), [1]);
-
-        drop(announced);
-        assert_eq!(*WRITES.lock().unwrap(), [1, 0]);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
     fn recording_cleanup_restores_without_a_terminal_event() {
         for ending in ["stop", "cancel", "deadline", "never_started", "panic"] {
             let events = DictationEventEmitter::unsubscribed();
@@ -1736,6 +1645,7 @@ mod tests {
             let cancellation = CancelToken::new();
             let control = Arc::new(ExecutionControl::new(
                 RecordingId(0),
+                RecordingOrigin::Local,
                 StopMode::Manual,
                 EscapeRule::Passes,
                 cancellation.clone(),
@@ -1786,9 +1696,10 @@ mod tests {
             fn execute(
                 &self,
                 _: DictationSettings,
+                _: PressAudio,
                 control: &Arc<ExecutionControl>,
                 events: &DictationEventEmitter,
-            ) -> Result<DictationResult, DictationError> {
+            ) -> Result<Executed, DictationError> {
                 OutputSlot::hold(&control.output, fake_output(&self.writes));
                 let guard = control.start_recording(
                     aria_settings::DeliveryMode::Complete,
@@ -1810,16 +1721,6 @@ mod tests {
                 _: &CancelToken,
             ) -> Result<Transcribed, DictationError> {
                 panic!("this test executes local recording");
-            }
-
-            fn deliver_recording(
-                &self,
-                _: &mut RecordingReader,
-                _: DictationSettings,
-                _: &Arc<ExecutionControl>,
-                _: &DictationEventEmitter,
-            ) -> Result<DeliveredRecording, DictationError> {
-                panic!("this test never delivers a relayed recording");
             }
         }
 
@@ -1968,96 +1869,39 @@ mod tests {
         assert!(!active.take_return());
     }
 
-    /// The stages a coordinator's caller hears, in order.
-    fn heard() -> (
-        DictationEventEmitter,
-        std::sync::mpsc::Receiver<DictationStage>,
-    ) {
-        let (sent, received) = std::sync::mpsc::channel();
-        let events = DictationEventEmitter::forwarded_by(move |event| {
-            if let crate::dictation::DictationEvent::Stage(stage) = event {
-                sent.send(stage).expect("the test is listening");
-            }
-        });
-        (events, received)
-    }
-
     #[test]
-    fn a_relayed_recording_keeps_its_announced_id_or_announces_itself() {
-        use crate::dictation::{CapturedMicrophone, RecordingDevice};
-        let (coordinator, edges, _) = coordinator();
-        let (events, stages) = heard();
-        let deliver = |relayed| {
-            let _no_speech = coordinator.deliver_recording(
-                &mut RecordingReader::from_samples(&[0.0; 16]),
-                relayed,
-                settings(StopMode::OnSilence),
-                CancelToken::never(),
-                &events,
-            );
+    fn a_pushed_press_keeps_the_microphone_until_after_its_text() {
+        use crate::dictation::RecordingDevice;
+        let (coordinator, edges, events) = coordinator();
+        let running = {
+            let coordinator = Arc::clone(&coordinator);
+            thread::spawn(move || {
+                coordinator.execute_pushed(
+                    PushedFeed::new(
+                        Vec::new(),
+                        std::sync::mpsc::channel().1,
+                        Duration::ZERO,
+                        || {},
+                    ),
+                    Some(RecordingDevice::Phone),
+                    settings(StopMode::Manual),
+                    CancelToken::never(),
+                    &events,
+                    |_executed| Ok(coordinator.microphone.admit_return_press().is_none()),
+                )
+            })
         };
+        let Ok(Edge::Recording(id)) = edges.recv() else {
+            panic!("the pushed press records");
+        };
+        assert!(coordinator.stop_recording(id));
 
-        let watch = CapturedMicrophone::Remote(RecordingDevice::Watch);
-        let announced = coordinator
-            .announce_recording(watch.clone(), false, &events)
-            .id();
-        deliver(Relayed::Announced(announced));
-        deliver(Relayed::Unannounced(CapturedMicrophone::Remote(
-            RecordingDevice::Phone,
-        )));
+        let held = running
+            .join()
+            .expect("the press thread")
+            .expect("the press completes");
 
-        let unannounced = RecordingId(announced.0 + 1);
-        assert_eq!(edges.try_recv(), Ok(Edge::Relayed(announced)));
-        assert_eq!(edges.try_recv(), Ok(Edge::Relayed(unannounced)));
-        assert_eq!(
-            stages.try_iter().collect::<Vec<_>>(),
-            [
-                DictationStage::Recording {
-                    id: announced,
-                    origin: crate::dictation::RecordingOrigin::Remote,
-                    delivery: DeliveryMode::Complete,
-                    route: TranscriptRoute::Deliver,
-                },
-                DictationStage::Capturing {
-                    id: announced,
-                    microphone: watch,
-                },
-                DictationStage::Recording {
-                    id: unannounced,
-                    origin: crate::dictation::RecordingOrigin::Remote,
-                    delivery: DeliveryMode::Complete,
-                    route: TranscriptRoute::TranscriptOnly,
-                },
-                DictationStage::Capturing {
-                    id: unannounced,
-                    microphone: CapturedMicrophone::Remote(RecordingDevice::Phone),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn an_announcement_ends_silently_once_a_newer_recording_started() {
-        let (coordinator, _edges, _) = coordinator();
-        let microphone = crate::dictation::CapturedMicrophone::Prerecorded;
-        let older = coordinator.announce_recording(
-            microphone.clone(),
-            false,
-            &DictationEventEmitter::unsubscribed(),
-        );
-        let newer = coordinator.announce_recording(
-            microphone,
-            false,
-            &DictationEventEmitter::unsubscribed(),
-        );
-        let (events, stages) = heard();
-
-        assert!(!coordinator.cancel_announced(older.id(), &events));
-        assert!(coordinator.cancel_announced(newer.id(), &events));
-
-        assert_eq!(
-            stages.try_iter().collect::<Vec<_>>(),
-            [DictationStage::Cancelled]
-        );
+        assert!(held, "nothing takes the microphone before the text is done");
+        assert!(coordinator.microphone.admit_return_press().is_some());
     }
 }
