@@ -22,12 +22,18 @@ service SystemTranscriptionService {
   // cut it short. They wait in `~/.aria/unsaved`, which never moves.
   rpc ListUnsaved(ListUnsavedTranscriptsRequest) returns (ListUnsavedTranscriptsResponse);
   // An unsaved transcript's text: all of it, or its first 1 MiB.
-  // Fails with HISTORY_MISSING once the transcript is gone.
+  // Fails with UNSAVED_TRANSCRIPT_MISSING once the transcript is gone.
   rpc ReadUnsaved(ReadUnsavedTranscriptRequest) returns (ReadUnsavedTranscriptResponse);
   // Delete an unsaved transcript. One already gone counts as deleted.
   // Refused with HISTORY_UNAVAILABLE while history can't open, since only
   // history knows the files it names.
   rpc DiscardUnsaved(DiscardUnsavedTranscriptRequest) returns (DiscardUnsavedTranscriptResponse);
+  // Copy an unsaved transcript to `destination`, then delete it. A file
+  // already there is replaced, and keeps its mode. Refused with
+  // INVALID_REQUEST for a destination in either Aria folder or a file
+  // history saved, with UNSAVED_TRANSCRIPT_MISSING once the transcript is
+  // gone, and with HISTORY_UNAVAILABLE while history can't open.
+  rpc SaveUnsaved(SaveUnsavedTranscriptRequest) returns (SaveUnsavedTranscriptResponse);
 }
 
 message StartSystemTranscriptionRequest {
@@ -64,9 +70,6 @@ message ListUnsavedTranscriptsResponse {
   // Whether Mac Audio history is full, which is why a session with history
   // on runs unsaved. False while history can't open.
   bool history_full = 2;
-  // Aria's two folders. A copy saved in either, or below it, isn't the
-  // person's own, since Aria removes files there.
-  string transcripts_dir = 3;
   string unsaved_dir = 4;
 }
 
@@ -94,6 +97,18 @@ message DiscardUnsavedTranscriptRequest {
 }
 
 message DiscardUnsavedTranscriptResponse {}
+
+message SaveUnsavedTranscriptRequest {
+  string name = 1;
+  // An absolute file path.
+  string destination = 2;
+}
+
+message SaveUnsavedTranscriptResponse {
+  // The copy is saved, but the unsaved transcript stayed, because removing
+  // it failed or another file took its name.
+  bool kept = 1;
+}
 
 message StopSystemTranscriptionRequest {}
 

@@ -177,10 +177,6 @@ impl TranscriptFolders {
         transcript_file::remove_staging(&self.unsaved);
     }
 
-    pub(crate) fn transcripts(&self) -> &Path {
-        &self.transcripts
-    }
-
     pub(crate) fn unsaved(&self) -> &Path {
         &self.unsaved
     }
@@ -335,7 +331,7 @@ mod tests {
 
         assert_eq!(saving, TranscriptSaving::HistoryOff);
         assert_eq!(transcript.parent(), Some(folders.unsaved()));
-        assert_eq!(fs::read_dir(folders.transcripts()).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&folders.transcripts).unwrap().count(), 0);
         assert!(listed(&history).is_empty());
     }
 
@@ -348,7 +344,7 @@ mod tests {
 
         assert_eq!(code(&refused), Some(RpcErrorCode::HistoryUnavailable));
         assert_eq!(
-            fs::read_dir(folders.transcripts()).map_or(0, |files| files.count()),
+            fs::read_dir(&folders.transcripts).map_or(0, |files| files.count()),
             0
         );
     }

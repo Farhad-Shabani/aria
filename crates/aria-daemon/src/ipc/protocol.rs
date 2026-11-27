@@ -39,7 +39,7 @@ use aria_voice::history::{ChatPage, ChatQuery, ClearHistoryResult, PromptResult}
 use aria_voice::speaker::{Role, SpeakerName, SpeakerNameError};
 use aria_voice::speech::{SpeechOutcome, SpeechRequest, SpeechStage};
 use aria_voice::stt::LanguageCodeError;
-use aria_voice::system_transcription::unsaved::{UnsavedText, UnsavedTranscriptList};
+use aria_voice::system_transcription::unsaved::{Saved, UnsavedText, UnsavedTranscriptList};
 use aria_voice::system_transcription::{
     SystemAudioLevel, SystemTranscriptionSnapshot, SystemTranscriptionStage,
     SystemTranscriptionStarted, SystemTranscriptionStopped, TranscriptSaving,
@@ -1036,14 +1036,15 @@ impl TryFrom<wire::SavePromptRequest> for PromptDraft {
     }
 }
 
-/// A relative path would name a file beside the daemon, not the caller.
 fn prompt_file(file: String) -> Result<std::path::PathBuf, PromptError> {
-    let path = std::path::PathBuf::from(&file);
-    if path.is_absolute() && !file.contains('\0') {
-        Ok(path)
-    } else {
-        Err(PromptError::File)
-    }
+    absolute_path(&file).ok_or(PromptError::File)
+}
+
+/// A file path a client sent. A relative path would name a file beside the
+/// daemon, not the caller.
+fn absolute_path(path: &str) -> Option<std::path::PathBuf> {
+    let absolute = std::path::PathBuf::from(path);
+    (absolute.is_absolute() && !path.contains('\0')).then_some(absolute)
 }
 
 impl TryFrom<wire::GetPromptRequest> for PromptSource {
@@ -1494,14 +1495,29 @@ impl TryFrom<wire::StartSystemTranscriptionRequest> for Option<std::path::PathBu
     fn try_from(request: wire::StartSystemTranscriptionRequest) -> Result<Self, Self::Error> {
         request
             .transcript_path
-            .map(|path| {
-                let output = std::path::PathBuf::from(&path);
-                if !output.is_absolute() || path.contains('\0') {
-                    return Err(ProtocolError::InvalidTranscriptPath);
-                }
-                Ok(output)
-            })
+            .map(|path| absolute_path(&path).ok_or(ProtocolError::InvalidTranscriptPath))
             .transpose()
+    }
+}
+
+/// The unsaved transcript's name, and where its copy goes.
+impl TryFrom<wire::SaveUnsavedTranscriptRequest> for (String, std::path::PathBuf) {
+    type Error = ProtocolError;
+
+    fn try_from(request: wire::SaveUnsavedTranscriptRequest) -> Result<Self, Self::Error> {
+        let destination =
+            absolute_path(&request.destination).ok_or(ProtocolError::InvalidTranscriptPath)?;
+        Ok((request.name, destination))
+    }
+}
+
+impl From<Saved> for wire::SaveUnsavedTranscriptResponse {
+    fn from(saved: Saved) -> Self {
+        let kept = match saved {
+            Saved::Removed => false,
+            Saved::Kept => true,
+        };
+        Self { kept }
     }
 }
 
@@ -1529,7 +1545,6 @@ impl From<UnsavedTranscriptList> for wire::ListUnsavedTranscriptsResponse {
                 })
                 .collect(),
             history_full: unsaved.history_full,
-            transcripts_dir: unsaved.transcripts_dir.display().to_string(),
             unsaved_dir: unsaved.unsaved_dir.display().to_string(),
         }
     }
@@ -5930,6 +5945,29 @@ mod tests {
         for path in ["", "notes/transcript.txt", "/tmp/transcript\0.txt"] {
             assert!(matches!(
                 decode(Some(path)),
+                Err(ProtocolError::InvalidTranscriptPath)
+            ));
+        }
+    }
+
+    #[test]
+    fn an_unsaved_transcript_saves_only_to_an_absolute_path() {
+        let decode = |destination: &str| {
+            <(String, std::path::PathBuf)>::try_from(wire::SaveUnsavedTranscriptRequest {
+                name: "2026-11-25T10-00-00Z-1a2b3c4d.txt".into(),
+                destination: destination.into(),
+            })
+        };
+        assert_eq!(
+            decode("/tmp/meeting.txt").unwrap(),
+            (
+                "2026-11-25T10-00-00Z-1a2b3c4d.txt".into(),
+                "/tmp/meeting.txt".into()
+            )
+        );
+        for destination in ["", "notes/meeting.txt", "/tmp/meeting\0.txt"] {
+            assert!(matches!(
+                decode(destination),
                 Err(ProtocolError::InvalidTranscriptPath)
             ));
         }

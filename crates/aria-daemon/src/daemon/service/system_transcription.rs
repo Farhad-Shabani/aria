@@ -123,4 +123,21 @@ impl wire::system_transcription_service_server::SystemTranscriptionService
             Err(failure) => Err(super::failed(METHOD, failure)),
         }
     }
+
+    async fn save_unsaved(
+        &self,
+        request: Request<wire::SaveUnsavedTranscriptRequest>,
+    ) -> Result<Response<wire::SaveUnsavedTranscriptResponse>, Status> {
+        const METHOD: &str = "SystemTranscriptionService/SaveUnsaved";
+        let (name, destination) = <(String, std::path::PathBuf)>::try_from(request.into_inner())
+            .map_err(|error| super::invalid_request(METHOD, &error))?;
+        let state = Arc::clone(&self.state);
+        match super::blocking(METHOD, move || state.save_unsaved(&name, &destination)).await? {
+            Ok(saved) => {
+                super::served(METHOD);
+                Ok(Response::new(saved.into()))
+            }
+            Err(failure) => Err(super::failed(METHOD, failure)),
+        }
+    }
 }

@@ -366,23 +366,58 @@ pub(crate) fn unlink(transcript: &Path) -> io::Result<Removal> {
 /// the old file or the new one there, and at most a staging file beside it.
 /// Returns the new file, open to append.
 pub(crate) fn rewrite(path: &Path, own: &File, contents: &[u8]) -> io::Result<File> {
+    let permissions = own.metadata()?.permissions();
+    let file = replace(path, Some(permissions), |file| {
+        io::Write::write_all(file, contents)
+    })?;
+    // A crash may still bring back the old file, which is as much the
+    // session's.
+    if let Err(error) = sync_folder(path) {
+        tracing::warn!(%error, "a rewritten transcript's folder could not be synced");
+    }
+    Ok(file)
+}
+
+/// Copies all of `source` to `destination`, over any file there. The copy is
+/// whole before it takes the name, and its folder is synced after, so once
+/// this returns a crash can't lose it. It takes the mode of a regular file it
+/// replaces, and is private to its owner otherwise.
+pub(crate) fn copy(source: &mut File, destination: &Path) -> io::Result<()> {
+    let permissions = match destination.symlink_metadata() {
+        Ok(metadata) if metadata.is_file() => Some(metadata.permissions()),
+        Ok(_) => None,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    source.seek(SeekFrom::Start(0))?;
+    replace(destination, permissions, |file| {
+        io::copy(source, file).map(drop)
+    })?;
+    sync_folder(destination)
+}
+
+/// Writes a staging file beside `path` with `fill`, syncs it, then renames
+/// it onto `path`. On any failure the staging file goes. Returns the file
+/// now at `path`, open to append.
+fn replace(
+    path: &Path,
+    permissions: Option<std::fs::Permissions>,
+    fill: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<File> {
     let (mut file, staging) = create_staging(path)?;
     let written = (|| {
-        file.set_permissions(own.metadata()?.permissions())?;
-        io::Write::write_all(&mut file, contents)?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
+        fill(&mut file)?;
         file.sync_all()?;
         std::fs::rename(&staging, path)
     })();
     if let Err(error) = written {
         if let Err(error) = std::fs::remove_file(&staging) {
-            tracing::warn!(%error, "a rewrite's staging file was left behind");
+            tracing::warn!(%error, "a staging file was left behind");
         }
         return Err(error);
-    }
-    // A crash may still bring back the old file, which is as much the
-    // session's.
-    if let Err(error) = sync_folder(path) {
-        tracing::warn!(%error, "a rewritten transcript's folder could not be synced");
     }
     Ok(file)
 }

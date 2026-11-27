@@ -16,7 +16,7 @@ use aria_settings::rpc::{RpcErrorCode, RpcFailure};
 use aria_voice::config::{SpeakerConfig, SystemTranscriptionConfig};
 use aria_voice::history::TRANSCRIPTION_INTERRUPTED;
 use aria_voice::system_transcription::unsaved::{
-    UnsavedFolder, UnsavedText, UnsavedTranscriptList,
+    Saved, UnsavedFolder, UnsavedText, UnsavedTranscriptList,
 };
 use aria_voice::system_transcription::{
     Kept, SaveHistory, SystemAudioCapture, SystemTranscriptionError,
@@ -289,6 +289,21 @@ impl SystemTranscriptionState {
         self.unsaved_folder()?
             .discard(name, running.as_deref())
             .map_err(|error| RpcFailure::from(&error))
+    }
+
+    /// Copies `name` to `destination`, then removes it. The copy runs
+    /// without the files lock, since the destination may be a slow volume.
+    pub(super) fn save_unsaved(&self, name: &str, destination: &Path) -> Result<Saved, RpcFailure> {
+        let mut copy = {
+            let _files = self.lock_files();
+            let running = self.running();
+            self.unsaved_folder()?
+                .start_save(name, destination, running.as_deref())
+                .map_err(|error| RpcFailure::from(&error))?
+        };
+        copy.write().map_err(|error| RpcFailure::from(&error))?;
+        let _files = self.lock_files();
+        Ok(copy.finish())
     }
 
     fn unsaved_folder(&self) -> Result<UnsavedFolder, RpcFailure> {
