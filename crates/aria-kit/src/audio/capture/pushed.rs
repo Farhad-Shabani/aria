@@ -446,7 +446,11 @@ mod tests {
 
     #[test]
     fn audio_its_device_held_past_the_limit_still_counts() {
-        let harness = Harness::new().with_limit(Duration::from_millis(200));
+        // A stall far past the sender's delay, so a slow machine can't end
+        // the capture first.
+        let harness = Harness::new()
+            .with_limit(Duration::from_millis(200))
+            .with_stall(Duration::from_secs(10));
         let (feed, recording) = harness.start(
             speech(Duration::from_millis(10)),
             RecordingMode::UntilStopped,
