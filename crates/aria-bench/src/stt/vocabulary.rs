@@ -8,9 +8,7 @@ use std::time::Instant;
 use aria_harness::artifact::{Provenance, fingerprint, fingerprint_value, write_json};
 use aria_harness::stats::bootstrap;
 use aria_kit::cancel::CancelToken;
-use aria_kit::transcription::{
-    Attachment, Caret, Corrected, DeferredWords, SentenceEnds, TypedBefore, Unheld, Writing,
-};
+use aria_kit::transcription::{SegmentCorrector, TypedBefore, Writing};
 use aria_voice::vocabulary::{PersonalRules, Term, Vocabulary};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -341,47 +339,23 @@ fn corrected_stream(
     vocabulary: &Vocabulary,
     writing: Writing,
 ) -> (String, Vec<String>) {
-    let mut words = DeferredWords::default();
-    let mut sentences = SentenceEnds::default();
-    let mut written = String::new();
-    let mut segments = Vec::new();
-    let mut publish = |unheld: Unheld| {
-        if unheld.text.is_empty() {
-            return;
-        }
-        let before = TypedBefore::streamed(&written, &sentences, unheld.sentence_ended_before);
-        let corrected = vocabulary
-            .correct_spoken(&unheld.text, before, writing)
-            .unwrap_or(Corrected {
-                text: unheld.text,
-                attachment: Attachment::default(),
-            });
-        let punctuated = sentences.punctuate(
-            &corrected.text,
-            corrected.attachment,
-            unheld.sentence_ended_before,
-        );
-        written.push_str(
-            &Caret::between(&written, "").insert_with(&punctuated.text, punctuated.spacing),
-        );
-        segments.push(punctuated.text);
-    };
-    for (index, input) in inputs.iter().enumerate() {
-        publish(words.hold(
-            input,
-            sentence_ended_before.get(index).copied().flatten(),
-            vocabulary,
-            writing,
-        ));
-    }
-    if let Some(held) = words.finish() {
-        publish(held);
-    }
-    if let Some(mark) = sentences.finish() {
-        written.push_str(&mark);
-        segments.push(mark);
-    }
-    (written, segments)
+    let mut corrector = SegmentCorrector::new(vocabulary).with_writing(writing);
+    let mut segments: Vec<String> = inputs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, input)| {
+            corrector.push(input, sentence_ended_before.get(index).copied().flatten())
+        })
+        .map(|typed| typed.text)
+        .collect();
+    let end = corrector.finish();
+    segments.extend(
+        end.words
+            .into_iter()
+            .chain(end.mark)
+            .map(|typed| typed.text),
+    );
+    (end.text, segments)
 }
 
 pub fn evaluate(suite: &Suite, output: &Path) -> Result<()> {
