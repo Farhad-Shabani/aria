@@ -118,8 +118,7 @@ impl wire::relay_service_server::RelayService for RelayRpc {
                 };
                 let (client, continuations) = match recording {
                     Some(recording) => {
-                        let client =
-                            Client::continuable(events, revoked, self.shutdown.clone());
+                        let client = Client::continuable(events, revoked, self.shutdown.clone());
                         let continuations = self
                             .resumable
                             .open((phone, recording), client.settled.clone())
