@@ -62,9 +62,6 @@ these choices:
 - **Discard…** deletes it, once you confirm. While history can't open, Aria
   can't discard it. Try again later.
 
-If Aria quits before you choose, it lists the transcript again the next time it
-opens. A transcript that heard nothing leaves no file.
-
 To save to a file of your own instead:
 
 ```sh
@@ -72,10 +69,11 @@ aria transcribe start \
   --output "$PWD/meeting.txt"
 ```
 
-Transcription only appends to this file, even if it exists. The file keeps
-the speaker labels Aria gave while listening, and text another app adds stays.
-Don't run this while another transcription is running. A file you name with
-`--output` never appears in history, and Aria never moves or deletes it.
+If the file exists, Transcription adds to its end and leaves the rest as it is.
+Speaker labels stay as Aria gave them while listening, since Aria never
+corrects them in this file. If another app writes to the file during a
+session, Aria keeps that text. Run one transcription at a time. Your file never
+appears in history, and Aria never moves or deletes it.
 
 Transcript files are plain text. Aria doesn't encrypt them as it does history,
 so delete them when you no longer need them.
