@@ -218,14 +218,14 @@ where
 }
 
 /// Forwards a recording's audio to its press until the recording
-/// ends. `sent` counts the bytes already forwarded, toward the size cap.
+/// ends. `sent` counts the bytes forwarded, toward the size cap.
 /// Dropping `feed` on return ends the recording at the press. A client that
 /// goes quiet is the press's to end: its capture stops once audio stalls.
 pub(super) async fn forward<S>(
     stream: &mut S,
     opening: Opening,
     feed: SyncSender<Vec<i16>>,
-    mut sent: usize,
+    sent: &mut usize,
 ) -> Result<PushEnd, RelayError>
 where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
@@ -234,10 +234,7 @@ where
         match stream.next().await {
             Some(Ok(request)) => match request.body {
                 Some(wire::relay_request::Body::Audio(chunk)) => {
-                    sent += chunk.chunk.len();
-                    if sent > MAX_AUDIO_BYTES {
-                        return Err(RelayError::TooLarge);
-                    }
+                    count(sent, &chunk)?;
                     let samples = decode(opening, &chunk.chunk)?;
                     if !feed_press(&feed, samples).await {
                         return Ok(PushEnd::PressEnded);
@@ -266,6 +263,15 @@ where
             None => return Ok(PushEnd::ClientClosed),
         }
     }
+}
+
+/// Counts a chunk toward the recording's size cap.
+fn count(sent: &mut usize, audio: &wire::RelayAudio) -> Result<(), RelayError> {
+    *sent += audio.chunk.len();
+    if *sent > MAX_AUDIO_BYTES {
+        return Err(RelayError::TooLarge);
+    }
+    Ok(())
 }
 
 /// Hands `samples` to the press, waiting while its feed is full: a chunk
@@ -332,10 +338,12 @@ where
 /// it transcribes. `asked` hears a `RelaySubmit` sent ahead of COMPLETED.
 ///
 /// A client whose recording the Mac ended may not have heard so yet: its
-/// audio is dropped until its stop.
+/// audio is dropped until its stop, and still counts toward the size cap
+/// with the bytes `sent`.
 pub(super) async fn after_audio<S>(
     stream: &mut S,
     ended: PushEnd,
+    mut sent: usize,
     asked: oneshot::Sender<()>,
 ) -> Result<(), RelayError>
 where
@@ -351,7 +359,9 @@ where
             Some(wire::relay_request::Body::Cancel(_cancel)) => {
                 return Err(RelayError::ClientCancelled);
             }
-            Some(wire::relay_request::Body::Audio(_)) if !is_stopped => {}
+            Some(wire::relay_request::Body::Audio(audio)) if !is_stopped => {
+                count(&mut sent, &audio)?;
+            }
             Some(wire::relay_request::Body::Stop(_stop)) if !is_stopped => is_stopped = true,
             Some(wire::relay_request::Body::Submit(_submit)) if is_stopped => {
                 if let Some(asked) = asked.take() {
@@ -606,7 +616,7 @@ mod tests {
         let first = first_audio(&mut stream, opening, &shutdown).await.unwrap();
         assert_eq!(first, Some(vec![1]));
         let (feed, press) = std::sync::mpsc::sync_channel(8);
-        let ended = forward(&mut stream, opening, feed, 2).await.unwrap();
+        let ended = forward(&mut stream, opening, feed, &mut 2).await.unwrap();
 
         assert_eq!(ended, PushEnd::ClientStopped);
         assert_eq!(press.try_iter().collect::<Vec<_>>(), [vec![2, 3]]);
@@ -619,7 +629,7 @@ mod tests {
         let (feed, press) = std::sync::mpsc::sync_channel(8);
         drop(press);
 
-        let ended = forward(&mut stream, opening, feed, 0).await.unwrap();
+        let ended = forward(&mut stream, opening, feed, &mut 0).await.unwrap();
 
         assert_eq!(ended, PushEnd::PressEnded);
     }
@@ -629,7 +639,7 @@ mod tests {
         let opening = pcm_opening().await;
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
 
-        let ended = forward(&mut requests(vec![chunk(&[2, 0])]), opening, feed, 0).await;
+        let ended = forward(&mut requests(vec![chunk(&[2, 0])]), opening, feed, &mut 0).await;
 
         assert_eq!(ended.unwrap(), PushEnd::ClientClosed);
     }
@@ -647,7 +657,7 @@ mod tests {
         sent: Vec<wire::RelayRequest>,
     ) -> (Result<(), RelayError>, bool) {
         let (asked, mut asking) = oneshot::channel();
-        let said = after_audio(&mut requests(sent), ended, asked).await;
+        let said = after_audio(&mut requests(sent), ended, 0, asked).await;
         (said, asking.try_recv().is_ok())
     }
 
@@ -681,6 +691,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn audio_dropped_once_the_mac_ended_the_recording_counts_toward_the_cap() {
+        let (asked, _asking) = oneshot::channel();
+        let mut late = requests(vec![chunk(&[2, 0])]);
+
+        let said = after_audio(&mut late, PushEnd::PressEnded, MAX_AUDIO_BYTES, asked).await;
+
+        assert!(matches!(said, Err(RelayError::TooLarge)));
+    }
+
+    #[tokio::test]
     async fn a_submit_ahead_of_the_stop_is_refused_once_the_mac_ended_the_recording() {
         let (said, asked) = said_after(PushEnd::PressEnded, vec![submit()]).await;
 
@@ -699,12 +719,13 @@ mod tests {
     async fn audio_past_the_cap_is_refused() {
         let opening = pcm_opening().await;
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
+        let mut sent = MAX_AUDIO_BYTES;
 
         let error = forward(
             &mut requests(vec![chunk(&[2, 0])]),
             opening,
             feed,
-            MAX_AUDIO_BYTES,
+            &mut sent,
         )
         .await
         .expect_err("the cap counts audio already sent");
@@ -834,7 +855,8 @@ mod tests {
 
         let before_audio =
             first_audio(&mut requests(vec![resume(b"walk")]), opening, &shutdown).await;
-        let mid_recording = forward(&mut requests(vec![resume(b"walk")]), opening, feed, 0).await;
+        let mid_recording =
+            forward(&mut requests(vec![resume(b"walk")]), opening, feed, &mut 0).await;
 
         assert!(matches!(before_audio, Err(RelayError::RestartedMidStream)));
         assert!(matches!(mid_recording, Err(RelayError::RestartedMidStream)));
@@ -891,7 +913,7 @@ mod tests {
             .await
             .expect("the first audio");
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
-        forward(&mut stream, opening, feed, 2)
+        forward(&mut stream, opening, feed, &mut 2)
             .await
             .expect("the stop ends the recording");
 
@@ -915,7 +937,8 @@ mod tests {
         let shutdown = CancellationToken::new();
         let before_audio = first_audio(&mut requests(vec![submit()]), opening, &shutdown).await;
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
-        let mid_recording = forward(&mut requests(vec![submit(), stop()]), opening, feed, 0).await;
+        let mid_recording =
+            forward(&mut requests(vec![submit(), stop()]), opening, feed, &mut 0).await;
 
         for error in [before_audio.unwrap_err(), mid_recording.unwrap_err()] {
             assert!(matches!(error, RelayError::SubmittedMidRecording));
@@ -1012,7 +1035,7 @@ mod tests {
             press.iter().collect::<Vec<_>>()
         });
 
-        let ended = forward(&mut stream, opening, feed, 0).await.unwrap();
+        let ended = forward(&mut stream, opening, feed, &mut 0).await.unwrap();
 
         assert_eq!(ended, PushEnd::ClientStopped);
         assert_eq!(reading.await.unwrap(), [vec![1], vec![2], vec![3]]);
@@ -1024,7 +1047,7 @@ mod tests {
         let mut stream = requests(vec![chunk(&[1, 0]), start(wire::AudioFormat::PcmS16le)]);
         let (feed, _press) = std::sync::mpsc::sync_channel(8);
 
-        let error = forward(&mut stream, opening, feed, 0)
+        let error = forward(&mut stream, opening, feed, &mut 0)
             .await
             .expect_err("one start per stream");
 
@@ -1038,7 +1061,7 @@ mod tests {
         let mut stream = requests(vec![newer_field, chunk(&[1, 0]), stop()]);
         let (feed, press) = std::sync::mpsc::sync_channel(8);
 
-        let ended = forward(&mut stream, opening, feed, 0)
+        let ended = forward(&mut stream, opening, feed, &mut 0)
             .await
             .expect("the unknown is skipped");
 

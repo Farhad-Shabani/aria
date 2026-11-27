@@ -164,10 +164,14 @@ enum Listener {
     /// A named recording's stream no other takes over from. Once its client
     /// stops reading, no Return follows the text.
     Last(Events),
-    /// The stream of a named recording the Mac still takes audio for, which
-    /// another can take over from. Its client not reading ends nothing: it
-    /// may come back.
+    /// The stream that started a named recording the Mac still takes audio
+    /// for, which another can take over from. Its client not reading ends
+    /// nothing: it may come back.
     Replaceable(Events),
+    /// A stream that took over such a recording, which another can take
+    /// over from in turn. It opened with CONTINUED, so it hears no
+    /// RECORDING.
+    Continuing(Events),
     /// A named recording's stream failed, and no other continues it yet.
     Away,
     /// The stream failed, and none continues the recording any more.
@@ -343,9 +347,7 @@ impl Session {
                 return;
             }
         };
-        client
-            .emit(Ok(RelayStage::Recording { quiet_limit }.into()))
-            .await;
+        client.emit_recording(quiet_limit).await;
         let sent = first.len() * 2;
         let (feed, rest) = std::sync::mpsc::sync_channel(FEED_CHUNKS);
         let (capture_ended, capturing) = oneshot::channel();
@@ -394,7 +396,9 @@ impl Session {
             early,
         } = follow_press(&client, capturing, job, pushed, pushing, asking, &abort).await;
         let channel = match ended {
-            Ok(PushEnd::ClientStopped) if early == Some(AfterStop::Closed) => ReplyChannel::Closed,
+            Ok(PushEnd::ClientStopped) if matches!(early, Ok(Some(AfterStop::Closed))) => {
+                ReplyChannel::Closed
+            }
             Ok(PushEnd::ClientStopped) => ReplyChannel::Open,
             // The client is still recording, or sends nothing more, so it
             // won't ask.
@@ -445,16 +449,7 @@ impl Session {
                 return;
             }
         };
-        let submitted = early == Some(AfterStop::Submit);
-        complete(
-            heard,
-            channel,
-            submitted,
-            &microphone,
-            &client,
-            &mut requests,
-        )
-        .await;
+        complete(heard, channel, early, &microphone, &client, &mut requests).await;
     }
 }
 
@@ -624,19 +619,19 @@ async fn push<S>(
     requests: &mut S,
     opening: Opening,
     feed: std::sync::mpsc::SyncSender<Vec<i16>>,
-    sent: usize,
+    mut sent: usize,
     stopped: oneshot::Sender<Result<PushEnd, RelayError>>,
     asked: oneshot::Sender<()>,
 ) -> Result<(), RelayError>
 where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
 {
-    let ended = relay::forward(requests, opening, feed, sent).await;
+    let ended = relay::forward(requests, opening, feed, &mut sent).await;
     let reads_on = ended.as_ref().ok().copied();
     let _ = stopped.send(ended);
     match reads_on {
         Some(ended @ (PushEnd::ClientStopped | PushEnd::PressEnded)) => {
-            relay::after_audio(requests, ended, asked).await
+            relay::after_audio(requests, ended, sent, asked).await
         }
         Some(PushEnd::ClientClosed) | None => std::future::pending().await,
     }
@@ -653,11 +648,12 @@ enum AfterStop {
 }
 
 /// What [`follow_press`] saw: what ended the pushing, the press's answer,
-/// and what the client said after its stop while the press ran.
+/// and what the client said after its stop while the press ran. A cancel
+/// said then can land as the press answers, with its text already typed.
 struct Followed<T> {
     ended: Result<PushEnd, RelayError>,
     joined: T,
-    early: Option<AfterStop>,
+    early: Result<Option<AfterStop>, RelayError>,
 }
 
 /// Runs until the press ends, and says what ended the pushing. The client
@@ -692,6 +688,7 @@ where
     let mut is_listening = true;
     let mut ended = None;
     let mut is_closed = false;
+    let mut refused = None;
     let mut is_reading = true;
     loop {
         tokio::select! {
@@ -717,6 +714,7 @@ where
                     Err(error) => {
                         tracing::info!(method = METHOD, %error, "the relay client ended its recording as the Mac transcribed it");
                         abort.cancel();
+                        refused = Some(error);
                     }
                 }
             }
@@ -730,10 +728,10 @@ where
                 if ended.is_none() && let Ok(end) = pushed.try_recv() {
                     ended = Some(pushing_ended(client, abort, Ok(end)));
                 }
-                let early = if asking.try_recv().is_ok() {
-                    Some(AfterStop::Submit)
-                } else {
-                    is_closed.then_some(AfterStop::Closed)
+                let early = match refused {
+                    Some(error) => Err(error),
+                    None if asking.try_recv().is_ok() => Ok(Some(AfterStop::Submit)),
+                    None => Ok(is_closed.then_some(AfterStop::Closed)),
                 };
                 // Still pushing: the client is recording, or gone.
                 break Followed {
@@ -834,17 +832,28 @@ impl ReturnPolicy {
     }
 }
 
-/// `submitted` says the client already asked for Return, after its stop.
+/// `early` is what the client said after its stop while the press ran. A
+/// cancel that landed as the press answered leaves its text typed, and
+/// presses no Return.
 async fn complete<S>(
     heard: Heard,
     channel: ReplyChannel,
-    submitted: bool,
+    early: Result<Option<AfterStop>, RelayError>,
     microphone: &Arc<Gate>,
     client: &Client,
     requests: &mut S,
 ) where
     S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
 {
+    let submitted = match early {
+        Ok(early) => early == Some(AfterStop::Submit),
+        Err(error) => {
+            client
+                .emit(Err(relay::redacted(super::failed(METHOD, &error))))
+                .await;
+            return;
+        }
+    };
     let return_offer = match heard.after {
         AfterText::Submitted => {
             tracing::info!(method = METHOD, status = "submitted", "request served");
@@ -921,19 +930,34 @@ impl Client {
     /// recording is already delivered, or already lost.
     async fn emit(&self, event: Result<wire::RelayEvent, Status>) {
         let events = match &*self.listener() {
-            Listener::Only(events) | Listener::Last(events) | Listener::Replaceable(events) => {
-                events.clone()
-            }
+            Listener::Only(events)
+            | Listener::Last(events)
+            | Listener::Replaceable(events)
+            | Listener::Continuing(events) => events.clone(),
             Listener::Away | Listener::Gone => return,
         };
         drop(events.send(event).await);
+    }
+
+    /// Says RECORDING to the stream that started the recording. One that
+    /// took it over before its first audio opened with CONTINUED, which
+    /// told it the same quiet limit.
+    async fn emit_recording(&self, quiet_limit: Duration) {
+        if matches!(*self.listener(), Listener::Continuing(_)) {
+            return;
+        }
+        self.emit(Ok(RelayStage::Recording { quiet_limit }.into()))
+            .await;
     }
 
     /// The recording's stream failed. True when another may continue it,
     /// which it then waits for.
     fn leave(&self) -> bool {
         let mut listener = self.listener();
-        let waits = matches!(*listener, Listener::Replaceable(_));
+        let waits = matches!(
+            *listener,
+            Listener::Replaceable(_) | Listener::Continuing(_)
+        );
         if waits {
             *listener = Listener::Away;
         }
@@ -944,9 +968,12 @@ impl Client {
     /// on. False once the recording settled, which takes no stream.
     fn listen_on(&self, events: Events) -> bool {
         let mut listener = self.listener();
-        let continues = matches!(*listener, Listener::Replaceable(_) | Listener::Away);
+        let continues = matches!(
+            *listener,
+            Listener::Replaceable(_) | Listener::Continuing(_) | Listener::Away
+        );
         if continues {
-            *listener = Listener::Replaceable(events);
+            *listener = Listener::Continuing(events);
         }
         continues
     }
@@ -958,7 +985,9 @@ impl Client {
             let mut listener = self.listener();
             *listener = match std::mem::replace(&mut *listener, Listener::Gone) {
                 Listener::Only(events) => Listener::Only(events),
-                Listener::Last(events) | Listener::Replaceable(events) => Listener::Last(events),
+                Listener::Last(events)
+                | Listener::Replaceable(events)
+                | Listener::Continuing(events) => Listener::Last(events),
                 Listener::Away | Listener::Gone => Listener::Gone,
             };
         }
@@ -980,8 +1009,10 @@ impl Client {
     fn listens(&self) -> impl Fn() -> bool + Send + Sync + 'static {
         let listener = Arc::clone(&self.listener);
         move || match &*listener.lock().unwrap_or_else(PoisonError::into_inner) {
-            Listener::Only(events) | Listener::Last(events) => !events.is_closed(),
-            Listener::Replaceable(_) => true,
+            Listener::Only(events)
+            | Listener::Last(events)
+            | Listener::Replaceable(events)
+            | Listener::Continuing(events) => !events.is_closed(),
             Listener::Away | Listener::Gone => false,
         }
     }
@@ -1113,6 +1144,22 @@ mod tests {
         typed_into: &str,
         channel: ReplyChannel,
         microphone: &Arc<Gate>,
+        requests: S,
+    ) -> (Vec<Result<wire::RelayEvent, Status>>, usize)
+    where
+        S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
+    {
+        landed(policy, typed_into, channel, Ok(None), microphone, requests).await
+    }
+
+    /// As [`after_landing`], after the client said `early` while the press
+    /// ran.
+    async fn landed<S>(
+        policy: ReturnPolicy,
+        typed_into: &str,
+        channel: ReplyChannel,
+        early: Result<Option<AfterStop>, RelayError>,
+        microphone: &Arc<Gate>,
         mut requests: S,
     ) -> (Vec<Result<wire::RelayEvent, Status>>, usize)
     where
@@ -1146,7 +1193,7 @@ mod tests {
         };
         let (client, mut receiver) = client();
 
-        complete(heard, channel, false, microphone, &client, &mut requests).await;
+        complete(heard, channel, early, microphone, &client, &mut requests).await;
         drop(client);
 
         let mut emitted = Vec::new();
@@ -1186,7 +1233,7 @@ mod tests {
         complete(
             heard,
             ReplyChannel::Closed,
-            false,
+            Ok(None),
             &Gate::new(),
             &client,
             &mut requests,
@@ -1354,6 +1401,24 @@ mod tests {
         assert_eq!(stage(&events[1]), (wire::RelayStage::OfferTaken, false));
     }
 
+    /// The cancel is read as the press answers, with a submit before it.
+    #[tokio::test]
+    async fn a_cancel_that_lands_as_the_press_answers_presses_no_return() {
+        let (events, presses) = landed(
+            ReturnPolicy::Offer,
+            "Messages",
+            ReplyChannel::Open,
+            Err(RelayError::ClientCancelled),
+            &Gate::new(),
+            tokio_stream::empty(),
+        )
+        .await;
+
+        assert_eq!(presses, 0);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].is_err(), "the stream ends as cancelled");
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_half_close_ends_the_session_at_completed_without_waiting() {
         let started = tokio::time::Instant::now();
@@ -1460,6 +1525,18 @@ mod tests {
     const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
     const QUIET: Duration = Duration::from_secs(10);
 
+    /// Forwards a recording's audio from its first byte.
+    async fn forwarded<S>(
+        requests: &mut S,
+        opening: Opening,
+        feed: std::sync::mpsc::SyncSender<Vec<i16>>,
+    ) -> Result<PushEnd, RelayError>
+    where
+        S: Stream<Item = Result<wire::RelayRequest, Status>> + Unpin,
+    {
+        relay::forward(requests, opening, feed, &mut 0).await
+    }
+
     /// A recording its phone named `walk`, under way and open to streams.
     struct Walk {
         opening: Opening,
@@ -1528,7 +1605,7 @@ mod tests {
         ));
 
         let (ended, resumed) = tokio::join!(
-            relay::forward(&mut requests, walk.opening, feed, 0),
+            forwarded(&mut requests, walk.opening, feed),
             walk.resumable.resume(&walk.named, continuing, events),
         );
         walk.client.emit(Ok(RelayStage::Transcribing.into())).await;
@@ -1568,7 +1645,7 @@ mod tests {
 
         let (ended, resumed) = tokio::time::timeout(WAIT, async {
             tokio::join!(
-                relay::forward(&mut requests, walk.opening, feed, 0),
+                forwarded(&mut requests, walk.opening, feed),
                 walk.resumable.resume(&walk.named, continuing, events),
             )
         })
@@ -1601,7 +1678,7 @@ mod tests {
         ));
 
         let (ended, resumed) = tokio::join!(
-            relay::forward(&mut requests, walk.opening, feed, 0),
+            forwarded(&mut requests, walk.opening, feed),
             walk.resumable.resume(&walk.named, continuing, events),
         );
 
@@ -1637,17 +1714,14 @@ mod tests {
         let resuming = walk.resumable.resume(&walk.named, continuing, events);
         tokio::pin!(resuming);
 
-        let (ended, ()) = tokio::join!(
-            relay::forward(&mut requests, walk.opening, feed, 0),
-            async {
-                let early =
-                    tokio::time::timeout(std::time::Duration::from_millis(50), &mut resuming).await;
-                assert!(early.is_err(), "the press still takes the second chunk in");
-                assert_eq!(press.recv().expect("the first chunk"), [1]);
-                assert_eq!(press.recv().expect("the second chunk"), [2]);
-                resuming.await.expect("the recording takes the stream");
-            },
-        );
+        let (ended, ()) = tokio::join!(forwarded(&mut requests, walk.opening, feed), async {
+            let early =
+                tokio::time::timeout(std::time::Duration::from_millis(50), &mut resuming).await;
+            assert!(early.is_err(), "the press still takes the second chunk in");
+            assert_eq!(press.recv().expect("the first chunk"), [1]);
+            assert_eq!(press.recv().expect("the second chunk"), [2]);
+            resuming.await.expect("the recording takes the stream");
+        },);
 
         assert_eq!(
             ended.expect("the recording ends on its second stream"),
@@ -1681,7 +1755,7 @@ mod tests {
         ));
 
         let (_ended, resumed) = tokio::join!(
-            relay::forward(&mut requests, walk.opening, feed, 0),
+            forwarded(&mut requests, walk.opening, feed),
             walk.resumable.resume(&walk.named, continuing, events),
         );
 
@@ -1856,7 +1930,7 @@ mod tests {
         let Followed { ended, early, .. } = answered_after(&mut walk, sent).await;
 
         assert!(matches!(ended, Ok(PushEnd::ClientStopped)));
-        assert_eq!(early, Some(AfterStop::Submit));
+        assert!(matches!(early, Ok(Some(AfterStop::Submit))));
     }
 
     #[tokio::test]
@@ -1865,8 +1939,51 @@ mod tests {
 
         let Followed { early, .. } = answered_after(&mut walk, vec![audio(&[1, 0]), stop()]).await;
 
-        assert_eq!(early, Some(AfterStop::Closed));
+        assert!(matches!(early, Ok(Some(AfterStop::Closed))));
         assert!(walk.client.listens()(), "its client hears COMPLETED");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_read_as_the_press_answers_is_kept_for_its_answer() {
+        let mut walk = walk().await;
+        let sent = vec![audio(&[1, 0]), stop(), Ok(submit()), cancel()];
+
+        let Followed { early, .. } = answered_after(&mut walk, sent).await;
+
+        assert!(matches!(early, Err(RelayError::ClientCancelled)));
+    }
+
+    /// The response side closes when the RPC ends, which the session can
+    /// read before its request side fails.
+    #[test]
+    fn a_client_whose_stream_stopped_reading_does_not_listen() {
+        let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
+        let named = Client::continuable(events, CancellationToken::new(), CancellationToken::new());
+
+        drop(receiver);
+
+        assert!(!named.listens()());
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_took_over_before_the_first_audio_hears_no_recording() {
+        let mut walk = walk().await;
+        let (events, mut continued) = mpsc::channel(EVENT_CAPACITY);
+
+        assert!(walk.client.listen_on(events));
+        walk.client.emit_recording(QUIET).await;
+
+        assert!(stages(&mut continued).is_empty());
+        assert!(stages(&mut walk.events).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_stream_that_started_a_recording_hears_recording() {
+        let mut walk = walk().await;
+
+        walk.client.emit_recording(QUIET).await;
+
+        assert_eq!(stages(&mut walk.events), [wire::RelayStage::Recording]);
     }
 
     #[tokio::test]
