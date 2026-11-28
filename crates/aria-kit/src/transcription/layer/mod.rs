@@ -17,6 +17,8 @@ mod correction;
 mod number_words;
 mod numbers;
 pub use correction::{Corrected, JoinSymbols, Writing};
+mod spoken_parts;
+pub(super) use spoken_parts::SpokenParts;
 mod symbol_words;
 mod symbols;
 pub mod vocabulary;
