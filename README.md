@@ -69,8 +69,8 @@ curl \
   https://github.com/Farhad-Shabani/aria/releases/latest/download/install.sh | bash
 ```
 
-To check that Aria's release workflow built the installer and the download,
-see [Installation](book/user-guide/src/installation.md#linux).
+To check that Aria's release workflow built a download, see
+[Installation](book/user-guide/src/installation.md#linux).
 
 Then try it from a terminal:
 

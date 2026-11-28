@@ -47,42 +47,17 @@ Run:
 curl -fsSL https://github.com/Farhad-Shabani/aria/releases/latest/download/install.sh | bash
 ```
 
-The installer checks the download against the release's checksum, installs
-the `aria` command in `~/.local/bin`, and starts [setup](#setup). It installs
-nothing if the check fails. If it reports that `~/.local/bin` is not on your
-`PATH`, add it in your shell's startup file.
+The installer checks the download, installs the `aria` command in
+`~/.local/bin`, and starts [setup](#setup). If it reports that `~/.local/bin`
+is not on your `PATH`, add it in your shell's startup file.
 
-The checksum comes from the same release, so it catches a damaged download
-but can't prove who built it. To check that Aria's release workflow on GitHub
-built both the installer and the download, use the
-[GitHub CLI](https://cli.github.com) instead. It must be version 2.67 or
-newer, because older versions can report a failed check as passed. You don't
-need to sign in. The command below downloads the release into a new folder,
-checks it, and installs from that folder only if both checks pass:
+To check that Aria's release workflow built a file you downloaded, use
+[GitHub CLI](https://cli.github.com) 2.67 or newer:
 
 ```sh
-cd "$(mktemp -d)" &&
-  base=https://github.com/Farhad-Shabani/aria/releases/latest/download &&
-  curl \
-    --fail \
-    --silent \
-    --show-error \
-    --location \
-    --remote-name "$base/install.sh" \
-    --remote-name "$base/aria-linux-x86_64.tar.gz" \
-    --remote-name "$base/SHA256SUMS" \
-    --remote-name "$base/aria.sigstore.json" &&
-  gh attestation verify install.sh \
-    --bundle aria.sigstore.json \
-    --repo Farhad-Shabani/aria \
-    --cert-identity-regex '^https://github\.com/Farhad-Shabani/aria/\.github/workflows/release\.yml@refs/tags/v[^@/]+$' \
-    --deny-self-hosted-runners &&
-  gh attestation verify aria-linux-x86_64.tar.gz \
-    --bundle aria.sigstore.json \
-    --repo Farhad-Shabani/aria \
-    --cert-identity-regex '^https://github\.com/Farhad-Shabani/aria/\.github/workflows/release\.yml@refs/tags/v[^@/]+$' \
-    --deny-self-hosted-runners &&
-  bash install.sh
+gh attestation verify aria-linux-x86_64.tar.gz \
+  --repo Farhad-Shabani/aria \
+  --signer-workflow Farhad-Shabani/aria/.github/workflows/release.yml
 ```
 
 Before setup, the installer offers a udev rule so the hotkey can read your
