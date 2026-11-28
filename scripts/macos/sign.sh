@@ -15,7 +15,7 @@ if [ "$identity" = - ]; then
 else
     sign() { codesign --force --options runtime --timestamp --sign "$identity" "$@"; }
 fi
-find "$app/Contents" -name '*.dylib' -not -path '*/Resources/*' | while read -r library; do
+find "$app/Contents" -type f -name '*.dylib' -not -path '*/Resources/*' | while read -r library; do
     sign "$library"
 done
 sparkle="$app/Contents/Frameworks/Sparkle.framework"
