@@ -7,7 +7,10 @@
 # Every other argument goes to setup.
 set -euo pipefail
 
-releases="https://github.com/Farhad-Shabani/aria/releases"
+repo=Farhad-Shabani/aria
+releases="https://github.com/$repo/releases"
+# The one name the release workflow gives the Linux build.
+file=aria-linux-x86_64.tar.gz
 if [ "$(uname -sm)" != "Linux x86_64" ]; then
     echo "install.sh supports Linux x86_64; on macOS, install Aria.dmg from $releases" >&2
     exit 1
@@ -17,7 +20,7 @@ fi
 # working directory as a release.
 script="${BASH_SOURCE[0]:-}"
 dist="${ARIA_DIST:-}"
-if [ -z "$dist" ] && [ -n "$script" ] && [ -f "$(dirname "$script")/SHA256SUMS" ]; then
+if [ -z "$dist" ] && [ -n "$script" ] && [ -f "$(dirname "$script")/$file" ]; then
     dist=$(cd "$(dirname "$script")" && pwd)
 fi
 bin_dir="$HOME/.local/bin"
@@ -55,9 +58,11 @@ if [ "${1:-}" = --uninstall ]; then
     exit 0
 fi
 
-remote=
+# Only this user can write to this folder, so no one can swap the tarball
+# between its check and its extraction.
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
 if [ -z "$dist" ]; then
-    remote=1
     # One tag for both downloads, so a release published mid-install can't split them.
     tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$releases/latest")
     case "$tag" in
@@ -65,17 +70,21 @@ if [ -z "$dist" ]; then
         *) echo "no published release at $releases" >&2; exit 1 ;;
     esac
     base="$releases/download/${tag##*/}"
-    dist=$(mktemp -d)
-    trap 'rm -rf "$dist"' EXIT
-    curl -fsSL -o "$dist/SHA256SUMS" "$base/SHA256SUMS"
+    curl -fsSL -o "$work/SHA256SUMS" "$base/SHA256SUMS"
+    curl -fL --progress-bar -o "$work/$file" "$base/$file"
+else
+    for name in SHA256SUMS "$file"; do
+        [ -f "$dist/$name" ] || { echo "no $name in $dist; set ARIA_DIST to a release folder" >&2; exit 1; }
+    done
+    cp "$dist/SHA256SUMS" "$dist/$file" "$work/"
 fi
-[ -f "$dist/SHA256SUMS" ] || { echo "no release at $dist; set ARIA_DIST" >&2; exit 1; }
-file=$(awk '/linux-x86_64\.tar\.gz$/ {print $2}' "$dist/SHA256SUMS")
-[ -n "$file" ] || { echo "no Linux x86_64 build in $dist/SHA256SUMS" >&2; exit 1; }
-if [ -n "$remote" ]; then
-    curl -fL --progress-bar -o "$dist/$file" "$base/$file"
-fi
-(cd "$dist" && grep " $file\$" SHA256SUMS | sha256sum --check --quiet -)
+# The checksum catches a damaged download. It comes from the same release, so
+# it can't prove where the tarball came from. The installation guide's
+# attestation check does that.
+(cd "$work" && grep -x "[0-9a-f]\{64\}  $file" SHA256SUMS | sha256sum --check --quiet -) || {
+    echo "$file doesn't match its checksum; nothing was installed" >&2
+    exit 1
+}
 
 upgrade=false
 [ -d "$lib_dir" ] && upgrade=true
@@ -83,7 +92,7 @@ upgrade=false
 # Unpacks beside the old install, so a failed extract leaves it in place.
 rm -rf "$lib_dir.new"
 mkdir -p "$bin_dir" "$lib_dir.new"
-tar -xzf "$dist/$file" --strip-components=1 -C "$lib_dir.new"
+tar -xzf "$work/$file" --strip-components=1 -C "$lib_dir.new"
 stop_daemon
 rm -rf "$lib_dir"
 mv "$lib_dir.new" "$lib_dir"

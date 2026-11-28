@@ -197,11 +197,24 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release
           path: dist
+      # Proves each file in dist/ came from this workflow at this tag.
+      # SHA256SUMS can't, since it ships in the same release. The installation
+      # guide shows how to check it.
+      - id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Ship the attestation bundle
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE" dist/aria.sigstore.json
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
