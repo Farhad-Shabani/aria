@@ -125,10 +125,17 @@ pub(super) fn word_for(value: usize) -> Option<&'static str> {
 
 /// Whether `word`, in lowercase, is one [`word_for`] gives.
 pub(super) fn is_up_to_twenty(word: &str) -> bool {
-    matches!(
-        NumberWord::parse(word),
-        Some(NumberWord::Digit(_) | NumberWord::Teen(_) | NumberWord::Tens(20))
-    )
+    value_up_to_twenty(word).is_some()
+}
+
+/// The value of `word`, in lowercase, when it is a number word up to twenty.
+pub(super) fn value_up_to_twenty(word: &str) -> Option<u128> {
+    match NumberWord::parse(word)? {
+        NumberWord::Digit(value) | NumberWord::Teen(value) | NumberWord::Tens(value @ 20) => {
+            Some(value)
+        }
+        _ => None,
+    }
 }
 
 /// The number words `word` holds, in lowercase: "twenty-one" holds two.

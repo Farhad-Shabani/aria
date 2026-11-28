@@ -161,6 +161,21 @@ pub(super) fn listed_names(character: char) -> Vec<&'static str> {
     }
 }
 
+/// A recognizer's word for `-`. Dictation's own name for `-` is "hyphen".
+pub(super) const DASH: &str = "dash";
+
+/// The symbol one word `name` stands for inside a written word: "dash" →
+/// `-`, "slash" → `/`.
+pub(super) fn named_by(name: &str) -> Option<char> {
+    if name == DASH {
+        return Some('-');
+    }
+    SYMBOLS
+        .iter()
+        .filter_map(|(symbol, ..)| symbol.chars().next())
+        .find(|symbol| listed_names(*symbol).contains(&name))
+}
+
 /// The first name of `character`: `_` → "underscore".
 pub(super) fn word(character: char) -> Option<&'static str> {
     names(character).first().copied()

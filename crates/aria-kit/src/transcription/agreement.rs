@@ -7,6 +7,7 @@ use crate::audio::{RecordingReader, canonical_duration, canonical_samples};
 use crate::cancel::CancelToken;
 use crate::primitives::error_chain;
 
+use super::layer::SpokenParts;
 use super::sentences::ends_sentence;
 use super::{
     ChunkStep, Hypothesis, SILENCE_FLOOR, Transcript, TranscriptSegment, TranscriptUpdate,
@@ -1154,13 +1155,16 @@ struct Opening {
 
 impl Opening {
     /// Lines `decode` up with `expected`, in order, so the fewest words
-    /// differ. A `clipped` first word may be missing at no cost.
+    /// differ. A `clipped` first word may be missing at no cost. A timed
+    /// word doesn't differ from timed words that spell it out over its
+    /// audio, as `2-step` and "two dash step", nor `1` from "one".
     ///
     /// Ties go first to the new words closest to `next`, which tell a
     /// reworded last word from a new one. Then to the fewest new words
     /// ending before `cut`, since everything before a cut was delivered. Then to paired words
-    /// that share audio, give or take a word's drifting edges. Last, to
-    /// more words said again, since the decode heard that audio.
+    /// that share audio, give or take a word's drifting edges. Then to the
+    /// fewest words taken as spelled out. Last, to more words said again,
+    /// since the decode heard that audio.
     fn of(
         expected: &[Word],
         clipped: bool,
@@ -1173,6 +1177,7 @@ impl Opening {
         };
         let (was, next, said) = (spoken_of(expected), spoken_of(next), spoken_of(decode));
         let (rows, columns) = (was.len(), said.len());
+        let spellings = Spellings::of(expected, &was, decode, &said);
 
         let mut after = vec![0_usize; columns + 1];
         for word in next.iter().rev() {
@@ -1197,8 +1202,10 @@ impl Opening {
         }
 
         // What one more step of a line-up adds: words that differ, then
-        // paired words that share no audio.
-        let unpaired = [1, 0];
+        // paired words timed apart, then words taken as spelled
+        // out. A speaker may spell a word out right after saying it.
+        let unpaired = [1, 0, 0];
+        let spelled = [0, 0, 1];
         let drift = (HEARD_MARGIN_FRAMES * TRIM_FRAME_SAMPLES) as u64;
         let paired = |row: usize, column: usize| {
             let apart = expected[row]
@@ -1208,13 +1215,19 @@ impl Opening {
                 .is_some_and(|(was, said)| {
                     said.end + drift <= was.start || was.end + drift <= said.start
                 });
-            [usize::from(was[row] != said[column]), usize::from(apart)]
+            [
+                usize::from(!spellings.same[row][column]),
+                usize::from(apart),
+                0,
+            ]
         };
-        let add = |cost: [usize; 2], step: [usize; 2]| [cost[0] + step[0], cost[1] + step[1]];
+        let add = |cost: [usize; 3], step: [usize; 3]| {
+            [cost[0] + step[0], cost[1] + step[1], cost[2] + step[2]]
+        };
 
         // cost[row][column]: the cheapest line-up of the first `row`
         // expected words with the first `column` decode words.
-        let mut cost = vec![vec![[0_usize; 2]; columns + 1]; rows + 1];
+        let mut cost = vec![vec![[0_usize; 3]; columns + 1]; rows + 1];
         for column in 1..=columns {
             cost[0][column] = add(cost[0][column - 1], unpaired);
         }
@@ -1229,17 +1242,26 @@ impl Opening {
                 if row == 1 && clipped {
                     best = best.min(cost[0][column]);
                 }
+                if let count @ 1.. = spellings.split[row - 1][column] {
+                    best = best.min(add(cost[row - 1][column - count], spelled));
+                }
+                if column > 0
+                    && let count @ 1.. = spellings.joined[column - 1][row]
+                {
+                    best = best.min(add(cost[row - count][column - 1], spelled));
+                }
                 cost[row][column] = best;
             }
         }
         let words = (0..=columns)
             .min_by_key(|&column| {
-                let [revised, apart] = cost[rows][column];
+                let [revised, apart, spellings] = cost[rows][column];
                 (
                     revised,
                     after[column],
                     early[column],
                     apart,
+                    spellings,
                     std::cmp::Reverse(column),
                 )
             })
@@ -1255,6 +1277,19 @@ impl Opening {
                 pairs.push((row, column));
             } else if row == 1 && clipped && here == cost[0][column] {
                 break;
+            } else if let count @ 1.. = spellings.split[row - 1][column]
+                && here == add(cost[row - 1][column - count], spelled)
+            {
+                row -= 1;
+                column -= count;
+                pairs.push((row, column));
+            } else if column > 0
+                && let count @ 1.. = spellings.joined[column - 1][row]
+                && here == add(cost[row - count][column - 1], spelled)
+            {
+                row -= count;
+                column -= 1;
+                pairs.push((row, column));
             } else if here == add(cost[row - 1][column], unpaired) {
                 row -= 1;
             } else {
@@ -1269,6 +1304,75 @@ impl Opening {
             unlike_next: after,
         }
     }
+}
+
+/// Which words of a decode say which expected words, other than one to
+/// one by text.
+struct Spellings {
+    /// `same[row][column]`: the two words are one word written two ways,
+    /// as "one" and `1`.
+    same: Vec<Vec<bool>>,
+    /// `split[row][column]`: how many decode words ending before `column`
+    /// say expected word `row`. Zero when none do.
+    split: Vec<Vec<usize>>,
+    /// `joined[column][row]`: how many expected words ending before `row`
+    /// decode word `column` says. Zero when none do.
+    joined: Vec<Vec<usize>>,
+}
+
+impl Spellings {
+    /// `was` and `said` are the spoken text of `expected` and `decode`.
+    fn of(expected: &[Word], was: &[String], decode: &[Word], said: &[String]) -> Self {
+        let parts_of = |words: &[Word]| -> Vec<SpokenParts> {
+            words
+                .iter()
+                .map(|word| SpokenParts::of(&word.text))
+                .collect()
+        };
+        let (was_parts, said_parts) = (parts_of(expected), parts_of(decode));
+        let (rows, columns) = (expected.len(), decode.len());
+        let mut same = vec![vec![false; columns]; rows];
+        let mut split = vec![vec![0_usize; columns + 1]; rows];
+        let mut joined = vec![vec![0_usize; rows + 1]; columns];
+        for row in 0..rows {
+            for column in 0..columns {
+                let said_in = was_parts[row].said_in(&said_parts[column..]);
+                same[row][column] = was[row] == said[column] || said_in == Some(1);
+                let several = |count: &usize| *count > 1;
+                if let Some(count) = said_in.filter(several)
+                    && shares_audio(&expected[row], &decode[column..column + count])
+                {
+                    // "slash" also names the `/` that "forward slash" names,
+                    // so a shorter run can end where a longer one does.
+                    split[row][column + count] = split[row][column + count].max(count);
+                }
+                if let Some(count) = said_parts[column]
+                    .said_in(&was_parts[row..])
+                    .filter(several)
+                    && shares_audio(&decode[column], &expected[row..row + count])
+                {
+                    joined[column][row + count] = count;
+                }
+            }
+        }
+        Self {
+            same,
+            split,
+            joined,
+        }
+    }
+}
+
+/// Whether every word of `run` overlaps the audio of `whole`. Letters timed
+/// past a typed "QA" spell a second "QA".
+fn shares_audio(whole: &Word, run: &[Word]) -> bool {
+    whole.span.as_ref().is_some_and(|whole| {
+        run.iter().all(|word| {
+            word.span
+                .as_ref()
+                .is_some_and(|word| word.start < whole.end && whole.start < word.end)
+        })
+    })
 }
 
 /// How one decode stands in the agreement.
@@ -2034,6 +2138,123 @@ mod tests {
         }
 
         #[test]
+        fn a_word_is_not_taken_for_the_two_words_it_runs_together() {
+            // "we cannot not go": the second "not" overlaps the end of
+            // "cannot", so only the words tell them apart.
+            let not = ("not", 0.5, 0.7);
+            let go = ("go", 0.7, 0.9);
+            assert_eq!(
+                typed_through(&[
+                    &[("we", 0.0, 0.2), ("cannot", 0.2, 0.6)],
+                    &[("we", 0.0, 0.2), ("cannot", 0.2, 0.6), not],
+                    &[("we", 0.0, 0.2), ("can", 0.2, 0.6), not, go],
+                    &[("we", 0.0, 0.2), ("can", 0.2, 0.6), not, go],
+                ]),
+                "we cannot not go"
+            );
+        }
+
+        fn typed_through(decodes: &[&[(&str, f32, f32)]]) -> String {
+            let mut agreement = Agreement::default();
+            let typed: Vec<String> = decodes
+                .iter()
+                .filter_map(|decode| text_of(agreement.agree(spoken_at(decode), None).0))
+                .collect();
+            typed.join(" ")
+        }
+
+        /// Each word lasts 0.3 s with no gap, and "word*3" three times that.
+        fn typed_from(first: &str, later: &str) -> String {
+            let mut agreement = Agreement::default();
+            let mut typed = Vec::new();
+            for decode in [first, first, later, later] {
+                let mut start = 0.0;
+                let words: Vec<(&str, f32, f32)> = decode
+                    .split(' ')
+                    .map(|word| {
+                        let (word, slots) = word.split_once('*').unwrap_or((word, "1"));
+                        let from = start;
+                        start += 0.3 * slots.parse::<f32>().unwrap();
+                        (word, from, start)
+                    })
+                    .collect();
+                typed.extend(text_of(agreement.agree(spoken_at(&words), None).0));
+            }
+            typed.extend(text_of(agreement.take_tail(None)));
+            typed.join(" ")
+        }
+
+        #[test]
+        fn a_digit_typed_early_is_not_typed_again_as_its_word() {
+            // "Q A two dash step": a decode ends on a short "2." and
+            // types it, then later decodes time "two" past it.
+            let letters = [("Q", 0.0, 0.25), ("A", 0.25, 0.5)];
+            let early = [("QA", 0.0, 0.5), ("2.", 0.5, 0.6)];
+            let later = [
+                ("Q", 0.0, 0.25),
+                ("A", 0.25, 0.5),
+                ("two", 0.75, 1.0),
+                ("dash", 1.0, 1.2),
+                ("step.", 1.2, 1.6),
+            ];
+
+            assert_eq!(
+                typed_through(&[&letters, &letters, &early, &early, &later, &later]),
+                "Q A 2. dash step."
+            );
+        }
+
+        #[test]
+        fn a_word_said_again_after_itself_is_not_its_spelling() {
+            // "use QA QA more": the second "Q" waits, 550 ms after the
+            // first "QA", and the decodes then hear only the second.
+            let more = [
+                ("use", 0.0, 0.3),
+                ("Q", 1.15, 1.35),
+                ("A", 1.35, 1.55),
+                ("more", 1.6, 1.9),
+            ];
+
+            assert_eq!(
+                typed_through(&[
+                    &[("use", 0.0, 0.3), ("QA", 0.3, 0.6)],
+                    &[("use", 0.0, 0.3), ("QA", 0.3, 0.6), ("Q", 1.15, 1.35)],
+                    &more,
+                    &more,
+                ]),
+                "use QA Q A more"
+            );
+        }
+
+        #[rstest::rstest]
+        #[case::a_named_symbol_and_digit(
+            "use 2-step.*3 Then",
+            "use two dash step. Then it worked",
+            "use 2-step. Then it worked"
+        )]
+        #[case::letters_one_by_one("say TLDR*4", "say T L D R now", "say TLDR now")]
+        #[case::a_symbol_with_two_names(
+            "run /review*3",
+            "run forward slash review now",
+            "run /review now"
+        )]
+        fn a_word_said_again_in_the_words_that_spell_it_out_is_not_typed_again(
+            #[case] first: &str,
+            #[case] later: &str,
+            #[case] typed: &str,
+        ) {
+            assert_eq!(typed_from(first, later), typed);
+        }
+
+        #[test]
+        fn a_word_spelled_out_after_it_is_said_is_typed() {
+            assert_eq!(
+                typed_from("it is JSON*5", "it is Jason J S O N right"),
+                "it is JSON J S O N right"
+            );
+        }
+
+        #[test]
         fn a_lookback_decode_is_not_held_to_words_from_before_it() {
             // Only "four" sounds inside the lookback, and the decode
             // rewords it. The three words before it are not missing.
@@ -2122,6 +2343,32 @@ mod tests {
 
             fn words_again(expected: &[Word], next: &[Word], decode: &[Word]) -> usize {
                 Opening::of(expected, false, next, decode, None).words
+            }
+
+            #[rstest::rstest]
+            #[case::a_named_symbol(&["two", "dash", "step"], "2-step.")]
+            #[case::letters_one_by_one(&["T", "L", "D", "R"], "TLDR")]
+            fn several_words_said_again_as_one_word_are_not_new(
+                #[case] typed: &[&str],
+                #[case] again: &str,
+            ) {
+                // "if", then `words` sharing one second of audio, then "came".
+                let in_one_second = |words: &[&str]| {
+                    let each = 1.0 / words.len() as f32;
+                    let mut timed = vec![("if", 0.0, 0.3)];
+                    timed.extend((0u8..).zip(words).map(|(index, word)| {
+                        let start = 0.3 + f32::from(index) * each;
+                        (*word, start, start + each)
+                    }));
+                    timed.push(("came", 1.3, 1.6));
+                    spoken_at(&timed)
+                };
+                let expected = in_one_second(typed);
+                let expected = &expected[..expected.len() - 1];
+
+                let opening = Opening::of(expected, false, &[], &in_one_second(&[again]), None);
+
+                assert_eq!((opening.words, opening.revised), (2, 0));
             }
 
             #[test]

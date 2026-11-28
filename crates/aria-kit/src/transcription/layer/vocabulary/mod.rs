@@ -749,8 +749,6 @@ fn normalize(text: &str) -> String {
         .to_lowercase()
 }
 
-// A recognizer writes "dash" for `-`, but dictation's symbol words call it
-// "hyphen".
 fn spoken_symbol(character: char, hyphen: &'static str, name: usize) -> Option<&'static str> {
     match character {
         '-' => Some(hyphen),
@@ -785,7 +783,7 @@ fn aliases(canonical: &str) -> Vec<String> {
         .map(|character| symbol_words::listed_names(character).len())
         .max()
         .unwrap_or(1);
-    for hyphen in ["dash"]
+    for hyphen in [symbol_words::DASH]
         .into_iter()
         .chain(symbol_words::word('-'))
         .take(hyphens)
