@@ -73,12 +73,14 @@ impl Cue {
                 origin: RecordingOrigin::Local,
                 ..
             } => Some(Self::Start),
-            // A focus change or a switched-off app is an ending, not a failure.
+            // A focus change, a switched-off app, or no text field is an
+            // ending, not a failure.
             DictationStage::Delivered { .. }
             | DictationStage::Failed(
                 RpcErrorCode::DeliveryTargetChanged
                 | RpcErrorCode::DeliveryInterrupted
-                | RpcErrorCode::ApplicationExcluded,
+                | RpcErrorCode::ApplicationExcluded
+                | RpcErrorCode::NoTextField,
             ) => Some(Self::Stop),
             DictationStage::Failed(_) => Some(Self::Error),
             // The device that records it tells the person it started.

@@ -371,6 +371,14 @@ pub enum DeliveryError {
     )]
     InsertionNotPermitted,
 
+    /// Raised before any of the text is typed. Only macOS checks the focus.
+    #[error("no text field has focus in the app in front")]
+    NoTextField,
+
+    /// Raised like `NoTextField`, when the app didn't say what has focus.
+    #[error("the app in front didn't say what has focus")]
+    FocusUnreadable,
+
     #[cfg(target_os = "macos")]
     #[error(
         "a process holds secure keyboard entry, which discards typed text — often a \

@@ -183,6 +183,9 @@ pub enum DictationError {
     #[error("Aria is switched off in the app in front")]
     ApplicationExcluded,
 
+    #[error("no text field has focus in the app in front")]
+    NoTextField,
+
     #[error("audio capture failed: {0}")]
     Capture(#[source] aria_kit::audio::CaptureError),
 
@@ -209,6 +212,7 @@ impl From<aria_platform::delivery::DeliveryError> for DictationError {
             | DeliveryError::CaretMoved
             | DeliveryError::TargetUnverified => Self::DeliveryTargetChanged,
             DeliveryError::ApplicationExcluded => Self::ApplicationExcluded,
+            DeliveryError::NoTextField => Self::NoTextField,
             error => Self::Delivery(error),
         }
     }
@@ -268,6 +272,7 @@ impl From<&DictationError> for RpcErrorCode {
             DictationError::DeliveryTargetChanged => Self::DeliveryTargetChanged,
             DictationError::DeliveryInterrupted => Self::DeliveryInterrupted,
             DictationError::ApplicationExcluded => Self::ApplicationExcluded,
+            DictationError::NoTextField => Self::NoTextField,
             DictationError::Capture(CaptureError::PushedUnsupported) => Self::Unsupported,
             DictationError::Capture(_) => Self::CaptureFailed,
             DictationError::NoSpeech => Self::NoSpeech,

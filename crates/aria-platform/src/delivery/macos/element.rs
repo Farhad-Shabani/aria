@@ -3,16 +3,110 @@
 
 use std::time::Instant;
 
-use cidre::{arc, ax, cf};
+use cidre::{arc, ax, cf, os};
 
-pub(super) fn focused_field(
+/// Far deeper than any app nests its focus, so a loop in the tree ends.
+const MAX_DEPTH: usize = 64;
+
+pub(super) fn focused_element(
     application: &ax::UiElement,
     deadline: Instant,
 ) -> Result<arc::R<ax::UiElement>, &'static str> {
+    focus_of(application, deadline)?.ok_or("no focused element")
+}
+
+/// `None` when the app reports nothing in focus, as against no answer.
+pub(super) fn focus_of(
+    application: &ax::UiElement,
+    deadline: Instant,
+) -> Result<Option<arc::R<ax::UiElement>>, &'static str> {
     limit(application, deadline)?;
-    application
-        .focused_ui_element()
-        .map_err(|_| "no focused element")
+    match application.focused_ui_element() {
+        Ok(element) => Ok(Some(element)),
+        Err(error) if is_absent(error) => Ok(None),
+        Err(_) => Err("focus unreadable"),
+    }
+}
+
+pub(super) fn role(element: &ax::UiElement, deadline: Instant) -> Result<String, &'static str> {
+    limit(element, deadline)?;
+    element
+        .attr_value(ax::attr::role())
+        .ok()
+        .and_then(|role| role.try_as_string().map(|role| role.to_string()))
+        .ok_or("role unreadable")
+}
+
+/// `None` when the element has no subrole, as most don't.
+pub(super) fn subrole(
+    element: &ax::UiElement,
+    deadline: Instant,
+) -> Result<Option<String>, &'static str> {
+    limit(element, deadline)?;
+    match element.attr_value(ax::attr::subrole()) {
+        Ok(subrole) => subrole
+            .try_as_string()
+            .map(|subrole| Some(subrole.to_string()))
+            .ok_or("subrole is not a string"),
+        Err(error) if is_absent(error) => Ok(None),
+        Err(_) => Err("subrole unreadable"),
+    }
+}
+
+pub(super) fn has_ancestor(
+    element: &ax::UiElement,
+    application: &ax::UiElement,
+    matches: impl Fn(&str) -> bool,
+    deadline: Instant,
+) -> Result<bool, &'static str> {
+    walk_up(
+        element.retained(),
+        |element| parent_of(element, deadline),
+        |ancestor| ancestor.equal(application),
+        |ancestor| Ok(matches(&role(ancestor, deadline)?)),
+    )
+}
+
+/// Every element but the application has a parent, so a walk that ends
+/// short of the application proves nothing.
+fn walk_up<E>(
+    start: E,
+    parent: impl Fn(&E) -> Result<Option<E>, &'static str>,
+    is_application: impl Fn(&E) -> bool,
+    matches: impl Fn(&E) -> Result<bool, &'static str>,
+) -> Result<bool, &'static str> {
+    let mut next = parent(&start)?;
+    for _ in 0..MAX_DEPTH {
+        let ancestor = next.ok_or("the tree ends short of the app")?;
+        if is_application(&ancestor) {
+            return Ok(false);
+        }
+        if matches(&ancestor)? {
+            return Ok(true);
+        }
+        next = parent(&ancestor)?;
+    }
+    Err("accessibility tree too deep")
+}
+
+fn parent_of(
+    element: &ax::UiElement,
+    deadline: Instant,
+) -> Result<Option<arc::R<ax::UiElement>>, &'static str> {
+    limit(element, deadline)?;
+    match element.attr_value(ax::attr::parent()) {
+        Ok(parent) => ui_element(&parent)
+            .map(|parent| Some(parent.retained()))
+            .ok_or("parent is not an element"),
+        Err(error) if is_absent(error) => Ok(None),
+        Err(_) => Err("parent unreadable"),
+    }
+}
+
+/// The element lacks the attribute. Any other error means the app gave no
+/// answer.
+fn is_absent(error: os::Error) -> bool {
+    error == ax::err::ATTR_UNSUPPORTED || error == ax::err::NO_VALUE
 }
 
 pub(super) fn selection(
@@ -186,6 +280,38 @@ mod tests {
         assert_eq!(actual.loc, range.loc);
         assert_eq!(actual.len, range.len);
         assert!(selection_range(&cf::String::from_str("wrong type")).is_none());
+    }
+
+    /// Walks a chain of roles, `None` marking a missing parent link.
+    fn walk(chain: &[Option<&str>]) -> Result<bool, &'static str> {
+        walk_up(
+            0,
+            |&at| match chain.get(at + 1) {
+                Some(Some(_)) => Ok(Some(at + 1)),
+                Some(None) | None => Ok(None),
+            },
+            |&at| chain[at] == Some("AXApplication"),
+            |&at| Ok(chain[at] == Some("AXList")),
+        )
+    }
+
+    #[test]
+    fn a_walk_must_reach_the_app_to_clear_an_element() {
+        let native = [Some("AXGroup"), Some("AXWindow"), Some("AXApplication")];
+        let listed = [Some("AXGroup"), Some("AXList"), Some("AXApplication")];
+        let cut = [Some("AXGroup"), Some("AXGroup"), None, Some("AXList")];
+
+        assert_eq!(walk(&native), Ok(false));
+        assert_eq!(walk(&listed), Ok(true));
+        assert!(walk(&cut).is_err());
+    }
+
+    #[test]
+    fn only_a_missing_attribute_reads_as_absent() {
+        assert!(is_absent(ax::err::ATTR_UNSUPPORTED));
+        assert!(is_absent(ax::err::NO_VALUE));
+        assert!(!is_absent(ax::err::CANNOT_COMPLETE));
+        assert!(!is_absent(ax::err::API_DISABLED));
     }
 
     #[test]
