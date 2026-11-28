@@ -1,10 +1,15 @@
 //! Assistants backed by one non-interactive CLI run per turn. The CLI keeps
 //! the chat on disk. The session keeps only the id that continues it.
 //!
-//! Both run read-only, and Claude ignores the checkout's own settings,
-//! hooks, and MCP servers: a turn may land in a repo nobody has vetted.
-//! Skills are the one thing it may take from that checkout, and a skill is
-//! only text the assistant reads with the same tools it already has.
+//! Every run is limited to its [`Tools`]. Neither CLI runs hooks or starts
+//! MCP servers, the user's or the checkout's: a turn may land in a repo
+//! nobody has vetted, and an MCP server runs outside the sandbox. Codex
+//! keeps the rest of the user's config, so its provider, endpoints and
+//! credential store still apply.
+//!
+//! Instructions still reach a chat turn: skills, Claude's CLAUDE.md files,
+//! and Codex's AGENTS.md from the user's Codex home and the checkout. A
+//! Codex prompt run keeps the AGENTS.md files out.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -32,42 +37,66 @@ const CLAUDE_PREFIXES: &[&str] = &["ANTHROPIC_", "CLAUDE_", "CLOUD_ML_", "AWS_",
 const CODEX_PREFIXES: &[&str] = &["OPENAI_", "CODEX_"];
 const NESTING_VARIABLES: &[&str] = &["CLAUDECODE", "CLAUDE_CODE"];
 
+// Codex reads its config and plugin manifests; it starts no server.
+const MCP_LIST_TIMEOUT: Duration = Duration::from_secs(10);
+
 // Both status commands answer in well under a second.
 const READY_CHECK_TIMEOUT: Duration = Duration::from_secs(2);
 
-// A deny-list, so a tool a Codex upgrade adds stays on until it is listed
-// here. Checked against codex-cli 0.163.0's `codex features list`.
-const CODEX_PROMPT_SETTINGS: &[&str] = &[
-    "features.shell_tool=false",
-    "features.unified_exec=false",
-    "features.view_image=false",
+// Codex has no single switch for "no tools", so these are deny-lists: a
+// tool a Codex upgrade adds stays on until it is listed here.
+//
+// Every run turns these off. Each acts outside the sandbox or does more
+// than read.
+const CODEX_TOOLS_OFF: &[&str] = &[
     "features.image_generation=false",
     "features.multi_agent=false",
+    // The model catalog turns the subagent tools on per model. No
+    // `features` key turns them off.
+    "agents.enabled=false",
     "features.goals=false",
     "features.hooks=false",
-    "features.skill_search=false",
     "features.sleep_tool=false",
     "features.tool_suggest=false",
-    "features.code_mode_host=false",
     "features.apps=false",
     "features.plugins=false",
+    "features.skill_mcp_dependency_install=false",
     "features.browser_use=false",
     "features.computer_use=false",
     "features.in_app_browser=false",
-    "project_doc_max_bytes=0",
     "web_search=\"disabled\"",
 ];
 
-/// `claude` with only the environment it needs.
-pub(crate) fn claude_command() -> Command {
-    Cli::Claude.command(Path::new(CLAUDE_BINARY))
+// A chat turn reads files and its AGENTS.md files with these, so only
+// `Tools::Off` sets them. The code-mode host runs the shell tool, so
+// without it nothing can read.
+const CODEX_READING_OFF: &[&str] = &[
+    "features.shell_tool=false",
+    "features.unified_exec=false",
+    "features.code_mode_host=false",
+    "features.view_image=false",
+    "features.skill_search=false",
+    "project_doc_max_bytes=0",
+];
+
+/// What a CLI run may use besides the model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tools {
+    Off,
+    /// Reading files and loading a skill.
+    Reading,
 }
 
-/// `claude -p --output-format stream-json`, prompt on stdin. One JSON line
-/// per message as the turn runs; the last is the envelope with the reply
-/// and the session id to `--resume` from. `--restricted` drops the
-/// command-running tools and ignores user, project and local settings;
-/// `--tools` leaves reading the repo and loading a skill.
+/// `claude` with only the environment it needs.
+pub(crate) fn claude_without_tools() -> Command {
+    let mut command = Cli::Claude.command(Path::new(CLAUDE_BINARY));
+    Cli::Claude.confine(&mut command, Tools::Off, &[]);
+    command
+}
+
+/// A chat turn is `claude -p --output-format stream-json`, prompt on
+/// stdin. One JSON line per message as the turn runs; the last is the
+/// envelope with the reply and the session id to `--resume` from.
 pub struct ClaudeCodeAssistant {
     binary: PathBuf,
 }
@@ -83,8 +112,9 @@ impl Assistant for ClaudeCodeAssistant {
 
     fn models(&self, cancel: &CancelToken) -> Result<Vec<AssistantModel>, AssistantError> {
         let mut command = Cli::Claude.command(&self.binary);
+        command.arg("-p");
+        Cli::Claude.confine(&mut command, Tools::Off, &[]);
         command
-            .args(["-p", "--restricted", "--strict-mcp-config", "--tools", ""])
             .args(["--no-session-persistence", "--input-format", "stream-json"])
             .args(["--output-format", "stream-json", "--verbose"])
             .env_remove("CLAUDE_CODE_ENTRYPOINT");
@@ -119,12 +149,12 @@ impl Assistant for ClaudeCodeAssistant {
 
 /// `codex exec --json`, prompt on stdin. The reply is the last
 /// `agent_message` item; the thread id comes first and is what
-/// `codex exec resume` continues. The sandbox is pinned on every turn: a
-/// resumed thread takes whatever the user's config says, not what it
-/// started with.
+/// `codex exec resume` continues. The thread lives in the user's own Codex
+/// home, so a later turn can resume it.
 pub struct CodexAssistant {
     binary: PathBuf,
-    /// The user's own Codex home, whose login a prompt run borrows.
+    /// The user's own Codex home, whose login and config a prompt run
+    /// borrows.
     user_home: PathBuf,
 }
 
@@ -163,8 +193,17 @@ impl Assistant for CodexAssistant {
         let schema = run.path().join("schema.json");
         std::fs::write(&schema, prompt_run::SCHEMA).map_err(AssistantError::RunDirectory)?;
         let home = codex_home_for(run.path(), &self.user_home)?;
-        let mut command =
-            codex_prompt_command(&self.binary, run.path(), &home, &schema, request.model_id);
+        let mut listing = Cli::Codex.command(&self.binary);
+        listing.env("CODEX_HOME", &home).current_dir(run.path());
+        let mcp_servers = codex_mcp_servers(listing, cancel)?;
+        let mut command = codex_prompt_command(
+            &self.binary,
+            run.path(),
+            &home,
+            &schema,
+            &mcp_servers,
+            request.model_id,
+        );
         let output = run_cli(&mut command, &request.prompt(), |_| {}, cancel, timeout)?;
         output.reply(parse_codex_prompt(&output.stdout))
     }
@@ -179,46 +218,84 @@ fn run_directory() -> Result<tempfile::TempDir, AssistantError> {
         .map_err(AssistantError::RunDirectory)
 }
 
-/// Codex reads the user's instructions (AGENTS.md), hooks and skills from
-/// its home. A home holding only a link to the login keeps them out.
+/// Codex reads the user's instructions (AGENTS.md) from its home. A home
+/// holding only links to the login and the config keeps them out, while
+/// the config's provider, endpoints and credential store still apply.
 fn codex_home_for(run: &Path, user_home: &Path) -> Result<PathBuf, AssistantError> {
     let home = run.join("codex-home");
     std::fs::create_dir(&home).map_err(AssistantError::RunDirectory)?;
-    let login = user_home.join("auth.json");
-    // No login file means an API key in the environment, or no login at all,
-    // which the CLI reports itself.
-    if login.is_file() {
-        std::os::unix::fs::symlink(login, home.join("auth.json"))
-            .map_err(AssistantError::RunDirectory)?;
+    // A missing login means an API key in the environment, or no login at
+    // all, which the CLI reports itself. A missing config means defaults.
+    for name in ["auth.json", "config.toml"] {
+        let file = user_home.join(name);
+        if file.is_file() {
+            std::os::unix::fs::symlink(file, home.join(name))
+                .map_err(AssistantError::RunDirectory)?;
+        }
     }
     Ok(home)
 }
 
-/// `--tools ""` leaves no tool at all, and `--restricted` ignores user,
-/// project and local settings. `structured_output` carries the answer.
+/// Asks Codex which MCP servers a run of `command`'s home and directory
+/// would start. The tool settings are off, as on the run, so plugin servers
+/// drop out.
+fn codex_mcp_servers(
+    mut command: Command,
+    cancel: &CancelToken,
+) -> Result<Vec<String>, AssistantError> {
+    command.args(["mcp", "list", "--json"]);
+    for setting in CODEX_TOOLS_OFF {
+        command.args(["--config", setting]);
+    }
+    let output = run_cli(&mut command, "", |_| {}, cancel, MCP_LIST_TIMEOUT)?;
+    if !output.status.success() {
+        return output.reply(Err(AssistantError::Malformed(
+            "the MCP server list did not finish".to_owned(),
+        )));
+    }
+    parse_mcp_servers(&output.stdout)
+}
+
+fn parse_mcp_servers(stdout: &str) -> Result<Vec<String>, AssistantError> {
+    #[derive(Deserialize)]
+    struct Server {
+        name: String,
+    }
+    let servers: Vec<Server> = serde_json::from_str(stdout).map_err(|_| {
+        AssistantError::Malformed("the MCP server list could not be read".to_owned())
+    })?;
+    Ok(servers.into_iter().map(|server| server.name).collect())
+}
+
+/// A server's name is a TOML key, so one with a dot or a quote stays one key.
+fn mcp_server_off(name: &str) -> String {
+    format!(
+        "mcp_servers.{}.enabled=false",
+        toml_edit::Key::new(name).display_repr()
+    )
+}
+
+/// `structured_output` carries the answer.
 fn claude_prompt_command(binary: &Path, workdir: &Path, model_id: Option<&str>) -> Command {
     let mut command = Cli::Claude.command(binary);
     command
         .args(["-p", "--output-format", "json"])
         .args(["--json-schema", prompt_run::SCHEMA])
-        .arg("--no-session-persistence")
-        .args(["--restricted", "--tools", ""])
-        .arg("--strict-mcp-config")
-        .current_dir(workdir);
+        .arg("--no-session-persistence");
+    Cli::Claude.confine(&mut command, Tools::Off, &[]);
+    command.current_dir(workdir);
     if let Some(model_id) = model_id {
         command.args(["--model", model_id]);
     }
     command
 }
 
-/// Codex has no single switch for "no tools". Its own home drops the
-/// user's config, MCP servers, instructions and hooks; the tool features
-/// left on by default are turned off one by one.
 fn codex_prompt_command(
     binary: &Path,
     workdir: &Path,
     home: &Path,
     schema: &Path,
+    mcp_servers: &[String],
     model_id: Option<&str>,
 ) -> Command {
     let mut command = Cli::Codex.command(binary);
@@ -227,10 +304,8 @@ fn codex_prompt_command(
         .args(["exec", "--ephemeral"])
         .arg("--cd")
         .arg(workdir)
-        .args(["--skip-git-repo-check", "--sandbox", "read-only"]);
-    for setting in CODEX_PROMPT_SETTINGS {
-        command.args(["--config", setting]);
-    }
+        .arg("--skip-git-repo-check");
+    Cli::Codex.confine(&mut command, Tools::Off, mcp_servers);
     if let Some(model_id) = model_id {
         command.args(["--model", model_id]);
     }
@@ -297,6 +372,38 @@ impl Cli {
         }
     }
 
+    /// Claude's `--restricted` ignores user, project and local settings.
+    /// Codex keeps the user's config, so its provider and login still
+    /// apply, and turns off each of `mcp_servers` by name. The sandbox is
+    /// pinned because a resumed thread doesn't keep the one it started
+    /// with.
+    fn confine(self, command: &mut Command, tools: Tools, mcp_servers: &[String]) {
+        match self {
+            Self::Claude => {
+                let allowed = match tools {
+                    Tools::Off => "",
+                    Tools::Reading => "Read,Glob,Grep,Skill",
+                };
+                command.args(["--restricted", "--strict-mcp-config", "--tools", allowed]);
+            }
+            Self::Codex => {
+                command
+                    .arg("--ignore-rules")
+                    .args(["--config", "sandbox_mode=\"read-only\""]);
+                let reading = match tools {
+                    Tools::Off => CODEX_READING_OFF,
+                    Tools::Reading => &[],
+                };
+                for setting in CODEX_TOOLS_OFF.iter().chain(reading) {
+                    command.args(["--config", setting]);
+                }
+                for name in mcp_servers {
+                    command.arg("--config").arg(mcp_server_off(name));
+                }
+            }
+        }
+    }
+
     fn needs(self, variable: &OsStr) -> bool {
         let Some(variable) = variable.to_str() else {
             return false;
@@ -334,14 +441,25 @@ impl CliSession {
         }
     }
 
-    fn command(&self) -> Command {
+    /// Codex lists its MCP servers first, so the turn can turn each off.
+    fn command(&self, cancel: &CancelToken) -> Result<Command, AssistantError> {
+        let mcp_servers = match self.cli {
+            Cli::Claude => Vec::new(),
+            Cli::Codex => {
+                let mut listing = Cli::Codex.command(&self.binary);
+                listing.current_dir(&self.workdir);
+                codex_mcp_servers(listing, cancel)?
+            }
+        };
+        Ok(self.command_with(&mcp_servers))
+    }
+
+    fn command_with(&self, mcp_servers: &[String]) -> Command {
         let mut command = self.cli.command(&self.binary);
         match self.cli {
             Cli::Claude => {
-                command
-                    .args(["-p", "--output-format", "stream-json", "--verbose"])
-                    .args(["--restricted", "--tools", "Read,Glob,Grep,Skill"])
-                    .arg("--strict-mcp-config");
+                command.args(["-p", "--output-format", "stream-json", "--verbose"]);
+                Cli::Claude.confine(&mut command, Tools::Reading, &[]);
                 if let Some(model_id) = &self.model_id {
                     command.args(["--model", model_id]);
                 }
@@ -360,9 +478,8 @@ impl CliSession {
                 if let Some(model_id) = &self.model_id {
                     command.args(["--model", model_id]);
                 }
-                command
-                    .args(["--config", "sandbox_mode=\"read-only\""])
-                    .args(["--skip-git-repo-check", "--json", "-"]);
+                Cli::Codex.confine(&mut command, Tools::Reading, mcp_servers);
+                command.args(["--skip-git-repo-check", "--json", "-"]);
             }
         }
         command.current_dir(&self.workdir);
@@ -381,7 +498,7 @@ impl Session for CliSession {
         let cli = self.cli;
         let mut warned = false;
         let output = run_cli(
-            &mut self.command(),
+            &mut self.command(cancel)?,
             text,
             |line: &str| match step(cli, line) {
                 Ok(Some(step)) => steps.step(step),
@@ -823,12 +940,12 @@ mod tests {
 
     #[test]
     fn claude_gets_a_model_and_a_resume_only_when_asked() {
-        let fresh = argv(&session(Cli::Claude, None, None).command());
+        let fresh = argv(&session(Cli::Claude, None, None).command_with(&[]));
         assert!(!fresh.contains(&"--model".to_owned()), "{fresh:?}");
         assert!(!fresh.contains(&"--resume".to_owned()), "{fresh:?}");
         assert!(fresh.contains(&"--restricted".to_owned()), "{fresh:?}");
 
-        let resumed = argv(&session(Cli::Claude, Some("s-1"), Some("opus")).command());
+        let resumed = argv(&session(Cli::Claude, Some("s-1"), Some("opus")).command_with(&[]));
         assert!(resumed.ends_with(&[
             "--model".into(),
             "opus".into(),
@@ -839,12 +956,12 @@ mod tests {
 
     #[test]
     fn codex_pins_its_sandbox_on_both_fresh_and_resumed_turns() {
-        let fresh = argv(&session(Cli::Codex, None, None).command());
+        let fresh = argv(&session(Cli::Codex, None, None).command_with(&[]));
         assert!(fresh.starts_with(&["exec".into(), "--cd".into(), "/work".into()]));
         assert!(fresh.contains(&"sandbox_mode=\"read-only\"".to_owned()));
         assert!(!fresh.contains(&"--model".to_owned()));
 
-        let resumed = argv(&session(Cli::Codex, Some("t-1"), Some("mini")).command());
+        let resumed = argv(&session(Cli::Codex, Some("t-1"), Some("mini")).command_with(&[]));
         assert!(resumed.starts_with(&[
             "exec".into(),
             "resume".into(),
@@ -854,6 +971,253 @@ mod tests {
         ]));
         assert!(resumed.contains(&"sandbox_mode=\"read-only\"".to_owned()));
         assert!(resumed.ends_with(&["--json".into(), "-".into()]));
+    }
+
+    #[test]
+    fn a_codex_chat_turn_turns_off_each_listed_mcp_server_but_keeps_reading() {
+        let servers = ["node_repl".to_owned(), "a.b".to_owned()];
+        for resume in [None, Some("t-1")] {
+            let args = argv(&session(Cli::Codex, resume, None).command_with(&servers));
+            for setting in [
+                "features.hooks=false",
+                "features.apps=false",
+                "features.plugins=false",
+                "agents.enabled=false",
+                "web_search=\"disabled\"",
+                "mcp_servers.node_repl.enabled=false",
+                "mcp_servers.\"a.b\".enabled=false",
+            ] {
+                assert!(
+                    args.windows(2).any(|pair| pair == ["--config", setting]),
+                    "{args:?}"
+                );
+            }
+            for setting in ["features.shell_tool=false", "features.code_mode_host=false"] {
+                assert!(!args.contains(&setting.to_owned()), "{args:?}");
+            }
+            assert!(
+                !args.contains(&"--ignore-user-config".to_owned()),
+                "{args:?}"
+            );
+        }
+    }
+
+    struct IgnoredSteps;
+
+    impl StepSink for IgnoredSteps {
+        fn step(&mut self, _step: Step) {}
+    }
+
+    /// A stand-in `codex` that answers `mcp list` with `servers`. An `exec`
+    /// logs its `CODEX_HOME`, what that home holds, and its arguments to
+    /// `exec.log`, then replies as a completed turn.
+    fn fake_codex(directory: &Path, servers: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let log = directory.join("exec.log");
+        let path = directory.join("codex");
+        std::fs::write(
+            &path,
+            format!(
+                r#"#!/bin/sh
+case "$1 $2" in
+  "mcp list") printf '%s' '{servers}'; exit ;;
+esac
+printf 'home=%s\n' "$CODEX_HOME" > '{log}'
+printf 'held=%s\n' "$(ls "$CODEX_HOME" 2>/dev/null | tr '\n' ' ')" >> '{log}'
+printf '%s\n' "$@" >> '{log}'
+cat > /dev/null
+echo '{{"type":"thread.started","thread_id":"t-1"}}'
+echo '{{"type":"item.completed","item":{{"id":"i0","type":"agent_message","text":"{{\"text\":\"ok\"}}"}}}}'
+echo '{{"type":"turn.completed","usage":{{}}}}'
+"#,
+                log = log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn exec_log(directory: &Path) -> Vec<String> {
+        std::fs::read_to_string(directory.join("exec.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn open_codex(binary: PathBuf, workdir: &Path) -> CliSession {
+        CodexAssistant::new(binary, workdir.into()).open(SessionSpec {
+            workdir,
+            model_id: None,
+            resume: None,
+        })
+    }
+
+    #[test]
+    fn a_codex_chat_turn_turns_off_the_mcp_servers_codex_lists() {
+        let directory = tempfile::tempdir().unwrap();
+        let codex = fake_codex(directory.path(), r#"[{"name":"node_repl","enabled":true}]"#);
+
+        open_codex(codex, directory.path())
+            .prompt(
+                "hi",
+                &mut IgnoredSteps,
+                &CancelToken::never(),
+                Duration::from_secs(10),
+            )
+            .unwrap();
+
+        let args = exec_log(directory.path());
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--config", "mcp_servers.node_repl.enabled=false"]),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn a_codex_chat_turn_does_not_run_when_its_mcp_servers_cannot_be_listed() {
+        let directory = tempfile::tempdir().unwrap();
+        let codex = fake_codex(directory.path(), "not json");
+
+        let chatted = open_codex(codex, directory.path()).prompt(
+            "hi",
+            &mut IgnoredSteps,
+            &CancelToken::never(),
+            Duration::from_secs(10),
+        );
+
+        assert!(
+            matches!(chatted, Err(AssistantError::Malformed(_))),
+            "{chatted:?}"
+        );
+        assert!(exec_log(directory.path()).is_empty());
+    }
+
+    #[test]
+    fn a_codex_prompt_run_borrows_the_login_and_config_and_turns_off_their_mcp_servers() {
+        let directory = tempfile::tempdir().unwrap();
+        let user_home = directory.path().join("user-codex");
+        std::fs::create_dir(&user_home).unwrap();
+        for name in ["auth.json", "config.toml", "AGENTS.md"] {
+            std::fs::write(user_home.join(name), "").unwrap();
+        }
+        let codex = fake_codex(directory.path(), r#"[{"name":"node_repl","enabled":true}]"#);
+
+        let reply = CodexAssistant::new(codex, user_home.clone()).run_prompt(
+            &PromptRun {
+                model_id: None,
+                kind: aria_settings::PromptKind::Rewrite,
+                instructions: "Tidy it.",
+                transcript: "hello",
+            },
+            &CancelToken::never(),
+            Duration::from_secs(10),
+        );
+
+        assert_eq!(reply.unwrap(), "ok");
+        let args = exec_log(directory.path());
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--config", "mcp_servers.node_repl.enabled=false"]),
+            "{args:?}"
+        );
+        assert_ne!(args[0], format!("home={}", user_home.display()));
+        assert_eq!(args[1], "held=auth.json config.toml ");
+    }
+
+    /// Runs against the user's own Codex config, which chat turns and
+    /// prompt runs both keep.
+    #[test]
+    #[ignore = "live: runs the installed codex CLI"]
+    fn a_confined_codex_run_shows_the_model_no_tool_beyond_its_own() {
+        const ALLOWED: &[&str] = &[
+            "functions.exec",
+            "functions.wait",
+            "functions.request_user_input",
+            "functions.request_user_input_async",
+            "functions.send_message_to_user_async",
+        ];
+        fn names(tools: &[serde_json::Value], prefix: &str, into: &mut Vec<String>) {
+            for tool in tools {
+                let name = format!("{prefix}{}", tool["name"].as_str().unwrap_or("?"));
+                match tool["tools"].as_array() {
+                    Some(nested) => names(nested, &format!("{name}."), into),
+                    None => into.push(name),
+                }
+            }
+        }
+
+        let workdir = tempfile::tempdir().unwrap();
+        let mut listing = Cli::Codex.command(Path::new(CODEX_BINARY));
+        listing.current_dir(workdir.path());
+        let mcp_servers = codex_mcp_servers(listing, &CancelToken::never()).unwrap();
+        for tools in [Tools::Off, Tools::Reading] {
+            let mut confined = Command::new("codex");
+            Cli::Codex.confine(&mut confined, tools, &mcp_servers);
+            let mut command = Cli::Codex.command(Path::new(CODEX_BINARY));
+            command
+                .args(["debug", "prompt-input"])
+                .current_dir(workdir.path());
+            for pair in argv(&confined).windows(2) {
+                if pair[0] == "--config" {
+                    command.args(["-c", &pair[1]]);
+                }
+            }
+            command.arg("hi");
+            let output = run_cli(
+                &mut command,
+                "",
+                |_| {},
+                &CancelToken::never(),
+                Duration::from_secs(60),
+            )
+            .unwrap();
+            assert!(output.status.success(), "{}", output.stderr);
+
+            let items: Vec<serde_json::Value> = serde_json::from_str(&output.stdout).unwrap();
+            let mut seen = Vec::new();
+            for item in items
+                .iter()
+                .filter(|item| item["type"] == "additional_tools")
+            {
+                names(item["tools"].as_array().unwrap(), "", &mut seen);
+            }
+            let extra: Vec<_> = seen
+                .iter()
+                .filter(|name| !ALLOWED.contains(&name.as_str()))
+                .collect();
+            assert!(extra.is_empty(), "{tools:?} shows {extra:?}");
+
+            // A lazily started MCP server stays out of the prompt input,
+            // so Codex's own list is what shows it is off.
+            let mut listed = Cli::Codex.command(Path::new(CODEX_BINARY));
+            listed
+                .args(["mcp", "list", "--json"])
+                .current_dir(workdir.path());
+            for pair in argv(&confined).windows(2) {
+                if pair[0] == "--config" {
+                    listed.args(["-c", &pair[1]]);
+                }
+            }
+            let output = run_cli(
+                &mut listed,
+                "",
+                |_| {},
+                &CancelToken::never(),
+                Duration::from_secs(60),
+            )
+            .unwrap();
+            let servers: Vec<serde_json::Value> = serde_json::from_str(&output.stdout).unwrap();
+            let running: Vec<_> = servers
+                .iter()
+                .filter(|server| server["enabled"] != false)
+                .map(|server| &server["name"])
+                .collect();
+            assert!(running.is_empty(), "{tools:?} keeps {running:?}");
+        }
     }
 
     #[test]
@@ -1099,6 +1463,7 @@ mod tests {
                     Path::new("/run"),
                     Path::new("/home"),
                     Path::new("/schema"),
+                    &[],
                     model_id,
                 ),
             ];
@@ -1146,6 +1511,7 @@ mod tests {
             Path::new("/run"),
             Path::new("/run/codex-home"),
             Path::new("/run/schema.json"),
+            &[],
             None,
         );
         let args = argv(&command);
@@ -1156,7 +1522,7 @@ mod tests {
         );
         for expected in [
             ["--cd", "/run"],
-            ["--sandbox", "read-only"],
+            ["--config", "sandbox_mode=\"read-only\""],
             ["--output-schema", "/run/schema.json"],
         ] {
             assert!(args.windows(2).any(|pair| pair == expected), "{args:?}");

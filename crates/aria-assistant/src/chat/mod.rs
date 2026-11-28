@@ -34,7 +34,7 @@ use aria_settings::rpc::RpcErrorCode;
 use aria_settings::{ChatKey, ChatName, PromptKind, Quote};
 
 pub use assistants::{CLAUDE_BINARY, CODEX_BINARY, ClaudeCodeAssistant, CodexAssistant};
-pub(crate) use assistants::{claude_command, parse_claude};
+pub(crate) use assistants::{claude_without_tools, parse_claude};
 pub use folders::{ChatFolders, RenameError, StartError};
 pub use local::{Ask, LocalAssistant, LocalSession, Recalled, SessionHistory};
 pub(crate) use process::run_cli;
@@ -508,7 +508,6 @@ pub enum AssistantError {
 
     #[error("the assistant's output could not be understood: {0}")]
     Malformed(String),
-
     #[error("the local assistant isn't set up; {fix}")]
     NotConfigured { fix: &'static str },
 
