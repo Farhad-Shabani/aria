@@ -51,6 +51,15 @@ The installer checks the download, installs the `aria` command in
 `~/.local/bin`, and starts [setup](#setup). If it reports that `~/.local/bin`
 is not on your `PATH`, add it in your shell's startup file.
 
+To check that Aria's release workflow built a file you downloaded, use
+[GitHub CLI](https://cli.github.com) 2.67 or newer:
+
+```sh
+gh attestation verify aria-linux-x86_64.tar.gz \
+  --repo Farhad-Shabani/aria \
+  --signer-workflow Farhad-Shabani/aria/.github/workflows/release.yml
+```
+
 Before setup, the installer offers a udev rule so the hotkey can read your
 keyboard. Installing it asks for your password. See
 [Linux dictation](./linux.md#permissions) for what it allows.
