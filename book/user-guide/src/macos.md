@@ -154,6 +154,13 @@ not report their cursor show none, and neither does **Only type my voice**.
 Turn them off with **Show inline preview** under **Settings → General → On
 screen**.
 
+Aria types only into a text field or a document. It never types into a list,
+a control, or a password field. On a web page, it types only into a text field.
+If no text field has focus, the status pill says **no text field**. With
+**Insert, or copy if that fails**, Aria copies the text instead. While Aria
+types segments, it waits for you to click into a field. **Insert, then press
+Return** stops instead.
+
 If output is set to copy, paste the text after recording. Copying always uses
 the completed text. Output choices are under **Settings → Dictation**.
 
