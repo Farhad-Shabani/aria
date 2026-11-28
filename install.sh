@@ -9,7 +9,6 @@ set -euo pipefail
 
 repo=Farhad-Shabani/aria
 releases="https://github.com/$repo/releases"
-# The one name the release workflow gives the Linux build.
 file=aria-linux-x86_64.tar.gz
 if [ "$(uname -sm)" != "Linux x86_64" ]; then
     echo "install.sh supports Linux x86_64; on macOS, install Aria.dmg from $releases" >&2
@@ -58,8 +57,7 @@ if [ "${1:-}" = --uninstall ]; then
     exit 0
 fi
 
-# Only this user can write to this folder, so no one can swap the tarball
-# between its check and its extraction.
+# A private copy, so no one can swap the tarball after its check.
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 if [ -z "$dist" ]; then
@@ -78,9 +76,6 @@ else
     done
     cp "$dist/SHA256SUMS" "$dist/$file" "$work/"
 fi
-# The checksum catches a damaged download. It comes from the same release, so
-# it can't prove where the tarball came from. The installation guide's
-# attestation check does that.
 (cd "$work" && grep -x "[0-9a-f]\{64\}  $file" SHA256SUMS | sha256sum --check --quiet -) || {
     echo "$file doesn't match its checksum; nothing was installed" >&2
     exit 1

@@ -204,9 +204,7 @@ jobs:
         with:
           name: release
           path: dist
-      # Proves each file in dist/ came from this workflow at this tag.
-      # SHA256SUMS can't, since it ships in the same release. The installation
-      # guide shows how to check it.
+      # SHA256SUMS ships in the same release, so it can't prove where a file came from.
       - id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
