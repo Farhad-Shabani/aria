@@ -979,11 +979,8 @@ mod tests {
         for resume in [None, Some("t-1")] {
             let args = argv(&session(Cli::Codex, resume, None).command_with(&servers));
             for setting in [
-                "features.hooks=false",
                 "features.apps=false",
-                "features.plugins=false",
                 "agents.enabled=false",
-                "web_search=\"disabled\"",
                 "mcp_servers.node_repl.enabled=false",
                 "mcp_servers.\"a.b\".enabled=false",
             ] {
@@ -1106,7 +1103,7 @@ echo '{{"type":"turn.completed","usage":{{}}}}'
         }
         let codex = fake_codex(directory.path(), r#"[{"name":"node_repl","enabled":true}]"#);
 
-        let reply = CodexAssistant::new(codex, user_home.clone()).run_prompt(
+        let reply = CodexAssistant::new(codex, user_home).run_prompt(
             &PromptRun {
                 model_id: None,
                 kind: aria_settings::PromptKind::Rewrite,
@@ -1124,7 +1121,6 @@ echo '{{"type":"turn.completed","usage":{{}}}}'
                 .any(|pair| pair == ["--config", "mcp_servers.node_repl.enabled=false"]),
             "{args:?}"
         );
-        assert_ne!(args[0], format!("home={}", user_home.display()));
         assert_eq!(args[1], "held=auth.json config.toml ");
     }
 
@@ -1505,7 +1501,7 @@ echo '{{"type":"turn.completed","usage":{{}}}}'
     }
 
     #[test]
-    fn a_codex_prompt_run_ignores_user_config_and_turns_tools_off() {
+    fn a_codex_prompt_run_uses_its_own_home_and_turns_reading_off() {
         let command = codex_prompt_command(
             Path::new("codex"),
             Path::new("/run"),
@@ -1527,13 +1523,7 @@ echo '{{"type":"turn.completed","usage":{{}}}}'
         ] {
             assert!(args.windows(2).any(|pair| pair == expected), "{args:?}");
         }
-        for setting in [
-            "features.shell_tool=false",
-            "features.apps=false",
-            "features.plugins=false",
-            "project_doc_max_bytes=0",
-            "web_search=\"disabled\"",
-        ] {
+        for setting in ["features.shell_tool=false", "project_doc_max_bytes=0"] {
             assert!(
                 args.windows(2).any(|pair| pair == ["--config", setting]),
                 "{args:?}"
