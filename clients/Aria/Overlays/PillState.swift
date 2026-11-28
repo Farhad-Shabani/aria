@@ -14,6 +14,8 @@ enum PillState: Equatable {
     case interrupted
     /// The app in front has Aria switched off, by name when known.
     case excluded(String?)
+    /// Nothing that takes text had focus, so nothing was typed. Not a failure.
+    case noTextField
     /// A press that failed, in the words the person needs.
     case failed(String)
     /// A chat in flight: its step, such as `reading · +1`, and since when.
@@ -39,6 +41,7 @@ enum PillState: Equatable {
         case .failed where [.deliveryTargetChanged, .deliveryInterrupted].contains(event.errorCode):
             self = .interrupted
         case .failed where event.errorCode == .applicationExcluded: self = .excluded(frontApp())
+        case .failed where event.errorCode == .noTextField: self = .noTextField
         case .failed: self = .failed(event.errorCode.dictationMessage)
         // A segment or a voice arrives while the speaker is still talking,
         // so it says nothing about the press.
@@ -108,7 +111,7 @@ enum PillState: Equatable {
             return .seconds(4)
         case .delivered, .replied: return .milliseconds(1200)
         case .cancelled: return .milliseconds(800)
-        case .interrupted, .excluded: return .seconds(2)
+        case .interrupted, .excluded, .noTextField: return .seconds(2)
         // Long enough to read, and the next press clears it anyway.
         case .failed, .noReply: return .seconds(5)
         }
@@ -121,7 +124,8 @@ enum PillState: Equatable {
         case .transcribing, .delivering, .asking:
             return OverlayStyle.workingTint
         // Words that never reached the field get no success color.
-        case .delivered(.inHistory, _), .delivered(.notTyped, _), .interrupted, .excluded, .returnDropped:
+        case .delivered(.inHistory, _), .delivered(.notTyped, _), .interrupted, .excluded, .noTextField,
+            .returnDropped:
             return OverlayStyle.quietTint
         case .delivered, .replied:
             return OverlayStyle.doneTint
@@ -131,8 +135,8 @@ enum PillState: Equatable {
     var motion: Motion {
         switch self {
         case .asking, .delivering: return .breathe
-        case .recording, .transcribing, .delivered, .cancelled, .interrupted, .excluded, .failed, .replied,
-            .noReply, .returnDropped:
+        case .recording, .transcribing, .delivered, .cancelled, .interrupted, .excluded, .noTextField, .failed,
+            .replied, .noReply, .returnDropped:
             return .still
         }
     }
@@ -171,6 +175,7 @@ enum PillState: Equatable {
         case .cancelled: return "canceled"
         case .interrupted: return "stopped · focus moved"
         case .excluded(let app): return "off in \(app ?? "this app")"
+        case .noTextField: return "no text field"
         case .failed(let message): return message
         case .asking(let step, _): return step
         case .replied(let copied): return copied ? "copied" : "replied"

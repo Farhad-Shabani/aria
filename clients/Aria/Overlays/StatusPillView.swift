@@ -234,6 +234,8 @@ private struct Mark: View {
             Glyph(name: "hand.raised", tint: state.tint)
         case .excluded:
             Glyph(name: "nosign", tint: state.tint)
+        case .noTextField:
+            Glyph(name: "character.cursor.ibeam", tint: state.tint)
         case .returnDropped:
             Glyph(name: "return", tint: state.tint)
         case .asking:
