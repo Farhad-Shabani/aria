@@ -503,7 +503,8 @@ pub(in crate::daemon) fn redacted(status: Status) -> Status {
         RpcErrorCode::InvalidRequest
         | RpcErrorCode::Unauthenticated
         | RpcErrorCode::PayloadTooLarge
-        | RpcErrorCode::ApplicationExcluded => failure.message,
+        | RpcErrorCode::ApplicationExcluded
+        | RpcErrorCode::NoTextField => failure.message,
         RpcErrorCode::SettingsInvalid => SETTINGS_NEED_FIXING.to_owned(),
         RpcErrorCode::Busy => "Your Mac is busy".to_owned(),
         RpcErrorCode::PermissionDenied => "Your Mac refused this change".to_owned(),

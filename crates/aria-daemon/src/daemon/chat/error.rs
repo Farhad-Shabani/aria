@@ -128,6 +128,7 @@ impl From<&ChatError> for RpcErrorCode {
                 | DeliveryError::TargetUnverified,
             ) => Self::DeliveryTargetChanged,
             ChatError::Delivery(DeliveryError::ApplicationExcluded) => Self::ApplicationExcluded,
+            ChatError::Delivery(DeliveryError::NoTextField) => Self::NoTextField,
             ChatError::Delivery(
                 DeliveryError::EmptyText
                 | DeliveryError::TextTooLarge { .. }
@@ -135,6 +136,7 @@ impl From<&ChatError> for RpcErrorCode {
                 | DeliveryError::InvalidTimeout { .. }
                 | DeliveryError::ClipboardRejected
                 | DeliveryError::TargetUnavailable
+                | DeliveryError::FocusUnreadable
                 | DeliveryError::InsertionUnsupported,
             ) => Self::DeliveryFailed,
             #[cfg(target_os = "linux")]

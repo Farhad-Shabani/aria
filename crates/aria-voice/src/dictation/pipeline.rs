@@ -1703,7 +1703,9 @@ fn map_capture_error(error: CaptureError, control: &ExecutionControl) -> Dictati
 /// A focus change after text already landed stopped typing partway.
 fn stopped_partway<S: TranscriptSink>(error: DictationError, sinks: &S) -> DictationError {
     match error {
-        DictationError::DeliveryTargetChanged if sinks.delivered().is_some() => {
+        DictationError::DeliveryTargetChanged | DictationError::NoTextField
+            if sinks.delivered().is_some() =>
+        {
             DictationError::DeliveryInterrupted
         }
         error => error,
@@ -5028,6 +5030,36 @@ mod tests {
 
         let result = published.finish(
             finished(Transcript::new("one two.").unwrap()),
+            false,
+            &mut sinks,
+        );
+
+        assert!(matches!(result, Err(DictationError::DeliveryInterrupted)));
+    }
+
+    #[test]
+    fn no_text_field_after_typed_text_reads_as_stopped_partway() {
+        let control = ExecutionControl::for_test(StopMode::Manual);
+        let events = DictationEventEmitter::unsubscribed();
+        let settings = settings(DeliveryMode::Streaming, OutputMode::InsertAndSubmit);
+        let mut published =
+            Published::new(&settings, no_terms(), &control, &events, Instant::now());
+        let mut sinks = (
+            CallLog::default().history(),
+            Cursor::new(FailsAfter {
+                typed: 1,
+                refusal: || DeliveryError::NoTextField,
+                delivered: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        );
+        sinks.dictation_started(&settings, &control).unwrap();
+        for text in ["red", "green"] {
+            let heard = heard(text);
+            publish_corrected(&mut published, heard, text, &mut sinks).unwrap();
+        }
+
+        let result = published.finish(
+            finished(Transcript::new("red green").unwrap()),
             false,
             &mut sinks,
         );

@@ -177,11 +177,7 @@ impl<D: TextDelivery> Cursor<D> {
                 });
                 Ok(())
             }
-            Err(DeliveryError::TargetChanged | DeliveryError::ApplicationExcluded)
-                if matches!(target.absence, Absence::Queues(_)) =>
-            {
-                Ok(())
-            }
+            Err(error) if waits(&error) && matches!(target.absence, Absence::Queues(_)) => Ok(()),
             Err(error) => {
                 // A Return taken earlier stays unpressed: it would send
                 // text cut short. One pressed from here on reaches the app.
@@ -253,6 +249,18 @@ impl<D: TextDelivery> Cursor<D> {
         });
         Ok(())
     }
+}
+
+/// Refusals that typed nothing because the text's place isn't in front: its
+/// app, or a text field in it.
+fn waits(error: &DeliveryError) -> bool {
+    matches!(
+        error,
+        DeliveryError::TargetChanged
+            | DeliveryError::ApplicationExcluded
+            | DeliveryError::NoTextField
+            | DeliveryError::FocusUnreadable
+    )
 }
 
 /// `text` without the closing mark `SentenceEnds` opened it with.
@@ -670,6 +678,33 @@ mod tests {
                 ..Spacing::default()
             },
             ..Utterance::anonymous(text)
+        }
+    }
+
+    #[test]
+    fn text_waits_while_no_text_field_has_focus() {
+        let refusals: [fn() -> DeliveryError; 2] = [
+            || DeliveryError::NoTextField,
+            || DeliveryError::FocusUnreadable,
+        ];
+        for refusal in refusals {
+            let log = CallLog::default();
+            let mut cursor = Cursor::new(wandering(&log));
+            cursor
+                .dictation_started(
+                    &settings(DeliveryMode::Streaming, OutputMode::Insert),
+                    &ExecutionControl::for_test(StopMode::Manual),
+                )
+                .unwrap();
+            cursor.delivery.leave(refusal);
+
+            cursor.segment(Utterance::anonymous("hello")).unwrap();
+            assert!(cursor.is_queueing());
+            cursor.delivery.come_back();
+            cursor.retry().unwrap();
+
+            assert!(!cursor.is_queueing());
+            assert_eq!(log.entries(), ["prepare:Insert", "deliver:hello"]);
         }
     }
 

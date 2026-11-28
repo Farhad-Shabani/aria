@@ -78,6 +78,11 @@ records what you type.
 To place spaces, Aria reads two characters before the cursor and one after
 it. It skips password fields and never saves or logs them.
 
+Before it types, Aria reads the kind of the item in focus and of the items
+that hold it, never their contents. As a dictation starts, it reads the app's
+accessibility role. Some apps then turn on their accessibility support, so any
+app with Accessibility permission can read them.
+
 ## Chats
 
 [Chat](./chat.md) sends your request to the assistant you choose. Claude Code

@@ -42,10 +42,10 @@ impl Paste {
         matches!(self, Self::Tmux(_))
     }
 
-    pub(super) fn check_focus(&self, process: u32) -> Result<(), DeliveryError> {
+    pub(super) fn check_pin(&self, process: u32) -> Result<(), DeliveryError> {
         match self {
-            Self::Ghostty(terminal) => terminal.check_focus(process),
-            Self::Tmux(pane) => pane.check_focus(process),
+            Self::Ghostty(terminal) => terminal.check_pin(process),
+            Self::Tmux(pane) => pane.check_pin(process),
         }
     }
 

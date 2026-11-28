@@ -103,7 +103,7 @@ extension Aria_Daemon_V1_RelayService {
         /// >   CANCELLED - the client sent a `RelayCancel`, its own stream failed, or
         /// >     a `RelayContinuation` named a recording that is over
         /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
-        /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
+        /// >     DELIVERY_TARGET_CHANGED, NO_TEXT_FIELD - as for a press on the Mac
         /// > Delivery failures do not return the text and can include partial delivery.
         ///
         /// - Parameters:
@@ -186,7 +186,7 @@ extension Aria_Daemon_V1_RelayService {
         /// >   CANCELLED - the client sent a `RelayCancel`, its own stream failed, or
         /// >     a `RelayContinuation` named a recording that is over
         /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
-        /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
+        /// >     DELIVERY_TARGET_CHANGED, NO_TEXT_FIELD - as for a press on the Mac
         /// > Delivery failures do not return the text and can include partial delivery.
         ///
         /// - Parameters:
@@ -266,7 +266,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// >   CANCELLED - the client sent a `RelayCancel`, its own stream failed, or
     /// >     a `RelayContinuation` named a recording that is over
     /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
-    /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
+    /// >     DELIVERY_TARGET_CHANGED, NO_TEXT_FIELD - as for a press on the Mac
     /// > Delivery failures do not return the text and can include partial delivery.
     ///
     /// - Parameters:
@@ -340,7 +340,7 @@ extension Aria_Daemon_V1_RelayService.ClientProtocol {
     /// >   CANCELLED - the client sent a `RelayCancel`, its own stream failed, or
     /// >     a `RelayContinuation` named a recording that is over
     /// >   TRANSCRIPTION_FAILED, DELIVERY_FAILED, DELIVERY_TIMEOUT,
-    /// >     DELIVERY_TARGET_CHANGED - as for a press on the Mac
+    /// >     DELIVERY_TARGET_CHANGED, NO_TEXT_FIELD - as for a press on the Mac
     /// > Delivery failures do not return the text and can include partial delivery.
     ///
     /// - Parameters:

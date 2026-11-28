@@ -178,6 +178,7 @@ fn grpc_code(code: RpcErrorCode) -> tonic::Code {
         | RpcErrorCode::PromptUnreadable
         | RpcErrorCode::PromptsFull
         | RpcErrorCode::ApplicationExcluded
+        | RpcErrorCode::NoTextField
         | RpcErrorCode::SettingsInvalid => tonic::Code::FailedPrecondition,
         RpcErrorCode::SpeakerAlreadyEnrolled | RpcErrorCode::ChatNameTaken => {
             tonic::Code::AlreadyExists
@@ -3695,6 +3696,7 @@ pub(crate) fn error_code_to_wire(code: RpcErrorCode) -> i32 {
         RpcErrorCode::DeliveryTargetChanged => wire::ErrorCode::DeliveryTargetChanged,
         RpcErrorCode::DeliveryInterrupted => wire::ErrorCode::DeliveryInterrupted,
         RpcErrorCode::ApplicationExcluded => wire::ErrorCode::ApplicationExcluded,
+        RpcErrorCode::NoTextField => wire::ErrorCode::NoTextField,
         RpcErrorCode::SynthesisFailed => wire::ErrorCode::SynthesisFailed,
         RpcErrorCode::PlaybackFailed => wire::ErrorCode::PlaybackFailed,
         RpcErrorCode::SpeechTimeout => wire::ErrorCode::SpeechTimeout,
@@ -3759,6 +3761,7 @@ pub(crate) fn error_code_from_wire(code: i32) -> Result<RpcErrorCode, ProtocolEr
         Ok(wire::ErrorCode::DeliveryTargetChanged) => RpcErrorCode::DeliveryTargetChanged,
         Ok(wire::ErrorCode::DeliveryInterrupted) => RpcErrorCode::DeliveryInterrupted,
         Ok(wire::ErrorCode::ApplicationExcluded) => RpcErrorCode::ApplicationExcluded,
+        Ok(wire::ErrorCode::NoTextField) => RpcErrorCode::NoTextField,
         Ok(wire::ErrorCode::SynthesisFailed) => RpcErrorCode::SynthesisFailed,
         Ok(wire::ErrorCode::PlaybackFailed) => RpcErrorCode::PlaybackFailed,
         Ok(wire::ErrorCode::SpeechTimeout) => RpcErrorCode::SpeechTimeout,

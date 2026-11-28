@@ -57,6 +57,7 @@ fn message(code: RpcErrorCode) -> &'static str {
         RpcErrorCode::DeliveryTargetChanged => "The window changed, so nothing was inserted.",
         RpcErrorCode::DeliveryInterrupted => "Focus moved, so typing stopped.",
         RpcErrorCode::ApplicationExcluded => "Aria is off in this app.",
+        RpcErrorCode::NoTextField => "No text field, so nothing was typed.",
         RpcErrorCode::DeliveryFailed | RpcErrorCode::DeliveryTimeout => {
             "The transcript could not be delivered."
         }

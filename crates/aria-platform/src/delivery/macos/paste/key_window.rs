@@ -51,7 +51,7 @@ fn key_window(process: u32) -> Result<KeyWindow, &'static str> {
     let standard = window
         .attr_value(ax::attr::subrole())
         .is_ok_and(|subrole| subrole.equal(ax::sub_role::standard_window()));
-    let field = element::focused_field(&app, deadline)?;
+    let field = element::focused_element(&app, deadline)?;
     element::limit(&field, deadline)?;
     let terminal_focused = field
         .role()

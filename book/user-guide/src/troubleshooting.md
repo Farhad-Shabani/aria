@@ -47,6 +47,10 @@ field focused. Check [Accessibility permission](./macos.md#permissions). For a
 terminal recording, try `aria dictate --mode copy` and paste to separate
 insertion from recognition.
 
+If the status pill says **no text field**, click into a text field and dictate
+again. If the app still takes no text, choose **Insert, or copy if that fails**
+for it in **Settings → Apps**, then paste.
+
 On a Mac, if the Aria key does nothing though Accessibility is on, turn on
 [Input Monitoring](./macos.md#permissions). `aria doctor` names the permission
 the Aria key still needs.

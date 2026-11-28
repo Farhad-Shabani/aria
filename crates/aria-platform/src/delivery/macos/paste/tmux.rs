@@ -109,7 +109,7 @@ impl Pane {
 
     /// Refuses unless the same tab has focus, its client is still in front,
     /// and that client shows the same pane, ready for input.
-    pub(super) fn check_focus(&self, process: u32) -> Result<(), DeliveryError> {
+    pub(super) fn check_pin(&self, process: u32) -> Result<(), DeliveryError> {
         let current = scripting::target(process)
             .map_err(Lookup::Unanswered)
             .and_then(|target| confirmed_tty(self.host, &target, process))

@@ -22,9 +22,12 @@ mod element;
 mod paste;
 mod placement;
 
-use anchor::Anchoring;
+use anchor::{Anchoring, LastLook, Post};
 use paste::Paste;
 
+/// Typing waits on the text field read. An app's first answer took over
+/// 400 ms.
+const FIELD_BUDGET: Duration = Duration::from_secs(1);
 const PLAIN_TEXT_TYPE: &str = "public.utf8-plain-text";
 // The concealed type asks clipboard managers not to record the transcript in
 // their history. It is a convention, not an OS guarantee.
@@ -48,7 +51,8 @@ pub(crate) const RETURN_VIRTUAL_KEY: u16 = 0x24;
 const NO_ERR: i32 = 0;
 
 pub struct MacOsTextDelivery {
-    /// How long a paste waits for an answer. Typed keys never wait.
+    /// How long a paste waits for an answer. Typed keys don't use it. Their
+    /// checks wait on the app within their own budgets instead.
     timeout: Duration,
 }
 
@@ -95,6 +99,9 @@ pub struct Destination {
 
 impl Destination {
     fn choose(process: u32) -> Self {
+        // Woken as the press starts, so its fields are readable by the time
+        // text arrives.
+        caret::wake(process);
         Self {
             process,
             route: Route::choose(process),
@@ -129,17 +136,34 @@ impl Route {
         }
     }
 
-    fn pins_target(&self) -> bool {
+    /// Whether text may wait for a press that knows no field. Keys post
+    /// only into a text field, and a tmux paste finds its pane again.
+    fn lets_text_wait(&self) -> bool {
         match self {
-            Self::Keys => false,
+            Self::Keys => true,
             Self::Paste(paste) => paste.pins_target(),
         }
     }
 
-    fn check_focus(&self, process: u32) -> Result<(), DeliveryError> {
+    /// Whether the terminal a paste route pinned still has focus. The keys
+    /// route pins nothing. Its text field is checked as it posts.
+    fn check_pin(&self, process: u32) -> Result<(), DeliveryError> {
         match self {
             Self::Keys => Ok(()),
-            Self::Paste(paste) => paste.check_focus(process),
+            Self::Paste(paste) => paste.check_pin(process),
+        }
+    }
+
+    /// The last look before text or a Return posts. `press` is absent for a
+    /// target that types once.
+    fn check_focus(
+        &self,
+        process: u32,
+        press: Option<(&Anchoring, Post)>,
+    ) -> Result<Option<LastLook>, DeliveryError> {
+        match self {
+            Self::Keys => check_text_field(process, press),
+            Self::Paste(paste) => paste.check_pin(process).map(|()| None),
         }
     }
 
@@ -221,7 +245,7 @@ impl TextDelivery for MacOsTextDelivery {
                 anchoring.start(if pinned {
                     focus
                 } else {
-                    Err("focus left the pinned terminal")
+                    Err(caret::Refusal::Unreadable("focus left the pinned terminal"))
                 });
                 Ok(MacOsDeliveryTarget::submitting(destination, anchoring))
             }),
@@ -277,7 +301,7 @@ impl TextDelivery for MacOsTextDelivery {
             } => return_after_text(destination, anchoring, &should_cancel),
             MacOsDeliveryTarget::ApplicationAndSubmit { .. } => Err(DeliveryError::SubmissionSpent),
             MacOsDeliveryTarget::ApplicationOrClipboard(destination) => {
-                guard(destination, &should_cancel, observe)?;
+                guard(destination, None, &should_cancel, observe)?;
                 post_return()
             }
             MacOsDeliveryTarget::Clipboard => Err(DeliveryError::TargetUnavailable),
@@ -311,14 +335,20 @@ impl TextDelivery for MacOsTextDelivery {
                 ..
             } => {
                 let mut anchoring = anchoring.borrow_mut();
-                anchoring.before_typing()?;
-                let outcome = insert(destination, text, self.timeout, &should_cancel, observe)
-                    .map_err(|error| match error {
-                        DeliveryError::TargetChanged => {
-                            focus_lost(&anchoring, destination.route.pins_target())
-                        }
-                        error => error,
-                    })?;
+                let outcome = insert(
+                    destination,
+                    Some((&mut anchoring, Post::Segment)),
+                    text,
+                    self.timeout,
+                    &should_cancel,
+                    observe,
+                )
+                .map_err(|error| match error {
+                    DeliveryError::TargetChanged => {
+                        focus_lost(&anchoring, destination.route.lets_text_wait())
+                    }
+                    error => error,
+                })?;
                 anchoring.after_typing(text);
                 Ok(outcome)
             }
@@ -363,8 +393,14 @@ impl TextDelivery for MacOsTextDelivery {
                 ..
             } => {
                 let mut anchoring = anchoring.borrow_mut();
-                anchoring.before_closing_space()?;
-                insert(destination, space, self.timeout, &should_cancel, observe)?;
+                insert(
+                    destination,
+                    Some((&mut anchoring, Post::ClosingSpace)),
+                    space,
+                    self.timeout,
+                    &should_cancel,
+                    observe,
+                )?;
                 anchoring.after_closing_space(space);
                 Ok(())
             }
@@ -447,31 +483,52 @@ impl TextDelivery for MacOsTextDelivery {
 /// Refuses the Return when the field the text went to lost focus, or its
 /// caret moved off the text. Another field in the same app may hold a command
 /// the person never meant to send. A field that can't be read leaves only the
-/// app check.
+/// route's check.
 fn return_after_text(
     destination: &Destination,
     anchoring: &RefCell<Anchoring>,
     should_cancel: &impl Fn() -> bool,
 ) -> Result<(), DeliveryError> {
-    anchoring.borrow_mut().before_return()?;
-    guard(destination, should_cancel, observe)?;
+    guard(
+        destination,
+        Some((&mut anchoring.borrow_mut(), Post::Return)),
+        should_cancel,
+        observe,
+    )?;
     post_return()
+}
+
+/// Keys posted on a web page anywhere but a text field run as its shortcuts,
+/// as a browser extension's are. A native document that hides its text
+/// still takes them.
+fn check_text_field(
+    process: u32,
+    press: Option<(&Anchoring, Post)>,
+) -> Result<Option<LastLook>, DeliveryError> {
+    let deadline = Instant::now() + FIELD_BUDGET;
+    let focus = caret::read_focus(process, deadline).inspect_err(|refusal| {
+        tracing::debug!(reason = refusal.reason(), "no text field has focus");
+    });
+    match press {
+        Some((anchoring, post)) => anchoring.look(focus, post, deadline),
+        None => focus.map(|_| None).map_err(caret::Refusal::into_error),
+    }
 }
 
 /// The caret, the focused field, and whether the route's focus check passed
 /// before and after the read. Only a field in the route's terminal may be
 /// anchored, since the app's other windows have their own fields.
-fn read_in_pin(destination: &Destination) -> (Caret, Result<caret::Focus, &'static str>, bool) {
-    let pinned = || destination.route.check_focus(destination.process).is_ok();
+fn read_in_pin(destination: &Destination) -> (Caret, Result<caret::Focus, caret::Refusal>, bool) {
+    let pinned = || destination.route.check_pin(destination.process).is_ok();
     let before = pinned();
     let (caret, focus) = caret::read(destination.process);
     (caret, focus, before && pinned())
 }
 
 /// Text may wait only when the press knows where it goes: its starting field,
-/// or a route that pins its target.
-fn focus_lost(anchoring: &Anchoring, route_pins_target: bool) -> DeliveryError {
-    if anchoring.is_unavailable() && !route_pins_target {
+/// or a route that finds its place again.
+fn focus_lost(anchoring: &Anchoring, route_lets_text_wait: bool) -> DeliveryError {
+    if anchoring.is_unavailable() && !route_lets_text_wait {
         return DeliveryError::TargetUnverified;
     }
     DeliveryError::TargetChanged
@@ -509,12 +566,13 @@ fn insertable(facts: Facts) -> Result<u32, DeliveryError> {
 
 fn insert(
     destination: &Destination,
+    press: Option<(&mut Anchoring, Post)>,
     text: &str,
     timeout: Duration,
     should_cancel: &impl Fn() -> bool,
     observe: impl Fn() -> Facts,
 ) -> Result<DeliveryOutcome, DeliveryError> {
-    guard(destination, should_cancel, observe)?;
+    guard(destination, press, should_cancel, observe)?;
     destination
         .route
         .send(destination.process, text, timeout)
@@ -524,19 +582,54 @@ fn insert(
 
 fn guard(
     destination: &Destination,
+    press: Option<(&mut Anchoring, Post)>,
     should_cancel: &impl Fn() -> bool,
     observe: impl Fn() -> Facts,
 ) -> Result<(), DeliveryError> {
+    guard_with(destination, press, should_cancel, observe, |press| {
+        destination.route.check_focus(destination.process, press)
+    })
+}
+
+fn guard_with(
+    destination: &Destination,
+    mut press: Option<(&mut Anchoring, Post)>,
+    should_cancel: &impl Fn() -> bool,
+    observe: impl Fn() -> Facts,
+    check_focus: impl FnOnce(Option<(&Anchoring, Post)>) -> Result<Option<LastLook>, DeliveryError>,
+) -> Result<(), DeliveryError> {
     judge(destination, observe())?;
-    destination.route.check_focus(destination.process)?;
+    // An app away from the front may report another caret, as a terminal
+    // that reports itself empty, and that is no moved caret. The check waits on the
+    // app, so the app is judged again before its refusal counts.
+    if let Some((anchoring, post)) = press.as_mut()
+        && let Err(error) = anchoring.check(*post)
+    {
+        judge(destination, observe())?;
+        return Err(error);
+    }
+    if should_cancel() {
+        return Err(DeliveryError::Cancelled);
+    }
+    let focus = check_focus(
+        press
+            .as_ref()
+            .map(|(anchoring, post)| (&**anchoring, *post)),
+    );
     // A route's focus check can wait on its app, and the user may leave
-    // meanwhile. Text or a Return posted after it goes wherever focus is then.
+    // meanwhile. Text or a Return posted after it goes wherever focus is then,
+    // and a refusal names what changed first.
     judge(destination, observe())?;
+    let look = focus?;
 
     // Check before typing: cancelling midway would leave a partial transcript
     // in the document while reporting failure.
     if should_cancel() {
         return Err(DeliveryError::Cancelled);
+    }
+    // Bound only now, since a refused guard posts nothing to that field.
+    if let (Some((anchoring, _)), Some(look)) = (press, look) {
+        anchoring.accept(look);
     }
     Ok(())
 }
@@ -580,7 +673,7 @@ fn insert_or_copy(
     observe: impl Fn() -> Facts,
     pasteboard: &NSPasteboard,
 ) -> Result<DeliveryOutcome, DeliveryError> {
-    let refusal = match guard(destination, should_cancel, observe) {
+    let refusal = match guard(destination, None, should_cancel, observe) {
         Ok(()) => match destination.route.send(destination.process, text, timeout) {
             Ok(()) => return Ok(DeliveryOutcome::Inserted),
             Err(Undelivered::Refused(refusal)) => refusal,
@@ -813,7 +906,14 @@ mod tests {
     /// An insertion that is not cancelled, so a test that is about the facts
     /// names only the facts.
     fn insertion(observe: impl Fn() -> Facts) -> Result<DeliveryOutcome, DeliveryError> {
-        insert(&keys(), TEST_TRANSCRIPT, TEST_TIMEOUT, &|| false, observe)
+        insert(
+            &keys(),
+            None,
+            TEST_TRANSCRIPT,
+            TEST_TIMEOUT,
+            &|| false,
+            observe,
+        )
     }
 
     #[test]
@@ -934,21 +1034,22 @@ mod tests {
     }
 
     #[test]
-    fn focus_leaving_during_the_route_check_stops_the_text() {
+    fn secure_input_during_the_focus_check_names_itself() {
         let looks = Cell::new(0);
         let observe = || {
             looks.set(looks.get() + 1);
-            let frontmost = if looks.get() == 1 {
-                PREPARED_TARGET
-            } else {
-                PREPARED_TARGET + 1
-            };
-            permitted(Ok(frontmost))
+            Facts {
+                trust: Trust::Trusted,
+                secure_input: looks.get() > 1,
+                frontmost: Ok(PREPARED_TARGET),
+            }
         };
 
-        let result = guard(&keys(), &|| false, observe);
+        let result = guard_with(&keys(), None, &|| false, observe, |_| {
+            Err(DeliveryError::NoTextField)
+        });
 
-        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+        assert!(matches!(result, Err(DeliveryError::SecureInput)));
     }
 
     #[test]
@@ -961,6 +1062,11 @@ mod tests {
             focus_lost(&Anchoring::Pending, false),
             DeliveryError::TargetChanged
         ));
+    }
+
+    #[test]
+    fn typed_keys_wait_for_a_text_field_though_none_was_bound() {
+        assert!(Route::Keys.lets_text_wait());
     }
 
     #[test]
@@ -990,12 +1096,131 @@ mod tests {
     }
 
     #[test]
-    fn a_cancelled_insertion_types_nothing() {
-        let result = insert(&keys(), TEST_TRANSCRIPT, TEST_TIMEOUT, &|| true, || {
-            permitted(Ok(PREPARED_TARGET))
-        });
+    fn a_cancel_during_the_focus_read_types_nothing() {
+        let mut anchoring = Anchoring::Pending;
+        let cancelled = Cell::new(false);
+
+        let result = guard_with(
+            &keys(),
+            Some((&mut anchoring, Post::Segment)),
+            &|| cancelled.get(),
+            || permitted(Ok(PREPARED_TARGET)),
+            |_| {
+                cancelled.set(true);
+                Ok(Some(LastLook::Bind(text_field())))
+            },
+        );
 
         assert!(matches!(result, Err(DeliveryError::Cancelled)));
+        assert!(!matches!(anchoring, Anchoring::Anchored(_)));
+    }
+
+    #[test]
+    fn an_app_left_during_the_anchor_check_names_the_switch() {
+        let looks = Cell::new(0);
+        let observe = || {
+            looks.set(looks.get() + 1);
+            let frontmost = if looks.get() == 1 {
+                PREPARED_TARGET
+            } else {
+                PREPARED_TARGET + 1
+            };
+            permitted(Ok(frontmost))
+        };
+        // An unbound press refuses the closing space.
+        let mut anchoring = Anchoring::Pending;
+
+        let result = guard_with(
+            &keys(),
+            Some((&mut anchoring, Post::ClosingSpace)),
+            &|| false,
+            observe,
+            |_| panic!("the focus read ran after a refused anchor check"),
+        );
+
+        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+    }
+
+    #[test]
+    fn a_cancel_skips_the_focus_read() {
+        let mut anchoring = Anchoring::Pending;
+
+        let result = guard_with(
+            &keys(),
+            Some((&mut anchoring, Post::Segment)),
+            &|| true,
+            || permitted(Ok(PREPARED_TARGET)),
+            |_| panic!("the focus read ran after a cancel"),
+        );
+
+        assert!(matches!(result, Err(DeliveryError::Cancelled)));
+    }
+
+    fn text_field() -> caret::Focus {
+        caret::Focus {
+            application: cidre::ax::UiElement::with_app_pid(1),
+            element: cidre::ax::UiElement::with_app_pid(1),
+            selection: Some(cidre::cf::Range { loc: 0, len: 0 }),
+        }
+    }
+
+    #[test]
+    fn a_field_found_while_its_app_lost_focus_stays_unbound() {
+        let looks = Cell::new(0);
+        let observe = || {
+            looks.set(looks.get() + 1);
+            let frontmost = if looks.get() == 1 {
+                PREPARED_TARGET
+            } else {
+                PREPARED_TARGET + 1
+            };
+            permitted(Ok(frontmost))
+        };
+        let mut anchoring = Anchoring::Pending;
+
+        let result = guard_with(
+            &keys(),
+            Some((&mut anchoring, Post::Segment)),
+            &|| false,
+            observe,
+            |_| Ok(Some(LastLook::Bind(text_field()))),
+        );
+
+        assert!(matches!(result, Err(DeliveryError::TargetChanged)));
+        assert!(!matches!(anchoring, Anchoring::Anchored(_)));
+    }
+
+    #[test]
+    fn the_app_in_front_is_judged_before_the_caret() {
+        let mut away = Anchoring::Pending;
+        let mut here = Anchoring::Pending;
+
+        let left = guard_with(
+            &keys(),
+            Some((&mut away, Post::Return)),
+            &|| false,
+            || permitted(Ok(PREPARED_TARGET + 1)),
+            |_| Ok(None),
+        );
+        let unbound = guard_with(
+            &keys(),
+            Some((&mut here, Post::Return)),
+            &|| false,
+            || permitted(Ok(PREPARED_TARGET)),
+            |_| Ok(None),
+        );
+
+        assert!(matches!(left, Err(DeliveryError::TargetChanged)));
+        assert!(matches!(unbound, Err(DeliveryError::TargetUnverified)));
+    }
+
+    #[test]
+    fn an_app_that_never_answers_accessibility_takes_no_keys() {
+        // The test process runs no accessibility server, so reads can't
+        // complete.
+        let result = Route::Keys.check_focus(std::process::id(), None);
+
+        assert!(matches!(result, Err(DeliveryError::FocusUnreadable)));
     }
 
     #[test]

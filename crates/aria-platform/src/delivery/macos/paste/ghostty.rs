@@ -42,7 +42,7 @@ impl Terminal {
 
     /// Refuses unless keyboard focus is still in this terminal. Another tab
     /// of the same window counts as elsewhere.
-    pub(super) fn check_focus(&self, process: u32) -> Result<(), DeliveryError> {
+    pub(super) fn check_pin(&self, process: u32) -> Result<(), DeliveryError> {
         let current = scripting::target(process)
             .map_err(Lookup::Unanswered)
             .and_then(|target| confirmed_id(&target, process));

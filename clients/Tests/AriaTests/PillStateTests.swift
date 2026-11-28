@@ -162,6 +162,16 @@ final class PillStateTests: XCTestCase {
         XCTAssertEqual(PillState.excluded(nil).life, .seconds(2))
     }
 
+    func testAPressWithNoTextFieldInFocusSaysSo() {
+        var event = Aria_Daemon_V1_DictationEvent()
+        event.stage = .failed
+        event.errorCode = .noTextField
+
+        XCTAssertEqual(PillState(event), .noTextField)
+        XCTAssertEqual(PillState(event)?.label(), "no text field")
+        XCTAssertEqual(PillState.noTextField.life, .seconds(2))
+    }
+
     func testASegmentDoesNotChangeThePill() {
         var event = Aria_Daemon_V1_DictationEvent()
         event.stage = .segmentTranscribed
